@@ -1,8 +1,13 @@
 function lerp(a, b, t) { return a + (b - a) * t }
 
+// An event carries position data (and is a movement keyframe) when it has
+// numeric px. create/update events do; color/destroy events don't.
+function hasPosition(e) { return typeof e.px === 'number' }
+
 function buildTimelines(events) {
   const map = new Map()
   events.forEach(e => {
+    if (e.id == null) return
     if (!map.has(e.id)) map.set(e.id, [])
     map.get(e.id).push({ ...e })
   })
@@ -10,32 +15,44 @@ function buildTimelines(events) {
   return map
 }
 
-function getObjectState(events, t) {
-  if (!events.length || events[0].type !== 'create' || t < events[0].time) return null
+// Sample one object's full state at time t, or null if it doesn't exist yet
+// (or has been destroyed). Position/rotation are interpolated between movement
+// keyframes; color is a step function (latest color-bearing event <= t).
+function sampleObject(events, t) {
+  const createEv = events.find(e => e.type === 'create')
+  if (!createEv || t < createEv.time) return null
   if (events.some(e => e.type === 'destroy' && e.time <= t)) return null
 
-  const keyframes = events.filter(e => e.type !== 'destroy')
+  const keyframes = events.filter(hasPosition)
   let from = keyframes[0], to = null
   for (const kf of keyframes) {
     if (kf.time <= t) from = kf
     else if (!to)     to   = kf
   }
 
-  if (!to) {
-    return {
-      pos: { x: from.px, y: from.py, z: from.pz },
-      rot: { x: from.rx, y: from.ry, z: from.rz },
-    }
+  let pos, rot
+  if (from && to) {
+    const f = (t - from.time) / (to.time - from.time)
+    pos = { x: lerp(from.px, to.px, f), y: lerp(from.py, to.py, f), z: lerp(from.pz, to.pz, f) }
+    rot = { x: lerp(from.rx, to.rx, f), y: lerp(from.ry, to.ry, f), z: lerp(from.rz, to.rz, f) }
+  } else if (from) {
+    pos = { x: from.px, y: from.py, z: from.pz }
+    rot = { x: from.rx, y: from.ry, z: from.rz }
+  } else {
+    pos = { x: 0, y: 0, z: 0 }
+    rot = { x: 0, y: 0, z: 0 }
   }
 
-  const f = (t - from.time) / (to.time - from.time)
-  return {
-    pos: { x: lerp(from.px, to.px, f), y: lerp(from.py, to.py, f), z: lerp(from.pz, to.pz, f) },
-    rot: { x: lerp(from.rx, to.rx, f), y: lerp(from.ry, to.ry, f), z: lerp(from.rz, to.rz, f) },
+  // Color: latest event (in time order) carrying a color, up to t.
+  let color = null
+  for (const e of events) {
+    if (e.time <= t && e.color != null) color = e.color
   }
+
+  return { shape: createEv.shape, pos, rot, color }
 }
 
-export function initPlayback(controlsEl, sceneAPI, tablePanel) {
+export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
   let state = 'idle'
   let startTime = null
   let pausedElapsed = 0
@@ -44,7 +61,7 @@ export function initPlayback(controlsEl, sceneAPI, tablePanel) {
   let maxTime = 0
   let isScrubbing = false
 
-  // DOM
+  // ── DOM ──
   const topRow = document.createElement('div')
   topRow.className = 'playback-row'
 
@@ -80,50 +97,47 @@ export function initPlayback(controlsEl, sceneAPI, tablePanel) {
 
   function applyAtTime(t) {
     for (const [id, events] of timelines) {
-      const s = getObjectState(events, t)
+      const s = sampleObject(events, t)
       if (s && !aliveObjects.has(id)) {
-        const createEv = events.find(e => e.type === 'create')
-        sceneAPI.createObject(id, createEv.shape, s.pos, s.rot)
+        sceneAPI.createObject(id, s.shape, s.pos, s.rot, s.color)
         aliveObjects.add(id)
       } else if (!s && aliveObjects.has(id)) {
         sceneAPI.destroyObject(id)
         aliveObjects.delete(id)
       } else if (s) {
         sceneAPI.updateObject(id, s.pos, s.rot)
+        sceneAPI.setColor(id, s.color)
       }
     }
-
-    const allEvents = tablePanel.getEvents()
-    let lastIdx = -1, lastTime = -1
-    allEvents.forEach((e, i) => {
-      if (e.time <= t && e.time > lastTime) { lastTime = e.time; lastIdx = i }
-    })
-    if (lastIdx !== -1) tablePanel.highlightRow(lastIdx)
-    else tablePanel.clearHighlights()
+    onTick?.(t)
   }
 
-  function initTimelines() {
-    const events = tablePanel.getEvents()
-    if (!events.length) return false
-    timelines = buildTimelines(events)
-    maxTime = Math.max(...events.map(e => e.time))
-    scrubber.max = maxTime
-    return true
+  function reset(t = 0) {
+    sceneAPI.reset()
+    aliveObjects = new Set()
+    scrubber.value = t
+    setFill(t)
+    timeEl.textContent = t.toFixed(1) + 's'
+    if (timelines.size) applyAtTime(t)
+  }
+
+  // ── Public: load a fresh events table and rewind ──
+
+  function load(eventRows) {
+    state = 'idle'
+    btn.textContent = '▶  Play'
+    startTime = null
+    pausedElapsed = 0
+    timelines = buildTimelines(eventRows ?? [])
+    maxTime = (eventRows ?? []).reduce((m, e) => Math.max(m, e.time ?? 0), 0)
+    scrubber.max = maxTime || 10
+    reset(0)
   }
 
   // ── Scrubber events ──
 
-  scrubber.addEventListener('pointerdown', () => {
-    isScrubbing = true
-    if (!timelines.size) {
-      if (initTimelines()) {
-        sceneAPI.reset()
-        aliveObjects = new Set()
-      }
-    }
-  })
-
   scrubber.addEventListener('input', () => {
+    isScrubbing = true
     const t = parseFloat(scrubber.value)
     timeEl.textContent = t.toFixed(1) + 's'
     setFill(t)
@@ -143,6 +157,7 @@ export function initPlayback(controlsEl, sceneAPI, tablePanel) {
   btn.onclick = toggle
 
   function toggle() {
+    if (!timelines.size) return
     if (state === 'playing') {
       state = 'paused'
       pausedElapsed = elapsed()
@@ -158,12 +173,7 @@ export function initPlayback(controlsEl, sceneAPI, tablePanel) {
   }
 
   function startFresh() {
-    if (!initTimelines()) return
-    sceneAPI.reset()
-    tablePanel.clearHighlights()
-    aliveObjects = new Set()
-    scrubber.value = 0
-    setFill(0)
+    reset(0)
     pausedElapsed = 0
     startTime = performance.now()
     state = 'playing'
@@ -198,4 +208,6 @@ export function initPlayback(controlsEl, sceneAPI, tablePanel) {
 
     requestAnimationFrame(tick)
   }
+
+  return { load }
 }
