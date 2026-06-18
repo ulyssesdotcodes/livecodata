@@ -13,6 +13,6 @@ await esbuild.build({
 })
 
 const html = readFileSync('index.html', 'utf8')
-  .replace('</head>', '    <link rel="stylesheet" href="/assets/index.css">\n  </head>')
-  .replace('src="/src/main.js"', 'src="/assets/index.js"')
+  .replace('</head>', '    <link rel="stylesheet" href="./assets/index.css">\n  </head>')
+  .replace('src="/src/main.js"', 'src="./assets/index.js"')
 writeFileSync('public/index.html', html)
