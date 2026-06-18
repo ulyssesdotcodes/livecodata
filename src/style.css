@@ -83,6 +83,7 @@ html, body {
 
 .table-scroll {
   flex: 1;
+  min-height: 0;
   overflow: auto;
 }
 
