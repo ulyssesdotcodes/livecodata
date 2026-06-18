@@ -80,21 +80,6 @@ html, body {
   text-transform: uppercase;
 }
 
-.table-add-btn {
-  background: transparent;
-  border: 1px solid #2a4a70;
-  color: #8ca0b8;
-  cursor: pointer;
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 3px;
-  transition: background 0.12s, color 0.12s;
-}
-
-.table-add-btn:hover {
-  background: #1a3a5e;
-  color: #c8d6e5;
-}
 
 .table-scroll {
   flex: 1;
@@ -137,75 +122,8 @@ html, body {
 }
 
 .events-table td {
-  padding: 2px 2px;
-  vertical-align: middle;
-}
-
-.cell-input {
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid transparent;
+  padding: 3px 6px;
   color: #c8d6e5;
-  font-size: 11px;
-  padding: 2px 3px;
-  outline: none;
-  width: 100%;
-  min-width: 0;
-}
-
-.cell-input:focus {
-  border-bottom-color: #e94560;
-  background: rgba(233, 69, 96, 0.06);
-}
-
-.cell-input[type="number"] {
-  width: 46px;
-  -moz-appearance: textfield;
-}
-
-.cell-input[type="number"]::-webkit-outer-spin-button,
-.cell-input[type="number"]::-webkit-inner-spin-button {
-  -webkit-appearance: none;
-}
-
-.cell-input[type="text"] {
-  width: 62px;
-}
-
-.cell-select {
-  background: transparent;
-  border: none;
-  border-bottom: 1px solid transparent;
-  color: #c8d6e5;
-  font-size: 11px;
-  padding: 2px 0;
-  outline: none;
-  cursor: pointer;
-  width: 100%;
-}
-
-.cell-select:focus {
-  border-bottom-color: #e94560;
-}
-
-.cell-select option {
-  background: #1a1a2e;
-  color: #c8d6e5;
-}
-
-.delete-btn {
-  background: none;
-  border: none;
-  color: #3a5070;
-  cursor: pointer;
-  font-size: 15px;
-  line-height: 1;
-  padding: 0 3px;
-  transition: color 0.12s;
-}
-
-.delete-btn:hover {
-  color: #e94560;
 }
 
 /* ── Playback controls ── */
