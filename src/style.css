@@ -134,14 +134,23 @@ html, body {
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
   background: rgba(22, 33, 62, 0.88);
   border: 1px solid #0f3460;
   border-radius: 6px;
-  padding: 8px 16px;
+  padding: 8px 16px 12px;
   backdrop-filter: blur(6px);
   user-select: none;
+  width: 70%;
+  min-width: 220px;
+  max-width: 420px;
+}
+
+.playback-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 #play-pause-btn {
@@ -154,6 +163,7 @@ html, body {
   border-radius: 4px;
   transition: background 0.15s, border-color 0.15s;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 
 #play-pause-btn:hover {
@@ -168,4 +178,43 @@ html, body {
   font-family: monospace;
   min-width: 44px;
   text-align: right;
+  margin-left: auto;
+}
+
+#scrub-bar {
+  width: 100%;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: #1a3a5e;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+#scrub-bar::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #e94560;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+#scrub-bar:active::-webkit-slider-thumb {
+  transform: scale(1.25);
+}
+
+#scrub-bar::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #e94560;
+  border: none;
+  cursor: pointer;
+}
+
+#scrub-bar::-moz-range-track {
+  background: transparent;
 }
