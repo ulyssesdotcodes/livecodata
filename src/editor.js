@@ -98,5 +98,10 @@ export function initEditor(parent, { onRun } = {}) {
 
   runBtn.onclick = run
 
-  return { run, getCode: () => view.state.doc.toString() }
+  // Replace the whole document (used to restore a rehydrated session's program).
+  function setCode(code) {
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } })
+  }
+
+  return { run, getCode: () => view.state.doc.toString(), setCode, setError }
 }
