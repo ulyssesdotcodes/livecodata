@@ -136,14 +136,34 @@ html, body {
   text-transform: uppercase;
 }
 
-.table-select {
+.table-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.table-tab {
   background: #16213e;
-  color: #c8d6e5;
+  color: #8ca0b8;
   border: 1px solid #1a5090;
   border-radius: 4px;
-  font-size: 12px;
-  padding: 2px 6px;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 2px 10px;
   cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.table-tab:hover {
+  color: #c8d6e5;
+  border-color: #2a70c0;
+}
+
+.table-tab.tab-active {
+  background: #0f3460;
+  color: #fff;
+  border-color: #e94560;
 }
 
 .table-count {

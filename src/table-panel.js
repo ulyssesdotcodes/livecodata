@@ -27,21 +27,21 @@ export function initTablePanel(container) {
   const header = document.createElement('div')
   header.className = 'table-pane-header'
 
-  const title = document.createElement('span')
-  title.className = 'table-pane-title'
-  title.textContent = 'Tables'
-  header.appendChild(title)
-
-  const select = document.createElement('select')
-  select.className = 'table-select'
-  select.onchange = () => render(select.value)
-  header.appendChild(select)
+  const tabs = document.createElement('div')
+  tabs.className = 'table-tabs'
+  header.appendChild(tabs)
 
   const countEl = document.createElement('span')
   countEl.className = 'table-count'
   header.appendChild(countEl)
 
   container.appendChild(header)
+
+  let tabEls = new Map()
+
+  function highlightTab(name) {
+    tabEls.forEach((el, n) => el.classList.toggle('tab-active', n === name))
+  }
 
   const scroll = document.createElement('div')
   scroll.className = 'table-scroll'
@@ -58,6 +58,7 @@ export function initTablePanel(container) {
 
   function render(name) {
     current = name
+    highlightTab(name)
     const t = store.get(name)
     thead.innerHTML = ''
     tbody.innerHTML = ''
@@ -104,12 +105,15 @@ export function initTablePanel(container) {
     setTables(newStore) {
       store = newStore
       const names = [...store.keys()]
-      select.innerHTML = ''
+      tabs.innerHTML = ''
+      tabEls = new Map()
       names.forEach(n => {
-        const opt = document.createElement('option')
-        opt.value = n
-        opt.textContent = n
-        select.appendChild(opt)
+        const tab = document.createElement('button')
+        tab.className = 'table-tab'
+        tab.textContent = n
+        tab.onclick = () => render(n)
+        tabs.appendChild(tab)
+        tabEls.set(n, tab)
       })
       if (!names.length) {
         render(null)
@@ -118,7 +122,6 @@ export function initTablePanel(container) {
       // Keep current selection if it still exists; else prefer "events".
       let next = names.includes(current) ? current : null
       if (!next) next = names.includes('events') ? 'events' : names[names.length - 1]
-      select.value = next
       render(next)
     },
 
