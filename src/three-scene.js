@@ -45,11 +45,11 @@ export function initThree(canvas) {
   let colorIdx = 0
 
   return {
-    createObject(id, shape, position, rotation) {
+    createObject(id, shape, position, rotation, color) {
       if (objects.has(id)) return
       const geo = (SHAPE_BUILDERS[shape] ?? SHAPE_BUILDERS.box)()
       const mat = new THREE.MeshStandardMaterial({
-        color: PALETTE[colorIdx % PALETTE.length],
+        color: color != null ? color : PALETTE[colorIdx % PALETTE.length],
         metalness: 0.35,
         roughness: 0.4,
       })
@@ -67,6 +67,12 @@ export function initThree(canvas) {
       if (!mesh) return
       mesh.position.set(position.x, position.y, position.z)
       mesh.rotation.set(rotation.x, rotation.y, rotation.z)
+    },
+
+    setColor(id, color) {
+      const mesh = objects.get(id)
+      if (!mesh || color == null) return
+      mesh.material.color.set(color)
     },
 
     destroyObject(id) {

@@ -37,9 +37,65 @@ html, body {
 #editor-pane {
   flex: 3;
   min-height: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
   background: #16213e;
   border-top: 1px solid #0f3460;
+  overflow: hidden;
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px;
+  background: #0f3460;
+  border-bottom: 1px solid #1a1a2e;
+  flex-shrink: 0;
+}
+
+.editor-title {
+  color: #8ca0b8;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.run-btn {
+  background: #1a5090;
+  border: 1px solid #1a5090;
+  color: #c8d6e5;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 3px 14px;
+  border-radius: 4px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.run-btn:hover {
+  background: #e94560;
+  border-color: #e94560;
+  color: #fff;
+}
+
+.editor-host {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.editor-error {
+  flex-shrink: 0;
+  background: #3a1620;
+  color: #ff8095;
+  font-family: monospace;
+  font-size: 11px;
+  padding: 6px 10px;
+  border-top: 1px solid #e94560;
+  white-space: pre-wrap;
+  max-height: 30%;
+  overflow: auto;
 }
 
 .cm-editor {
@@ -49,6 +105,99 @@ html, body {
 
 .cm-scroller {
   overflow: auto;
+}
+
+/* ── Graph pane ── */
+#graph-pane {
+  flex: 3;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #16213e;
+  border-top: 1px solid #0f3460;
+  overflow: hidden;
+}
+
+.graph-pane-header {
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  background: #0f3460;
+  border-bottom: 1px solid #1a1a2e;
+  flex-shrink: 0;
+}
+
+.graph-pane-title {
+  color: #8ca0b8;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.graph-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+
+.graph-empty {
+  color: #607a96;
+  font-size: 12px;
+  padding: 12px 4px;
+}
+
+.graph-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 120px;
+  min-height: 120px;
+  background: #12203c;
+  border: 1px solid #0f3460;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.graph-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 5px 8px;
+  font-size: 11px;
+  color: #8ca0b8;
+  border-bottom: 1px solid #0f3460;
+}
+
+.graph-name {
+  font-weight: 600;
+  color: #c8d6e5;
+}
+
+.graph-series {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.graph-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.graph-canvas {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  display: block;
 }
 
 /* ── Table pane ── */
@@ -78,6 +227,43 @@ html, body {
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.table-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.table-tab {
+  background: #16213e;
+  color: #8ca0b8;
+  border: 1px solid #1a5090;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 2px 10px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.table-tab:hover {
+  color: #c8d6e5;
+  border-color: #2a70c0;
+}
+
+.table-tab.tab-active {
+  background: #0f3460;
+  color: #fff;
+  border-color: #e94560;
+}
+
+.table-count {
+  color: #607a96;
+  font-size: 11px;
+  font-family: monospace;
+  margin-left: auto;
 }
 
 

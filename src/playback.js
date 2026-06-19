@@ -1,50 +1,69 @@
+const FPS = 60 // one row == one frame; playback advances FPS indices per second
+
 function lerp(a, b, t) { return a + (b - a) * t }
+
+// An event carries position data (and is a movement keyframe) when it has
+// numeric px. create/update events do; color/destroy events don't.
+function hasPosition(e) { return typeof e.px === 'number' }
 
 function buildTimelines(events) {
   const map = new Map()
   events.forEach(e => {
+    if (e.id == null) return
     if (!map.has(e.id)) map.set(e.id, [])
     map.get(e.id).push({ ...e })
   })
-  for (const evs of map.values()) evs.sort((a, b) => a.time - b.time)
+  for (const evs of map.values()) evs.sort((a, b) => a.index - b.index)
   return map
 }
 
-function getObjectState(events, t) {
-  if (!events.length || events[0].type !== 'create' || t < events[0].time) return null
-  if (events.some(e => e.type === 'destroy' && e.time <= t)) return null
+// Sample one object's full state at index i, or null if it doesn't exist yet
+// (or has been destroyed). Position/rotation are interpolated between movement
+// keyframes; color is a step function (latest color-bearing event <= i).
+function sampleObject(events, i) {
+  const createEv = events.find(e => e.type === 'create')
+  if (!createEv || i < createEv.index) return null
+  if (events.some(e => e.type === 'destroy' && e.index <= i)) return null
 
-  const keyframes = events.filter(e => e.type !== 'destroy')
+  const keyframes = events.filter(hasPosition)
   let from = keyframes[0], to = null
   for (const kf of keyframes) {
-    if (kf.time <= t) from = kf
-    else if (!to)     to   = kf
+    if (kf.index <= i) from = kf
+    else if (!to)      to   = kf
   }
 
-  if (!to) {
-    return {
-      pos: { x: from.px, y: from.py, z: from.pz },
-      rot: { x: from.rx, y: from.ry, z: from.rz },
-    }
+  let pos, rot
+  if (from && to) {
+    const f = (i - from.index) / (to.index - from.index)
+    pos = { x: lerp(from.px, to.px, f), y: lerp(from.py, to.py, f), z: lerp(from.pz, to.pz, f) }
+    rot = { x: lerp(from.rx, to.rx, f), y: lerp(from.ry, to.ry, f), z: lerp(from.rz, to.rz, f) }
+  } else if (from) {
+    pos = { x: from.px, y: from.py, z: from.pz }
+    rot = { x: from.rx, y: from.ry, z: from.rz }
+  } else {
+    pos = { x: 0, y: 0, z: 0 }
+    rot = { x: 0, y: 0, z: 0 }
   }
 
-  const f = (t - from.time) / (to.time - from.time)
-  return {
-    pos: { x: lerp(from.px, to.px, f), y: lerp(from.py, to.py, f), z: lerp(from.pz, to.pz, f) },
-    rot: { x: lerp(from.rx, to.rx, f), y: lerp(from.ry, to.ry, f), z: lerp(from.rz, to.rz, f) },
+  // Color: latest event (in index order) carrying a color, up to i.
+  let color = null
+  for (const e of events) {
+    if (e.index <= i && e.color != null) color = e.color
   }
+
+  return { shape: createEv.shape, pos, rot, color }
 }
 
-export function initPlayback(controlsEl, sceneAPI, tablePanel) {
+export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
   let state = 'idle'
   let startTime = null
-  let pausedElapsed = 0
+  let pausedIndex = 0
   let timelines = new Map()
   let aliveObjects = new Set()
-  let maxTime = 0
+  let maxIndex = 0
   let isScrubbing = false
 
-  // DOM
+  // ── DOM ──
   const topRow = document.createElement('div')
   topRow.className = 'playback-row'
 
@@ -54,7 +73,7 @@ export function initPlayback(controlsEl, sceneAPI, tablePanel) {
 
   const timeEl = document.createElement('span')
   timeEl.id = 'playback-time'
-  timeEl.textContent = '0.0s'
+  timeEl.textContent = 'f0'
 
   topRow.appendChild(btn)
   topRow.appendChild(timeEl)
@@ -63,8 +82,8 @@ export function initPlayback(controlsEl, sceneAPI, tablePanel) {
   scrubber.type = 'range'
   scrubber.id = 'scrub-bar'
   scrubber.min = 0
-  scrubber.max = 10
-  scrubber.step = 0.01
+  scrubber.max = 100
+  scrubber.step = 1
   scrubber.value = 0
 
   controlsEl.appendChild(topRow)
@@ -72,70 +91,71 @@ export function initPlayback(controlsEl, sceneAPI, tablePanel) {
 
   // ── Helpers ──
 
-  function setFill(t) {
-    const pct = maxTime > 0 ? Math.min(100, (t / maxTime) * 100) : 0
+  function setFill(i) {
+    const pct = maxIndex > 0 ? Math.min(100, (i / maxIndex) * 100) : 0
     scrubber.style.background =
       `linear-gradient(to right, #e94560 ${pct}%, #1a3a5e ${pct}%)`
   }
 
-  function applyAtTime(t) {
+  function showIndex(i) {
+    timeEl.textContent = 'f' + Math.round(i)
+  }
+
+  function applyAtIndex(i) {
     for (const [id, events] of timelines) {
-      const s = getObjectState(events, t)
+      const s = sampleObject(events, i)
       if (s && !aliveObjects.has(id)) {
-        const createEv = events.find(e => e.type === 'create')
-        sceneAPI.createObject(id, createEv.shape, s.pos, s.rot)
+        sceneAPI.createObject(id, s.shape, s.pos, s.rot, s.color)
         aliveObjects.add(id)
       } else if (!s && aliveObjects.has(id)) {
         sceneAPI.destroyObject(id)
         aliveObjects.delete(id)
       } else if (s) {
         sceneAPI.updateObject(id, s.pos, s.rot)
+        sceneAPI.setColor(id, s.color)
       }
     }
-
-    const allEvents = tablePanel.getEvents()
-    let lastIdx = -1, lastTime = -1
-    allEvents.forEach((e, i) => {
-      if (e.time <= t && e.time > lastTime) { lastTime = e.time; lastIdx = i }
-    })
-    if (lastIdx !== -1) tablePanel.highlightRow(lastIdx)
-    else tablePanel.clearHighlights()
+    onTick?.(i)
   }
 
-  function initTimelines() {
-    const events = tablePanel.getEvents()
-    if (!events.length) return false
-    timelines = buildTimelines(events)
-    maxTime = Math.max(...events.map(e => e.time))
-    scrubber.max = maxTime
-    return true
+  function reset(i = 0) {
+    sceneAPI.reset()
+    aliveObjects = new Set()
+    scrubber.value = i
+    setFill(i)
+    showIndex(i)
+    if (timelines.size) applyAtIndex(i)
+  }
+
+  // ── Public: load a fresh events table and rewind ──
+
+  function load(eventRows) {
+    state = 'idle'
+    btn.textContent = '▶  Play'
+    startTime = null
+    pausedIndex = 0
+    timelines = buildTimelines(eventRows ?? [])
+    maxIndex = (eventRows ?? []).reduce((m, e) => Math.max(m, e.index ?? 0), 0)
+    scrubber.max = maxIndex || 100
+    reset(0)
   }
 
   // ── Scrubber events ──
 
-  scrubber.addEventListener('pointerdown', () => {
-    isScrubbing = true
-    if (!timelines.size) {
-      if (initTimelines()) {
-        sceneAPI.reset()
-        aliveObjects = new Set()
-      }
-    }
-  })
-
   scrubber.addEventListener('input', () => {
-    const t = parseFloat(scrubber.value)
-    timeEl.textContent = t.toFixed(1) + 's'
-    setFill(t)
-    if (timelines.size) applyAtTime(t)
+    isScrubbing = true
+    const i = parseFloat(scrubber.value)
+    showIndex(i)
+    setFill(i)
+    if (timelines.size) applyAtIndex(i)
   })
 
   window.addEventListener('pointerup', () => {
     if (!isScrubbing) return
     isScrubbing = false
-    const t = parseFloat(scrubber.value)
-    pausedElapsed = t
-    if (state === 'playing') startTime = performance.now() - t * 1000
+    const i = parseFloat(scrubber.value)
+    pausedIndex = i
+    if (state === 'playing') startTime = performance.now() - (i / FPS) * 1000
   })
 
   // ── Play / pause ──
@@ -143,13 +163,14 @@ export function initPlayback(controlsEl, sceneAPI, tablePanel) {
   btn.onclick = toggle
 
   function toggle() {
+    if (!timelines.size) return
     if (state === 'playing') {
       state = 'paused'
-      pausedElapsed = elapsed()
+      pausedIndex = position()
       btn.textContent = '▶  Play'
     } else if (state === 'paused') {
       state = 'playing'
-      startTime = performance.now() - pausedElapsed * 1000
+      startTime = performance.now() - (pausedIndex / FPS) * 1000
       btn.textContent = '⏸  Pause'
       tick()
     } else {
@@ -158,39 +179,35 @@ export function initPlayback(controlsEl, sceneAPI, tablePanel) {
   }
 
   function startFresh() {
-    if (!initTimelines()) return
-    sceneAPI.reset()
-    tablePanel.clearHighlights()
-    aliveObjects = new Set()
-    scrubber.value = 0
-    setFill(0)
-    pausedElapsed = 0
+    reset(0)
+    pausedIndex = 0
     startTime = performance.now()
     state = 'playing'
     btn.textContent = '⏸  Pause'
     tick()
   }
 
-  function elapsed() {
-    return (performance.now() - startTime) / 1000
+  function position() {
+    return ((performance.now() - startTime) / 1000) * FPS
   }
 
   function tick() {
     if (state !== 'playing') return
 
-    const t = elapsed()
-    timeEl.textContent = t.toFixed(1) + 's'
+    const i = position()
+    showIndex(i)
 
     if (!isScrubbing) {
-      scrubber.value = Math.min(t, maxTime)
-      setFill(Math.min(t, maxTime))
+      scrubber.value = Math.min(i, maxIndex)
+      setFill(Math.min(i, maxIndex))
     }
 
-    applyAtTime(t)
+    applyAtIndex(i)
 
-    if (t >= maxTime) {
-      scrubber.value = maxTime
-      setFill(maxTime)
+    if (i >= maxIndex) {
+      scrubber.value = maxIndex
+      setFill(maxIndex)
+      showIndex(maxIndex)
       state = 'idle'
       btn.textContent = '▶  Play'
       return
@@ -198,4 +215,6 @@ export function initPlayback(controlsEl, sceneAPI, tablePanel) {
 
     requestAnimationFrame(tick)
   }
+
+  return { load }
 }
