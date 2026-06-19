@@ -15,8 +15,10 @@
 //   Table.sortBy(key | fn)         stable-ish sort by column or accessor
 //   Table.concat(other)            append another table's rows
 //   Table.slice(start, end)        sub-range of rows
-//   Table.trigger(pred, emit)      scan (current, previous) pairs; whenever
-//                                  pred is true, emit() rows into a new table
+//   Table.fold(fn, init)           left-fold over rows, like Array.reduce:
+//                                  fn(acc, current, index, rows) -> acc.
+//                                  Subsumes "trigger": carry the previous row
+//                                  (rows[index - 1]) and push emitted rows.
 //   Table.save("name")             register in the store and return self
 // ----------------------------------------------------------------------------
 
@@ -73,22 +75,17 @@ export class Table {
     return new Table(this.rows.slice(start, end), this._store)
   }
 
-  // Walk consecutive (previous, current) row pairs. Whenever pred(current,
-  // previous) is true, call emit(current, previous) and collect the returned
-  // row(s) into a brand-new table. This is the heart of the table-driven idea:
-  // a value table -> an event table.
-  trigger(predicate, emit) {
-    const out = []
-    for (let i = 1; i < this.rows.length; i++) {
-      const current = this.rows[i]
-      const previous = this.rows[i - 1]
-      if (predicate(current, previous)) {
-        const emitted = emit(current, previous)
-        if (Array.isArray(emitted)) out.push(...emitted)
-        else if (emitted != null) out.push(emitted)
-      }
+  // Left fold over the rows, exactly like Array.reduce. The callback gets
+  // (accumulator, current, index, rows), so the previous row is rows[index-1].
+  // This is the general primitive behind the table-driven idea: fold a value
+  // table down to anything — an event table, a sum, a min/max, etc. Wrap an
+  // accumulated array of rows with rows(...) to get a chainable Table back.
+  fold(fn, initial) {
+    let acc = initial
+    for (let i = 0; i < this.rows.length; i++) {
+      acc = fn(acc, this.rows[i], i, this.rows)
     }
-    return new Table(out, this._store)
+    return acc
   }
 
   save(name) {

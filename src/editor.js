@@ -19,15 +19,19 @@ rows([
 ]).save("base")
 
 // 3. Whenever the wave crosses zero, flash the sphere white, then back.
-//    trigger(pred, emit) walks (current, previous) pairs of "randsin".
-table("randsin")
-  .trigger(
-    (cur, prev) => cur.value * prev.value < 0,
-    cur => [
-      { id: "sphere1", type: "color", time: cur.time,        color: 0xffffff },
-      { id: "sphere1", type: "color", time: cur.time + 0.06, color: 0x4a9eff },
-    ],
-  )
+//    fold walks the rows like Array.reduce; the previous row is all[i - 1],
+//    and we push event rows onto the accumulator when the sign flips.
+rows(
+  table("randsin").fold((out, cur, i, all) => {
+    if (i > 0 && cur.value * all[i - 1].value < 0) {
+      out.push(
+        { id: "sphere1", type: "color", time: cur.time,        color: 0xffffff },
+        { id: "sphere1", type: "color", time: cur.time + 0.06, color: 0x4a9eff },
+      )
+    }
+    return out
+  }, []),
+)
   .concat(table("base"))
   .sortBy("time")
   .save("events")
