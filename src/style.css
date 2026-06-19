@@ -107,6 +107,99 @@ html, body {
   overflow: auto;
 }
 
+/* ── Graph pane ── */
+#graph-pane {
+  flex: 3;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #16213e;
+  border-top: 1px solid #0f3460;
+  overflow: hidden;
+}
+
+.graph-pane-header {
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  background: #0f3460;
+  border-bottom: 1px solid #1a1a2e;
+  flex-shrink: 0;
+}
+
+.graph-pane-title {
+  color: #8ca0b8;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.graph-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+
+.graph-empty {
+  color: #607a96;
+  font-size: 12px;
+  padding: 12px 4px;
+}
+
+.graph-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 120px;
+  min-height: 120px;
+  background: #12203c;
+  border: 1px solid #0f3460;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.graph-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 5px 8px;
+  font-size: 11px;
+  color: #8ca0b8;
+  border-bottom: 1px solid #0f3460;
+}
+
+.graph-name {
+  font-weight: 600;
+  color: #c8d6e5;
+}
+
+.graph-series {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.graph-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.graph-canvas {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  display: block;
+}
+
 /* ── Table pane ── */
 #table-pane {
   flex: 3;

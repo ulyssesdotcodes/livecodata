@@ -1,12 +1,13 @@
 // livecodata DSL
 // ----------------------------------------------------------------------------
 // A tiny, JavaScript-flavoured DSL for generating tables and using those tables
-// to drive visuals. Tables are (for now) arrays of plain row objects. Each
-// builder returns a new Table, so everything chains.
+// to drive visuals. Tables are (for now) arrays of plain row objects, implicitly
+// ordered by row index — each row is one ~1/60s frame. Every builder returns a
+// new Table, so everything chains.
 //
 // Surface:
-//   math(time => ...)              sample a function of time into rows
-//     .range(seconds, fps = 60)    -> Table of { frame, time, value }
+//   math(index => ...)             sample a function of the row index
+//     .range(count)                -> Table of { index, value }, count rows
 //   rows([ {...}, ... ])           wrap a literal array of rows in a Table
 //   table("name")                  look up a previously .save()'d table
 //
@@ -23,14 +24,17 @@
 //                                  returns { state, emit } where emit is a row,
 //                                  an array of rows, or null. Returns a new
 //                                  Table of everything emitted.
+//   Table.graph(...columns)        render this table to the graph panel, using
+//                                  the named columns as y-series (x is index).
+//                                  With no args, plots every numeric column.
 //   Table.save("name")             register in the store and return self
 // ----------------------------------------------------------------------------
 
 export class Table {
-  constructor(rows = [], store = null) {
+  constructor(rows = [], ctx = null) {
     this.rows = rows
     this.name = null
-    this._store = store
+    this._ctx = ctx
   }
 
   get length() {
@@ -53,11 +57,11 @@ export class Table {
   }
 
   map(fn) {
-    return new Table(this.rows.map((r, i) => fn(r, i)), this._store)
+    return new Table(this.rows.map((r, i) => fn(r, i)), this._ctx)
   }
 
   filter(fn) {
-    return new Table(this.rows.filter((r, i) => fn(r, i)), this._store)
+    return new Table(this.rows.filter((r, i) => fn(r, i)), this._ctx)
   }
 
   sortBy(key) {
@@ -67,16 +71,16 @@ export class Table {
       const bv = accessor(b)
       return av < bv ? -1 : av > bv ? 1 : 0
     })
-    return new Table(sorted, this._store)
+    return new Table(sorted, this._ctx)
   }
 
   concat(other) {
     const otherRows = other instanceof Table ? other.rows : (other ?? [])
-    return new Table([...this.rows, ...otherRows], this._store)
+    return new Table([...this.rows, ...otherRows], this._ctx)
   }
 
   slice(start, end) {
-    return new Table(this.rows.slice(start, end), this._store)
+    return new Table(this.rows.slice(start, end), this._ctx)
   }
 
   // Left fold over the rows, exactly like Array.reduce. The callback gets
@@ -108,52 +112,60 @@ export class Table {
       if (Array.isArray(emit)) out.push(...emit)
       else if (emit != null) out.push(emit)
     }
-    return new Table(out, this._store)
+    return new Table(out, this._ctx)
+  }
+
+  // Queue this table to be drawn on the graph panel. The named columns become
+  // y-series plotted against the row index (or the `index` column if present).
+  // With no columns, every numeric column (besides `index`) is plotted.
+  graph(...columns) {
+    const cols = columns.flat().filter(Boolean)
+    if (this._ctx) this._ctx.graphs.push({ table: this, columns: cols })
+    return this
   }
 
   save(name) {
     this.name = name
-    if (this._store) this._store.set(name, this)
+    if (this._ctx) this._ctx.store.set(name, this)
     return this
   }
 }
 
 class MathBuilder {
-  constructor(fn, store) {
+  constructor(fn, ctx) {
     this._fn = fn
-    this._store = store
+    this._ctx = ctx
   }
 
-  // Sample the function once per frame across `seconds` seconds at `fps`.
-  // Each row is { frame, time, value } — one row per ~1/60s frame by default.
-  range(seconds, fps = 60) {
-    const count = Math.max(1, Math.round(seconds * fps))
-    const rows = new Array(count)
-    for (let frame = 0; frame < count; frame++) {
-      const time = frame / fps
-      rows[frame] = { frame, time, value: this._fn(time, frame) }
+  // Sample the function once per row for `count` rows. Each row is one frame:
+  // { index, value } where value = fn(index).
+  range(count) {
+    const n = Math.max(1, Math.round(count))
+    const rows = new Array(n)
+    for (let index = 0; index < n; index++) {
+      rows[index] = { index, value: this._fn(index) }
     }
-    return new Table(rows, this._store)
+    return new Table(rows, this._ctx)
   }
 }
 
-// Create an isolated DSL instance with its own table store.
-// Returns { api, store } where `api` holds the functions injected into user
-// code and `store` is a Map<name, Table>.
+// Create an isolated DSL instance with its own table store and graph queue.
+// Returns { api, store, graphs } where `api` holds the functions injected into
+// user code, `store` is a Map<name, Table>, and `graphs` collects .graph() specs.
 export function createDSL() {
-  const store = new Map()
+  const ctx = { store: new Map(), graphs: [] }
 
   const api = {
-    math: (fn) => new MathBuilder(fn, store),
+    math: (fn) => new MathBuilder(fn, ctx),
 
-    rows: (arr) => new Table((arr ?? []).map((r) => ({ ...r })), store),
+    rows: (arr) => new Table((arr ?? []).map((r) => ({ ...r })), ctx),
 
     table: (name) => {
-      const t = store.get(name)
+      const t = ctx.store.get(name)
       if (!t) throw new Error(`table("${name}") not found — did you .save("${name}") it first?`)
       return t
     },
   }
 
-  return { api, store }
+  return { api, store: ctx.store, graphs: ctx.graphs }
 }

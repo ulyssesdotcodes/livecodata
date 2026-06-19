@@ -1,5 +1,5 @@
 // Generic table viewer. Renders whichever stored table is selected, with
-// dynamic columns, a table-picker dropdown, and time-based row highlighting
+// dynamic columns, per-table tabs, and index-based row highlighting
 // driven by the playback clock.
 
 const MAX_ROWS = 1000 // cap DOM rows so large frame tables stay responsive
@@ -21,7 +21,7 @@ export function initTablePanel(container) {
   let store = new Map()
   let current = null
   let currentRows = []
-  let timeCol = null
+  let indexCol = null
   let rowEls = []
 
   const header = document.createElement('div')
@@ -64,7 +64,7 @@ export function initTablePanel(container) {
     tbody.innerHTML = ''
     rowEls = []
     currentRows = []
-    timeCol = null
+    indexCol = null
 
     if (!t || !t.length) {
       countEl.textContent = t ? '0 rows' : ''
@@ -72,7 +72,7 @@ export function initTablePanel(container) {
     }
 
     const cols = t.columns
-    timeCol = cols.includes('time') ? 'time' : null
+    indexCol = cols.includes('index') ? 'index' : null
 
     const headRow = document.createElement('tr')
     cols.forEach(col => {
@@ -125,12 +125,12 @@ export function initTablePanel(container) {
       render(next)
     },
 
-    // Highlight the last row whose `time` <= t (called by playback each frame).
-    highlightTime(t) {
-      if (!timeCol) return
+    // Highlight the last row whose `index` <= playback index (called each frame).
+    highlightIndex(playIndex) {
+      if (!indexCol) return
       let activeIdx = -1
       for (let i = 0; i < currentRows.length; i++) {
-        if (currentRows[i][timeCol] <= t) activeIdx = i
+        if (currentRows[i][indexCol] <= playIndex) activeIdx = i
         else break
       }
       rowEls.forEach((tr, i) => tr.classList.toggle('row-active', i === activeIdx))

@@ -6,15 +6,16 @@ import { keymap } from '@codemirror/view'
 const initialDoc = `// livecodata — generate tables, drive visuals.
 // Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 
-// 1. A noisy sine wave: one row per frame at 60fps over 6 seconds.
-//    Each row is { frame, time, value }.
-math(t => Math.sin(t * Math.PI * 4) + (Math.random() * 0.5 - 0.25))
-  .range(6)
+// 1. A noisy sine wave: one row per frame, 360 frames (~6s at 60fps).
+//    Each row is { index, value }; .graph plots value against the index.
+math(i => Math.sin(i * Math.PI / 15) + (Math.random() * 0.5 - 0.25))
+  .range(360)
   .save("randsin")
+  .graph("value")
 
 // 2. A base scene: a single sphere sitting at the origin.
 rows([
-  { id: "sphere1", type: "create", time: 0, shape: "sphere", color: 0x4a9eff,
+  { id: "sphere1", type: "create", index: 0, shape: "sphere", color: 0x4a9eff,
     px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
 ]).save("base")
 
@@ -27,13 +28,13 @@ table("randsin")
     return {
       state: { prev: cur.value },
       emit: crossed ? [
-        { id: "sphere1", type: "color", time: cur.time,        color: 0xffffff },
-        { id: "sphere1", type: "color", time: cur.time + 0.06, color: 0x4a9eff },
+        { id: "sphere1", type: "color", index: cur.index,     color: 0xffffff },
+        { id: "sphere1", type: "color", index: cur.index + 4, color: 0x4a9eff },
       ] : null,
     }
   }, { prev: null })
   .concat(table("base"))
-  .sortBy("time")
+  .sortBy("index")
   .save("events")
 `
 
