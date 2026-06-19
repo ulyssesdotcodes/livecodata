@@ -17,8 +17,12 @@
 //   Table.slice(start, end)        sub-range of rows
 //   Table.fold(fn, init)           left-fold over rows, like Array.reduce:
 //                                  fn(acc, current, index, rows) -> acc.
-//                                  Subsumes "trigger": carry the previous row
-//                                  (rows[index - 1]) and push emitted rows.
+//                                  Returns the bare accumulator (any type).
+//   Table.scan(fn, initState)      stateful, row-emitting fold that stays
+//                                  chainable. fn(state, current, index, rows)
+//                                  returns { state, emit } where emit is a row,
+//                                  an array of rows, or null. Returns a new
+//                                  Table of everything emitted.
 //   Table.save("name")             register in the store and return self
 // ----------------------------------------------------------------------------
 
@@ -86,6 +90,25 @@ export class Table {
       acc = fn(acc, this.rows[i], i, this.rows)
     }
     return acc
+  }
+
+  // A stateful fold that emits rows as it goes and stays chainable. For each
+  // row, fn(state, current, index, rows) returns { state, emit }: `state` is
+  // threaded to the next call, `emit` (a row, array of rows, or null) is
+  // appended to the output. Returns a new Table of everything emitted — so
+  // unlike fold you don't need to wrap the result in rows(...).
+  scan(fn, initialState) {
+    const out = []
+    let state = initialState
+    for (let i = 0; i < this.rows.length; i++) {
+      const res = fn(state, this.rows[i], i, this.rows)
+      if (res == null) continue
+      if ('state' in res) state = res.state
+      const emit = res.emit
+      if (Array.isArray(emit)) out.push(...emit)
+      else if (emit != null) out.push(emit)
+    }
+    return new Table(out, this._store)
   }
 
   save(name) {
