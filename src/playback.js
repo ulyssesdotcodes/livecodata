@@ -1,4 +1,5 @@
 import { buildFrameIndex, stateAtFrame } from './rasterize.js'
+import { buildTimeline } from './timeline.js'
 import { activeLineage } from './lineage.js'
 
 const FPS = 60 // one row == one frame; playback advances FPS indices per second
@@ -8,6 +9,7 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
   let startTime = null
   let pausedIndex = 0
   let frameIndex = buildFrameIndex([])
+  let timeline = buildTimeline([])
   let aliveObjects = new Set()
   let maxIndex = 0
   let isScrubbing = false
@@ -47,13 +49,16 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
   }
 
   function showIndex(i) {
-    timeEl.textContent = 'f' + Math.round(i)
+    const src = timeline.frameAt(i)
+    // Show tick→source frame when the timeline remaps time, else just the frame.
+    timeEl.textContent = timeline.length ? `f${Math.round(i)}→f${src}` : 'f' + Math.round(i)
   }
 
-  // Drive the scene from the dense cache at frame i: every object present in the
-  // cache row set is created/updated, anything alive but absent is destroyed.
+  // Drive the scene from the dense cache at the tick's *source* frame (mapped
+  // through the timeline): every object present is created/updated, anything
+  // alive but absent is destroyed.
   function applyAtIndex(i) {
-    const states = stateAtFrame(frameIndex, i)
+    const states = stateAtFrame(frameIndex, timeline.frameAt(i))
     const present = new Set()
     for (const s of states) {
       present.add(s.id)
@@ -86,15 +91,17 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
     if (frameIndex.map.size) applyAtIndex(i)
   }
 
-  // ── Public: load a fresh dense frame cache and rewind ──
+  // ── Public: load a fresh dense frame cache (+ optional timeline) and rewind ──
 
-  function load(sceneRows) {
+  function load(sceneRows, timelineRows) {
     state = 'idle'
     btn.textContent = '▶  Play'
     startTime = null
     pausedIndex = 0
     frameIndex = buildFrameIndex(sceneRows ?? [])
-    maxIndex = frameIndex.maxFrame
+    timeline = buildTimeline(timelineRows ?? [])
+    // Playback length follows the timeline when present, else the cache.
+    maxIndex = timeline.length ? timeline.length - 1 : frameIndex.maxFrame
     scrubber.max = maxIndex || 100
     reset(0)
   }

@@ -47,6 +47,11 @@ define("events", () =>
 // 4. The frame cache: bake the sparse events into dense per-frame world state
 //    (one row per object per frame). Playback indexes straight into this.
 define("scene", () => table("events").rasterize(360))
+
+// 5. (Optional) The timeline is data too: map each playback tick to a source
+//    cache frame. Uncomment to loop the first 60 frames, or reverse time.
+// define("timeline", () => math(i => i % 60).range(360).map(r => ({ frame: r.value })))
+// define("timeline", () => math(i => 359 - i).range(360).map(r => ({ frame: r.value })))
 `
 
 export function initEditor(parent, { onRun } = {}) {
