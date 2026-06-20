@@ -5,6 +5,7 @@ import { initTablePanel } from './table-panel.js'
 import { initGraphPanel } from './graph-panel.js'
 import { initPlayback } from './playback.js'
 import { createRuntime } from './runtime.js'
+import { rasterizeRows } from './rasterize.js'
 import { createLog, randomSeed } from './log.js'
 
 const sceneAPI = initThree(document.getElementById('three-canvas'))
@@ -39,8 +40,12 @@ function evaluate(code, { setError, record = true, seed = randomSeed() } = {}) {
   setError?.(null)
   tablePanel.setTables(result.views)
   graphPanel.setGraphs(result.graphs)
+  // Playback indexes into the dense frame cache. Prefer an explicit "scene"
+  // view; fall back to rasterizing a sparse "events" view for older programs.
+  const scene = result.views.get('scene')
   const events = result.views.get('events')
-  playback.load(events ? events.rows : [])
+  const sceneRows = scene ? scene.rows : events ? rasterizeRows(events.rows) : []
+  playback.load(sceneRows)
 
   if (record) {
     log.append({ kind: 'run', code, seed })

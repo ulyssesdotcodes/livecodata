@@ -41,6 +41,10 @@ define("flash_white", "events", (rand, table) => {
     ])
   )
 })
+
+// 4. The frame cache: bake the sparse events into dense per-frame world state
+//    (one row per object per frame). Playback indexes straight into this.
+define("scene", (rand, table) => table("events").rasterize(360))
 `
 
 export function initEditor(parent, { onRun } = {}) {
