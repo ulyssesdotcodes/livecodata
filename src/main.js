@@ -4,8 +4,9 @@ import { initEditor } from './editor.js'
 import { initTablePanel } from './table-panel.js'
 import { initGraphPanel } from './graph-panel.js'
 import { initPlayback } from './playback.js'
+import { initSessionBar } from './session-bar.js'
 import { createRuntime } from './runtime.js'
-import { rasterizeRows } from './rasterize.js'
+import { cookProgram, replayAt } from './replay.js'
 import { createLog, randomSeed } from './log.js'
 
 const sceneAPI = initThree(document.getElementById('three-canvas'))
@@ -25,35 +26,56 @@ const playback = initPlayback(
 const runtime = createRuntime()
 const log = createLog()
 
-// Cook the editor's program through the runtime, then refresh the table + graph
-// panels and (re)load "events" into playback. `record` appends the run to the
-// session log; replays pass record:false (and the recorded seed) so a restored
-// session reproduces exactly and isn't re-logged as it's being replayed.
+// Push a cooked result to the panels + playback. Shared by live runs and replay.
+function applyCooked({ views, graphs, sceneRows }) {
+  tablePanel.setTables(views)
+  graphPanel.setGraphs(graphs)
+  playback.load(sceneRows)
+}
+
+// Cook the editor's program and show it. `record` appends the run to the session
+// log (and advances the session bar to latest); replays pass record:false and
+// the recorded seed so a restored/replayed run reproduces exactly.
 function evaluate(code, { setError, record = true, seed = randomSeed() } = {}) {
-  let result
+  let cooked
   try {
-    result = runtime.run(code, { seed })
+    cooked = cookProgram(runtime, code, seed)
   } catch (err) {
     setError?.(err.message)
     return
   }
   setError?.(null)
-  tablePanel.setTables(result.views)
-  graphPanel.setGraphs(result.graphs)
-  // Playback indexes into the dense frame cache. Prefer an explicit "scene"
-  // view; fall back to rasterizing a sparse "events" view for older programs.
-  const scene = result.views.get('scene')
-  const events = result.views.get('events')
-  const sceneRows = scene ? scene.rows : events ? rasterizeRows(events.rows) : []
-  playback.load(sceneRows)
+  applyCooked(cooked)
 
   if (record) {
     log.append({ kind: 'run', code, seed })
     log.persist()
+    sessionBar.setLog(log)
   }
 }
 
 const editor = initEditor(document.getElementById('editor-pane'), { onRun: evaluate })
+
+// Replay the session to a logical position: re-cook the program live then
+// (recorded seed) and reflect it in the editor + panels, without re-logging.
+function scrubSession(pos) {
+  let replayed
+  try {
+    replayed = replayAt(runtime, log, pos)
+  } catch (err) {
+    editor.setError(err.message)
+    return
+  }
+  if (!replayed) return
+  editor.setError(null)
+  editor.setCode(replayed.entry.code)
+  applyCooked(replayed)
+}
+
+// Mount the session bar just under the editor header (authoring timeline).
+const editorPane = document.getElementById('editor-pane')
+const sessionBar = initSessionBar({ onScrub: scrubSession })
+editorPane.insertBefore(sessionBar.el, editorPane.children[1])
 
 // On load: if a previous session was persisted, restore its latest program and
 // replay it deterministically (recorded seed, without re-logging). Otherwise run
@@ -65,3 +87,4 @@ if (log.rehydrate()) {
 } else {
   editor.run()
 }
+sessionBar.setLog(log)

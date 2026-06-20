@@ -107,6 +107,53 @@ html, body {
   color: #fff;
 }
 
+.session-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: #13294b;
+  border-bottom: 1px solid #1a1a2e;
+  flex-shrink: 0;
+}
+
+.session-bar.replaying {
+  background: #3a2a16;
+}
+
+.session-label {
+  color: #8ca0b8;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  min-width: 64px;
+}
+
+.session-range {
+  flex: 1;
+  height: 4px;
+  cursor: pointer;
+  accent-color: #e9a23b;
+}
+
+.session-live {
+  background: transparent;
+  border: 1px solid #e9a23b;
+  color: #e9a23b;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.session-live:hover {
+  background: #e9a23b;
+  color: #1a1a2e;
+}
+
 .editor-host {
   flex: 1;
   min-height: 0;
