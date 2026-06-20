@@ -135,5 +135,12 @@ export function initTablePanel(container) {
       }
       rowEls.forEach((tr, i) => tr.classList.toggle('row-active', i === activeIdx))
     },
+
+    // Highlight the rows of the currently-shown table that feed the current
+    // frame, by ordinal position (lineage indexes rows by position in the view).
+    highlightLineage(active) {
+      const set = active?.get(current)
+      rowEls.forEach((tr, i) => tr.classList.toggle('row-source', !!set?.has(i)))
+    },
   }
 }

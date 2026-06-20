@@ -16,6 +16,7 @@
 // ----------------------------------------------------------------------------
 
 import { createDSL, Table } from './dsl.js'
+import { getLineage, withLineage } from './lineage.js'
 
 // Small, fast PRNG. Deterministic given its 32-bit seed.
 function mulberry32(seed) {
@@ -55,6 +56,15 @@ export function createRuntime() {
     return prngs.get(name)
   }
 
+  // Materialize a view: clone its rows (so views never share row objects) and
+  // append this view's own provenance ref { table: name, index } to each row's
+  // lineage. Cloning also makes returning a dependency table directly safe.
+  function stamp(name, table) {
+    const rows = table.rows.map((r, index) =>
+      withLineage({ ...r }, [...getLineage(r), { table: name, index }]))
+    return new Table(rows, ctx)
+  }
+
   // Cook a view by name, memoized. Records a dependency from the view currently
   // being cooked (if any) onto `name`.
   function cook(name) {
@@ -72,8 +82,9 @@ export function createRuntime() {
     if (currentView) deps.get(currentView)?.push(name)
 
     if (def.kind === 'const') {
-      cache.set(name, def.table)
-      return def.table
+      const stamped = stamp(name, def.table)
+      cache.set(name, stamped)
+      return stamped
     }
 
     cookStack.push(name)
@@ -91,8 +102,9 @@ export function createRuntime() {
       currentView = prev
       cookStack.pop()
     }
-    cache.set(name, result)
-    return result
+    const stamped = stamp(name, result)
+    cache.set(name, stamped)
+    return stamped
   }
 
   // The hooks the DSL builders call. Stable identity so createDSL binds once.

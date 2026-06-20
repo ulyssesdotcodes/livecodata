@@ -385,6 +385,12 @@ html, body {
   background: rgba(233, 69, 96, 0.08);
 }
 
+/* Provenance: rows feeding the current frame (which data is used now). */
+.events-table tbody tr.row-source td {
+  box-shadow: inset 2px 0 0 #e9a23b;
+  background: rgba(233, 162, 59, 0.1);
+}
+
 .events-table td {
   padding: 3px 6px;
   color: #c8d6e5;
