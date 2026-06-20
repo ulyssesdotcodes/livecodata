@@ -1,64 +1,12 @@
+import { buildFrameIndex, stateAtFrame } from './rasterize.js'
+
 const FPS = 60 // one row == one frame; playback advances FPS indices per second
-
-function lerp(a, b, t) { return a + (b - a) * t }
-
-// An event carries position data (and is a movement keyframe) when it has
-// numeric px. create/update events do; color/destroy events don't.
-function hasPosition(e) { return typeof e.px === 'number' }
-
-function buildTimelines(events) {
-  const map = new Map()
-  events.forEach(e => {
-    if (e.id == null) return
-    if (!map.has(e.id)) map.set(e.id, [])
-    map.get(e.id).push({ ...e })
-  })
-  for (const evs of map.values()) evs.sort((a, b) => a.index - b.index)
-  return map
-}
-
-// Sample one object's full state at index i, or null if it doesn't exist yet
-// (or has been destroyed). Position/rotation are interpolated between movement
-// keyframes; color is a step function (latest color-bearing event <= i).
-function sampleObject(events, i) {
-  const createEv = events.find(e => e.type === 'create')
-  if (!createEv || i < createEv.index) return null
-  if (events.some(e => e.type === 'destroy' && e.index <= i)) return null
-
-  const keyframes = events.filter(hasPosition)
-  let from = keyframes[0], to = null
-  for (const kf of keyframes) {
-    if (kf.index <= i) from = kf
-    else if (!to)      to   = kf
-  }
-
-  let pos, rot
-  if (from && to) {
-    const f = (i - from.index) / (to.index - from.index)
-    pos = { x: lerp(from.px, to.px, f), y: lerp(from.py, to.py, f), z: lerp(from.pz, to.pz, f) }
-    rot = { x: lerp(from.rx, to.rx, f), y: lerp(from.ry, to.ry, f), z: lerp(from.rz, to.rz, f) }
-  } else if (from) {
-    pos = { x: from.px, y: from.py, z: from.pz }
-    rot = { x: from.rx, y: from.ry, z: from.rz }
-  } else {
-    pos = { x: 0, y: 0, z: 0 }
-    rot = { x: 0, y: 0, z: 0 }
-  }
-
-  // Color: latest event (in index order) carrying a color, up to i.
-  let color = null
-  for (const e of events) {
-    if (e.index <= i && e.color != null) color = e.color
-  }
-
-  return { shape: createEv.shape, pos, rot, color }
-}
 
 export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
   let state = 'idle'
   let startTime = null
   let pausedIndex = 0
-  let timelines = new Map()
+  let frameIndex = buildFrameIndex([])
   let aliveObjects = new Set()
   let maxIndex = 0
   let isScrubbing = false
@@ -101,18 +49,27 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
     timeEl.textContent = 'f' + Math.round(i)
   }
 
+  // Drive the scene from the dense cache at frame i: every object present in the
+  // cache row set is created/updated, anything alive but absent is destroyed.
   function applyAtIndex(i) {
-    for (const [id, events] of timelines) {
-      const s = sampleObject(events, i)
-      if (s && !aliveObjects.has(id)) {
-        sceneAPI.createObject(id, s.shape, s.pos, s.rot, s.color)
-        aliveObjects.add(id)
-      } else if (!s && aliveObjects.has(id)) {
+    const states = stateAtFrame(frameIndex, i)
+    const present = new Set()
+    for (const s of states) {
+      present.add(s.id)
+      const pos = { x: s.px, y: s.py, z: s.pz }
+      const rot = { x: s.rx, y: s.ry, z: s.rz }
+      if (!aliveObjects.has(s.id)) {
+        sceneAPI.createObject(s.id, s.shape, pos, rot, s.color)
+        aliveObjects.add(s.id)
+      } else {
+        sceneAPI.updateObject(s.id, pos, rot)
+        sceneAPI.setColor(s.id, s.color)
+      }
+    }
+    for (const id of aliveObjects) {
+      if (!present.has(id)) {
         sceneAPI.destroyObject(id)
         aliveObjects.delete(id)
-      } else if (s) {
-        sceneAPI.updateObject(id, s.pos, s.rot)
-        sceneAPI.setColor(id, s.color)
       }
     }
     onTick?.(i)
@@ -124,18 +81,18 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
     scrubber.value = i
     setFill(i)
     showIndex(i)
-    if (timelines.size) applyAtIndex(i)
+    if (frameIndex.map.size) applyAtIndex(i)
   }
 
-  // ── Public: load a fresh events table and rewind ──
+  // ── Public: load a fresh dense frame cache and rewind ──
 
-  function load(eventRows) {
+  function load(sceneRows) {
     state = 'idle'
     btn.textContent = '▶  Play'
     startTime = null
     pausedIndex = 0
-    timelines = buildTimelines(eventRows ?? [])
-    maxIndex = (eventRows ?? []).reduce((m, e) => Math.max(m, e.index ?? 0), 0)
+    frameIndex = buildFrameIndex(sceneRows ?? [])
+    maxIndex = frameIndex.maxFrame
     scrubber.max = maxIndex || 100
     reset(0)
   }
@@ -147,7 +104,7 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
     const i = parseFloat(scrubber.value)
     showIndex(i)
     setFill(i)
-    if (timelines.size) applyAtIndex(i)
+    if (frameIndex.map.size) applyAtIndex(i)
   })
 
   window.addEventListener('pointerup', () => {
@@ -163,7 +120,7 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
   btn.onclick = toggle
 
   function toggle() {
-    if (!timelines.size) return
+    if (!frameIndex.map.size) return
     if (state === 'playing') {
       state = 'paused'
       pausedIndex = position()

@@ -43,6 +43,10 @@ define("events", () =>
     .concat(table("base"))
     .sortBy("index")
 )
+
+// 4. The frame cache: bake the sparse events into dense per-frame world state
+//    (one row per object per frame). Playback indexes straight into this.
+define("scene", () => table("events").rasterize(360))
 `
 
 export function initEditor(parent, { onRun } = {}) {
