@@ -29,10 +29,10 @@ const runtime = createRuntime()
 const log = createLog()
 
 // Push a cooked result to the panels + playback. Shared by live runs and replay.
-function applyCooked({ views, graphs, sceneRows }) {
+function applyCooked({ views, graphs, sceneRows, timelineRows }) {
   tablePanel.setTables(views)
   graphPanel.setGraphs(graphs)
-  playback.load(sceneRows)
+  playback.load(sceneRows, timelineRows)
 }
 
 // Cook the editor's program and show it. `record` appends the run to the session
