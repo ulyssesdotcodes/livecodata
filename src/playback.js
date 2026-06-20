@@ -1,4 +1,5 @@
 import { buildFrameIndex, stateAtFrame } from './rasterize.js'
+import { activeLineage } from './lineage.js'
 
 const FPS = 60 // one row == one frame; playback advances FPS indices per second
 
@@ -72,7 +73,8 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
         aliveObjects.delete(id)
       }
     }
-    onTick?.(i)
+    // The provenance of the on-screen state: which source rows feed this frame.
+    onTick?.(i, activeLineage(states))
   }
 
   function reset(i = 0) {

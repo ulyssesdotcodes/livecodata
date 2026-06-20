@@ -16,9 +16,11 @@ const playback = initPlayback(
   document.getElementById('playback-controls'),
   sceneAPI,
   {
-    onTick: (i) => {
+    onTick: (i, active) => {
       tablePanel.highlightIndex(i)
       graphPanel.highlightIndex(i)
+      tablePanel.highlightLineage(active)
+      graphPanel.highlightLineage(active)
     },
   },
 )

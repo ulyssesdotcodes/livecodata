@@ -28,6 +28,7 @@
 // ----------------------------------------------------------------------------
 
 import { rasterizeRows } from './rasterize.js'
+import { withLineage, carry } from './lineage.js'
 
 export class Table {
   constructor(rows = [], ctx = null) {
@@ -55,12 +56,17 @@ export class Table {
     return seen
   }
 
+  // Transforms clone each row (so views never share row objects) and thread the
+  // source row's lineage onto the result — see lineage.js.
+
   map(fn) {
-    return new Table(this.rows.map((r, i) => fn(r, i)), this._ctx)
+    return new Table(this.rows.map((r, i) => withLineage({ ...fn(r, i) }, carry(r))), this._ctx)
   }
 
   filter(fn) {
-    return new Table(this.rows.filter((r, i) => fn(r, i)), this._ctx)
+    const out = []
+    this.rows.forEach((r, i) => { if (fn(r, i)) out.push(withLineage({ ...r }, carry(r))) })
+    return new Table(out, this._ctx)
   }
 
   // filter + flatMap in one pass: fn(row, i, rows) returns a row, an array of
@@ -75,16 +81,27 @@ export class Table {
       if (Array.isArray(res)) out.push(...res)
       else out.push(res)
     })
-    return new Table(out, this._ctx)
+    return new Table(out.map((r) => withLineage({ ...r }, carry(r))), this._ctx)
   }
 
   concat(other) {
     const otherRows = other instanceof Table ? other.rows : (other ?? [])
-    return new Table([...this.rows, ...otherRows], this._ctx)
+    const all = [...this.rows, ...otherRows].map((r) => withLineage({ ...r }, carry(r)))
+    return new Table(all, this._ctx)
   }
 
   slice(start, end) {
-    return new Table(this.rows.slice(start, end), this._ctx)
+    return new Table(this.rows.slice(start, end).map((r) => withLineage({ ...r }, carry(r))), this._ctx)
+  }
+
+  sortBy(key) {
+    const accessor = typeof key === 'function' ? key : (r) => r[key]
+    const sorted = [...this.rows].sort((a, b) => {
+      const av = accessor(a)
+      const bv = accessor(b)
+      return av < bv ? -1 : av > bv ? 1 : 0
+    })
+    return new Table(sorted.map((r) => withLineage({ ...r }, carry(r))), this._ctx)
   }
 
   // Left fold over the rows, exactly like Array.reduce. The callback gets
@@ -106,12 +123,14 @@ export class Table {
     const out = []
     let state = initialState
     for (let i = 0; i < this.rows.length; i++) {
-      const res = fn(state, this.rows[i], i, this.rows)
+      const cur = this.rows[i]
+      const res = fn(state, cur, i, this.rows)
       if (res == null) continue
       if ('state' in res) state = res.state
       const emit = res.emit
-      if (Array.isArray(emit)) out.push(...emit)
-      else if (emit != null) out.push(emit)
+      // Emitted rows are caused by `cur`, so they inherit its lineage.
+      if (Array.isArray(emit)) emit.forEach((e) => out.push(withLineage({ ...e }, carry(cur))))
+      else if (emit != null) out.push(withLineage({ ...emit }, carry(cur)))
     }
     return new Table(out, this._ctx)
   }

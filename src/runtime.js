@@ -16,6 +16,7 @@
 // ----------------------------------------------------------------------------
 
 import { createDSL, Table } from './dsl.js'
+import { getLineage, withLineage } from './lineage.js'
 
 // A deterministic [0,1) stream from a 32-bit seed (mulberry32).
 const seededStream = (seed) => {
@@ -58,6 +59,15 @@ function cookSession(seed) {
   const cache = new Map()   // name -> cooked Table (memo)
   const randFor = memoize((name) => seededStream((seed ^ hash(name)) >>> 0))
 
+  // Materialize a view: clone its rows (so views never share row objects) and
+  // append this view's own provenance ref { table: name, index } to each row's
+  // lineage. Cloning also makes returning a dependency table directly safe.
+  function stamp(name, table) {
+    const rows = table.rows.map((r, index) =>
+      withLineage({ ...r }, [...getLineage(r), { table: name, index }]))
+    return new Table(rows, ctx)
+  }
+
   // Cook a view to its Table, memoized. `stack` is the active cook chain, used
   // only for cycle detection. Each view receives its own rand and a `table`
   // resolver closed over its name, so resolving a dep records the edge for it.
@@ -70,7 +80,7 @@ function cookSession(seed) {
     listIn(deps, name) // every cooked view owns an edge list, even with no deps
     const childStack = [...stack, name]
     const table = (dep) => (listIn(deps, name).push(dep), cook(dep, childStack))
-    return cache.set(name, asTable(def(randFor(name), table), ctx)).get(name)
+    return cache.set(name, stamp(name, asTable(def(randFor(name), table), ctx))).get(name)
   }
 
   // A group view is the index-sorted concatenation of its tagged members —

@@ -25,8 +25,9 @@ export function initGraphPanel(container) {
   container.innerHTML = ''
 
   let specs = []
-  let charts = [] // { canvas, ctx2d, rows, cols, xOf, xMin, xMax }
+  let charts = [] // { canvas, ctx2d, rows, cols, xOf, xMin, xMax, name }
   let playIndex = 0
+  let playActive = null // Map<table, Set<ordinal>> — provenance for this frame
 
   const header = document.createElement('div')
   header.className = 'graph-pane-header'
@@ -46,7 +47,7 @@ export function initGraphPanel(container) {
   scroll.appendChild(empty)
 
   function drawChart(chart) {
-    const { canvas, ctx2d: g, rows, cols, xOf, xMin, xMax } = chart
+    const { canvas, ctx2d: g, rows, cols, xOf, xMin, xMax, name } = chart
     const dpr = window.devicePixelRatio || 1
     const w = canvas.clientWidth
     const h = canvas.clientHeight
@@ -106,6 +107,23 @@ export function initGraphPanel(container) {
       })
       g.stroke()
     })
+
+    // provenance markers: the points of this table feeding the current frame.
+    const sources = playActive?.get(name)
+    if (sources) {
+      g.fillStyle = '#e9a23b'
+      for (const ordinal of sources) {
+        const row = rows[ordinal]
+        if (!row) continue
+        cols.forEach((c) => {
+          const v = row[c]
+          if (typeof v !== 'number') return
+          g.beginPath()
+          g.arc(px(xOf(row, ordinal)), py(v), 3.5, 0, Math.PI * 2)
+          g.fill()
+        })
+      }
+    }
 
     // playhead
     if (playIndex >= xMin && playIndex <= xMax) {
@@ -171,7 +189,7 @@ export function initGraphPanel(container) {
         if (x > xMax) xMax = x
       })
 
-      const chart = { canvas, ctx2d: canvas.getContext('2d'), rows, cols, xOf, xMin, xMax }
+      const chart = { canvas, ctx2d: canvas.getContext('2d'), rows, cols, xOf, xMin, xMax, name: spec.table.name }
       charts.push(chart)
       ro.observe(canvas)
     }
@@ -185,6 +203,10 @@ export function initGraphPanel(container) {
     },
     highlightIndex(index) {
       playIndex = index
+      drawAll()
+    },
+    highlightLineage(active) {
+      playActive = active
       drawAll()
     },
   }

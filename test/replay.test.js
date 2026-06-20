@@ -9,9 +9,9 @@ import { cookProgram, replayAt } from '../src/replay.js'
 const PROG = (n) => `
   define("base", () => rows([{ id: "s", type: "create", index: 0, shape: "sphere",
     color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
-  define("noise", () => math(() => rand()).range(${n}))
-  define("events", () => table("base"))
-  define("scene", () => table("events").rasterize(${n}))
+  define("noise", (rand) => math(() => rand()).range(${n}))
+  define("events", (rand, table) => table("base"))
+  define("scene", (rand, table) => table("events").rasterize(${n}))
 `
 
 test('cookProgram resolves the scene cache and is deterministic per seed', () => {
