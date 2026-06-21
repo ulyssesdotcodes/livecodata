@@ -26,6 +26,11 @@
 //   grid(cols, rows)               a cols×rows lattice of XZ object positions
 //   linear/easeIn/easeOut/easeInOut   easing curves for a color pulse's `ease`
 //                                     (any t => t' works, e.g. ease: t => t*t)
+//   physics(table | rows)          bake a JoltPhysics simulation from a base
+//     .simulate({ steps, gravity,  scene table. Returns a Table of the base
+//       fps, sampleEvery,          create rows plus per-frame "update" rows and
+//       collisions })              "collision" rows the sim produced. See
+//                                  physics.js for the base-scene row fields.
 //
 //   Table.map / filter / filterMap / concat / slice / fold / scan   transforms
 //   Table.join(other,on) / zip(other)          combine two tables (key / positional)
@@ -331,6 +336,27 @@ export class Table {
   }
 }
 
+// Wraps a base scene (a Table or raw rows) and bakes a physics simulation off it
+// when .simulate() is called during a cook. The actual stepping lives in the
+// engine the runtime exposes as ctx.physics() (wired in by main.js once the
+// async Jolt build has loaded); until then .simulate() throws a friendly error
+// rather than silently doing nothing.
+class PhysicsBuilder {
+  constructor(source, ctx) {
+    this._source = source
+    this._ctx = ctx
+  }
+
+  simulate(opts = {}) {
+    const engine = this._ctx.physics?.()
+    if (!engine) {
+      throw new Error('physics engine still loading — press Run again in a moment')
+    }
+    const baseRows = this._source instanceof Table ? this._source.rows : (this._source ?? [])
+    return new Table(engine.simulate(baseRows, opts), this._ctx)
+  }
+}
+
 class MathBuilder {
   constructor(fn, ctx) {
     this._fn = fn
@@ -415,6 +441,9 @@ export function createDSL(ctx) {
       }
       return new Table(out, ctx)
     },
+    // Bake a JoltPhysics simulation from a base scene. The engine is reached
+    // through ctx.physics() (wired in by main.js once Jolt has loaded).
+    physics: (source) => new PhysicsBuilder(source, ctx),
     ...EASINGS,
   }
 }

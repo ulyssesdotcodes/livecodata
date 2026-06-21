@@ -8,11 +8,11 @@ import { buildTablePreview } from './preview.js'
 // Completed by the editor. Builtins are the DSL surface (createDSL in dsl.js);
 // methods are Table/builder methods offered after a dot. Kept in sync by hand.
 const DSL_BUILTINS = ['define', 'table', 'math', 'rows', 'csv', 'json', 'grid',
-  'linear', 'easeIn', 'easeOut', 'easeInOut']
+  'physics', 'linear', 'easeIn', 'easeOut', 'easeInOut']
 const TABLE_METHODS = ['map', 'filter', 'filterMap', 'concat', 'slice', 'fold', 'scan',
   'join', 'zip', 'orderBy', 'derive', 'assign', 'mapField', 'rescale', 'lag',
   'groupBy', 'agg', 'count', 'trigger', 'triggerEach', 'crossings',
-  'range', 'rasterize', 'graph', 'save']
+  'range', 'rasterize', 'simulate', 'graph', 'save']
 
 // Which view's define(...) block the caret sits in: the latest define("X" whose
 // header starts at or before pos (define()s are top-level and sequential).
@@ -60,56 +60,47 @@ const initialDoc = `// livecodata — define tables as views; the engine cooks t
 // Tips: Ctrl-Space completes views & Table verbs; hover a "view" name to preview
 // its table; your caret selects that view's tab on the right.
 
-// A grid of spheres. Bump GRID to stress-test playback (GRID*GRID objects,
-// each baked into every frame of the dense cache).
-const GRID = 10
-
-// 1. A noisy sine wave: one row per frame, 360 frames (~6s at 60fps).
-//    rand is a seeded per-view PRNG, so replaying a session reproduces it exactly.
-//    Each row is { index, value }; .graph plots value against the index.
-define("randsin", (rand) =>
-  math(i => Math.sin(i * Math.PI / 15) + (rand() * 0.5 - 0.25))
-    .range(360)
-    .graph("value")
+// 1. The base scene: a static floor and three shapes to drop on it. Each create
+//    row carries physics fields — motion, spawn position (px/py/pz) and rotation
+//    (rx/ry/rz). The floor's physics half-extents (hx/hy/hz) are wider than the
+//    drawn mesh, so things land instead of rolling off.
+define("base", () =>
+  rows([
+    { id: "floor", type: "create", shape: "box", color: 0x222244,
+      motion: "static", px: 0, py: -1.2, pz: 0, hx: 3, hy: 0.2, hz: 3 },
+    { id: "ball",  type: "create", shape: "sphere",   color: 0x4a9eff,
+      motion: "dynamic", px: -0.5, py: 3.0, pz: 0.0 },
+    { id: "box1",  type: "create", shape: "box",      color: 0xff6b6b,
+      motion: "dynamic", px: 0.4,  py: 4.5, pz: 0.2, rx: 0.4, ry: 0.3 },
+    { id: "cyl",   type: "create", shape: "cylinder", color: 0x51cf66,
+      motion: "dynamic", px: 0.0,  py: 6.0, pz: -0.3 },
+  ])
 )
 
-// 2. The base scene: grid() lays out a GRID x GRID lattice (rows carry px/pz/col/
-//    row); derive() turns each cell into a "create" event. The "events" 3rd arg
-//    tags it into a group the engine merges (index-sorted) for free. "ripple"
-//    gives each sphere a diagonal delay used by the flash below.
-define("base", "events", () =>
-  grid(GRID, GRID).derive({
-    id: r => "s" + r.i, type: "create", index: 0, shape: "sphere", color: 0x4a9eff,
-    rx: 0, ry: 0, rz: 0, ripple: r => (r.col + r.row) * 2,
-  })
+// 2. Bake a JoltPhysics simulation in the background: step the world for 240
+//    frames (~4s at 60fps). simulate() ADDS to the table — a per-frame "update"
+//    row for each moving body (the baked motion the cache interpolates between)
+//    plus a "collision" row whenever two bodies first touch.
+define("events", (rand, table) =>
+  physics(table("base")).simulate({ steps: 240, gravity: -9.81 })
 )
 
-// 3. Each zero-crossing of the wave flashes every sphere. triggerEach fires when
-//    the predicate is true (the wave crosses zero) and fans the event out across
-//    base's objects — one pulse each, with the sphere's "ripple" delay. A pulse
-//    flashes then eases back over "dur" frames (newest wins). Lineage threads
-//    through the fan-out, so each flash traces back to the sample that fired it
-//    AND its sphere — watch the graph/table light up during playback.
-//    (Sugar: table("randsin").crossings("value") gives the crossings directly.)
-define("flash", "events", (rand, table) =>
-  table("randsin").triggerEach(
-    (cur, i, rows) => i > 0 && cur.value * rows[i - 1].value < 0,
-    table("base"),
-    (o, cur) => ({
-      id: o.id, type: "color", index: cur.index + o.ripple,
-      color: 0xff5577, dur: 36, ease: easeOut,
-    })
-  )
+// 3. The frame cache: bake the sparse "events" into dense per-frame world state
+//    that playback indexes straight into.
+define("scene", (rand, table) => table("events").rasterize(240))
+
+// 4. Collisions are just rows — pull them into their own view to inspect, and
+//    graph the ball's height over time as it bounces and settles.
+define("collisions", (rand, table) =>
+  table("events").filter(r => r.type === "collision")
 )
 
-// 4. The frame cache: bake the sparse "events" into dense per-frame world state
-//    (one row per object per frame). Playback indexes straight into this.
-define("scene", () => table("events").rasterize(360))
-
-// 5. (Optional) The timeline is data too: map each playback tick to a source
-//    cache frame. Uncomment to loop the first 60 frames, or reverse time.
-// define("timeline", () => math(i => i % 60).range(360).map(r => ({ frame: r.value })))
-// define("timeline", () => math(i => 359 - i).range(360).map(r => ({ frame: r.value })))
+define("ball_height", (rand, table) =>
+  table("events")
+    .filter(r => r.id === "ball" && r.type === "update")
+    .map(r => ({ index: r.index, height: r.py }))
+    .graph("height")
+)
 `
 
 // A hover tooltip: hovering a "name" string that matches a cooked view pops an

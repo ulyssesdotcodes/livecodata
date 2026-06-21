@@ -37,7 +37,10 @@ function hashString(s) {
   return h >>> 0
 }
 
-export function createRuntime() {
+// `physics` is an optional getter returning the loaded physics engine (or null
+// while the async Jolt build is still loading). It's threaded onto ctx so the
+// DSL's physics() builder can reach the engine during a cook.
+export function createRuntime({ physics } = {}) {
   // Per-run state, reset by run(). cook() reads these but never swaps a
   // "current view" pointer — callerView and stack are threaded as parameters.
   let defs    // Map<name, { kind:'lazy', fn } | { kind:'const', table }>
@@ -132,6 +135,8 @@ export function createRuntime() {
     resolve(name) {
       return cook(name, null, [])
     },
+    // Reach the (async-loaded) physics engine, or null while it's still loading.
+    physics: () => (physics ? physics() : null),
   }
 
   const api = createDSL(ctx)

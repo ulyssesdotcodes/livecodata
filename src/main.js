@@ -7,6 +7,7 @@ import { initPlayback } from './playback.js'
 import { initSessionBar } from './session-bar.js'
 import { createRuntime } from './runtime.js'
 import { cookProgram, replayAt } from './replay.js'
+import { initPhysics } from './physics.js'
 import { createLog, randomSeed } from './log.js'
 
 const sceneAPI = initThree(document.getElementById('three-canvas'))
@@ -28,7 +29,11 @@ const playback = initPlayback(
   },
 )
 
-const runtime = createRuntime()
+// The Jolt build loads in the background; until it resolves, physics() in the
+// DSL throws a friendly "still loading" error. The runtime takes a getter so the
+// engine can be slotted in once ready (see firstRun below).
+let physicsEngine = null
+const runtime = createRuntime({ physics: () => physicsEngine })
 const log = createLog()
 
 // The most recent cook's views, exposed to the editor for autocomplete.
@@ -90,14 +95,23 @@ const editorPane = document.getElementById('editor-pane')
 const sessionBar = initSessionBar({ onScrub: scrubSession })
 editorPane.insertBefore(sessionBar.el, editorPane.children[1])
 
-// On load: if a previous session was persisted, restore its latest program and
-// replay it deterministically (recorded seed, without re-logging). Otherwise run
-// the default doc as a fresh run.
-if (log.rehydrate()) {
-  const latest = log.last()
-  editor.setCode(latest.code)
-  evaluate(latest.code, { setError: editor.setError, record: false, seed: latest.seed })
-} else {
-  editor.run()
+// First run. The default program drives a physics bake, so wait for the Jolt
+// engine to load before the initial cook (the page shell is already up). If Jolt
+// fails to load we still run — only physics() programs will error. On load: if a
+// previous session was persisted, restore its latest program and replay it
+// deterministically (recorded seed, no re-log); otherwise run the default doc.
+function firstRun() {
+  if (log.rehydrate()) {
+    const latest = log.last()
+    editor.setCode(latest.code)
+    evaluate(latest.code, { setError: editor.setError, record: false, seed: latest.seed })
+  } else {
+    editor.run()
+  }
+  sessionBar.setLog(log)
 }
-sessionBar.setLog(log)
+
+initPhysics()
+  .then((engine) => { physicsEngine = engine })
+  .catch((err) => console.error('physics failed to load:', err))
+  .finally(firstRun)
