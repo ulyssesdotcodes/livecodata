@@ -19,10 +19,19 @@ test('map exposes the row index', () => {
   assert.deepEqual(out.rows, [{ v: 5, i: 0 }, { v: 6, i: 1 }])
 })
 
-test('sortBy column and accessor', () => {
-  const base = t([{ k: 3 }, { k: 1 }, { k: 2 }])
-  assert.deepEqual(base.sortBy('k').rows.map((r) => r.k), [1, 2, 3])
-  assert.deepEqual(base.sortBy((r) => -r.k).rows.map((r) => r.k), [3, 2, 1])
+test('filterMap drops nulls, keeps rows, and flattens arrays', () => {
+  const base = t([{ v: 1 }, { v: 2 }, { v: 3 }])
+  // null/undefined → dropped; a row → kept; an array → flattened.
+  const out = base.filterMap((r) =>
+    r.v === 2 ? null : r.v === 3 ? [{ v: 3 }, { v: 30 }] : { v: r.v * 10 })
+  assert.deepEqual(out.rows, [{ v: 10 }, { v: 3 }, { v: 30 }])
+})
+
+test('filterMap exposes the index and full row array (for look-back)', () => {
+  const base = t([{ v: 5 }, { v: 9 }, { v: 2 }])
+  // Keep a row only when it is greater than its predecessor.
+  const out = base.filterMap((r, i, rows) => (i > 0 && r.v > rows[i - 1].v ? r : null))
+  assert.deepEqual(out.rows, [{ v: 9 }])
 })
 
 test('concat accepts a Table or a bare array', () => {

@@ -45,6 +45,7 @@ export function createRuntime() {
   let graphs  // queued graph specs
   let seedVal // run seed
   let prngs   // Map<name, () => number> — per-view random streams
+  let groups  // Map<groupId, string[]> — view names tagged into each group
 
   function randForView(name) {
     if (!prngs.has(name)) prngs.set(name, mulberry32((seedVal ^ hashString(name)) >>> 0))
@@ -73,6 +74,17 @@ export function createRuntime() {
       return def.table
     }
 
+    // A group view is the index-sorted concatenation of its member views.
+    if (def.kind === 'group') {
+      if (!deps.has(name)) deps.set(name, [])
+      const groupStack = [...stack, name]
+      const rows = def.members.flatMap((m) => cook(m, name, groupStack).rows)
+      rows.sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
+      const grouped = new Table(rows, ctx)
+      cache.set(name, grouped)
+      return grouped
+    }
+
     if (!deps.has(name)) deps.set(name, [])
     const nextStack = [...stack, name]
     // Inject per-view rand and a dep-tracking table resolver as parameters.
@@ -88,8 +100,12 @@ export function createRuntime() {
 
   // The hooks the DSL builders call. Stable identity so createDSL binds once.
   const ctx = {
-    defineLazy(name, fn) {
+    defineLazy(name, fn, group) {
       defs.set(name, { kind: 'lazy', fn })
+      if (group) {
+        if (!groups.has(group)) groups.set(group, [])
+        groups.get(group).push(name)
+      }
     },
     defineConst(name, table) {
       defs.set(name, { kind: 'const', table })
@@ -114,10 +130,16 @@ export function createRuntime() {
     deps = new Map()
     graphs = []
     prngs = new Map()
+    groups = new Map()
     seedVal = seed >>> 0
 
     const fn = new Function(...Object.keys(api), code)
     fn(...Object.values(api))
+
+    // Register each group as a view that merges its tagged members (index-sorted).
+    for (const [group, members] of groups) {
+      defs.set(group, { kind: 'group', members })
+    }
 
     // Force every defined view to materialize (consts are already cached).
     for (const name of defs.keys()) cook(name, null, [])

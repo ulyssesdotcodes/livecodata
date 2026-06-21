@@ -11,6 +11,10 @@
 //
 // Surface (injected into user code by the engine):
 //   define("name", (rand, table) => <Table>)  register a named view (cooked lazily)
+//   define("name", "group", (rand, table) => <Table>)  also tag the view into a
+//     group: the engine auto-creates a view named "group" that concatenates every
+//     member, index-sorted — so e.g. base creates + flash events merge into one
+//     "events" table with no manual concat/sort.
 //     rand()   seeded per-view PRNG in [0,1); deterministic per run + view name
 //     table()  dep-tracked resolver — records the dependency edge for this view
 //   table("name")                  resolve a view at top-level (no dep tracking)
@@ -18,7 +22,7 @@
 //     .range(count)                -> Table of { index, value }, count rows
 //   rows([ {...}, ... ])           wrap a literal array of rows in a Table
 //
-//   Table.map / filter / sortBy / concat / slice / fold / scan   transforms
+//   Table.map / filter / filterMap / concat / slice / fold / scan   transforms
 //   Table.graph(...columns)        render this table to the graph panel
 //   Table.save("name")             sugar for define("name", () => this)
 // ----------------------------------------------------------------------------
@@ -57,14 +61,19 @@ export class Table {
     return new Table(this.rows.filter((r, i) => fn(r, i)), this._ctx)
   }
 
-  sortBy(key) {
-    const accessor = typeof key === 'function' ? key : (r) => r[key]
-    const sorted = [...this.rows].sort((a, b) => {
-      const av = accessor(a)
-      const bv = accessor(b)
-      return av < bv ? -1 : av > bv ? 1 : 0
+  // filter + flatMap in one pass: fn(row, i, rows) returns a row, an array of
+  // rows, or null/undefined to drop it. Returns a new Table of everything kept.
+  // The workhorse for deriving one event stream from another — e.g. turning each
+  // "create" in a base scene into a flash event per trigger.
+  filterMap(fn) {
+    const out = []
+    this.rows.forEach((r, i) => {
+      const res = fn(r, i, this.rows)
+      if (res == null) return
+      if (Array.isArray(res)) out.push(...res)
+      else out.push(res)
     })
-    return new Table(sorted, this._ctx)
+    return new Table(out, this._ctx)
   }
 
   concat(other) {
@@ -147,7 +156,12 @@ class MathBuilder {
 // rand and table inside views are injected per-cook by the engine, not from ctx.
 export function createDSL(ctx) {
   return {
-    define: (name, fn) => ctx.defineLazy(name, fn),
+    // define(name, fn) or define(name, group, fn). A 3-arg call tags the view
+    // into a named group (see runtime.js — the engine builds the group view).
+    define: (name, group, fn) =>
+      fn === undefined
+        ? ctx.defineLazy(name, group)
+        : ctx.defineLazy(name, fn, group),
     table: (name) => ctx.resolve(name),
     math: (fn) => new MathBuilder(fn, ctx),
     rows: (arr) => new Table((arr ?? []).map((r) => ({ ...r })), ctx),
