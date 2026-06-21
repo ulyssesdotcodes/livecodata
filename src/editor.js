@@ -2,6 +2,7 @@ import { EditorView, basicSetup } from 'codemirror'
 import { javascript } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { keymap } from '@codemirror/view'
+import { Prec } from '@codemirror/state'
 
 const initialDoc = `// livecodata — generate tables, drive visuals.
 // Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
@@ -85,9 +86,9 @@ export function initEditor(parent, { onRun } = {}) {
       basicSetup,
       javascript(),
       oneDark,
-      keymap.of([
+      Prec.highest(keymap.of([
         { key: 'Mod-Enter', run: () => { run(); return true } },
-      ]),
+      ])),
       EditorView.theme({
         '&': { height: '100%' },
         '.cm-scroller': { overflow: 'auto' },
@@ -98,5 +99,10 @@ export function initEditor(parent, { onRun } = {}) {
 
   runBtn.onclick = run
 
-  return { run, getCode: () => view.state.doc.toString() }
+  // Replace the whole document (used to restore a rehydrated session's program).
+  function setCode(code) {
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } })
+  }
+
+  return { run, getCode: () => view.state.doc.toString(), setCode, setError }
 }
