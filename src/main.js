@@ -62,10 +62,3 @@ if (log.rehydrate()) {
 } else {
   editor.run()
 }
-
-// Debug handle: inspect or reset the session log from the console.
-// e.g. livecodata.log.all(); livecodata.resetSession()
-window.livecodata = {
-  log,
-  resetSession() { log.clear(); location.reload() },
-}
