@@ -1,18 +1,16 @@
 // livecodata runtime — the cook network
 // ----------------------------------------------------------------------------
 // A reactive dataflow engine over named views (à la Houdini node cooking). A
-// program registers views with define("name", () => <Table>); the engine cooks
-// them on demand, in dependency order, caching each result. Calling table("x")
-// inside a view both materializes "x" and records a dependency edge, so the
-// dependency DAG is discovered automatically.
+// program registers views with define("name", (rand, table) => <Table>); the
+// engine cooks them on demand, in dependency order, caching each result.
 //
-// Determinism: each run is cooked from a recorded seed. rand() is a seeded PRNG,
-// and every view gets its *own* stream (seeded from the run seed mixed with the
-// view name), so a view's random sequence is independent of cook order and of
-// other views — which keeps replays reproducible and is safe to memoize.
+// Calling table("x") inside a view both materializes "x" and records a
+// dependency edge. Each view receives its own injected `rand` and `table`
+// arguments — no mutable instance state tracks the current view.
 //
-// In this step every view is effectively static (cooked once per run). The dense
-// per-frame cache (rasterize) and static-vs-frame tagging arrive in later steps.
+// cook() is a pure recursive function: callerView and stack are threaded as
+// parameters. rand and table are injected per-invocation, not routed through
+// shared mutable state.
 // ----------------------------------------------------------------------------
 
 import { createDSL, Table } from './dsl.js'
@@ -39,58 +37,51 @@ function hashString(s) {
 }
 
 export function createRuntime() {
-  // Per-run state, reset by run().
-  let defs        // Map<name, { kind:'lazy', fn } | { kind:'const', table }>
-  let cache       // Map<name, Table>  — cooked results
-  let deps        // Map<name, string[]> — discovered dependency edges
-  let graphs      // queued graph specs
-  let seedVal     // run seed
-  let prngs       // Map<name, () => number> — per-view random streams
-  let baseRand    // body-level random stream (outside any view)
-  let currentView // name of the view being cooked (for dep + rand routing)
-  let cookStack   // active cook chain, for cycle detection
+  // Per-run state, reset by run(). cook() reads these but never swaps a
+  // "current view" pointer — callerView and stack are threaded as parameters.
+  let defs    // Map<name, { kind:'lazy', fn } | { kind:'const', table }>
+  let cache   // Map<name, Table>  — cooked results
+  let deps    // Map<name, string[]> — discovered dependency edges
+  let graphs  // queued graph specs
+  let seedVal // run seed
+  let prngs   // Map<name, () => number> — per-view random streams
 
   function randForView(name) {
     if (!prngs.has(name)) prngs.set(name, mulberry32((seedVal ^ hashString(name)) >>> 0))
     return prngs.get(name)
   }
 
-  // Cook a view by name, memoized. Records a dependency from the view currently
-  // being cooked (if any) onto `name`.
-  function cook(name) {
+  // Cook a view by name, memoized.
+  //   callerView — name of the view that triggered this cook (for dep recording), or null
+  //   stack      — names currently on the cook path, for cycle detection
+  function cook(name, callerView, stack) {
     if (cache.has(name)) {
-      if (currentView) deps.get(currentView)?.push(name)
+      if (callerView) deps.get(callerView)?.push(name)
       return cache.get(name)
     }
     const def = defs.get(name)
     if (!def) {
-      throw new Error(`table("${name}") not found — define("${name}", () => ...) it first`)
+      throw new Error(`table("${name}") not found — define("${name}", (rand, table) => ...) it first`)
     }
-    if (cookStack.includes(name)) {
-      throw new Error(`cycle in cook: ${[...cookStack, name].join(' -> ')}`)
+    if (stack.includes(name)) {
+      throw new Error(`cycle in cook: ${[...stack, name].join(' -> ')}`)
     }
-    if (currentView) deps.get(currentView)?.push(name)
+    if (callerView) deps.get(callerView)?.push(name)
 
     if (def.kind === 'const') {
       cache.set(name, def.table)
       return def.table
     }
 
-    cookStack.push(name)
-    const prev = currentView
-    currentView = name
     if (!deps.has(name)) deps.set(name, [])
-    let result
-    try {
-      result = def.fn()
-      if (!(result instanceof Table)) {
-        // Tolerate a thunk that returns a bare array of rows.
-        result = new Table(Array.isArray(result) ? result.map((r) => ({ ...r })) : [], ctx)
-      }
-    } finally {
-      currentView = prev
-      cookStack.pop()
-    }
+    const nextStack = [...stack, name]
+    // Inject per-view rand and a dep-tracking table resolver as parameters.
+    const rand = randForView(name)
+    const localTable = (dep) => cook(dep, name, nextStack)
+    const raw = def.fn(rand, localTable)
+    const result = raw instanceof Table
+      ? raw
+      : new Table(Array.isArray(raw) ? raw.map((r) => ({ ...r })) : [], ctx)
     cache.set(name, result)
     return result
   }
@@ -107,11 +98,9 @@ export function createRuntime() {
     addGraph(spec) {
       graphs.push(spec)
     },
+    // top-level table() calls (outside any view): no callerView, empty stack
     resolve(name) {
-      return cook(name)
-    },
-    rand() {
-      return (currentView ? randForView(currentView) : baseRand)()
+      return cook(name, null, [])
     },
   }
 
@@ -126,15 +115,12 @@ export function createRuntime() {
     graphs = []
     prngs = new Map()
     seedVal = seed >>> 0
-    baseRand = mulberry32(seedVal)
-    currentView = null
-    cookStack = []
 
     const fn = new Function(...Object.keys(api), code)
     fn(...Object.values(api))
 
     // Force every defined view to materialize (consts are already cached).
-    for (const name of defs.keys()) cook(name)
+    for (const name of defs.keys()) cook(name, null, [])
 
     const resolvedGraphs = graphs
       .map((g) => (g.table ? g : { table: cache.get(g.name), columns: g.columns }))

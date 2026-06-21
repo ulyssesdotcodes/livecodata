@@ -6,7 +6,7 @@ test('cooks defined views and resolves table() dependencies', () => {
   const rt = createRuntime()
   const code = `
     define("nums", () => math(i => i).range(4))
-    define("doubled", () => table("nums").map(r => ({ index: r.index, value: r.value * 2 })))
+    define("doubled", (rand, table) => table("nums").map(r => ({ index: r.index, value: r.value * 2 })))
   `
   const { views } = rt.run(code, { seed: 1 })
   assert.deepEqual(views.get('nums').rows.map((r) => r.value), [0, 1, 2, 3])
@@ -17,8 +17,8 @@ test('records the dependency edges it discovers', () => {
   const rt = createRuntime()
   const code = `
     define("a", () => rows([{ v: 1 }]))
-    define("b", () => table("a").map(r => ({ v: r.v + 1 })))
-    define("c", () => table("a").concat(table("b")))
+    define("b", (rand, table) => table("a").map(r => ({ v: r.v + 1 })))
+    define("c", (rand, table) => table("a").concat(table("b")))
   `
   const { deps } = rt.run(code, { seed: 1 })
   assert.deepEqual(deps.get('b'), ['a'])
@@ -30,17 +30,17 @@ test('a shared upstream view is cooked exactly once per run', () => {
   globalThis.__cookCount = 0
   const code = `
     define("c", () => { globalThis.__cookCount++; return rows([{ v: 1 }]) })
-    define("a", () => table("c").map(r => ({ ...r, a: 1 })))
-    define("b", () => table("c").map(r => ({ ...r, b: 1 })))
+    define("a", (rand, table) => table("c").map(r => ({ ...r, a: 1 })))
+    define("b", (rand, table) => table("c").map(r => ({ ...r, b: 1 })))
   `
   rt.run(code, { seed: 1 })
   assert.equal(globalThis.__cookCount, 1)
   delete globalThis.__cookCount
 })
 
-test('rand() is deterministic for a given seed and varies by seed', () => {
+test('rand is deterministic for a given seed and varies by seed', () => {
   const rt = createRuntime()
-  const code = `define("r", () => math(() => rand()).range(6))`
+  const code = `define("r", (rand) => math(() => rand()).range(6))`
   const a = rt.run(code, { seed: 42 }).views.get('r').rows.map((r) => r.value)
   const b = rt.run(code, { seed: 42 }).views.get('r').rows.map((r) => r.value)
   const c = rt.run(code, { seed: 7 }).views.get('r').rows.map((r) => r.value)
@@ -54,12 +54,12 @@ test("each view has an independent rand stream (order-independent)", () => {
   // Cooking "x" before/after "y" must not change x's values, because each view
   // is seeded from (runSeed, viewName), not from a shared global stream.
   const code1 = `
-    define("x", () => math(() => rand()).range(3))
-    define("y", () => table("x").map(r => ({ v: rand() })))
+    define("x", (rand) => math(() => rand()).range(3))
+    define("y", (rand, table) => table("x").map(r => ({ v: rand() })))
   `
   const code2 = `
-    define("y", () => table("x").map(r => ({ v: rand() })))
-    define("x", () => math(() => rand()).range(3))
+    define("y", (rand, table) => table("x").map(r => ({ v: rand() })))
+    define("x", (rand) => math(() => rand()).range(3))
   `
   const x1 = rt.run(code1, { seed: 99 }).views.get('x').rows.map((r) => r.value)
   const x2 = rt.run(code2, { seed: 99 }).views.get('x').rows.map((r) => r.value)
@@ -70,7 +70,7 @@ test('save() registers a constant view, still resolvable by table()', () => {
   const rt = createRuntime()
   const code = `
     rows([{ v: 1 }]).save("k")
-    define("d", () => table("k").map(r => ({ d: r.v + 1 })))
+    define("d", (rand, table) => table("k").map(r => ({ d: r.v + 1 })))
   `
   const { views } = rt.run(code, { seed: 1 })
   assert.equal(views.get('k').rows[0].v, 1)
@@ -89,7 +89,7 @@ test('graph specs are resolved to their cooked tables', () => {
 test('resolving an undefined view throws a helpful error', () => {
   const rt = createRuntime()
   assert.throws(
-    () => rt.run(`define("x", () => table("missing"))`, { seed: 1 }),
+    () => rt.run(`define("x", (rand, table) => table("missing"))`, { seed: 1 }),
     /table\("missing"\) not found/,
   )
 })
@@ -97,8 +97,8 @@ test('resolving an undefined view throws a helpful error', () => {
 test('a dependency cycle is detected', () => {
   const rt = createRuntime()
   const code = `
-    define("a", () => table("b"))
-    define("b", () => table("a"))
+    define("a", (rand, table) => table("b"))
+    define("b", (rand, table) => table("a"))
   `
   assert.throws(() => rt.run(code, { seed: 1 }), /cycle in cook/)
 })
@@ -109,7 +109,7 @@ test('reproduces the zero-crossing events program end-to-end', () => {
     define("wave", () => math(i => Math.sin(i * Math.PI / 4)).range(16))
     define("base", () => rows([{ id: "s", type: "create", index: 0, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
-    define("events", () =>
+    define("events", (rand, table) =>
       table("wave")
         .scan((state, cur) => {
           const crossed = state.prev != null && cur.value * state.prev < 0

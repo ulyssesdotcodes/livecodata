@@ -10,12 +10,13 @@
 // it builds Tables and talks to the engine through a small `ctx` of hooks.
 //
 // Surface (injected into user code by the engine):
-//   define("name", () => <Table>)  register a named view (a thunk, cooked lazily)
-//   table("name")                  resolve another view (records a dependency)
+//   define("name", (rand, table) => <Table>)  register a named view (cooked lazily)
+//     rand()   seeded per-view PRNG in [0,1); deterministic per run + view name
+//     table()  dep-tracked resolver — records the dependency edge for this view
+//   table("name")                  resolve a view at top-level (no dep tracking)
 //   math(index => ...)             sample a function of the row index
 //     .range(count)                -> Table of { index, value }, count rows
 //   rows([ {...}, ... ])           wrap a literal array of rows in a Table
-//   rand()                         seeded PRNG in [0,1); deterministic per run
 //
 //   Table.map / filter / sortBy / concat / slice / fold / scan   transforms
 //   Table.graph(...columns)        render this table to the graph panel
@@ -142,14 +143,13 @@ class MathBuilder {
 
 // Build the DSL surface bound to an engine context. `ctx` provides the hooks the
 // builders need: defineLazy/defineConst (registration), resolve (look up another
-// view, recording a dependency), addGraph (queue a render spec), and rand (the
-// seeded PRNG). See runtime.js for the implementation of these hooks.
+// view at the top level), and addGraph (queue a render spec).
+// rand and table inside views are injected per-cook by the engine, not from ctx.
 export function createDSL(ctx) {
   return {
     define: (name, fn) => ctx.defineLazy(name, fn),
     table: (name) => ctx.resolve(name),
     math: (fn) => new MathBuilder(fn, ctx),
     rows: (arr) => new Table((arr ?? []).map((r) => ({ ...r })), ctx),
-    rand: () => ctx.rand(),
   }
 }

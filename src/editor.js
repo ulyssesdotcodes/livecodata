@@ -8,9 +8,9 @@ const initialDoc = `// livecodata — define tables as views; the engine cooks t
 // Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 
 // 1. A noisy sine wave: one row per frame, 360 frames (~6s at 60fps).
-//    rand() is a seeded PRNG, so replaying a session reproduces it exactly.
+//    rand is a seeded per-view PRNG, so replaying a session reproduces it exactly.
 //    Each row is { index, value }; .graph plots value against the index.
-define("randsin", () =>
+define("randsin", (rand) =>
   math(i => Math.sin(i * Math.PI / 15) + (rand() * 0.5 - 0.25))
     .range(360)
     .graph("value")
@@ -28,7 +28,7 @@ define("base", () =>
 //    scan threads state (the previous value) and emits rows as it folds,
 //    so it stays chainable — no need to wrap the result in rows(...).
 //    table("randsin") records a dependency: change randsin and events recooks.
-define("events", () =>
+define("events", (rand, table) =>
   table("randsin")
     .scan((state, cur) => {
       const crossed = state.prev != null && cur.value * state.prev < 0
