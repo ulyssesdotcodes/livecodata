@@ -58,7 +58,8 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
   // through the timeline): every object present is created/updated, anything
   // alive but absent is destroyed.
   function applyAtIndex(i) {
-    const states = stateAtFrame(frameIndex, timeline.frameAt(i))
+    const src = timeline.frameAt(i)
+    const states = stateAtFrame(frameIndex, src)
     const present = new Set()
     for (const s of states) {
       present.add(s.id)
@@ -78,8 +79,10 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
         aliveObjects.delete(id)
       }
     }
-    // The provenance of the on-screen state: which source rows feed this frame.
-    onTick?.(i, activeLineage(states))
+    // Report both the playback tick and the *source* frame it maps to (they
+    // differ when a timeline retimes/reverses), plus the provenance of the
+    // on-screen state — so panel cursors track the source frame, not the tick.
+    onTick?.(i, activeLineage(states), src)
   }
 
   function reset(i = 0) {

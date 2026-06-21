@@ -16,9 +16,12 @@ const playback = initPlayback(
   document.getElementById('playback-controls'),
   sceneAPI,
   {
-    onTick: (i, active) => {
-      tablePanel.highlightIndex(i)
-      graphPanel.highlightIndex(i)
+    onTick: (tick, active, srcFrame) => {
+      // Cursors follow the source frame (what's on screen), so under a remapped
+      // timeline the table/graph index bar tracks e.g. f349 when reversed, not
+      // the raw tick f10. Without a timeline, srcFrame === tick.
+      tablePanel.highlightIndex(srcFrame)
+      graphPanel.highlightIndex(srcFrame)
       tablePanel.highlightLineage(active)
       graphPanel.highlightLineage(active)
     },
