@@ -1,24 +1,26 @@
 // livecodata runtime — the cook network
 // ----------------------------------------------------------------------------
-// A reactive dataflow engine over named views (à la Houdini node cooking). A
-// program registers views with define("name", (rand, table) => <Table>); the
-// engine cooks them on demand, in dependency order, caching each result.
+// A reactive dataflow engine over named views (à la Houdini node cooking).
+// A program registers views with define("name", (rand, table) => <Table>).
 //
-// Calling table("x") inside a view both materializes "x" and records a
-// dependency edge. Each view receives its own injected `rand` and `table`
-// arguments — no mutable instance state tracks the current view.
+// Cooking a view is a memoized recursive resolution over the definition map:
+// asking for a view materializes it — and, transitively, everything it asks
+// for via table() — caching each result and recording the dependency edges
+// (and any cycles) it discovers along the way.
 //
-// cook() is a pure recursive function: callerView and stack are threaded as
-// parameters. rand and table are injected per-invocation, not routed through
-// shared mutable state.
+// There is no mutable "current view" pointer and no per-instance scratch:
+// every run() builds a fresh, self-contained session, and each view is handed
+// its own `rand` (a per-view seeded stream) and `table` (a resolver that
+// records the dependency edge) as arguments. const views, lazy views, and
+// group views are all just thunks of that shape, so there is a single cook path.
 // ----------------------------------------------------------------------------
 
 import { createDSL, Table } from './dsl.js'
 
-// Small, fast PRNG. Deterministic given its 32-bit seed.
-function mulberry32(seed) {
+// A deterministic [0,1) stream from a 32-bit seed (mulberry32).
+const seededStream = (seed) => {
   let a = seed >>> 0
-  return function () {
+  return () => {
     a = (a + 0x6d2b79f5) | 0
     let t = Math.imul(a ^ (a >>> 15), 1 | a)
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
@@ -26,129 +28,90 @@ function mulberry32(seed) {
   }
 }
 
-// FNV-1a string hash → 32-bit. Used to derive a per-view seed.
-function hashString(s) {
+// FNV-1a string hash → 32-bit, used to give each view its own seed.
+const hash = (s) => {
   let h = 2166136261 >>> 0
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i)
-    h = Math.imul(h, 16777619)
-  }
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619)
   return h >>> 0
 }
 
-export function createRuntime() {
-  // Per-run state, reset by run(). cook() reads these but never swaps a
-  // "current view" pointer — callerView and stack are threaded as parameters.
-  let defs    // Map<name, { kind:'lazy', fn } | { kind:'const', table }>
-  let cache   // Map<name, Table>  — cooked results
-  let deps    // Map<name, string[]> — discovered dependency edges
-  let graphs  // queued graph specs
-  let seedVal // run seed
-  let prngs   // Map<name, () => number> — per-view random streams
-  let groups  // Map<groupId, string[]> — view names tagged into each group
+// Coerce a thunk's result to a Table (tolerating a bare array of rows).
+const asTable = (v, ctx) =>
+  v instanceof Table ? v : new Table(Array.isArray(v) ? v.map((r) => ({ ...r })) : [], ctx)
 
-  function randForView(name) {
-    if (!prngs.has(name)) prngs.set(name, mulberry32((seedVal ^ hashString(name)) >>> 0))
-    return prngs.get(name)
-  }
+// Memoize a unary function by its key.
+const memoize = (fn) => {
+  const cache = new Map()
+  return (key) => (cache.has(key) ? cache.get(key) : cache.set(key, fn(key)).get(key))
+}
 
-  // Cook a view by name, memoized.
-  //   callerView — name of the view that triggered this cook (for dep recording), or null
-  //   stack      — names currently on the cook path, for cycle detection
-  function cook(name, callerView, stack) {
-    if (cache.has(name)) {
-      if (callerView) deps.get(callerView)?.push(name)
-      return cache.get(name)
-    }
+// Get a Map's array value, creating an empty one on first access.
+const listIn = (map, key) => (map.has(key) ? map.get(key) : map.set(key, []).get(key))
+
+// One evaluation of a program: an isolated graph of named views cooked from a
+// single run seed. All state lives in this closure and dies with the call.
+function cookSession(seed) {
+  const defs = new Map()    // name -> (rand, table) => Table | rows
+  const deps = new Map()    // name -> names it depends on, in cook order
+  const members = new Map() // groupId -> member view names tagged into it
+  const graphs = []         // queued { table, columns } render specs
+  const cache = new Map()   // name -> cooked Table (memo)
+  const randFor = memoize((name) => seededStream((seed ^ hash(name)) >>> 0))
+
+  // Cook a view to its Table, memoized. `stack` is the active cook chain, used
+  // only for cycle detection. Each view receives its own rand and a `table`
+  // resolver closed over its name, so resolving a dep records the edge for it.
+  const cook = (name, stack) => {
+    if (cache.has(name)) return cache.get(name)
+    if (stack.includes(name)) throw new Error(`cycle in cook: ${[...stack, name].join(' -> ')}`)
     const def = defs.get(name)
-    if (!def) {
-      throw new Error(`table("${name}") not found — define("${name}", (rand, table) => ...) it first`)
-    }
-    if (stack.includes(name)) {
-      throw new Error(`cycle in cook: ${[...stack, name].join(' -> ')}`)
-    }
-    if (callerView) deps.get(callerView)?.push(name)
+    if (!def) throw new Error(`table("${name}") not found — define("${name}", (rand, table) => ...) it first`)
 
-    if (def.kind === 'const') {
-      cache.set(name, def.table)
-      return def.table
-    }
-
-    // A group view is the index-sorted concatenation of its member views.
-    if (def.kind === 'group') {
-      if (!deps.has(name)) deps.set(name, [])
-      const groupStack = [...stack, name]
-      const rows = def.members.flatMap((m) => cook(m, name, groupStack).rows)
-      rows.sort((a, b) => (a.index ?? 0) - (b.index ?? 0))
-      const grouped = new Table(rows, ctx)
-      cache.set(name, grouped)
-      return grouped
-    }
-
-    if (!deps.has(name)) deps.set(name, [])
-    const nextStack = [...stack, name]
-    // Inject per-view rand and a dep-tracking table resolver as parameters.
-    const rand = randForView(name)
-    const localTable = (dep) => cook(dep, name, nextStack)
-    const raw = def.fn(rand, localTable)
-    const result = raw instanceof Table
-      ? raw
-      : new Table(Array.isArray(raw) ? raw.map((r) => ({ ...r })) : [], ctx)
-    cache.set(name, result)
-    return result
+    listIn(deps, name) // every cooked view owns an edge list, even with no deps
+    const childStack = [...stack, name]
+    const table = (dep) => (listIn(deps, name).push(dep), cook(dep, childStack))
+    return cache.set(name, asTable(def(randFor(name), table), ctx)).get(name)
   }
+
+  // A group view is the index-sorted concatenation of its tagged members —
+  // just a lazy view whose body resolves each member through `table` (so the
+  // group→member edges are recorded like any other dependency).
+  const groupThunk = (group) => (_rand, table) =>
+    new Table(
+      members.get(group).flatMap((m) => table(m).rows).sort((a, b) => (a.index ?? 0) - (b.index ?? 0)),
+      ctx,
+    )
 
   // The hooks the DSL builders call. Stable identity so createDSL binds once.
   const ctx = {
-    defineLazy(name, fn, group) {
-      defs.set(name, { kind: 'lazy', fn })
-      if (group) {
-        if (!groups.has(group)) groups.set(group, [])
-        groups.get(group).push(name)
-      }
+    defineLazy: (name, fn, group) => {
+      defs.set(name, fn)
+      if (group) listIn(members, group).push(name)
     },
-    defineConst(name, table) {
-      defs.set(name, { kind: 'const', table })
-      cache.set(name, table)
-    },
-    addGraph(spec) {
-      graphs.push(spec)
-    },
-    // top-level table() calls (outside any view): no callerView, empty stack
-    resolve(name) {
-      return cook(name, null, [])
-    },
+    defineConst: (name, table) => defs.set(name, () => table),
+    addGraph: (spec) => graphs.push(spec),
+    resolve: (name) => cook(name, []), // top-level table(): no caller, no edge
   }
 
-  const api = createDSL(ctx)
+  // Register each group as a synthetic view, force everything to materialize,
+  // then hand back the cooked graph.
+  const finalize = () => {
+    for (const group of members.keys()) defs.set(group, groupThunk(group))
+    for (const name of defs.keys()) cook(name, [])
+    return { views: cache, graphs: graphs.filter((g) => g.table), deps }
+  }
 
-  // Evaluate a program and cook every view it defines. Returns the materialized
-  // views (Map<name, Table>), resolved graph specs, and the dependency edges.
-  function run(code, { seed = 0 } = {}) {
-    defs = new Map()
-    cache = new Map()
-    deps = new Map()
-    graphs = []
-    prngs = new Map()
-    groups = new Map()
-    seedVal = seed >>> 0
+  return { ctx, finalize }
+}
 
-    const fn = new Function(...Object.keys(api), code)
-    fn(...Object.values(api))
-
-    // Register each group as a view that merges its tagged members (index-sorted).
-    for (const [group, members] of groups) {
-      defs.set(group, { kind: 'group', members })
-    }
-
-    // Force every defined view to materialize (consts are already cached).
-    for (const name of defs.keys()) cook(name, null, [])
-
-    const resolvedGraphs = graphs
-      .map((g) => (g.table ? g : { table: cache.get(g.name), columns: g.columns }))
-      .filter((g) => g.table)
-
-    return { views: cache, graphs: resolvedGraphs, deps }
+export function createRuntime() {
+  // Evaluate a program against a fresh session and return the cooked views
+  // (Map<name, Table>), resolved graph specs, and the discovered dependency edges.
+  const run = (code, { seed = 0 } = {}) => {
+    const { ctx, finalize } = cookSession(seed >>> 0)
+    const api = createDSL(ctx)
+    new Function(...Object.keys(api), code)(...Object.values(api))
+    return finalize()
   }
 
   return { run }
