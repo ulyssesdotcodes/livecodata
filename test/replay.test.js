@@ -4,14 +4,15 @@ import { createRuntime } from '../src/runtime.js'
 import { createLog } from '../src/log.js'
 import { cookProgram, replayAt } from '../src/replay.js'
 
-// A program whose scene depends on a rand()-driven count of frames, so the seed
+// A program whose scene depends on a rand()-driven count of rows, so the seed
 // genuinely affects the output (good for determinism checks).
+// n/60 converts row count → seconds so range(n/60) produces exactly n rows.
 const PROG = (n) => `
   define("base", () => rows([{ id: "s", type: "create", index: 0, shape: "sphere",
     color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
-  define("noise", (rand) => math(() => rand()).range(${n}))
+  define("noise", (rand) => math(() => rand()).range(${n}/60))
   define("events", (rand, table) => table("base"))
-  define("scene", (rand, table) => table("events").rasterize(${n}))
+  define("scene", (rand, table) => table("events").rasterize(${n}/60))
 `
 
 test('cookProgram resolves the scene cache and is deterministic per seed', () => {

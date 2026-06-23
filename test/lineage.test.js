@@ -74,8 +74,10 @@ test('the engine stamps each view, accumulating transitive provenance', () => {
 
 test('end-to-end: the scene cache traces back to the randsin sample that set color', () => {
   const rt = createRuntime()
+  // 0.5s animation; sin(t * 8π) has period 0.25s → sign flip between rows 7 and 8
+  // (positive at t=7/60s, negative at t=8/60s). rasterize(0.5) bakes 30 frames (0..30).
   const code = `
-    define("randsin", () => math(i => Math.sin(i * Math.PI / 4)).range(16))
+    define("randsin", () => math(t => Math.sin(t * Math.PI * 8)).range(0.5))
     define("base", "events", () => rows([{ id: "s", type: "create", index: 0, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
     define("flash", "events", (rand, table) => {
@@ -85,14 +87,14 @@ test('end-to-end: the scene cache traces back to the randsin sample that set col
           ? objects.rows.map(o => ({ id: o.id, type: "color", index: cur.index, color: 0xffffff }))
           : null)
     })
-    define("scene", () => table("events").rasterize(16))
+    define("scene", () => table("events").rasterize(0.5))
   `
   const { views } = rt.run(code, { seed: 1 })
   const scene = views.get('scene')
 
-  // Active provenance at a late frame includes a randsin sample and the events
-  // table — i.e. the cache knows which dataset rows drive the current state.
-  const lateRows = scene.rows.filter((r) => r.frame === 12)
+  // Active provenance at a frame after the first crossing (at row 8, frame 8) includes
+  // a randsin sample and the events table.
+  const lateRows = scene.rows.filter((r) => r.frame === 20)
   const active = activeLineage(lateRows)
   assert.ok(active.has('randsin'), 'a randsin sample is referenced')
   assert.ok(active.has('events'), 'an events row is referenced')

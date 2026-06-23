@@ -1,8 +1,10 @@
 // livecodata DSL
 // ----------------------------------------------------------------------------
 // A tiny, JavaScript-flavoured DSL for generating tables and using those tables
-// to drive visuals. Tables are (for now) arrays of plain row objects, implicitly
-// ordered by row index — each row is one ~1/60s frame. Every builder returns a
+// to drive visuals. Tables are arrays of plain row objects. All timing uses
+// **seconds** — math().range(duration) samples over `duration` seconds at 60 fps,
+// event `index`/`dur` fields are in seconds, and rasterize(maxSeconds) sets the
+// animation length in seconds. Every builder returns a
 // new Table, so everything chains.
 //
 // Tables are no longer built-and-saved imperatively; they are *defined* as named
@@ -39,7 +41,7 @@
 //   Table.trigger(pred,emit) / triggerEach(pred,objs,make) / crossings(field,level)
 //                                  event detection — "when X, do Y" (and fan out)
 //   Table.graph(...columns)        draw this table on the graph panel
-//   Table.rasterize(maxFrame)      bake events into the dense frame cache
+//   Table.rasterize(maxSeconds)    bake events into the dense frame cache
 //   Table.save("name")             sugar for define("name", () => this)
 // ----------------------------------------------------------------------------
 
@@ -313,9 +315,10 @@ export class Table {
   // Bake this sparse event table into a dense, frame-indexed cache: one row per
   // alive object per frame, with position/rotation interpolated and color
   // stepped (see rasterize.js). This is the table playback indexes into.
-  // `maxFrame` sets the timeline length; omit it to infer from the max index.
-  rasterize(maxFrame) {
-    return this._wrap(rasterizeRows(this.rows, maxFrame))
+  // `maxSeconds` sets the animation length in seconds; omit to infer from the
+  // largest event index.
+  rasterize(maxSeconds) {
+    return this._wrap(rasterizeRows(this.rows, maxSeconds))
   }
 
   // Queue this table to be drawn on the graph panel. The named columns become
@@ -335,6 +338,8 @@ export class Table {
     return this
   }
 }
+
+const FPS = 60 // sampling rate for math().range(); matches rasterize bake rate
 
 // Wraps a base scene (a Table or raw rows) and bakes a physics simulation off it
 // when .simulate() is called during a cook. The actual stepping lives in the
@@ -363,13 +368,14 @@ class MathBuilder {
     this._ctx = ctx
   }
 
-  // Sample the function once per row for `count` rows. Each row is one frame:
-  // { index, value } where value = fn(index).
-  range(count) {
-    const n = Math.max(1, Math.round(count))
+  // Sample the function over `durationSeconds` at FPS (60) hz. Each row is
+  // { index, value } where `index` is time in seconds and value = fn(index).
+  range(durationSeconds) {
+    const n = Math.max(1, Math.round(durationSeconds * FPS))
     const rows = new Array(n)
-    for (let index = 0; index < n; index++) {
-      rows[index] = { index, value: this._fn(index) }
+    for (let i = 0; i < n; i++) {
+      const t = i / FPS
+      rows[i] = { index: t, value: this._fn(t) }
     }
     return new Table(rows, this._ctx)
   }

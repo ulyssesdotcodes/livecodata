@@ -4,7 +4,10 @@ import { buildTimeline } from '../src/timeline.js'
 import { createRuntime } from '../src/runtime.js'
 import { cookProgram } from '../src/replay.js'
 
-const frames = (arr) => arr.map((frame) => ({ frame }))
+// Convenience: build timeline rows where each row has `time` in seconds.
+const times = (arr) => arr.map((time) => ({ time }))
+// Convenience: frame → seconds
+const f = (frames) => frames / 60
 
 test('no timeline rows → identity mapping, length 0', () => {
   const tl = buildTimeline([])
@@ -14,8 +17,8 @@ test('no timeline rows → identity mapping, length 0', () => {
   assert.equal(tl.frameAt(3.9), 3, 'floors fractional ticks')
 })
 
-test('maps tick → frame, clamping the tick and rounding the frame', () => {
-  const tl = buildTimeline([{ frame: 10 }, { frame: 20 }, { frame: 30.6 }])
+test('maps tick → source frame via time field (seconds), clamping the tick', () => {
+  const tl = buildTimeline([{ time: f(10) }, { time: f(20) }, { time: f(30.6) }])
   assert.equal(tl.length, 3)
   assert.equal(tl.frameAt(0), 10)
   assert.equal(tl.frameAt(1), 20)
@@ -25,8 +28,10 @@ test('maps tick → frame, clamping the tick and rounding the frame', () => {
   assert.equal(tl.frameAt(-5), 10, 'negative tick clamps to the first row')
 })
 
-test('loop: first 60 frames repeat across a longer timeline', () => {
-  const tl = buildTimeline(frames(Array.from({ length: 360 }, (_, i) => i % 60)))
+test('loop: first second (60 frames) repeats across a 6-second timeline', () => {
+  // 360 rows where each row's time = (i/60) % 1 seconds (loops every 1 second)
+  const rows = Array.from({ length: 360 }, (_, i) => ({ time: (i / 60) % 1 }))
+  const tl = buildTimeline(rows)
   assert.equal(tl.length, 360)
   assert.equal(tl.frameAt(0), 0)
   assert.equal(tl.frameAt(59), 59)
@@ -35,13 +40,15 @@ test('loop: first 60 frames repeat across a longer timeline', () => {
 })
 
 test('reverse: time runs backwards', () => {
-  const tl = buildTimeline(frames(Array.from({ length: 100 }, (_, i) => 99 - i)))
+  // 100 rows, source time descends from 99/60s to 0
+  const rows = Array.from({ length: 100 }, (_, i) => ({ time: (99 - i) / 60 }))
+  const tl = buildTimeline(rows)
   assert.equal(tl.frameAt(0), 99)
   assert.equal(tl.frameAt(99), 0)
   assert.equal(tl.frameAt(40), 59)
 })
 
-test('falls back to the source frame when a row omits frame', () => {
+test('falls back to identity when a row omits time', () => {
   const tl = buildTimeline([{}, {}, {}])
   assert.equal(tl.frameAt(2), 2)
 })
@@ -51,8 +58,8 @@ test('cookProgram surfaces timelineRows from a defined timeline view', () => {
   const code = `
     define("base", () => rows([{ id: "s", type: "create", index: 0, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
-    define("scene", () => table("base").rasterize(120))
-    define("timeline", () => math(i => i % 30).range(120).map(r => ({ frame: r.value })))
+    define("scene", () => table("base").rasterize(2))
+    define("timeline", () => math(t => t % 0.5).range(2).map(r => ({ time: r.value })))
   `
   const cooked = cookProgram(rt, code, 1)
   assert.equal(cooked.timelineRows.length, 120)

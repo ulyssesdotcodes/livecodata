@@ -4,8 +4,9 @@ import { createRuntime } from '../src/runtime.js'
 
 test('cooks defined views and resolves table() dependencies', () => {
   const rt = createRuntime()
+  // range(4/60) generates exactly 4 rows at 60 fps; t*60 converts seconds → frame index.
   const code = `
-    define("nums", () => math(i => i).range(4))
+    define("nums", () => math(t => t * 60).range(4/60))
     define("doubled", (rand, table) => table("nums").map(r => ({ index: r.index, value: r.value * 2 })))
   `
   const { views } = rt.run(code, { seed: 1 })
@@ -79,7 +80,8 @@ test('save() registers a constant view, still resolvable by table()', () => {
 
 test('graph specs are resolved to their cooked tables', () => {
   const rt = createRuntime()
-  const code = `define("g", () => math(i => i).range(3).graph("value"))`
+  // range(3/60) generates exactly 3 rows (3 frames at 60 fps).
+  const code = `define("g", () => math(t => t).range(3/60).graph("value"))`
   const { graphs } = rt.run(code, { seed: 1 })
   assert.equal(graphs.length, 1)
   assert.deepEqual(graphs[0].columns, ['value'])

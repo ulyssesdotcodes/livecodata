@@ -11,11 +11,14 @@
 //   color   — { id, type:"color",  index, color, dur?, ease?, to? }  (pulse/step)
 //   destroy — { id, type:"destroy", index }
 //
+// All timing fields (`index`, `dur`) are in **seconds**. Rasterization bakes at
+// FPS (60) internally — one output frame per 1/60s.
+//
 // Color is a "newest wins" pulse: at any frame the latest color event at/before
 // it owns the color, so overlapping triggers never fight. A bare color event is
 // a step change; one with a `dur` is a pulse that eases (via its `ease` curve)
 // from `color` back to a base (`to`, else the object's create color) over `dur`
-// frames — after which it rests on the base until a newer pulse takes over.
+// seconds — after which it rests on the base until a newer pulse takes over.
 //
 // Output cache rows (dense):
 //   { frame, id, shape, px,py,pz, rx,ry,rz, color }
@@ -26,10 +29,20 @@
 import { withLineage, unionLineage } from './lineage.js'
 import { mixColor } from './color.js'
 
+const FPS = 60 // bake resolution: one output frame per 1/FPS seconds
+
 function lerp(a, b, t) { return a + (b - a) * t }
 
 // An event is a movement keyframe (carries position) when it has numeric px.
 function hasPosition(e) { return typeof e.px === 'number' }
+
+// Convert an event row's second-based timing fields to integer frame indices.
+function toFrameEvent(e) {
+  const ev = { ...e }
+  if (ev.index != null) ev.index = Math.round(ev.index * FPS)
+  if (ev.dur != null) ev.dur = ev.dur * FPS
+  return ev
+}
 
 function buildTimelines(events) {
   const map = new Map()
@@ -94,14 +107,15 @@ function sampleObject(events, i) {
   return { shape: createEv.shape, pos, rot, color, sources }
 }
 
-// Bake event rows into a dense frame cache. `maxFrame` sets the timeline length
-// (frames 0..maxFrame inclusive); when omitted it is inferred from the largest
-// event index. One output row per alive object per frame.
-export function rasterizeRows(eventRows, maxFrame) {
-  const events = eventRows ?? []
+// Bake event rows into a dense frame cache. `maxSeconds` sets the timeline
+// length (frames 0..round(maxSeconds*FPS) inclusive); when omitted it is
+// inferred from the largest event index. One output row per alive object per
+// frame. Event `index` and `dur` fields are in seconds.
+export function rasterizeRows(eventRows, maxSeconds) {
+  const events = (eventRows ?? []).map(toFrameEvent)
   const timelines = buildTimelines(events)
-  const max = maxFrame != null
-    ? Math.max(0, Math.round(maxFrame))
+  const max = maxSeconds != null
+    ? Math.max(0, Math.round(maxSeconds * FPS))
     : events.reduce((m, e) => Math.max(m, e.index ?? 0), 0)
 
   const out = []

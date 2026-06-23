@@ -15,14 +15,14 @@
 //   h         cylinder/cone half-height
 //   restitution, friction     per-body surface props
 //
-// simulate() steps the world `steps` frames (one frame == one row index, like
-// everything else here) and APPENDS to the table:
+// simulate() steps the world `steps` frames and APPENDS to the table:
 //   * an "update" row per dynamic/kinematic body per sampled frame, carrying the
 //     baked px,py,pz / rx,ry,rz the playback clock interpolates between, and
 //   * a "collision" row each time two bodies first touch — { id, other, index,
 //     cx,cy,cz } at the world-space contact point. (Contact points use cx,cy,cz
 //     rather than px,py,pz so playback never mistakes them for movement
 //     keyframes.)
+// All `index` values are in **seconds** (frame / fps), matching the DSL convention.
 //
 // The Jolt asm.js build loads asynchronously, so initPhysics() is the async door
 // in; the engine it returns runs each simulate() synchronously during a cook.
@@ -229,8 +229,8 @@ export function simulateScene(Jolt, baseRows, opts = {}) {
       if (idA == null || idB == null) return
       const p = manifold.GetWorldSpaceContactPointOn1(0)
       const cx = p.GetX(), cy = p.GetY(), cz = p.GetZ()
-      collisionRows.push({ id: idA, type: 'collision', index: frame, other: idB, cx, cy, cz })
-      collisionRows.push({ id: idB, type: 'collision', index: frame, other: idA, cx, cy, cz })
+      collisionRows.push({ id: idA, type: 'collision', index: frame / fps, other: idB, cx, cy, cz })
+      collisionRows.push({ id: idB, type: 'collision', index: frame / fps, other: idA, cx, cy, cz })
     }
     listener.OnContactPersisted = () => {}
     listener.OnContactRemoved = () => {}
@@ -249,7 +249,7 @@ export function simulateScene(Jolt, baseRows, opts = {}) {
       const r = bodyInterface.GetRotation(bodyId)
       const e = quatToEuler(r.GetX(), r.GetY(), r.GetZ(), r.GetW())
       updateRows.push({
-        id, type: 'update', index: frame,
+        id, type: 'update', index: frame / fps,
         px: p.GetX(), py: p.GetY(), pz: p.GetZ(),
         rx: e.rx, ry: e.ry, rz: e.rz,
       })
