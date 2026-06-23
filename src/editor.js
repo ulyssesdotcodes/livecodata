@@ -1,8 +1,9 @@
 import { EditorView, basicSetup } from 'codemirror'
 import { javascript, javascriptLanguage } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { keymap } from '@codemirror/view'
+import { keymap, hoverTooltip } from '@codemirror/view'
 import { Prec } from '@codemirror/state'
+import { buildTablePreview } from './preview.js'
 
 // Completed by the editor. Builtins are the DSL surface (createDSL in dsl.js);
 // methods are Table/builder methods offered after a dot. Kept in sync by hand.
@@ -114,6 +115,26 @@ define("scene", () => table("events").rasterize(360))
 // define("timeline", () => math(i => 359 - i).range(360).map(r => ({ frame: r.value })))
 `
 
+// A hover tooltip: hovering a "name" string that matches a cooked view pops an
+// inline preview (sparkline + first rows) of that table. `getViews` supplies the
+// live views from the last cook.
+function dslHover(getViews) {
+  return hoverTooltip((view, pos) => {
+    const line = view.state.doc.lineAt(pos)
+    const re = /"([^"]+)"/g
+    let m
+    while ((m = re.exec(line.text))) {
+      const start = line.from + m.index
+      const end = start + m[0].length
+      if (pos < start || pos > end) continue
+      const table = (getViews?.() ?? new Map()).get(m[1])
+      if (!table) return null
+      return { pos: start, end, above: true, create: () => ({ dom: buildTablePreview(table) }) }
+    }
+    return null
+  })
+}
+
 export function initEditor(parent, { onRun, getViews, onCaretView } = {}) {
   parent.innerHTML = ''
 
@@ -175,6 +196,8 @@ export function initEditor(parent, { onRun, getViews, onCaretView } = {}) {
           onCaretView(name)
         }
       }),
+      // Hover a "view" string to preview its table (sparkline + first rows).
+      dslHover(getViews),
       oneDark,
       Prec.highest(keymap.of([
         { key: 'Mod-Enter', run: () => { run(); return true } },
