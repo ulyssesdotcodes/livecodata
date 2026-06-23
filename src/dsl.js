@@ -41,6 +41,27 @@
 import { rasterizeRows } from './rasterize.js'
 import { withLineage, carry, unionLineage } from './lineage.js'
 
+// ── Row helpers ─────────────────────────────────────────────────────────────
+// Every transform clones each row (so views never share row objects) and threads
+// lineage onto the result. Capturing that once here keeps the verbs below
+// declarative — they say what they produce, not how to copy and tag it.
+
+// Clone a row and stamp `refs` as its lineage.
+const tag = (row, refs) => withLineage({ ...row }, refs)
+
+// Clone a row, carrying its own lineage forward — the default for transforms that
+// reshape or reorder rows without changing where they came from.
+const recarry = (row) => tag(row, carry(row))
+
+// Normalize an emit result — a row, an array of rows, or null/undefined — into a
+// flat array of cloned rows each stamped with `refs`. The shared shape behind
+// filterMap / scan / trigger / triggerEach: "for this source, emit these rows".
+const spread = (res, refs) =>
+  res == null ? [] : (Array.isArray(res) ? res : [res]).map((e) => tag(e, refs))
+
+// The rows of a Table, a bare array, or nothing — for verbs that accept either.
+const rowsOf = (x) => (x instanceof Table ? x.rows : x ?? [])
+
 export class Table {
   constructor(rows = [], ctx = null) {
     this.rows = rows
@@ -67,43 +88,39 @@ export class Table {
     return seen
   }
 
+  // Build a sibling Table sharing this one's engine context. Every transform
+  // funnels through here, so the row-cloning + lineage rules live in one place
+  // (the row helpers above) rather than being respelled in each verb.
+  _wrap(rows) {
+    return new Table(rows, this._ctx)
+  }
+
   // Transforms clone each row (so views never share row objects) and thread the
-  // source row's lineage onto the result — see lineage.js.
+  // source row's lineage onto the result — see the row helpers above.
 
   map(fn) {
-    return new Table(this.rows.map((r, i) => withLineage({ ...fn(r, i) }, carry(r))), this._ctx)
+    return this._wrap(this.rows.map((r, i) => tag(fn(r, i), carry(r))))
   }
 
   filter(fn) {
-    const out = []
-    this.rows.forEach((r, i) => { if (fn(r, i)) out.push(withLineage({ ...r }, carry(r))) })
-    return new Table(out, this._ctx)
+    return this._wrap(this.rows.filter((r, i) => fn(r, i)).map(recarry))
   }
 
   // filter + flatMap in one pass: fn(row, i, rows) returns a row, an array of
   // rows, or null/undefined to drop it. Returns a new Table of everything kept.
   // The workhorse for deriving one event stream from another — e.g. turning each
-  // "create" in a base scene into a flash event per trigger.
+  // "create" in a base scene into a flash event per trigger. Emitted rows inherit
+  // the source row's lineage.
   filterMap(fn) {
-    const out = []
-    this.rows.forEach((r, i) => {
-      const res = fn(r, i, this.rows)
-      if (res == null) return
-      // Emitted rows are derived from `r`, so they inherit its lineage.
-      if (Array.isArray(res)) res.forEach((e) => out.push(withLineage({ ...e }, carry(r))))
-      else out.push(withLineage({ ...res }, carry(r)))
-    })
-    return new Table(out, this._ctx)
+    return this._wrap(this.rows.flatMap((r, i) => spread(fn(r, i, this.rows), carry(r))))
   }
 
   concat(other) {
-    const otherRows = other instanceof Table ? other.rows : (other ?? [])
-    const all = [...this.rows, ...otherRows].map((r) => withLineage({ ...r }, carry(r)))
-    return new Table(all, this._ctx)
+    return this._wrap([...this.rows, ...rowsOf(other)].map(recarry))
   }
 
   slice(start, end) {
-    return new Table(this.rows.slice(start, end).map((r) => withLineage({ ...r }, carry(r))), this._ctx)
+    return this._wrap(this.rows.slice(start, end).map(recarry))
   }
 
   // Left fold over the rows, exactly like Array.reduce. The callback gets
@@ -124,17 +141,14 @@ export class Table {
   scan(fn, initialState) {
     const out = []
     let state = initialState
-    for (let i = 0; i < this.rows.length; i++) {
-      const cur = this.rows[i]
+    this.rows.forEach((cur, i) => {
       const res = fn(state, cur, i, this.rows)
-      if (res == null) continue
+      if (res == null) return
       if ('state' in res) state = res.state
-      const emit = res.emit
       // Emitted rows are caused by `cur`, so they inherit its lineage.
-      if (Array.isArray(emit)) emit.forEach((e) => out.push(withLineage({ ...e }, carry(cur))))
-      else if (emit != null) out.push(withLineage({ ...emit }, carry(cur)))
-    }
-    return new Table(out, this._ctx)
+      out.push(...spread(res.emit, carry(cur)))
+    })
+    return this._wrap(out)
   }
 
   // ── Combine datasets ──────────────────────────────────────────────────────
@@ -144,34 +158,33 @@ export class Table {
   // { ...left, ...right } row per matching pair; lineage is the union of both, so
   // a joined row traces back to its source rows on either side.
   join(other, on) {
-    const otherRows = other instanceof Table ? other.rows : (other ?? [])
     const leftOf = typeof on === 'function' ? on : (r) => r[typeof on === 'object' ? on.left : on]
     const rightOf = typeof on === 'function' ? on : (r) => r[typeof on === 'object' ? on.right : on]
     const index = new Map()
-    for (const r of otherRows) {
+    for (const r of rowsOf(other)) {
       const k = rightOf(r)
       if (!index.has(k)) index.set(k, [])
       index.get(k).push(r)
     }
     const out = []
     for (const l of this.rows) {
-      const matches = index.get(leftOf(l))
-      if (!matches) continue
-      for (const r of matches) out.push(withLineage({ ...l, ...r }, unionLineage([l, r])))
+      for (const r of index.get(leftOf(l)) ?? []) {
+        out.push(withLineage({ ...l, ...r }, unionLineage([l, r])))
+      }
     }
-    return new Table(out, this._ctx)
+    return this._wrap(out)
   }
 
   // Positional join: pair row i of each table, merging fields ({ ...left, ...right }),
   // stopping at the shorter. Handy for combining frame-aligned series.
   zip(other) {
-    const otherRows = other instanceof Table ? other.rows : (other ?? [])
+    const otherRows = rowsOf(other)
     const n = Math.min(this.rows.length, otherRows.length)
     const out = []
     for (let i = 0; i < n; i++) {
       out.push(withLineage({ ...this.rows[i], ...otherRows[i] }, unionLineage([this.rows[i], otherRows[i]])))
     }
-    return new Table(out, this._ctx)
+    return this._wrap(out)
   }
 
   // ── Reshape / derive ──────────────────────────────────────────────────────
@@ -184,17 +197,17 @@ export class Table {
       const av = accessor(a), bv = accessor(b)
       return av < bv ? -sign : av > bv ? sign : 0
     })
-    return new Table(sorted.map((r) => withLineage({ ...r }, carry(r))), this._ctx)
+    return this._wrap(sorted.map(recarry))
   }
 
   // Add or overwrite columns. spec maps a field name to a value or a fn(row, i);
   // all other columns are kept. (Arquero's derive.) `assign` is an alias.
   derive(spec) {
-    return new Table(this.rows.map((r, i) => {
+    return this._wrap(this.rows.map((r, i) => {
       const next = { ...r }
       for (const k in spec) next[k] = typeof spec[k] === 'function' ? spec[k](r, i) : spec[k]
       return withLineage(next, carry(r))
-    }), this._ctx)
+    }))
   }
 
   assign(spec) { return this.derive(spec) }
@@ -202,8 +215,8 @@ export class Table {
   // Derive ONE output field from ONE source field: row[dst] = fn(row[src], row, i),
   // keeping every other column. The focused form of derive.
   mapField(src, dst, fn) {
-    return new Table(this.rows.map((r, i) =>
-      withLineage({ ...r, [dst]: fn(r[src], r, i) }, carry(r))), this._ctx)
+    return this._wrap(this.rows.map((r, i) =>
+      withLineage({ ...r, [dst]: fn(r[src], r, i) }, carry(r))))
   }
 
   // Linearly remap a numeric field from an input range to an output range, into
@@ -211,17 +224,17 @@ export class Table {
   // workhorse for mapping a data value to a position, size, or hue.
   rescale(src, [inLo, inHi], [outLo, outHi], dst = src) {
     const span = (inHi - inLo) || 1
-    return new Table(this.rows.map((r) => {
+    return this._wrap(this.rows.map((r) => {
       const f = (r[src] - inLo) / span
       return withLineage({ ...r, [dst]: outLo + f * (outHi - outLo) }, carry(r))
-    }), this._ctx)
+    }))
   }
 
   // Add a column carrying `field`'s value from n rows earlier (null for the first n
   // rows) — compare against the past without the rows[i-1] dance.
   lag(field, n = 1, as = `${field}_lag`) {
-    return new Table(this.rows.map((r, i) =>
-      withLineage({ ...r, [as]: i >= n ? this.rows[i - n][field] : null }, carry(r))), this._ctx)
+    return this._wrap(this.rows.map((r, i) =>
+      withLineage({ ...r, [as]: i >= n ? this.rows[i - n][field] : null }, carry(r))))
   }
 
   // ── Group / aggregate ─────────────────────────────────────────────────────
@@ -240,7 +253,7 @@ export class Table {
       if (!groups.has(k)) groups.set(k, [])
       groups.get(k).push(r)
     }
-    const ctx = this._ctx
+    const wrap = (rows) => this._wrap(rows)
     return {
       agg(spec) {
         const out = []
@@ -249,7 +262,7 @@ export class Table {
           for (const f in spec) row[f] = spec[f](rs)
           out.push(withLineage(row, unionLineage(rs)))
         }
-        return new Table(out, ctx)
+        return wrap(out)
       },
       count(as = 'count') { return this.agg({ [as]: (rs) => rs.length }) },
     }
@@ -261,15 +274,8 @@ export class Table {
   // truthy, emit(cur, i, rows) returns a row, an array of rows, or null to skip.
   // Reads as "when X, do Y" — a named filterMap. Emitted rows inherit cur's lineage.
   trigger(predicate, emit) {
-    const out = []
-    this.rows.forEach((r, i) => {
-      if (!predicate(r, i, this.rows)) return
-      const res = emit(r, i, this.rows)
-      if (res == null) return
-      if (Array.isArray(res)) res.forEach((e) => out.push(withLineage({ ...e }, carry(r))))
-      else out.push(withLineage({ ...res }, carry(r)))
-    })
-    return new Table(out, this._ctx)
+    return this._wrap(this.rows.flatMap((r, i) =>
+      predicate(r, i, this.rows) ? spread(emit(r, i, this.rows), carry(r)) : []))
   }
 
   // On each row where predicate fires, fan out across `objects` (a Table or array):
@@ -277,17 +283,11 @@ export class Table {
   // wave crosses zero, do something to every sphere." Each emitted row's lineage is
   // the union of the trigger row and the object row, so it traces back to both.
   triggerEach(predicate, objects, make) {
-    const objRows = objects instanceof Table ? objects.rows : (objects ?? [])
-    const out = []
-    this.rows.forEach((cur, i) => {
-      if (!predicate(cur, i, this.rows)) return
-      objRows.forEach((o, k) => {
-        const res = make(o, cur, i, k)
-        if (res == null) return
-        out.push(withLineage({ ...res }, unionLineage([cur, o])))
-      })
-    })
-    return new Table(out, this._ctx)
+    const objRows = rowsOf(objects)
+    return this._wrap(this.rows.flatMap((cur, i) =>
+      predicate(cur, i, this.rows)
+        ? objRows.flatMap((o, k) => spread(make(o, cur, i, k), unionLineage([cur, o])))
+        : []))
   }
 
   // Detect crossings of a numeric `field` past `level` (default 0): emit each row
@@ -302,7 +302,7 @@ export class Table {
         out.push(withLineage({ ...this.rows[i], dir: cur > 0 ? 1 : -1 }, carry(this.rows[i])))
       }
     }
-    return new Table(out, this._ctx)
+    return this._wrap(out)
   }
 
   // Bake this sparse event table into a dense, frame-indexed cache: one row per
@@ -310,7 +310,7 @@ export class Table {
   // stepped (see rasterize.js). This is the table playback indexes into.
   // `maxFrame` sets the timeline length; omit it to infer from the max index.
   rasterize(maxFrame) {
-    return new Table(rasterizeRows(this.rows, maxFrame), this._ctx)
+    return this._wrap(rasterizeRows(this.rows, maxFrame))
   }
 
   // Queue this table to be drawn on the graph panel. The named columns become
