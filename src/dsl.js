@@ -80,10 +80,11 @@ export class Table {
     this.rows.forEach((r, i) => {
       const res = fn(r, i, this.rows)
       if (res == null) return
-      if (Array.isArray(res)) out.push(...res)
-      else out.push(res)
+      // Emitted rows are derived from `r`, so they inherit its lineage.
+      if (Array.isArray(res)) res.forEach((e) => out.push(withLineage({ ...e }, carry(r))))
+      else out.push(withLineage({ ...res }, carry(r)))
     })
-    return new Table(out.map((r) => withLineage({ ...r }, carry(r))), this._ctx)
+    return new Table(out, this._ctx)
   }
 
   concat(other) {
@@ -94,16 +95,6 @@ export class Table {
 
   slice(start, end) {
     return new Table(this.rows.slice(start, end).map((r) => withLineage({ ...r }, carry(r))), this._ctx)
-  }
-
-  sortBy(key) {
-    const accessor = typeof key === 'function' ? key : (r) => r[key]
-    const sorted = [...this.rows].sort((a, b) => {
-      const av = accessor(a)
-      const bv = accessor(b)
-      return av < bv ? -1 : av > bv ? 1 : 0
-    })
-    return new Table(sorted.map((r) => withLineage({ ...r }, carry(r))), this._ctx)
   }
 
   // Left fold over the rows, exactly like Array.reduce. The callback gets

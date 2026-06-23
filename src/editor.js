@@ -21,8 +21,10 @@ define("randsin", (rand) =>
     .graph("value")
 )
 
-// 2. The base scene: a GRID x GRID lattice of spheres centred on the origin.
-define("base", () =>
+// 2. The base scene: a GRID x GRID lattice of spheres. The "events" 3rd arg tags
+//    it into a group — the engine merges every member into an index-sorted
+//    "events" table for free, so there's no manual concat/sort below.
+define("base", "events", () =>
   rows(Array.from({ length: COUNT }, (_, k) => ({
     id: "s" + k, type: "create", index: 0, shape: "sphere", color: 0x4a9eff,
     px: ((k % GRID) - (GRID - 1) / 2) * 0.7, py: 0,
@@ -32,37 +34,32 @@ define("base", () =>
 )
 
 // 3. Each zero-crossing of the wave fires a flash that ripples across the grid.
-//    A pulse is ONE self-contained event: it flashes to `color`, then `ease`s
-//    back to the sphere's base over `dur` frames. Overlapping pulses don't fight
-//    — at any frame the newest pulse wins — so this stays correct no matter how
-//    densely the crossings land. table("randsin") records the dependency.
-define("events", (rand, table) =>
-  table("randsin")
-    .scan((state, cur) => {
-      const crossed = state.prev != null && cur.value * state.prev < 0
-      return {
-        state: { prev: cur.value },
-        emit: crossed
-          ? Array.from({ length: COUNT }, (_, k) => ({
-              id: "s" + k, type: "color",
-              index: cur.index + (k % GRID + Math.floor(k / GRID)) * 2, // diagonal ripple
-              color: 0xff5577, dur: 36, ease: easeOut,
-            }))
-          : null,
-      }
-    }, { prev: null })
-    .concat(table("base"))
-    .sortBy("index")
-)
+//    A pulse is ONE event: it flashes to its color, then eases back to the
+//    sphere's base over "dur" frames (on overlap, the newest pulse wins). The
+//    objects come from "base" (filterMap keeps its creates; the row index k
+//    gives each a diagonal ripple delay), but the pulses are emitted from
+//    "randsin" — so each traces back, through lineage, to the sample that fired
+//    it. Tagged into "events" too.
+define("flash", "events", (rand, table) => {
+  const objects = table("base").filterMap((o, k) =>
+    o.type === "create" ? { id: o.id, ripple: (k % GRID + Math.floor(k / GRID)) * 2 } : null
+  )
+  return table("randsin").filterMap((cur, i, rows) =>
+    i > 0 && cur.value * rows[i - 1].value < 0
+      ? objects.rows.map(o => ({
+          id: o.id, type: "color", index: cur.index + o.ripple,
+          color: 0xff5577, dur: 36, ease: easeOut,
+        }))
+      : null
+  )
+})
 
-// 4. The frame cache: bake the sparse events into dense per-frame world state
-//    (one row per object per frame), with color eased per the pulses above.
-//    Playback indexes straight into this.
-define("scene", (rand, table) => table("events").rasterize(360))
+// 4. The frame cache: bake the sparse "events" into dense per-frame world state
+//    (one row per object per frame). Playback indexes straight into this.
+define("scene", () => table("events").rasterize(360))
 
 // 5. (Optional) The timeline is data too: map each playback tick to a source
-//    cache frame. Uncomment to loop the first 60 frames, or reverse time — the
-//    table/graph cursor follows the *source* frame either way.
+//    cache frame. Uncomment to loop the first 60 frames, or reverse time.
 // define("timeline", () => math(i => i % 60).range(360).map(r => ({ frame: r.value })))
 // define("timeline", () => math(i => 359 - i).range(360).map(r => ({ frame: r.value })))
 `

@@ -40,7 +40,7 @@ html, body {
   }
 
   #side-panels {
-    flex: 0 0 380px;
+    flex: 0 0 33%;
     height: 100%;
     border-top: none;
     border-left: 1px solid #0f3460;
