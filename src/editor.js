@@ -1,8 +1,58 @@
 import { EditorView, basicSetup } from 'codemirror'
-import { javascript } from '@codemirror/lang-javascript'
+import { javascript, javascriptLanguage } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { keymap } from '@codemirror/view'
 import { Prec } from '@codemirror/state'
+
+// Completed by the editor. Builtins are the DSL surface (createDSL in dsl.js);
+// methods are Table/builder methods offered after a dot. Kept in sync by hand.
+const DSL_BUILTINS = ['define', 'table', 'math', 'rows', 'csv', 'json', 'grid',
+  'linear', 'easeIn', 'easeOut', 'easeInOut']
+const TABLE_METHODS = ['map', 'filter', 'filterMap', 'concat', 'slice', 'fold', 'scan',
+  'join', 'zip', 'orderBy', 'derive', 'assign', 'mapField', 'rescale', 'lag',
+  'groupBy', 'agg', 'count', 'trigger', 'triggerEach', 'crossings',
+  'range', 'rasterize', 'graph', 'save']
+
+// Which view's define(...) block the caret sits in: the latest define("X" whose
+// header starts at or before pos (define()s are top-level and sequential).
+function viewAtPos(text, pos) {
+  const re = /\bdefine\(\s*"([^"]+)"/g
+  let m
+  let name = null
+  while ((m = re.exec(text))) {
+    if (m.index <= pos) name = m[1]
+    else break
+  }
+  return name
+}
+
+// A completion source for the DSL: defined view names inside table("…")/define("…"),
+// Table methods after a dot, and builtins otherwise. `getViews` returns the live
+// Map of cooked views, so view-name completion reflects the last run.
+function dslCompletions(getViews) {
+  return (context) => {
+    // Inside a table("…") / define("…") string → complete defined view names.
+    if (context.matchBefore(/\b(?:table|define)\(\s*"[^"]*/)) {
+      const open = context.matchBefore(/"[^"]*/)
+      const names = [...(getViews?.() ?? new Map()).keys()]
+      if (!names.length) return null
+      return {
+        from: open ? open.from + 1 : context.pos,
+        options: names.map((n) => ({ label: n, type: 'variable' })),
+        validFor: /^[^"]*$/,
+      }
+    }
+    // After a dot → Table / builder methods.
+    const dot = context.matchBefore(/\.\w*/)
+    if (dot) {
+      return { from: dot.from + 1, options: TABLE_METHODS.map((label) => ({ label, type: 'method' })), validFor: /^\w*$/ }
+    }
+    // Otherwise → DSL builtins (only while typing a word, or on explicit request).
+    const word = context.matchBefore(/\w+/)
+    if (!word && !context.explicit) return null
+    return { from: word ? word.from : context.pos, options: DSL_BUILTINS.map((label) => ({ label, type: 'function' })), validFor: /^\w*$/ }
+  }
+}
 
 const initialDoc = `// livecodata — define tables as views; the engine cooks them each run.
 // Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
@@ -64,7 +114,7 @@ define("scene", () => table("events").rasterize(360))
 // define("timeline", () => math(i => 359 - i).range(360).map(r => ({ frame: r.value })))
 `
 
-export function initEditor(parent, { onRun } = {}) {
+export function initEditor(parent, { onRun, getViews, onCaretView } = {}) {
   parent.innerHTML = ''
 
   const header = document.createElement('div')
@@ -105,11 +155,26 @@ export function initEditor(parent, { onRun } = {}) {
     onRun?.(view.state.doc.toString(), { setError })
   }
 
+  // The view whose define() block the caret last sat in — debounces panel sync.
+  let lastCaretView = null
+
   const view = new EditorView({
     doc: initialDoc,
     extensions: [
       basicSetup,
       javascript(),
+      // DSL autocomplete (view names / Table methods / builtins). Added as a JS
+      // language-data source so basicSetup's autocompletion picks it up.
+      javascriptLanguage.data.of({ autocomplete: dslCompletions(getViews) }),
+      // Caret → panel link: select the table for the define() block being edited.
+      EditorView.updateListener.of((u) => {
+        if (!onCaretView || !(u.selectionSet || u.docChanged)) return
+        const name = viewAtPos(u.state.doc.toString(), u.state.selection.main.head)
+        if (name && name !== lastCaretView) {
+          lastCaretView = name
+          onCaretView(name)
+        }
+      }),
       oneDark,
       Prec.highest(keymap.of([
         { key: 'Mod-Enter', run: () => { run(); return true } },

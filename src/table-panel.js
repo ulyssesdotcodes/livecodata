@@ -102,6 +102,12 @@ export function initTablePanel(container) {
   }
 
   return {
+    // Programmatically select a table's tab — driven by the editor caret so the
+    // panel shows whichever view's define(...) block you're editing.
+    selectTable(name) {
+      if (name != null && store.has(name) && name !== current) render(name)
+    },
+
     // Rebuild the dropdown from the store and render a sensible default.
     setTables(newStore) {
       store = newStore
