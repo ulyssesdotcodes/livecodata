@@ -17,6 +17,8 @@
 // render time.
 // ----------------------------------------------------------------------------
 
+import { withLineage, unionLineage } from './lineage.js'
+
 function lerp(a, b, t) { return a + (b - a) * t }
 
 // An event is a movement keyframe (carries position) when it has numeric px.
@@ -62,11 +64,14 @@ function sampleObject(events, i) {
   }
 
   let color = null
+  let colorEv = null
   for (const e of events) {
-    if (e.index <= i && e.color != null) color = e.color
+    if (e.index <= i && e.color != null) { color = e.color; colorEv = e }
   }
 
-  return { shape: createEv.shape, pos, rot, color }
+  // The events actually contributing to this frame's state — its provenance.
+  const sources = [createEv, from, to, colorEv].filter(Boolean)
+  return { shape: createEv.shape, pos, rot, color, sources }
 }
 
 // Bake event rows into a dense frame cache. `maxFrame` sets the timeline length
@@ -84,12 +89,12 @@ export function rasterizeRows(eventRows, maxFrame) {
     for (const evs of timelines.values()) {
       const s = sampleObject(evs, frame)
       if (!s) continue
-      out.push({
+      out.push(withLineage({
         frame, id: evs[0].id, shape: s.shape,
         px: s.pos.x, py: s.pos.y, pz: s.pos.z,
         rx: s.rot.x, ry: s.rot.y, rz: s.rot.z,
         color: s.color,
-      })
+      }, unionLineage(s.sources)))
     }
   }
   return out
