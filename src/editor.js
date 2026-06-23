@@ -57,11 +57,12 @@ function dslCompletions(getViews) {
 
 const initialDoc = `// livecodata — define tables as views; the engine cooks them each run.
 // Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
+// Tips: Ctrl-Space completes views & Table verbs; hover a "view" name to preview
+// its table; your caret selects that view's tab on the right.
 
 // A grid of spheres. Bump GRID to stress-test playback (GRID*GRID objects,
 // each baked into every frame of the dense cache).
 const GRID = 10
-const COUNT = GRID * GRID
 
 // 1. A noisy sine wave: one row per frame, 360 frames (~6s at 60fps).
 //    rand is a seeded per-view PRNG, so replaying a session reproduces it exactly.
@@ -72,38 +73,34 @@ define("randsin", (rand) =>
     .graph("value")
 )
 
-// 2. The base scene: a GRID x GRID lattice of spheres. The "events" 3rd arg tags
-//    it into a group — the engine merges every member into an index-sorted
-//    "events" table for free, so there's no manual concat/sort below.
+// 2. The base scene: grid() lays out a GRID x GRID lattice (rows carry px/pz/col/
+//    row); derive() turns each cell into a "create" event. The "events" 3rd arg
+//    tags it into a group the engine merges (index-sorted) for free. "ripple"
+//    gives each sphere a diagonal delay used by the flash below.
 define("base", "events", () =>
-  rows(Array.from({ length: COUNT }, (_, k) => ({
-    id: "s" + k, type: "create", index: 0, shape: "sphere", color: 0x4a9eff,
-    px: ((k % GRID) - (GRID - 1) / 2) * 0.7, py: 0,
-    pz: (Math.floor(k / GRID) - (GRID - 1) / 2) * 0.7,
-    rx: 0, ry: 0, rz: 0,
-  })))
+  grid(GRID, GRID).derive({
+    id: r => "s" + r.i, type: "create", index: 0, shape: "sphere", color: 0x4a9eff,
+    rx: 0, ry: 0, rz: 0, ripple: r => (r.col + r.row) * 2,
+  })
 )
 
-// 3. Each zero-crossing of the wave fires a flash that ripples across the grid.
-//    A pulse is ONE event: it flashes to its color, then eases back to the
-//    sphere's base over "dur" frames (on overlap, the newest pulse wins). The
-//    objects come from "base" (filterMap keeps its creates; the row index k
-//    gives each a diagonal ripple delay), but the pulses are emitted from
-//    "randsin" — so each traces back, through lineage, to the sample that fired
-//    it. Tagged into "events" too.
-define("flash", "events", (rand, table) => {
-  const objects = table("base").filterMap((o, k) =>
-    o.type === "create" ? { id: o.id, ripple: (k % GRID + Math.floor(k / GRID)) * 2 } : null
+// 3. Each zero-crossing of the wave flashes every sphere. triggerEach fires when
+//    the predicate is true (the wave crosses zero) and fans the event out across
+//    base's objects — one pulse each, with the sphere's "ripple" delay. A pulse
+//    flashes then eases back over "dur" frames (newest wins). Lineage threads
+//    through the fan-out, so each flash traces back to the sample that fired it
+//    AND its sphere — watch the graph/table light up during playback.
+//    (Sugar: table("randsin").crossings("value") gives the crossings directly.)
+define("flash", "events", (rand, table) =>
+  table("randsin").triggerEach(
+    (cur, i, rows) => i > 0 && cur.value * rows[i - 1].value < 0,
+    table("base"),
+    (o, cur) => ({
+      id: o.id, type: "color", index: cur.index + o.ripple,
+      color: 0xff5577, dur: 36, ease: easeOut,
+    })
   )
-  return table("randsin").filterMap((cur, i, rows) =>
-    i > 0 && cur.value * rows[i - 1].value < 0
-      ? objects.rows.map(o => ({
-          id: o.id, type: "color", index: cur.index + o.ripple,
-          color: 0xff5577, dur: 36, ease: easeOut,
-        }))
-      : null
-  )
-})
+)
 
 // 4. The frame cache: bake the sparse "events" into dense per-frame world state
 //    (one row per object per frame). Playback indexes straight into this.
