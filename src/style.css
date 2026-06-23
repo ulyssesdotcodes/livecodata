@@ -512,9 +512,26 @@ html, body {
 }
 
 .cm-preview-spark-label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 10px;
   font-size: 10px;
   color: #607a96;
   margin: 2px 0 6px;
+}
+
+.cm-preview-series {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cm-preview-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
 }
 
 .cm-preview-table {
