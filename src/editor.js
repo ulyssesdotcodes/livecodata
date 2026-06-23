@@ -4,39 +4,43 @@ import { oneDark } from '@codemirror/theme-one-dark'
 import { keymap } from '@codemirror/view'
 import { Prec } from '@codemirror/state'
 
-const initialDoc = `// livecodata — generate tables, drive visuals.
+const initialDoc = `// livecodata — define tables as views; the engine cooks them each run.
 // Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 
 // 1. A noisy sine wave: one row per frame, 360 frames (~6s at 60fps).
+//    rand is a seeded per-view PRNG, so replaying a session reproduces it exactly.
 //    Each row is { index, value }; .graph plots value against the index.
-math(i => Math.sin(i * Math.PI / 15) + (Math.random() * 0.5 - 0.25))
-  .range(360)
-  .save("randsin")
-  .graph("value")
+define("randsin", (rand) =>
+  math(i => Math.sin(i * Math.PI / 15) + (rand() * 0.5 - 0.25))
+    .range(360)
+    .graph("value")
+)
 
-// 2. A base scene: a single sphere sitting at the origin.
-rows([
-  { id: "sphere1", type: "create", index: 0, shape: "sphere", color: 0x4a9eff,
-    px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
-]).save("base")
+// 2. The base scene: object-creation events. The "events" 3rd arg tags this view
+//    into a group — the engine merges every member into an index-sorted "events"
+//    table for free, so there's no manual concat/sort below.
+define("base", "events", () =>
+  rows([
+    { id: "sphere1", type: "create", index: 0, shape: "sphere", color: 0x4a9eff,
+      px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
+  ])
+)
 
-// 3. Whenever the wave crosses zero, flash the sphere white, then back.
-//    scan threads state (the previous value) and emits rows as it folds,
-//    so it stays chainable — no need to wrap the result in rows(...).
-table("randsin")
-  .scan((state, cur) => {
-    const crossed = state.prev != null && cur.value * state.prev < 0
-    return {
-      state: { prev: cur.value },
-      emit: crossed ? [
-        { id: "sphere1", type: "color", index: cur.index,     color: 0xffffff },
-        { id: "sphere1", type: "color", index: cur.index + 4, color: 0x4a9eff },
-      ] : null,
-    }
-  }, { prev: null })
-  .concat(table("base"))
-  .sortBy("index")
-  .save("events")
+// 3. Flash every object white when the wave crosses zero, then back to its own
+//    color. Instead of hard-coding ids, derive the objects from "base":
+//    filterMap keeps the create events and maps each to a flash/restore pair per
+//    crossing. Also tagged into "events", so it merges with the creates above.
+define("flash_white", "events", (rand, table) => {
+  const crossings = table("randsin").filterMap((cur, i, rows) =>
+    i > 0 && cur.value * rows[i - 1].value < 0 ? { index: cur.index } : null
+  )
+  return table("base").filterMap(o =>
+    o.type !== "create" ? null : crossings.rows.flatMap(c => [
+      { id: o.id, type: "color", index: c.index,     color: 0xffffff },
+      { id: o.id, type: "color", index: c.index + 4, color: o.color },
+    ])
+  )
+})
 `
 
 export function initEditor(parent, { onRun } = {}) {

@@ -5,29 +5,26 @@
 // ordered by row index — each row is one ~1/60s frame. Every builder returns a
 // new Table, so everything chains.
 //
-// Surface:
+// Tables are no longer built-and-saved imperatively; they are *defined* as named
+// views and cooked by the engine (see runtime.js). The DSL itself is UI-agnostic:
+// it builds Tables and talks to the engine through a small `ctx` of hooks.
+//
+// Surface (injected into user code by the engine):
+//   define("name", (rand, table) => <Table>)  register a named view (cooked lazily)
+//   define("name", "group", (rand, table) => <Table>)  also tag the view into a
+//     group: the engine auto-creates a view named "group" that concatenates every
+//     member, index-sorted — so e.g. base creates + flash events merge into one
+//     "events" table with no manual concat/sort.
+//     rand()   seeded per-view PRNG in [0,1); deterministic per run + view name
+//     table()  dep-tracked resolver — records the dependency edge for this view
+//   table("name")                  resolve a view at top-level (no dep tracking)
 //   math(index => ...)             sample a function of the row index
 //     .range(count)                -> Table of { index, value }, count rows
 //   rows([ {...}, ... ])           wrap a literal array of rows in a Table
-//   table("name")                  look up a previously .save()'d table
 //
-//   Table.map(fn)                  map rows -> rows
-//   Table.filter(fn)               keep rows where fn(row) is truthy
-//   Table.sortBy(key | fn)         stable-ish sort by column or accessor
-//   Table.concat(other)            append another table's rows
-//   Table.slice(start, end)        sub-range of rows
-//   Table.fold(fn, init)           left-fold over rows, like Array.reduce:
-//                                  fn(acc, current, index, rows) -> acc.
-//                                  Returns the bare accumulator (any type).
-//   Table.scan(fn, initState)      stateful, row-emitting fold that stays
-//                                  chainable. fn(state, current, index, rows)
-//                                  returns { state, emit } where emit is a row,
-//                                  an array of rows, or null. Returns a new
-//                                  Table of everything emitted.
-//   Table.graph(...columns)        render this table to the graph panel, using
-//                                  the named columns as y-series (x is index).
-//                                  With no args, plots every numeric column.
-//   Table.save("name")             register in the store and return self
+//   Table.map / filter / filterMap / concat / slice / fold / scan   transforms
+//   Table.graph(...columns)        render this table to the graph panel
+//   Table.save("name")             sugar for define("name", () => this)
 // ----------------------------------------------------------------------------
 
 export class Table {
@@ -64,14 +61,19 @@ export class Table {
     return new Table(this.rows.filter((r, i) => fn(r, i)), this._ctx)
   }
 
-  sortBy(key) {
-    const accessor = typeof key === 'function' ? key : (r) => r[key]
-    const sorted = [...this.rows].sort((a, b) => {
-      const av = accessor(a)
-      const bv = accessor(b)
-      return av < bv ? -1 : av > bv ? 1 : 0
+  // filter + flatMap in one pass: fn(row, i, rows) returns a row, an array of
+  // rows, or null/undefined to drop it. Returns a new Table of everything kept.
+  // The workhorse for deriving one event stream from another — e.g. turning each
+  // "create" in a base scene into a flash event per trigger.
+  filterMap(fn) {
+    const out = []
+    this.rows.forEach((r, i) => {
+      const res = fn(r, i, this.rows)
+      if (res == null) return
+      if (Array.isArray(res)) out.push(...res)
+      else out.push(res)
     })
-    return new Table(sorted, this._ctx)
+    return new Table(out, this._ctx)
   }
 
   concat(other) {
@@ -85,9 +87,7 @@ export class Table {
 
   // Left fold over the rows, exactly like Array.reduce. The callback gets
   // (accumulator, current, index, rows), so the previous row is rows[index-1].
-  // This is the general primitive behind the table-driven idea: fold a value
-  // table down to anything — an event table, a sum, a min/max, etc. Wrap an
-  // accumulated array of rows with rows(...) to get a chainable Table back.
+  // Returns the bare accumulator (any type).
   fold(fn, initial) {
     let acc = initial
     for (let i = 0; i < this.rows.length; i++) {
@@ -99,8 +99,7 @@ export class Table {
   // A stateful fold that emits rows as it goes and stays chainable. For each
   // row, fn(state, current, index, rows) returns { state, emit }: `state` is
   // threaded to the next call, `emit` (a row, array of rows, or null) is
-  // appended to the output. Returns a new Table of everything emitted — so
-  // unlike fold you don't need to wrap the result in rows(...).
+  // appended to the output. Returns a new Table of everything emitted.
   scan(fn, initialState) {
     const out = []
     let state = initialState
@@ -120,13 +119,15 @@ export class Table {
   // With no columns, every numeric column (besides `index`) is plotted.
   graph(...columns) {
     const cols = columns.flat().filter(Boolean)
-    if (this._ctx) this._ctx.graphs.push({ table: this, columns: cols })
+    this._ctx?.addGraph({ table: this, columns: cols })
     return this
   }
 
+  // Sugar for define("name", () => this): register this already-built table as
+  // a constant named view.
   save(name) {
     this.name = name
-    if (this._ctx) this._ctx.store.set(name, this)
+    this._ctx?.defineConst(name, this)
     return this
   }
 }
@@ -149,23 +150,20 @@ class MathBuilder {
   }
 }
 
-// Create an isolated DSL instance with its own table store and graph queue.
-// Returns { api, store, graphs } where `api` holds the functions injected into
-// user code, `store` is a Map<name, Table>, and `graphs` collects .graph() specs.
-export function createDSL() {
-  const ctx = { store: new Map(), graphs: [] }
-
-  const api = {
+// Build the DSL surface bound to an engine context. `ctx` provides the hooks the
+// builders need: defineLazy/defineConst (registration), resolve (look up another
+// view at the top level), and addGraph (queue a render spec).
+// rand and table inside views are injected per-cook by the engine, not from ctx.
+export function createDSL(ctx) {
+  return {
+    // define(name, fn) or define(name, group, fn). A 3-arg call tags the view
+    // into a named group (see runtime.js — the engine builds the group view).
+    define: (name, group, fn) =>
+      fn === undefined
+        ? ctx.defineLazy(name, group)
+        : ctx.defineLazy(name, fn, group),
+    table: (name) => ctx.resolve(name),
     math: (fn) => new MathBuilder(fn, ctx),
-
     rows: (arr) => new Table((arr ?? []).map((r) => ({ ...r })), ctx),
-
-    table: (name) => {
-      const t = ctx.store.get(name)
-      if (!t) throw new Error(`table("${name}") not found — did you .save("${name}") it first?`)
-      return t
-    },
   }
-
-  return { api, store: ctx.store, graphs: ctx.graphs }
 }
