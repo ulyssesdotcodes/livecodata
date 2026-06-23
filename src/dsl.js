@@ -27,6 +27,8 @@
 //   Table.save("name")             sugar for define("name", () => this)
 // ----------------------------------------------------------------------------
 
+import { rasterizeRows } from './rasterize.js'
+
 export class Table {
   constructor(rows = [], ctx = null) {
     this.rows = rows
@@ -112,6 +114,14 @@ export class Table {
       else if (emit != null) out.push(emit)
     }
     return new Table(out, this._ctx)
+  }
+
+  // Bake this sparse event table into a dense, frame-indexed cache: one row per
+  // alive object per frame, with position/rotation interpolated and color
+  // stepped (see rasterize.js). This is the table playback indexes into.
+  // `maxFrame` sets the timeline length; omit it to infer from the max index.
+  rasterize(maxFrame) {
+    return new Table(rasterizeRows(this.rows, maxFrame), this._ctx)
   }
 
   // Queue this table to be drawn on the graph panel. The named columns become
