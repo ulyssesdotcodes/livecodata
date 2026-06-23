@@ -52,6 +52,31 @@ test('color is a step function: latest color-bearing event <= frame', () => {
   assert.equal(colorAt(8), 0x333333)
 })
 
+test('color pulse: flashes exactly at the trigger, eases to base, newest wins', () => {
+  const rows = rasterizeRows([
+    create({ color: 0x4a9eff }),
+    { id: 's', type: 'color', index: 3, color: 0xffffff, dur: 4, ease: (t) => t },
+    { id: 's', type: 'color', index: 6, color: 0xff0000, dur: 4, ease: (t) => t },
+  ], 12)
+  const colorAt = (f) => rows.find((r) => r.frame === f).color
+  assert.equal(colorAt(0), 0x4a9eff, 'base color before any pulse')
+  assert.equal(colorAt(3), 0xffffff, 'exact flash color at the trigger frame')
+  assert.notEqual(colorAt(5), 0xffffff, 'mid-decay color is a mix, not the flash')
+  assert.equal(colorAt(6), 0xff0000, 'a newer pulse overrides the older one mid-decay')
+  assert.equal(colorAt(10), 0x4a9eff, 'fully decayed back to the base color')
+})
+
+test('color step (no dur) stays a hard switch, newest event wins', () => {
+  const rows = rasterizeRows([
+    create({ color: 0x111111 }),
+    { id: 's', type: 'color', index: 4, color: 0x222222 },
+  ], 6)
+  const colorAt = (f) => rows.find((r) => r.frame === f).color
+  assert.equal(colorAt(3), 0x111111)
+  assert.equal(colorAt(4), 0x222222)
+  assert.equal(colorAt(6), 0x222222)
+})
+
 test('no rows before create and from destroy onward', () => {
   const rows = rasterizeRows([
     create({ index: 2 }),

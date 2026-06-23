@@ -21,6 +21,8 @@
 //   math(index => ...)             sample a function of the row index
 //     .range(count)                -> Table of { index, value }, count rows
 //   rows([ {...}, ... ])           wrap a literal array of rows in a Table
+//   linear/easeIn/easeOut/easeInOut   easing curves for a color pulse's `ease`
+//                                     (any t => t' works, e.g. ease: t => t*t)
 //
 //   Table.map / filter / filterMap / concat / slice / fold / scan   transforms
 //   Table.graph(...columns)        render this table to the graph panel
@@ -179,6 +181,16 @@ class MathBuilder {
   }
 }
 
+// Easing curves injected into user code, used as the `ease` of a color pulse
+// (see rasterize.js). They map progress t in [0,1] to an eased t'; a custom
+// curve is just any function of the same shape, e.g. `ease: t => t * t`.
+export const EASINGS = {
+  linear: (t) => t,
+  easeIn: (t) => t * t,
+  easeOut: (t) => 1 - (1 - t) * (1 - t),
+  easeInOut: (t) => (t < 0.5 ? 2 * t * t : 1 - ((-2 * t + 2) ** 2) / 2),
+}
+
 // Build the DSL surface bound to an engine context. `ctx` provides the hooks the
 // builders need: defineLazy/defineConst (registration), resolve (look up another
 // view at the top level), and addGraph (queue a render spec).
@@ -194,5 +206,6 @@ export function createDSL(ctx) {
     table: (name) => ctx.resolve(name),
     math: (fn) => new MathBuilder(fn, ctx),
     rows: (arr) => new Table((arr ?? []).map((r) => ({ ...r })), ctx),
+    ...EASINGS,
   }
 }

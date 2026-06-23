@@ -16,9 +16,12 @@ const playback = initPlayback(
   document.getElementById('playback-controls'),
   sceneAPI,
   {
-    onTick: (i, active) => {
-      tablePanel.highlightIndex(i)
-      graphPanel.highlightIndex(i)
+    onTick: (tick, active, srcFrame) => {
+      // Cursors follow the source frame (what's on screen), so under a remapped
+      // timeline the table/graph index bar tracks e.g. f349 when reversed, not
+      // the raw tick f10. Without a timeline, srcFrame === tick.
+      tablePanel.highlightIndex(srcFrame)
+      graphPanel.highlightIndex(srcFrame)
       tablePanel.highlightLineage(active)
       graphPanel.highlightLineage(active)
     },
@@ -29,10 +32,10 @@ const runtime = createRuntime()
 const log = createLog()
 
 // Push a cooked result to the panels + playback. Shared by live runs and replay.
-function applyCooked({ views, graphs, sceneRows }) {
+function applyCooked({ views, graphs, sceneRows, timelineRows }) {
   tablePanel.setTables(views)
   graphPanel.setGraphs(graphs)
-  playback.load(sceneRows)
+  playback.load(sceneRows, timelineRows)
 }
 
 // Cook the editor's program and show it. `record` appends the run to the session

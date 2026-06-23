@@ -6,6 +6,7 @@ const MAX_ROWS = 1000 // cap DOM rows so large frame tables stay responsive
 
 function formatCell(col, value) {
   if (value == null) return ''
+  if (typeof value === 'function') return value.name ? `ƒ ${value.name}` : 'ƒ'
   if (col === 'color' && typeof value === 'number') {
     return '0x' + value.toString(16).padStart(6, '0')
   }

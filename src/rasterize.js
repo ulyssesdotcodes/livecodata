@@ -8,8 +8,14 @@
 // Input event rows (sparse), keyed by object `id`, ordered by `index`:
 //   create  — { id, type:"create", index, shape, px,py,pz, rx,ry,rz, color? }
 //   update  — { id, type:"update", index, px,py,pz, rx,ry,rz }  (movement keyframe)
-//   color   — { id, type:"color",  index, color }               (step change)
+//   color   — { id, type:"color",  index, color, dur?, ease?, to? }  (pulse/step)
 //   destroy — { id, type:"destroy", index }
+//
+// Color is a "newest wins" pulse: at any frame the latest color event at/before
+// it owns the color, so overlapping triggers never fight. A bare color event is
+// a step change; one with a `dur` is a pulse that eases (via its `ease` curve)
+// from `color` back to a base (`to`, else the object's create color) over `dur`
+// frames — after which it rests on the base until a newer pulse takes over.
 //
 // Output cache rows (dense):
 //   { frame, id, shape, px,py,pz, rx,ry,rz, color }
@@ -18,6 +24,7 @@
 // ----------------------------------------------------------------------------
 
 import { withLineage, unionLineage } from './lineage.js'
+import { mixColor } from './color.js'
 
 function lerp(a, b, t) { return a + (b - a) * t }
 
@@ -63,10 +70,23 @@ function sampleObject(events, i) {
     rot = { x: 0, y: 0, z: 0 }
   }
 
-  let color = null
+  // The latest color-bearing event at/before i is the active pulse — so a newer
+  // trigger always overrides an older one. With a `dur` it eases from its color
+  // back toward a base (`to`, else the create color); otherwise it steps.
   let colorEv = null
   for (const e of events) {
-    if (e.index <= i && e.color != null) { color = e.color; colorEv = e }
+    if (e.index <= i && e.color != null) colorEv = e
+  }
+  let color = createEv.color ?? null
+  if (colorEv) {
+    if (colorEv.dur > 0) {
+      const base = colorEv.to != null ? colorEv.to : (createEv.color ?? colorEv.color)
+      const p = Math.min(1, Math.max(0, (i - colorEv.index) / colorEv.dur))
+      const eased = typeof colorEv.ease === 'function' ? colorEv.ease(p) : p
+      color = mixColor(colorEv.color, base, eased)
+    } else {
+      color = colorEv.color
+    }
   }
 
   // The events actually contributing to this frame's state — its provenance.
