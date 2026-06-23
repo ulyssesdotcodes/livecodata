@@ -31,8 +31,12 @@ const playback = initPlayback(
 const runtime = createRuntime()
 const log = createLog()
 
+// The most recent cook's views, exposed to the editor for autocomplete.
+let lastViews = new Map()
+
 // Push a cooked result to the panels + playback. Shared by live runs and replay.
 function applyCooked({ views, graphs, sceneRows, timelineRows }) {
+  lastViews = views
   tablePanel.setTables(views)
   graphPanel.setGraphs(graphs)
   playback.load(sceneRows, timelineRows)
@@ -59,7 +63,11 @@ function evaluate(code, { setError, record = true, seed = randomSeed() } = {}) {
   }
 }
 
-const editor = initEditor(document.getElementById('editor-pane'), { onRun: evaluate })
+const editor = initEditor(document.getElementById('editor-pane'), {
+  onRun: evaluate,
+  getViews: () => lastViews,
+  onCaretView: (name) => tablePanel.selectTable(name),
+})
 
 // Replay the session to a logical position: re-cook the program live then
 // (recorded seed) and reflect it in the editor + panels, without re-logging.

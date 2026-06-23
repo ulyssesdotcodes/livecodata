@@ -4,7 +4,7 @@
 
 const MAX_ROWS = 1000 // cap DOM rows so large frame tables stay responsive
 
-function formatCell(col, value) {
+export function formatCell(col, value) {
   if (value == null) return ''
   if (typeof value === 'function') return value.name ? `ƒ ${value.name}` : 'ƒ'
   if (col === 'color' && typeof value === 'number') {
@@ -102,6 +102,12 @@ export function initTablePanel(container) {
   }
 
   return {
+    // Programmatically select a table's tab — driven by the editor caret so the
+    // panel shows whichever view's define(...) block you're editing.
+    selectTable(name) {
+      if (name != null && store.has(name) && name !== current) render(name)
+    },
+
     // Rebuild the dropdown from the store and render a sensible default.
     setTables(newStore) {
       store = newStore

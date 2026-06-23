@@ -40,7 +40,7 @@ html, body {
   }
 
   #side-panels {
-    flex: 0 0 380px;
+    flex: 0 0 33%;
     height: 100%;
     border-top: none;
     border-left: 1px solid #0f3460;
@@ -486,4 +486,57 @@ html, body {
 
 #scrub-bar::-moz-range-track {
   background: transparent;
+}
+
+/* ── Editor hover preview (table + sparkline) ── */
+.cm-preview {
+  max-width: 280px;
+  padding: 6px;
+  background: #12203c;
+  color: #c8d6e5;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.cm-preview-head {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8ca0b8;
+  margin-bottom: 5px;
+}
+
+.cm-preview-spark {
+  display: block;
+  background: #0f1c33;
+  border: 1px solid #0f3460;
+  border-radius: 3px;
+}
+
+.cm-preview-spark-label {
+  font-size: 10px;
+  color: #607a96;
+  margin: 2px 0 6px;
+}
+
+.cm-preview-table {
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.cm-preview-table th,
+.cm-preview-table td {
+  padding: 2px 6px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid #0f3460;
+}
+
+.cm-preview-table th {
+  color: #8ca0b8;
+  font-weight: 600;
+}
+
+.cm-preview-more {
+  font-size: 10px;
+  color: #607a96;
+  margin-top: 4px;
 }
