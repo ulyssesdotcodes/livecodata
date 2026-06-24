@@ -148,7 +148,12 @@ define("base", () =>
 //    frames (~4 s at 60 fps). simulate() ADDS to the table — a per-frame "update"
 //    row for each moving body (index in seconds; the cache interpolates between
 //    them) plus a "collision" row whenever two bodies first touch.
-define("events", (rand, table) =>
+//    The 3rd arg tags this view into the "events" group: the engine auto-builds
+//    a view named "events" that concats every group member (index-sorted), so
+//    the motion rows here and the effect rows in step 5 merge into one "events"
+//    table — no manual .concat. "events" is the single sparse stream of
+//    everything that happens: object motion *and* the post-processing chain.
+define("sim", "events", (rand, table) =>
   physics(table("base")).simulate({ steps: 240, gravity: -9.81 })
 )
 
@@ -167,6 +172,35 @@ define("ball_height", (rand, table) =>
     .filter(r => r.id === "ball" && r.type === "update")
     .map(r => ({ index: r.index, height: r.py }))
     .graph("height")
+)
+
+// 5. Post-processing effects layer over the rendered scene as a chain of
+//    Three.js passes. Each effect event has an event type (addEffect /
+//    updateEffect / removeEffect), an id, an effect type ("bloom", "afterimage",
+//    "dotscreen", "rgbshift", "film", "glitch", "halftone"), an optional input
+//    (another effect's id, or omitted to read the base render output), params,
+//    and an index (seconds). An updateEffect with a dur eases its params over
+//    time, just like a color pulse. Here bloom feeds an afterimage trail, and
+//    the bloom flashes on each real landing — data-driven from "sim"'s collision
+//    rows (filter the sibling member, not "events", or we'd cycle), so the flash
+//    fires exactly when a shape hits the floor, not at a guessed time. Like step
+//    2 this view is tagged into the "events" group, so its rows merge into "events".
+define("effects", "events", (rand, table) =>
+  rows([
+    { id: "bloom",  type: "addEffect", effect: "bloom", index: 0,
+      params: { strength: 0.8, radius: 0.5, threshold: 0.6 } },
+    { id: "trails", type: "addEffect", effect: "afterimage", input: "bloom",
+      index: 0, params: { damp: 0.82 } },
+  ]).concat(
+    table("sim")
+      .filter(r => r.type === "collision" && r.other === "floor")
+      .filterMap(r => [
+        { id: "bloom", type: "updateEffect", index: r.index, dur: 0.05,
+          params: { strength: 2.6 } },
+        { id: "bloom", type: "updateEffect", index: r.index + 0.05, dur: 0.5,
+          ease: easeOut, params: { strength: 0.8 } },
+      ])
+  )
 )
 `
 

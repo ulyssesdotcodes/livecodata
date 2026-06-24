@@ -47,6 +47,7 @@
 
 import { rasterizeRows } from './rasterize.js'
 import { withLineage, carry, unionLineage } from './lineage.js'
+import { FPS } from './constants.js'
 
 // ── Row helpers ─────────────────────────────────────────────────────────────
 // Every transform clones each row (so views never share row objects) and threads
@@ -338,8 +339,6 @@ export class Table {
     return this
   }
 }
-
-const FPS = 60 // sampling rate for math().range(); matches rasterize bake rate
 
 // Wraps a base scene (a Table or raw rows) and bakes a physics simulation off it
 // when .simulate() is called during a cook. The actual stepping lives in the

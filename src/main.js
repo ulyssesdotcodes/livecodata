@@ -40,11 +40,11 @@ const log = createLog()
 let lastViews = new Map()
 
 // Push a cooked result to the panels + playback. Shared by live runs and replay.
-function applyCooked({ views, graphs, sceneRows, timelineRows }) {
+function applyCooked({ views, graphs, sceneRows, timelineRows, effectRows }) {
   lastViews = views
   tablePanel.setTables(views)
   graphPanel.setGraphs(graphs)
-  playback.load(sceneRows, timelineRows)
+  playback.load(sceneRows, timelineRows, effectRows)
 }
 
 // Cook the editor's program and show it. `record` appends the run to the session
