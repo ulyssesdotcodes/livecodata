@@ -1,4 +1,5 @@
 import { buildFrameIndex, stateAtFrame } from './rasterize.js'
+import { buildEffectIndex, effectChainAtFrame } from './effects.js'
 import { buildTimeline } from './timeline.js'
 import { activeLineage } from './lineage.js'
 
@@ -9,6 +10,7 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
   let startTime = null
   let pausedIndex = 0
   let frameIndex = buildFrameIndex([])
+  let effectIndex = buildEffectIndex([])
   let timeline = buildTimeline([])
   let aliveObjects = new Set()
   let maxIndex = 0
@@ -83,6 +85,9 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
         aliveObjects.delete(id)
       }
     }
+    // Resolve the post-processing chain active at the source frame and reconcile
+    // it onto the renderer's composer (no-op when there are no effect events).
+    sceneAPI.setEffects(effectChainAtFrame(effectIndex, src))
     // Report both the playback time (seconds) and the *source* frame it maps to
     // (they differ when a timeline retimes/reverses), plus the provenance of the
     // on-screen state — so panel cursors track the source frame, not the tick.
@@ -100,12 +105,13 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
 
   // ── Public: load a fresh dense frame cache (+ optional timeline) and rewind ──
 
-  function load(sceneRows, timelineRows) {
+  function load(sceneRows, timelineRows, effectRows) {
     state = 'idle'
     btn.textContent = '▶  Play'
     startTime = null
     pausedIndex = 0
     frameIndex = buildFrameIndex(sceneRows ?? [])
+    effectIndex = buildEffectIndex(effectRows ?? [])
     timeline = buildTimeline(timelineRows ?? [])
     // Playback length in seconds: follow the timeline when present, else the cache.
     maxIndex = (timeline.length ? timeline.length - 1 : frameIndex.maxFrame) / FPS

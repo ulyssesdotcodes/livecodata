@@ -13,6 +13,8 @@ export function formatCell(col, value) {
   if (typeof value === 'number') {
     return Number.isInteger(value) ? String(value) : value.toFixed(3)
   }
+  // Nested objects (e.g. an effect event's `params`) — show as compact JSON.
+  if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
 }
 

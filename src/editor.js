@@ -148,8 +148,12 @@ define("base", () =>
 //    frames (~4 s at 60 fps). simulate() ADDS to the table — a per-frame "update"
 //    row for each moving body (index in seconds; the cache interpolates between
 //    them) plus a "collision" row whenever two bodies first touch.
+//    The effect events (step 5) are merged in too, so the events table is the
+//    single sparse stream of everything that happens — object motion *and* the
+//    post-processing chain.
 define("events", (rand, table) =>
   physics(table("base")).simulate({ steps: 240, gravity: -9.81 })
+    .concat(table("effects"))
 )
 
 // 3. The frame cache: bake the sparse "events" into dense per-frame world state
@@ -167,6 +171,25 @@ define("ball_height", (rand, table) =>
     .filter(r => r.id === "ball" && r.type === "update")
     .map(r => ({ index: r.index, height: r.py }))
     .graph("height")
+)
+
+// 5. Post-processing effects layer over the rendered scene as a chain of
+//    Three.js passes. Each effect event has an event type (addEffect /
+//    updateEffect / removeEffect), an id, an effect type ("bloom", "afterimage",
+//    "dotscreen", "rgbshift", "film", "glitch", "halftone"), an optional input
+//    (another effect's id, or omitted to read the base render output), params,
+//    and an index (seconds). An updateEffect with a dur eases its params over
+//    time, just like a color pulse. Here bloom feeds an afterimage trail, and
+//    the bloom intensifies as the shapes land (~1.2s).
+define("effects", () =>
+  rows([
+    { id: "bloom",  type: "addEffect", effect: "bloom", index: 0,
+      params: { strength: 0.8, radius: 0.5, threshold: 0.6 } },
+    { id: "trails", type: "addEffect", effect: "afterimage", input: "bloom",
+      index: 0, params: { damp: 0.82 } },
+    { id: "bloom",  type: "updateEffect", index: 1.2, dur: 0.6,
+      params: { strength: 2.4 } },
+  ])
 )
 `
 
