@@ -4,7 +4,7 @@ import { buildTimeline } from './timeline.js'
 import { activeLineage } from './lineage.js'
 import { FPS } from './constants.js' // used to convert seconds ↔ frame indices
 
-export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
+export function initPlayback(controlsEl, sceneAPI, { onTick, onPlay } = {}) {
   let state = 'idle'
   let startTime = null
   let pausedIndex = 0
@@ -150,6 +150,7 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
       state = 'playing'
       startTime = performance.now() - pausedIndex * 1000
       btn.textContent = '⏸  Pause'
+      onPlay?.()
       tick()
     } else {
       startFresh()
@@ -162,6 +163,7 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
     startTime = performance.now()
     state = 'playing'
     btn.textContent = '⏸  Pause'
+    onPlay?.()
     tick()
   }
 
