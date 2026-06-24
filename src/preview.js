@@ -9,10 +9,11 @@ import { SERIES_COLORS } from './graph-panel.js'
 const SPARK_W = 220
 const SPARK_H = 36
 
-// A tiny multi-line chart of `cols` across the rows — one colored series per
+// A tiny multi-line chart of `cols` plotted against `xOf` (the row's `index`
+// in seconds when the table has one, else its ordinal) — one colored series per
 // column, sharing a single y-range like the graph panel. Returns a <canvas>,
 // or null when no column has enough numeric data to draw a line.
-function drawSparklines(rows, cols) {
+function drawSparklines(rows, cols, xOf) {
   let min = Infinity, max = -Infinity
   for (const row of rows) {
     for (const c of cols) {
@@ -30,6 +31,14 @@ function drawSparklines(rows, cols) {
   if (!drawable) return null
   if (min === max) { min -= 1; max += 1 }
 
+  let xMin = Infinity, xMax = -Infinity
+  rows.forEach((row, i) => {
+    const x = xOf(row, i)
+    if (x < xMin) xMin = x
+    if (x > xMax) xMax = x
+  })
+  const xSpan = xMax - xMin || 1
+
   const canvas = document.createElement('canvas')
   canvas.className = 'cm-preview-spark'
   const dpr = window.devicePixelRatio || 1
@@ -41,14 +50,13 @@ function drawSparklines(rows, cols) {
   g.setTransform(dpr, 0, 0, dpr, 0, 0)
 
   const pad = 3
-  const n = rows.length
-  const x = (i) => pad + (n > 1 ? i / (n - 1) : 0) * (SPARK_W - 2 * pad)
-  const y = (v) => pad + (1 - (v - min) / (max - min)) * (SPARK_H - 2 * pad)
+  const px = (x) => pad + ((x - xMin) / xSpan) * (SPARK_W - 2 * pad)
+  const py = (v) => pad + (1 - (v - min) / (max - min)) * (SPARK_H - 2 * pad)
 
   if (min < 0 && max > 0) {
     g.strokeStyle = 'rgba(140,160,184,0.25)'
     g.lineWidth = 1
-    g.beginPath(); g.moveTo(0, y(0)); g.lineTo(SPARK_W, y(0)); g.stroke()
+    g.beginPath(); g.moveTo(0, py(0)); g.lineTo(SPARK_W, py(0)); g.stroke()
   }
   cols.forEach((c, ci) => {
     g.strokeStyle = SERIES_COLORS[ci % SERIES_COLORS.length]
@@ -58,8 +66,8 @@ function drawSparklines(rows, cols) {
     rows.forEach((row, i) => {
       const v = row[c]
       if (typeof v !== 'number') return
-      if (!started) { g.moveTo(x(i), y(v)); started = true }
-      else g.lineTo(x(i), y(v))
+      if (!started) { g.moveTo(px(xOf(row, i)), py(v)); started = true }
+      else g.lineTo(px(xOf(row, i)), py(v))
     })
     g.stroke()
   })
@@ -83,13 +91,16 @@ export function buildTablePreview(table, { maxRows = 6, maxCols = 6 } = {}) {
   head.textContent = `${table.name ?? 'table'} · ${rowsLabel} · ${colsLabel}`
   wrap.appendChild(head)
 
-  // Every numeric column except the index — each drawn as its own line. A table
-  // with only an index has nothing to plot, so the graph is skipped entirely.
+  // Every numeric column except the index — each drawn as its own line against
+  // the index (seconds) on the x-axis, like the graph panel. A table with only
+  // an index has nothing to plot, so the graph is skipped entirely.
+  const hasIndex = allCols.includes('index')
+  const xOf = (row, i) => (hasIndex ? row.index : i)
   const numCols = allCols.filter(
     (c) => c !== 'index' && table.rows.some((r) => typeof r[c] === 'number'),
   )
   if (numCols.length) {
-    const spark = drawSparklines(table.rows, numCols)
+    const spark = drawSparklines(table.rows, numCols, xOf)
     if (spark) {
       wrap.appendChild(spark)
       const legend = document.createElement('div')
