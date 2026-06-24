@@ -58,7 +58,6 @@ function evaluate(code, { setError, record = true, seed = randomSeed() } = {}) {
 
   if (record) {
     log.append({ kind: 'run', code, seed })
-    log.persist()
     sessionBar.setLog(log)
   }
 }
@@ -93,11 +92,5 @@ editorPane.insertBefore(sessionBar.el, editorPane.children[1])
 // On load: if a previous session was persisted, restore its latest program and
 // replay it deterministically (recorded seed, without re-logging). Otherwise run
 // the default doc as a fresh run.
-if (log.rehydrate()) {
-  const latest = log.last()
-  editor.setCode(latest.code)
-  evaluate(latest.code, { setError: editor.setError, record: false, seed: latest.seed })
-} else {
-  editor.run()
-}
+editor.run()
 sessionBar.setLog(log)
