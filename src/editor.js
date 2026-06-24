@@ -8,12 +8,64 @@ import { buildTablePreview } from './preview.js'
 
 // Completed by the editor. Builtins are the DSL surface (createDSL in dsl.js);
 // methods are Table/builder methods offered after a dot. Kept in sync by hand.
-const DSL_BUILTINS = ['define', 'table', 'math', 'rows', 'csv', 'json', 'grid',
-  'physics', 'linear', 'easeIn', 'easeOut', 'easeInOut']
-const TABLE_METHODS = ['map', 'filter', 'filterMap', 'concat', 'slice', 'fold', 'scan',
-  'join', 'zip', 'orderBy', 'derive', 'assign', 'mapField', 'rescale', 'lag',
-  'groupBy', 'agg', 'count', 'trigger', 'triggerEach', 'crossings',
-  'range', 'rasterize', 'simulate', 'graph', 'save']
+const DSL_BUILTIN_DOCS = {
+  define:     { sig: 'define(name, fn)',             detail: 'register view',    info: 'Register a named view. fn receives (rand, table) and must return a Table. Views are cooked lazily; deps tracked via table().' },
+  table:      { sig: 'table(name)',                  detail: 'resolve view',     info: 'Resolve a named view at top-level (no dependency tracking). Returns the cooked Table for that view.' },
+  math:       { sig: 'math(index => value)',         detail: 'sample function',  info: 'Sample a numeric function of the row index. Chain .range(n) to emit n rows of { index, value }.' },
+  rows:       { sig: 'rows([{...}, ...])',           detail: 'wrap array',       info: 'Wrap a literal array of plain objects into a Table.' },
+  csv:        { sig: 'csv(string)',                  detail: 'parse CSV',        info: 'Parse a CSV string (header row + data rows) into a Table.' },
+  json:       { sig: 'json(array | string)',         detail: 'parse JSON',       info: 'Wrap a JS array or parse a JSON string into a Table.' },
+  grid:       { sig: 'grid(cols, rows)',             detail: 'XZ lattice',       info: 'Generate a cols×rows lattice of XZ positions as a Table (fields: col, row, x, z).' },
+  physics:    { sig: 'physics(table)',               detail: 'physics scene',    info: 'Load a base scene table into the JoltPhysics engine. Chain .simulate() to run the simulation.' },
+  linear:     { sig: 'linear',                       detail: 'easing curve',     info: 'Linear easing (t → t). Pass as the ease field of a color-pulse row.' },
+  easeIn:     { sig: 'easeIn',                       detail: 'easing curve',     info: 'Quadratic ease-in (t → t²). Starts slow, ends fast.' },
+  easeOut:    { sig: 'easeOut',                      detail: 'easing curve',     info: 'Quadratic ease-out (t → 1-(1-t)²). Starts fast, ends slow.' },
+  easeInOut:  { sig: 'easeInOut',                    detail: 'easing curve',     info: 'Quadratic ease-in-out. Slow at both ends, fast in the middle.' },
+}
+
+const TABLE_METHOD_DOCS = {
+  map:         { sig: '.map(row => row)',                     detail: 'transform rows',   info: 'Transform every row with a mapping function. Returns a new Table.' },
+  filter:      { sig: '.filter(row => bool)',                 detail: 'keep rows',        info: 'Keep only rows for which the predicate returns true.' },
+  filterMap:   { sig: '.filterMap(row => row | null)',        detail: 'filter + map',     info: 'Map and filter in one pass — return a new row to keep it, null/undefined to drop it.' },
+  concat:      { sig: '.concat(other)',                       detail: 'combine tables',   info: 'Append the rows of another Table (or array) to this one.' },
+  slice:       { sig: '.slice(start, end?)',                  detail: 'subset rows',      info: 'Return a sub-range of rows, like Array.slice.' },
+  fold:        { sig: '.fold(init, (acc, row) => acc)',       detail: 'reduce to value',  info: 'Reduce all rows to a single accumulated value, like Array.reduce.' },
+  scan:        { sig: '.scan(init, (acc, row) => row)',       detail: 'running accumul.', info: 'Running accumulator — emit one output row per input row, carrying state forward.' },
+  join:        { sig: '.join(other, on)',                     detail: 'key join',         info: 'Key-based join: merge rows where the `on` field (or key fn) matches. Like SQL LEFT JOIN.' },
+  zip:         { sig: '.zip(other)',                          detail: 'positional join',  info: 'Merge rows positionally — row 0 with row 0, row 1 with row 1, etc.' },
+  orderBy:     { sig: '.orderBy(field | fn, dir?)',           detail: 'sort rows',        info: 'Sort rows by a field name or comparator function. Optional dir: "asc" (default) or "desc".' },
+  derive:      { sig: '.derive({ field: row => val })',       detail: 'add fields',       info: 'Add or overwrite fields on every row using derivation functions.' },
+  assign:      { sig: '.assign({ field: value })',            detail: 'set fields',       info: 'Merge a fixed object of field values into every row.' },
+  mapField:    { sig: '.mapField(field, val => val)',         detail: 'transform field',  info: 'Apply a function to one field of every row, replacing it in place.' },
+  rescale:     { sig: '.rescale(field, [min, max]?)',         detail: 'normalize field',  info: 'Normalize a numeric field to [0, 1] (or a custom range) across all rows.' },
+  lag:         { sig: '.lag(n)',                              detail: 'shift rows',       info: 'Shift rows forward by n positions, padding the start with null rows.' },
+  groupBy:     { sig: '.groupBy(field | fn)',                 detail: 'group rows',       info: 'Group rows by a key field or function. Chain .agg() or .count() to aggregate.' },
+  agg:         { sig: '.agg({ field: rows => val })',         detail: 'aggregate groups', info: 'Aggregate each group into one row. Called after .groupBy().' },
+  count:       { sig: '.count()',                             detail: 'count groups',     info: 'Emit one row per group with a `count` field. Called after .groupBy().' },
+  trigger:     { sig: '.trigger(pred, emit)',                 detail: 'event detection',  info: 'When pred(row) is true, call emit(row) and include returned rows in the output.' },
+  triggerEach: { sig: '.triggerEach(pred, objs, make)',       detail: 'fan-out events',   info: 'Fan out: for each object in objs when pred fires, call make(row, obj) to emit rows.' },
+  crossings:   { sig: '.crossings(field, level)',             detail: 'threshold events', info: 'Emit one row each time the named field crosses the given numeric level.' },
+  range:       { sig: '.range(count)',                        detail: 'generate rows',    info: 'Emit count rows from a math() builder — each row has { index, value }.' },
+  rasterize:   { sig: '.rasterize(maxFrame)',                 detail: 'bake frame cache', info: 'Bake sparse event rows (from simulate) into a dense per-frame world state Table indexed 0…maxFrame.' },
+  simulate:    { sig: '.simulate({ steps, gravity, ... })',   detail: 'run physics',      info: 'Step the JoltPhysics world. Options: steps (frames), gravity, fps, sampleEvery, collisions.' },
+  graph:       { sig: '.graph(...columns)',                   detail: 'draw graph',       info: 'Mark this Table to be drawn on the graph panel. Pass column name(s) to plot.' },
+  save:        { sig: '.save(name)',                          detail: 'save as view',     info: 'Sugar for define(name, () => this) — register the current Table as a named view.' },
+}
+
+function makeInfoNode(sig, info) {
+  const el = document.createElement('div')
+  el.className = 'cm-completion-info'
+  const sigEl = document.createElement('code')
+  sigEl.textContent = sig
+  const desc = document.createElement('p')
+  desc.textContent = info
+  el.appendChild(sigEl)
+  el.appendChild(desc)
+  return el
+}
+
+const DSL_BUILTINS = Object.keys(DSL_BUILTIN_DOCS)
+const TABLE_METHODS = Object.keys(TABLE_METHOD_DOCS)
 
 // Which view's define(...) block the caret sits in: the latest define("X" whose
 // header starts at or before pos (define()s are top-level and sequential).
@@ -47,12 +99,26 @@ function dslCompletions(getViews) {
     // After a dot → Table / builder methods.
     const dot = context.matchBefore(/\.\w*/)
     if (dot) {
-      return { from: dot.from + 1, options: TABLE_METHODS.map((label) => ({ label, type: 'method' })), validFor: /^\w*$/ }
+      return {
+        from: dot.from + 1,
+        options: TABLE_METHODS.map((label) => {
+          const d = TABLE_METHOD_DOCS[label]
+          return { label, type: 'method', detail: d.detail, info: () => makeInfoNode(d.sig, d.info) }
+        }),
+        validFor: /^\w*$/,
+      }
     }
     // Otherwise → DSL builtins (only while typing a word, or on explicit request).
     const word = context.matchBefore(/\w+/)
     if (!word && !context.explicit) return null
-    return { from: word ? word.from : context.pos, options: DSL_BUILTINS.map((label) => ({ label, type: 'function' })), validFor: /^\w*$/ }
+    return {
+      from: word ? word.from : context.pos,
+      options: DSL_BUILTINS.map((label) => {
+        const d = DSL_BUILTIN_DOCS[label]
+        return { label, type: 'function', detail: d.detail, info: () => makeInfoNode(d.sig, d.info) }
+      }),
+      validFor: /^\w*$/,
+    }
   }
 }
 
