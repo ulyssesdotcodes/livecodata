@@ -207,7 +207,7 @@ define("effects", "events", (rand, table) =>
 // A hover tooltip: hovering a "name" string that matches a cooked view pops an
 // inline preview (sparkline + first rows) of that table. `getViews` supplies the
 // live views from the last cook.
-function dslHover(getViews) {
+function dslHover(getViews, getPlayIndex) {
   return hoverTooltip((view, pos) => {
     const line = view.state.doc.lineAt(pos)
     const re = /"([^"]+)"/g
@@ -218,13 +218,16 @@ function dslHover(getViews) {
       if (pos < start || pos > end) continue
       const table = (getViews?.() ?? new Map()).get(m[1])
       if (!table) return null
-      return { pos: start, end, above: true, create: () => ({ dom: buildTablePreview(table) }) }
+      return {
+        pos: start, end, above: true,
+        create: () => ({ dom: buildTablePreview(table, { playIndex: getPlayIndex?.() }) }),
+      }
     }
     return null
   })
 }
 
-export function initEditor(parent, { onRun, getViews, onCaretView } = {}) {
+export function initEditor(parent, { onRun, getViews, onCaretView, getPlayIndex } = {}) {
   parent.innerHTML = ''
 
   const header = document.createElement('div')
@@ -287,7 +290,7 @@ export function initEditor(parent, { onRun, getViews, onCaretView } = {}) {
         }
       }),
       // Hover a "view" string to preview its table (sparkline + first rows).
-      dslHover(getViews),
+      dslHover(getViews, getPlayIndex),
       oneDark,
       Prec.highest(keymap.of([
         { key: 'Mod-Enter', run: () => { run(); return true } },

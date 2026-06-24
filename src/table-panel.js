@@ -1,8 +1,11 @@
-// Generic table viewer. Renders whichever stored table is selected, with
-// dynamic columns, per-table tabs, and index-based row highlighting
-// driven by the playback clock.
+// Combined table + graph panel. Each tab shows one view; if the view has a
+// graph spec (.graph() was called on it), a mini chart appears at the top.
+// The table autoscrolls to the active row during playback unless the user
+// has manually scrolled since the last time Play was pressed.
 
-const MAX_ROWS = 1000 // cap DOM rows so large frame tables stay responsive
+import { SERIES_COLORS, resolveSpec, drawChartToCanvas } from './graph-panel.js'
+
+const MAX_ROWS = 1000
 
 export function formatCell(col, value) {
   if (value == null) return ''
@@ -22,11 +25,23 @@ export function initTablePanel(container) {
   container.innerHTML = ''
 
   let store = new Map()
+  let graphByName = new Map() // tableName → { table, columns } spec
   let current = null
   let currentRows = []
   let indexCol = null
   let rowEls = []
+  let playIndex = 0
+  let playActive = null
 
+  // Auto-scroll: user scroll suppresses autoscroll until resetAutoscroll() is called.
+  let userScrolled = false
+  let suppressScrollEvent = false
+
+  // Chart for the currently-visible tab (null when tab has no graph spec).
+  let currentChart = null
+  const ro = new ResizeObserver(() => { if (currentChart) drawCurrentChart() })
+
+  // ── Header ──
   const header = document.createElement('div')
   header.className = 'table-pane-header'
 
@@ -40,15 +55,31 @@ export function initTablePanel(container) {
 
   container.appendChild(header)
 
-  let tabEls = new Map()
+  // ── Content area (graph section + table scroll, stacked vertically) ──
+  const content = document.createElement('div')
+  content.className = 'tab-content'
+  container.appendChild(content)
 
-  function highlightTab(name) {
-    tabEls.forEach((el, n) => el.classList.toggle('tab-active', n === name))
-  }
+  // Graph section (inserted into content when the current tab is graphable).
+  const graphSection = document.createElement('div')
+  graphSection.className = 'tab-graph'
 
+  const graphLegend = document.createElement('div')
+  graphLegend.className = 'graph-legend'
+  graphSection.appendChild(graphLegend)
+
+  const graphCanvas = document.createElement('canvas')
+  graphCanvas.className = 'tab-graph-canvas'
+  graphSection.appendChild(graphCanvas)
+
+  // Table scroll section (always present in content).
   const scroll = document.createElement('div')
-  scroll.className = 'table-scroll'
-  container.appendChild(scroll)
+  scroll.className = 'tab-scroll'
+  content.appendChild(scroll)
+
+  scroll.addEventListener('scroll', () => {
+    if (!suppressScrollEvent) userScrolled = true
+  })
 
   const table = document.createElement('table')
   table.className = 'events-table'
@@ -59,16 +90,69 @@ export function initTablePanel(container) {
   const tbody = document.createElement('tbody')
   table.appendChild(tbody)
 
+  // ── Tab tracking ──
+  let tabEls = new Map()
+
+  function highlightTab(name) {
+    tabEls.forEach((el, n) => el.classList.toggle('tab-active', n === name))
+  }
+
+  function drawCurrentChart() {
+    if (!currentChart) return
+    drawChartToCanvas(graphCanvas, currentChart, playIndex, playActive)
+  }
+
   function render(name) {
     current = name
     highlightTab(name)
-    const t = store.get(name)
+    userScrolled = false // switching tabs resumes autoscroll for the new tab
+
+    // ── Graph section ──
+    ro.disconnect()
+    const spec = graphByName.get(name)
+    if (spec) {
+      const { rows, cols, xOf } = resolveSpec(spec)
+      if (cols.length && rows.length) {
+        let xMin = Infinity, xMax = -Infinity
+        rows.forEach((row, i) => {
+          const x = xOf(row, i)
+          if (x < xMin) xMin = x
+          if (x > xMax) xMax = x
+        })
+        currentChart = { rows, cols, xOf, xMin, xMax, name }
+
+        graphLegend.innerHTML = ''
+        cols.forEach((c, ci) => {
+          const item = document.createElement('span')
+          item.className = 'graph-series'
+          const dot = document.createElement('span')
+          dot.className = 'graph-dot'
+          dot.style.background = SERIES_COLORS[ci % SERIES_COLORS.length]
+          item.appendChild(dot)
+          item.appendChild(document.createTextNode(c))
+          graphLegend.appendChild(item)
+        })
+
+        if (!content.contains(graphSection)) content.insertBefore(graphSection, scroll)
+        ro.observe(graphCanvas)
+        drawCurrentChart()
+      } else {
+        currentChart = null
+        graphSection.remove()
+      }
+    } else {
+      currentChart = null
+      graphSection.remove()
+    }
+
+    // ── Table rows ──
     thead.innerHTML = ''
     tbody.innerHTML = ''
     rowEls = []
     currentRows = []
     indexCol = null
 
+    const t = store.get(name)
     if (!t || !t.length) {
       countEl.textContent = t ? '0 rows' : ''
       return
@@ -104,13 +188,10 @@ export function initTablePanel(container) {
   }
 
   return {
-    // Programmatically select a table's tab — driven by the editor caret so the
-    // panel shows whichever view's define(...) block you're editing.
     selectTable(name) {
       if (name != null && store.has(name) && name !== current) render(name)
     },
 
-    // Rebuild the dropdown from the store and render a sensible default.
     setTables(newStore) {
       store = newStore
       const names = [...store.keys()]
@@ -124,32 +205,47 @@ export function initTablePanel(container) {
         tabs.appendChild(tab)
         tabEls.set(n, tab)
       })
-      if (!names.length) {
-        render(null)
-        return
-      }
-      // Keep current selection if it still exists; else prefer "events".
+      if (!names.length) { render(null); return }
       let next = names.includes(current) ? current : null
       if (!next) next = names.includes('events') ? 'events' : names[names.length - 1]
       render(next)
     },
 
-    // Highlight the last row whose `index` <= playback index (called each frame).
-    highlightIndex(playIndex) {
+    setGraphs(newSpecs) {
+      graphByName = new Map()
+      for (const spec of (newSpecs ?? [])) {
+        if (spec.table?.name) graphByName.set(spec.table.name, spec)
+      }
+      if (current) render(current)
+    },
+
+    highlightIndex(idx) {
+      playIndex = idx
+      drawCurrentChart()
       if (!indexCol) return
       let activeIdx = -1
       for (let i = 0; i < currentRows.length; i++) {
-        if (currentRows[i][indexCol] <= playIndex) activeIdx = i
+        if (currentRows[i][indexCol] <= idx) activeIdx = i
         else break
       }
       rowEls.forEach((tr, i) => tr.classList.toggle('row-active', i === activeIdx))
+      if (!userScrolled && activeIdx >= 0) {
+        suppressScrollEvent = true
+        rowEls[activeIdx].scrollIntoView({ block: 'nearest' })
+        requestAnimationFrame(() => { suppressScrollEvent = false })
+      }
     },
 
-    // Highlight the rows of the currently-shown table that feed the current
-    // frame, by ordinal position (lineage indexes rows by position in the view).
     highlightLineage(active) {
+      playActive = active
+      drawCurrentChart()
       const set = active?.get(current)
       rowEls.forEach((tr, i) => tr.classList.toggle('row-source', !!set?.has(i)))
+    },
+
+    // Call when Play is pressed to re-enable autoscroll.
+    resetAutoscroll() {
+      userScrolled = false
     },
   }
 }

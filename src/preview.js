@@ -13,7 +13,7 @@ const SPARK_H = 36
 // in seconds when the table has one, else its ordinal) — one colored series per
 // column, sharing a single y-range like the graph panel. Returns a <canvas>,
 // or null when no column has enough numeric data to draw a line.
-function drawSparklines(rows, cols, xOf) {
+function drawSparklines(rows, cols, xOf, playIndex = null) {
   let min = Infinity, max = -Infinity
   for (const row of rows) {
     for (const c of cols) {
@@ -71,12 +71,25 @@ function drawSparklines(rows, cols, xOf) {
     })
     g.stroke()
   })
+
+  if (playIndex != null && xSpan > 0) {
+    const cx = pad + ((playIndex - xMin) / xSpan) * (SPARK_W - 2 * pad)
+    if (cx >= 0 && cx <= SPARK_W) {
+      g.strokeStyle = '#e94560'
+      g.lineWidth = 1
+      g.beginPath()
+      g.moveTo(cx, 0)
+      g.lineTo(cx, SPARK_H)
+      g.stroke()
+    }
+  }
+
   return canvas
 }
 
 // Build a preview card for a Table: header (name · rows · cols), a sparkline of
 // every numeric column (besides index), and the first maxRows×maxCols cells.
-export function buildTablePreview(table, { maxRows = 6, maxCols = 6 } = {}) {
+export function buildTablePreview(table, { maxRows = 6, maxCols = 6, playIndex = null } = {}) {
   const wrap = document.createElement('div')
   wrap.className = 'cm-preview'
 
@@ -100,7 +113,7 @@ export function buildTablePreview(table, { maxRows = 6, maxCols = 6 } = {}) {
     (c) => c !== 'index' && table.rows.some((r) => typeof r[c] === 'number'),
   )
   if (numCols.length) {
-    const spark = drawSparklines(table.rows, numCols, xOf)
+    const spark = drawSparklines(table.rows, numCols, xOf, playIndex)
     if (spark) {
       wrap.appendChild(spark)
       const legend = document.createElement('div')
