@@ -2,7 +2,7 @@
 // charts: each selected column is a y-series plotted against the row index
 // (x). A vertical playhead tracks the current playback index.
 
-const SERIES_COLORS = [
+export const SERIES_COLORS = [
   '#4a9eff', '#ff6b6b', '#51cf66', '#ffd43b', '#cc5de8', '#ff922b', '#22d3ee',
 ]
 

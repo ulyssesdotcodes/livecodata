@@ -1,18 +1,43 @@
-// Inline table preview. Builds a compact DOM card — a sparkline of the first
+// Inline table preview. Builds a compact DOM card — a sparkline of every
 // numeric column plus the first few rows/columns — for any Table. Used by the
 // editor's hover tooltip so you can see a view's data without leaving the code
 // (reusing the table panel's cell formatter for consistent display).
 
 import { formatCell } from './table-panel.js'
+import { SERIES_COLORS } from './graph-panel.js'
 
 const SPARK_W = 220
 const SPARK_H = 36
 
-// A tiny line chart of `col` across the rows. Returns a <canvas>, or null when
-// there isn't enough numeric data to be worth drawing.
-function drawSparkline(rows, col) {
-  const vals = rows.map((r) => r[col]).filter((v) => typeof v === 'number')
-  if (vals.length < 2) return null
+// A tiny multi-line chart of `cols` plotted against `xOf` (the row's `index`
+// in seconds when the table has one, else its ordinal) — one colored series per
+// column, sharing a single y-range like the graph panel. Returns a <canvas>,
+// or null when no column has enough numeric data to draw a line.
+function drawSparklines(rows, cols, xOf) {
+  let min = Infinity, max = -Infinity
+  for (const row of rows) {
+    for (const c of cols) {
+      const v = row[c]
+      if (typeof v === 'number') {
+        if (v < min) min = v
+        if (v > max) max = v
+      }
+    }
+  }
+  // A line needs at least two points; bail if no series qualifies.
+  const drawable = cols.some(
+    (c) => rows.filter((r) => typeof r[c] === 'number').length >= 2,
+  )
+  if (!drawable) return null
+  if (min === max) { min -= 1; max += 1 }
+
+  let xMin = Infinity, xMax = -Infinity
+  rows.forEach((row, i) => {
+    const x = xOf(row, i)
+    if (x < xMin) xMin = x
+    if (x > xMax) xMax = x
+  })
+  const xSpan = xMax - xMin || 1
 
   const canvas = document.createElement('canvas')
   canvas.className = 'cm-preview-spark'
@@ -25,27 +50,32 @@ function drawSparkline(rows, col) {
   g.setTransform(dpr, 0, 0, dpr, 0, 0)
 
   const pad = 3
-  let min = Math.min(...vals)
-  let max = Math.max(...vals)
-  if (min === max) { min -= 1; max += 1 }
-  const x = (i) => pad + (i / (vals.length - 1)) * (SPARK_W - 2 * pad)
-  const y = (v) => pad + (1 - (v - min) / (max - min)) * (SPARK_H - 2 * pad)
+  const px = (x) => pad + ((x - xMin) / xSpan) * (SPARK_W - 2 * pad)
+  const py = (v) => pad + (1 - (v - min) / (max - min)) * (SPARK_H - 2 * pad)
 
   if (min < 0 && max > 0) {
     g.strokeStyle = 'rgba(140,160,184,0.25)'
     g.lineWidth = 1
-    g.beginPath(); g.moveTo(0, y(0)); g.lineTo(SPARK_W, y(0)); g.stroke()
+    g.beginPath(); g.moveTo(0, py(0)); g.lineTo(SPARK_W, py(0)); g.stroke()
   }
-  g.strokeStyle = '#4a9eff'
-  g.lineWidth = 1.25
-  g.beginPath()
-  vals.forEach((v, i) => (i ? g.lineTo(x(i), y(v)) : g.moveTo(x(i), y(v))))
-  g.stroke()
+  cols.forEach((c, ci) => {
+    g.strokeStyle = SERIES_COLORS[ci % SERIES_COLORS.length]
+    g.lineWidth = 1.25
+    g.beginPath()
+    let started = false
+    rows.forEach((row, i) => {
+      const v = row[c]
+      if (typeof v !== 'number') return
+      if (!started) { g.moveTo(px(xOf(row, i)), py(v)); started = true }
+      else g.lineTo(px(xOf(row, i)), py(v))
+    })
+    g.stroke()
+  })
   return canvas
 }
 
 // Build a preview card for a Table: header (name · rows · cols), a sparkline of
-// the first numeric column (besides index), and the first maxRows×maxCols cells.
+// every numeric column (besides index), and the first maxRows×maxCols cells.
 export function buildTablePreview(table, { maxRows = 6, maxCols = 6 } = {}) {
   const wrap = document.createElement('div')
   wrap.className = 'cm-preview'
@@ -61,17 +91,31 @@ export function buildTablePreview(table, { maxRows = 6, maxCols = 6 } = {}) {
   head.textContent = `${table.name ?? 'table'} · ${rowsLabel} · ${colsLabel}`
   wrap.appendChild(head)
 
-  const numCol = allCols.find(
+  // Every numeric column except the index — each drawn as its own line against
+  // the index (seconds) on the x-axis, like the graph panel. A table with only
+  // an index has nothing to plot, so the graph is skipped entirely.
+  const hasIndex = allCols.includes('index')
+  const xOf = (row, i) => (hasIndex ? row.index : i)
+  const numCols = allCols.filter(
     (c) => c !== 'index' && table.rows.some((r) => typeof r[c] === 'number'),
   )
-  if (numCol) {
-    const spark = drawSparkline(table.rows, numCol)
+  if (numCols.length) {
+    const spark = drawSparklines(table.rows, numCols, xOf)
     if (spark) {
       wrap.appendChild(spark)
-      const label = document.createElement('div')
-      label.className = 'cm-preview-spark-label'
-      label.textContent = numCol
-      wrap.appendChild(label)
+      const legend = document.createElement('div')
+      legend.className = 'cm-preview-spark-label'
+      numCols.forEach((c, ci) => {
+        const item = document.createElement('span')
+        item.className = 'cm-preview-series'
+        const dot = document.createElement('span')
+        dot.className = 'cm-preview-dot'
+        dot.style.background = SERIES_COLORS[ci % SERIES_COLORS.length]
+        item.appendChild(dot)
+        item.appendChild(document.createTextNode(c))
+        legend.appendChild(item)
+      })
+      wrap.appendChild(legend)
     }
   }
 
