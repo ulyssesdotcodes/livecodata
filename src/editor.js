@@ -79,16 +79,16 @@ define("base", () =>
 )
 
 // 2. Bake a JoltPhysics simulation in the background: step the world for 240
-//    frames (~4s at 60fps). simulate() ADDS to the table — a per-frame "update"
-//    row for each moving body (the baked motion the cache interpolates between)
-//    plus a "collision" row whenever two bodies first touch.
+//    frames (~4 s at 60 fps). simulate() ADDS to the table — a per-frame "update"
+//    row for each moving body (index in seconds; the cache interpolates between
+//    them) plus a "collision" row whenever two bodies first touch.
 define("events", (rand, table) =>
   physics(table("base")).simulate({ steps: 240, gravity: -9.81 })
 )
 
 // 3. The frame cache: bake the sparse "events" into dense per-frame world state
-//    that playback indexes straight into.
-define("scene", (rand, table) => table("events").rasterize(240))
+//    that playback indexes straight into. rasterize(seconds) sets the duration.
+define("scene", (rand, table) => table("events").rasterize(4))
 
 // 4. Collisions are just rows — pull them into their own view to inspect, and
 //    graph the ball's height over time as it bounces and settles.

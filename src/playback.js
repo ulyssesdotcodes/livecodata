@@ -2,7 +2,7 @@ import { buildFrameIndex, stateAtFrame } from './rasterize.js'
 import { buildTimeline } from './timeline.js'
 import { activeLineage } from './lineage.js'
 
-const FPS = 60 // one row == one frame; playback advances FPS indices per second
+const FPS = 60 // must match rasterize.js; used to convert seconds ↔ frame indices
 
 export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
   let state = 'idle'
@@ -24,7 +24,7 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
 
   const timeEl = document.createElement('span')
   timeEl.id = 'playback-time'
-  timeEl.textContent = 'f0'
+  timeEl.textContent = '0.00s'
 
   topRow.appendChild(btn)
   topRow.appendChild(timeEl)
@@ -34,7 +34,7 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
   scrubber.id = 'scrub-bar'
   scrubber.min = 0
   scrubber.max = 100
-  scrubber.step = 1
+  scrubber.step = 1 / FPS
   scrubber.value = 0
 
   controlsEl.appendChild(topRow)
@@ -42,23 +42,27 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
 
   // ── Helpers ──
 
-  function setFill(i) {
-    const pct = maxIndex > 0 ? Math.min(100, (i / maxIndex) * 100) : 0
+  function setFill(t) {
+    const pct = maxIndex > 0 ? Math.min(100, (t / maxIndex) * 100) : 0
     scrubber.style.background =
       `linear-gradient(to right, #e94560 ${pct}%, #1a3a5e ${pct}%)`
   }
 
-  function showIndex(i) {
-    const src = timeline.frameAt(i)
-    // Show tick→source frame when the timeline remaps time, else just the frame.
-    timeEl.textContent = timeline.length ? `f${Math.round(i)}→f${src}` : 'f' + Math.round(i)
+  function showIndex(t) {
+    const src = timeline.frameAt(Math.floor(t * FPS))
+    // Show tick→source when the timeline remaps time, else just seconds.
+    if (timeline.length) {
+      timeEl.textContent = `${t.toFixed(2)}s→${(src / FPS).toFixed(2)}s`
+    } else {
+      timeEl.textContent = `${t.toFixed(2)}s`
+    }
   }
 
   // Drive the scene from the dense cache at the tick's *source* frame (mapped
   // through the timeline): every object present is created/updated, anything
-  // alive but absent is destroyed.
-  function applyAtIndex(i) {
-    const src = timeline.frameAt(i)
+  // alive but absent is destroyed. `t` is playback time in seconds.
+  function applyAtIndex(t) {
+    const src = timeline.frameAt(Math.floor(t * FPS))
     const states = stateAtFrame(frameIndex, src)
     const present = new Set()
     for (const s of states) {
@@ -79,19 +83,19 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
         aliveObjects.delete(id)
       }
     }
-    // Report both the playback tick and the *source* frame it maps to (they
-    // differ when a timeline retimes/reverses), plus the provenance of the
+    // Report both the playback time (seconds) and the *source* frame it maps to
+    // (they differ when a timeline retimes/reverses), plus the provenance of the
     // on-screen state — so panel cursors track the source frame, not the tick.
-    onTick?.(i, activeLineage(states), src)
+    onTick?.(t, activeLineage(states), src)
   }
 
-  function reset(i = 0) {
+  function reset(t = 0) {
     sceneAPI.reset()
     aliveObjects = new Set()
-    scrubber.value = i
-    setFill(i)
-    showIndex(i)
-    if (frameIndex.map.size) applyAtIndex(i)
+    scrubber.value = t
+    setFill(t)
+    showIndex(t)
+    if (frameIndex.map.size) applyAtIndex(t)
   }
 
   // ── Public: load a fresh dense frame cache (+ optional timeline) and rewind ──
@@ -103,8 +107,8 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
     pausedIndex = 0
     frameIndex = buildFrameIndex(sceneRows ?? [])
     timeline = buildTimeline(timelineRows ?? [])
-    // Playback length follows the timeline when present, else the cache.
-    maxIndex = timeline.length ? timeline.length - 1 : frameIndex.maxFrame
+    // Playback length in seconds: follow the timeline when present, else the cache.
+    maxIndex = (timeline.length ? timeline.length - 1 : frameIndex.maxFrame) / FPS
     scrubber.max = maxIndex || 100
     reset(0)
   }
@@ -113,18 +117,18 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
 
   scrubber.addEventListener('input', () => {
     isScrubbing = true
-    const i = parseFloat(scrubber.value)
-    showIndex(i)
-    setFill(i)
-    if (frameIndex.map.size) applyAtIndex(i)
+    const t = parseFloat(scrubber.value)
+    showIndex(t)
+    setFill(t)
+    if (frameIndex.map.size) applyAtIndex(t)
   })
 
   window.addEventListener('pointerup', () => {
     if (!isScrubbing) return
     isScrubbing = false
-    const i = parseFloat(scrubber.value)
-    pausedIndex = i
-    if (state === 'playing') startTime = performance.now() - (i / FPS) * 1000
+    const t = parseFloat(scrubber.value)
+    pausedIndex = t
+    if (state === 'playing') startTime = performance.now() - t * 1000
   })
 
   // ── Play / pause ──
@@ -139,7 +143,7 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
       btn.textContent = '▶  Play'
     } else if (state === 'paused') {
       state = 'playing'
-      startTime = performance.now() - (pausedIndex / FPS) * 1000
+      startTime = performance.now() - pausedIndex * 1000
       btn.textContent = '⏸  Pause'
       tick()
     } else {
@@ -157,23 +161,23 @@ export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
   }
 
   function position() {
-    return ((performance.now() - startTime) / 1000) * FPS
+    return (performance.now() - startTime) / 1000
   }
 
   function tick() {
     if (state !== 'playing') return
 
-    const i = position()
-    showIndex(i)
+    const t = position()
+    showIndex(t)
 
     if (!isScrubbing) {
-      scrubber.value = Math.min(i, maxIndex)
-      setFill(Math.min(i, maxIndex))
+      scrubber.value = Math.min(t, maxIndex)
+      setFill(Math.min(t, maxIndex))
     }
 
-    applyAtIndex(i)
+    applyAtIndex(t)
 
-    if (i >= maxIndex) {
+    if (t >= maxIndex) {
       scrubber.value = maxIndex
       setFill(maxIndex)
       showIndex(maxIndex)

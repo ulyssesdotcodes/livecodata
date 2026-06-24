@@ -7,7 +7,7 @@ import { getLineage } from '../src/lineage.js'
 // stamping, rasterize) — not just as isolated Table units.
 test('new verbs cook end-to-end (grid/derive/groupBy/csv/join/triggerEach + lineage)', () => {
   const code = `
-define("wave", () => math(i => Math.sin(i * Math.PI / 6)).range(24))
+define("wave", () => math(t => Math.sin(t * Math.PI * 10)).range(0.4))
 define("base", "events", () => grid(2, 2).derive({
   id: r => "o" + r.i, type: "create", index: 0, shape: "sphere",
   rx: 0, ry: 0, rz: 0, color: 0x4444ff,
@@ -16,9 +16,9 @@ define("flash", "events", (rand, table) =>
   table("wave").triggerEach(
     (cur, i, rows) => i > 0 && cur.value * rows[i - 1].value < 0,
     table("base"),
-    (o, cur) => ({ id: o.id, type: "color", index: cur.index, color: 0xff0000, dur: 4 })
+    (o, cur) => ({ id: o.id, type: "color", index: cur.index, color: 0xff0000, dur: 4/60 })
   ))
-define("scene", () => table("events").rasterize(24))
+define("scene", () => table("events").rasterize(24/60))
 define("bySign", () => table("wave").derive({ sign: r => r.value >= 0 ? "pos" : "neg" }).groupBy("sign").count())
 define("cities", () => csv("id,pop\\na,8\\nb,4"))
 define("joined", () => table("cities").join(rows([{ id: "a", note: "hit" }]), "id"))
