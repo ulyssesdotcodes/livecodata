@@ -63,6 +63,34 @@ test('cookProgram surfaces effect rows when effects join the events group', () =
   assert.ok(cooked.sceneRows.every((r) => r.id === 's'))
 })
 
+test('effects can be data-driven from a sibling group member without cycling', () => {
+  // Mirrors the default doc: "effects" reads "sim" (the other "events" member),
+  // not "events" itself — filtering "events" here would cycle. A collision row
+  // in "sim" drives a bloom flash, so the effect fires at the real landing time.
+  const rt = createRuntime()
+  const code = `
+    define("sim", "events", () => rows([
+      { id: "s", type: "create", index: 0, shape: "box", color: 1,
+        px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
+      { id: "s", type: "collision", index: 0.5, other: "floor" },
+    ]))
+    define("effects", "events", (rand, table) =>
+      rows([{ id: "bloom", type: "addEffect", effect: "bloom", index: 0 }]).concat(
+        table("sim")
+          .filter(r => r.type === "collision" && r.other === "floor")
+          .map(r => ({ id: "bloom", type: "updateEffect", index: r.index,
+            dur: 0.05, params: { strength: 2.6 } }))
+      ))
+    define("scene", (rand, table) => table("events").rasterize(1/60))
+  `
+  const cooked = cookProgram(rt, code, 1)
+  // The bloom flash is timed to the collision (0.5s), not a guessed constant.
+  const update = cooked.effectRows.find((r) => r.type === 'updateEffect')
+  assert.ok(update, 'a collision-driven updateEffect was emitted')
+  assert.equal(update.index, 0.5)
+  assert.equal(update.params.strength, 2.6)
+})
+
 test('replayAt selects the program live at a session position', () => {
   const rt = createRuntime()
   const log = createLog()

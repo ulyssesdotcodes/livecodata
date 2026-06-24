@@ -181,17 +181,26 @@ define("ball_height", (rand, table) =>
 //    (another effect's id, or omitted to read the base render output), params,
 //    and an index (seconds). An updateEffect with a dur eases its params over
 //    time, just like a color pulse. Here bloom feeds an afterimage trail, and
-//    the bloom intensifies as the shapes land (~1.2s). Like step 2 this view is
-//    tagged into the "events" group, so its rows are concatted into "events".
-define("effects", "events", () =>
+//    the bloom flashes on each real landing — data-driven from "sim"'s collision
+//    rows (filter the sibling member, not "events", or we'd cycle), so the flash
+//    fires exactly when a shape hits the floor, not at a guessed time. Like step
+//    2 this view is tagged into the "events" group, so its rows merge into "events".
+define("effects", "events", (rand, table) =>
   rows([
     { id: "bloom",  type: "addEffect", effect: "bloom", index: 0,
       params: { strength: 0.8, radius: 0.5, threshold: 0.6 } },
     { id: "trails", type: "addEffect", effect: "afterimage", input: "bloom",
       index: 0, params: { damp: 0.82 } },
-    { id: "bloom",  type: "updateEffect", index: 1.2, dur: 0.6,
-      params: { strength: 2.4 } },
-  ])
+  ]).concat(
+    table("sim")
+      .filter(r => r.type === "collision" && r.other === "floor")
+      .filterMap(r => [
+        { id: "bloom", type: "updateEffect", index: r.index, dur: 0.05,
+          params: { strength: 2.6 } },
+        { id: "bloom", type: "updateEffect", index: r.index + 0.05, dur: 0.5,
+          ease: easeOut, params: { strength: 0.8 } },
+      ])
+  )
 )
 `
 
