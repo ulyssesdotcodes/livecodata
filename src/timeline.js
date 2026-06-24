@@ -10,7 +10,7 @@
 // With no timeline view, playback is the identity: tick i shows cache frame i.
 // ----------------------------------------------------------------------------
 
-const FPS = 60 // must match rasterize.js
+import { FPS } from './constants.js'
 
 // Build a tick → frame mapping from a timeline view's rows. Returns
 // { length, frameAt(tick) }. `length` is the number of playback ticks (0 when

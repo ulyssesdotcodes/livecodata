@@ -25,7 +25,7 @@
 // for the chain at the current frame each tick.
 // ----------------------------------------------------------------------------
 
-const FPS = 60 // must match rasterize.js; converts seconds ↔ frame indices
+import { FPS } from './constants.js' // converts seconds ↔ frame indices
 
 // The known effect types and their tunable parameters' defaults. A param left
 // unset on an event falls back to these, and only numeric params here are

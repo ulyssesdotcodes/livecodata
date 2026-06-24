@@ -2,8 +2,7 @@ import { buildFrameIndex, stateAtFrame } from './rasterize.js'
 import { buildEffectIndex, effectChainAtFrame } from './effects.js'
 import { buildTimeline } from './timeline.js'
 import { activeLineage } from './lineage.js'
-
-const FPS = 60 // must match rasterize.js; used to convert seconds ↔ frame indices
+import { FPS } from './constants.js' // used to convert seconds ↔ frame indices
 
 export function initPlayback(controlsEl, sceneAPI, { onTick } = {}) {
   let state = 'idle'
