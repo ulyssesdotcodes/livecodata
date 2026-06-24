@@ -28,8 +28,7 @@
 
 import { withLineage, unionLineage } from './lineage.js'
 import { mixColor } from './color.js'
-
-const FPS = 60 // bake resolution: one output frame per 1/FPS seconds
+import { FPS } from './constants.js' // bake resolution: one output frame per 1/FPS seconds
 
 function lerp(a, b, t) { return a + (b - a) * t }
 

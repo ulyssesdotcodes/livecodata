@@ -48,11 +48,11 @@ let currentSessionId = sessionStore.newId()
 let lastViews = new Map()
 
 // Push a cooked result to the panels + playback. Shared by live runs and replay.
-function applyCooked({ views, graphs, sceneRows, timelineRows }) {
+function applyCooked({ views, graphs, sceneRows, timelineRows, effectRows }) {
   lastViews = views
   tablePanel.setTables(views)
   graphPanel.setGraphs(graphs)
-  playback.load(sceneRows, timelineRows)
+  playback.load(sceneRows, timelineRows, effectRows)
 }
 
 // Save the live log into the multi-session store under the current id, labeled
