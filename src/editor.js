@@ -122,7 +122,7 @@ function dslCompletions(getViews) {
   }
 }
 
-const initialDoc = `// livecodata — define tables as views; the engine cooks them each run.
+export const defaultProgram = `// livecodata — define tables as views; the engine cooks them each run.
 // Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 // Tips: Ctrl-Space completes views & Table verbs; hover a "view" name to preview
 // its table; your caret selects that view's tab on the right.
@@ -235,7 +235,7 @@ export function initEditor(parent, { onRun, getViews, onCaretView } = {}) {
   let lastCaretView = null
 
   const view = new EditorView({
-    doc: initialDoc,
+    doc: defaultProgram,
     extensions: [
       vim(),
       basicSetup,
