@@ -10,6 +10,10 @@ await esbuild.build({
   minify: true,
   outfile: 'public/assets/index.js',
   format: 'esm',
+  // Jolt's emscripten glue has a node-only branch that does
+  // `await import("module")`; keep it external so it isn't resolved at build
+  // time (the browser never reaches that node-detection path).
+  external: ['module'],
 })
 
 const html = readFileSync('index.html', 'utf8')

@@ -13,6 +13,7 @@ const ctx = await esbuild.context({
   bundle: true,
   outfile: 'public/assets/index.js',
   format: 'esm',
+  external: ['module'], // see build.js
 })
 
 await ctx.watch()
