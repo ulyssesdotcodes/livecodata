@@ -3,6 +3,7 @@ import { javascript, javascriptLanguage } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { keymap, hoverTooltip } from '@codemirror/view'
 import { Prec } from '@codemirror/state'
+import { vim } from '@replit/codemirror-vim'
 import { buildTablePreview } from './preview.js'
 
 // Completed by the editor. Builtins are the DSL surface (createDSL in dsl.js);
@@ -170,6 +171,7 @@ export function initEditor(parent, { onRun, getViews, onCaretView } = {}) {
   const view = new EditorView({
     doc: initialDoc,
     extensions: [
+      vim(),
       basicSetup,
       javascript(),
       // DSL autocomplete (view names / Table methods / builtins). Added as a JS
