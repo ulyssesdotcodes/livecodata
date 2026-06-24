@@ -5,6 +5,7 @@ import { keymap, hoverTooltip } from '@codemirror/view'
 import { Prec } from '@codemirror/state'
 import { vim } from '@replit/codemirror-vim'
 import { buildTablePreview } from './preview.js'
+import { SAMPLES } from './samples.js'
 
 // Completed by the editor. Builtins are the DSL surface (createDSL in dsl.js);
 // methods are Table/builder methods offered after a dot. Kept in sync by hand.
@@ -122,53 +123,7 @@ function dslCompletions(getViews) {
   }
 }
 
-const initialDoc = `// livecodata — define tables as views; the engine cooks them each run.
-// Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
-// Tips: Ctrl-Space completes views & Table verbs; hover a "view" name to preview
-// its table; your caret selects that view's tab on the right.
-
-// 1. The base scene: a static floor and three shapes to drop on it. Each create
-//    row carries physics fields — motion, spawn position (px/py/pz) and rotation
-//    (rx/ry/rz). The floor's physics half-extents (hx/hy/hz) are wider than the
-//    drawn mesh, so things land instead of rolling off.
-define("base", () =>
-  rows([
-    { id: "floor", type: "create", shape: "box", color: 0x222244,
-      motion: "static", px: 0, py: -1.2, pz: 0, hx: 3, hy: 0.2, hz: 3 },
-    { id: "ball",  type: "create", shape: "sphere",   color: 0x4a9eff,
-      motion: "dynamic", px: -0.5, py: 3.0, pz: 0.0 },
-    { id: "box1",  type: "create", shape: "box",      color: 0xff6b6b,
-      motion: "dynamic", px: 0.4,  py: 4.5, pz: 0.2, rx: 0.4, ry: 0.3 },
-    { id: "cyl",   type: "create", shape: "cylinder", color: 0x51cf66,
-      motion: "dynamic", px: 0.0,  py: 6.0, pz: -0.3 },
-  ])
-)
-
-// 2. Bake a JoltPhysics simulation in the background: step the world for 240
-//    frames (~4 s at 60 fps). simulate() ADDS to the table — a per-frame "update"
-//    row for each moving body (index in seconds; the cache interpolates between
-//    them) plus a "collision" row whenever two bodies first touch.
-define("events", (rand, table) =>
-  physics(table("base")).simulate({ steps: 240, gravity: -9.81 })
-)
-
-// 3. The frame cache: bake the sparse "events" into dense per-frame world state
-//    that playback indexes straight into. rasterize(seconds) sets the duration.
-define("scene", (rand, table) => table("events").rasterize(4))
-
-// 4. Collisions are just rows — pull them into their own view to inspect, and
-//    graph the ball's height over time as it bounces and settles.
-define("collisions", (rand, table) =>
-  table("events").filter(r => r.type === "collision")
-)
-
-define("ball_height", (rand, table) =>
-  table("events")
-    .filter(r => r.id === "ball" && r.type === "update")
-    .map(r => ({ index: r.index, height: r.py }))
-    .graph("height")
-)
-`
+const initialDoc = SAMPLES[0].code
 
 // A hover tooltip: hovering a "name" string that matches a cooked view pops an
 // inline preview (sparkline + first rows) of that table. `getViews` supplies the
@@ -200,6 +155,16 @@ export function initEditor(parent, { onRun, getViews, onCaretView } = {}) {
   titleEl.className = 'editor-title'
   titleEl.textContent = 'DSL'
   header.appendChild(titleEl)
+
+  const sampleSelect = document.createElement('select')
+  sampleSelect.className = 'sample-select'
+  SAMPLES.forEach((s, i) => {
+    const opt = document.createElement('option')
+    opt.value = i
+    opt.textContent = s.name
+    sampleSelect.appendChild(opt)
+  })
+  header.appendChild(sampleSelect)
 
   const runBtn = document.createElement('button')
   runBtn.className = 'run-btn'
@@ -271,6 +236,11 @@ export function initEditor(parent, { onRun, getViews, onCaretView } = {}) {
   // Replace the whole document (used to restore a rehydrated session's program).
   function setCode(code) {
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } })
+  }
+
+  sampleSelect.onchange = () => {
+    const sample = SAMPLES[+sampleSelect.value]
+    if (sample) setCode(sample.code)
   }
 
   return { run, getCode: () => view.state.doc.toString(), setCode, setError }
