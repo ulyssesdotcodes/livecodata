@@ -487,7 +487,9 @@ html, body {
 
 /* ── Editor hover preview (table + sparkline) ── */
 .cm-preview {
-  max-width: 280px;
+  max-width: 320px;
+  max-height: 340px;
+  overflow-y: auto;
   padding: 6px;
   background: #12203c;
   color: #c8d6e5;

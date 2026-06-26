@@ -50,6 +50,7 @@ export function createRuntime({ physics } = {}) {
   let seedVal // run seed
   let prngs   // Map<name, () => number> — per-view random streams
   let groups  // Map<groupId, string[]> — view names tagged into each group
+  let currentCookingView = null  // which view's fn() is executing right now
 
   function randForView(name) {
     if (!prngs.has(name)) prngs.set(name, mulberry32((seedVal ^ hashString(name)) >>> 0))
@@ -106,7 +107,10 @@ export function createRuntime({ physics } = {}) {
     // Inject per-view rand and a dep-tracking table resolver as parameters.
     const rand = randForView(name)
     const localTable = (dep) => cook(dep, name, nextStack)
+    const prevCooking = currentCookingView
+    currentCookingView = name
     const raw = def.fn(rand, localTable)
+    currentCookingView = prevCooking
     const result = raw instanceof Table
       ? raw
       : new Table(Array.isArray(raw) ? raw.map((r) => ({ ...r })) : [], ctx)
@@ -129,7 +133,7 @@ export function createRuntime({ physics } = {}) {
       cache.set(name, table)
     },
     addGraph(spec) {
-      graphs.push(spec)
+      graphs.push({ ...spec, viewName: currentCookingView })
     },
     // top-level table() calls (outside any view): no callerView, empty stack
     resolve(name) {
@@ -164,8 +168,13 @@ export function createRuntime({ physics } = {}) {
     for (const name of defs.keys()) cook(name, null, [])
 
     const resolvedGraphs = graphs
-      .map((g) => (g.table ? g : { table: cache.get(g.name), columns: g.columns }))
-      .filter((g) => g.table)
+      .map((g) => {
+        const table = g.table
+          ? (g.viewName ? cache.get(g.viewName) ?? g.table : g.table)
+          : cache.get(g.name)
+        return table ? { table, columns: g.columns, viewName: g.viewName ?? g.table?.name } : null
+      })
+      .filter(Boolean)
 
     return { views: cache, graphs: resolvedGraphs, deps }
   }

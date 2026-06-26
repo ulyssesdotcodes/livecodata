@@ -1,9 +1,9 @@
-// Combined table + graph panel. Each tab shows one view; if the view has a
-// graph spec (.graph() was called on it), a mini chart appears at the top.
+// Combined table + graph panel. Each tab shows one view; if the view has
+// numeric columns a chart appears at the top (auto-detected or from .graph()).
 // The table autoscrolls to the active row during playback unless the user
 // has manually scrolled since the last time Play was pressed.
 
-import { SERIES_COLORS, resolveSpec, drawChartToCanvas } from './graph-panel.js'
+import { SERIES_COLORS, resolveSpec, drawChartToCanvas, fmtNum } from './graph-panel.js'
 
 const MAX_ROWS = 1000
 
@@ -37,7 +37,7 @@ export function initTablePanel(container) {
   let userScrolled = false
   let suppressScrollEvent = false
 
-  // Chart for the currently-visible tab (null when tab has no graph spec).
+  // Chart for the currently-visible tab (null when tab has no numeric columns).
   let currentChart = null
   const ro = new ResizeObserver(() => { if (currentChart) drawCurrentChart() })
 
@@ -60,7 +60,7 @@ export function initTablePanel(container) {
   content.className = 'tab-content'
   container.appendChild(content)
 
-  // Graph section (inserted into content when the current tab is graphable).
+  // Graph section (inserted into content when the current tab has numeric data).
   const graphSection = document.createElement('div')
   graphSection.className = 'tab-graph'
 
@@ -99,7 +99,22 @@ export function initTablePanel(container) {
 
   function drawCurrentChart() {
     if (!currentChart) return
-    drawChartToCanvas(graphCanvas, currentChart, playIndex, playActive)
+    const colRanges = drawChartToCanvas(graphCanvas, currentChart, playIndex, playActive)
+    // Update legend items with per-series y-range.
+    if (colRanges) {
+      const seriesEls = graphLegend.querySelectorAll('.graph-series')
+      seriesEls.forEach((el, ci) => {
+        if (ci >= colRanges.length) return
+        const { rawMin, rawMax } = colRanges[ci]
+        let rangeEl = el.querySelector('.graph-range')
+        if (!rangeEl) {
+          rangeEl = document.createElement('span')
+          rangeEl.className = 'graph-range'
+          el.appendChild(rangeEl)
+        }
+        rangeEl.textContent = `${fmtNum(rawMin)}–${fmtNum(rawMax)}`
+      })
+    }
   }
 
   function render(name) {
@@ -109,9 +124,21 @@ export function initTablePanel(container) {
 
     // ── Graph section ──
     ro.disconnect()
-    const spec = graphByName.get(name)
+
+    // Use explicit .graph() spec if present, otherwise auto-detect numeric columns.
+    let spec = graphByName.get(name)
+    if (!spec) {
+      const t = store.get(name)
+      if (t && t.rows.length) {
+        const numericCols = t.columns.filter(
+          c => c !== 'index' && t.rows.some(r => typeof r[c] === 'number')
+        )
+        if (numericCols.length) spec = { table: t, columns: numericCols, viewName: name }
+      }
+    }
+
     if (spec) {
-      const { rows, cols, xOf } = resolveSpec(spec)
+      const { rows, cols, xOf, hasIndex } = resolveSpec(spec)
       if (cols.length && rows.length) {
         let xMin = Infinity, xMax = -Infinity
         rows.forEach((row, i) => {
@@ -119,7 +146,7 @@ export function initTablePanel(container) {
           if (x < xMin) xMin = x
           if (x > xMax) xMax = x
         })
-        currentChart = { rows, cols, xOf, xMin, xMax, name }
+        currentChart = { rows, cols, xOf, hasIndex, xMin, xMax, name }
 
         graphLegend.innerHTML = ''
         cols.forEach((c, ci) => {
@@ -214,7 +241,8 @@ export function initTablePanel(container) {
     setGraphs(newSpecs) {
       graphByName = new Map()
       for (const spec of (newSpecs ?? [])) {
-        if (spec.table?.name) graphByName.set(spec.table.name, spec)
+        const name = spec.viewName ?? spec.table?.name
+        if (name) graphByName.set(name, spec)
       }
       if (current) render(current)
     },

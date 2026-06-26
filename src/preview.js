@@ -14,22 +14,23 @@ const SPARK_H = 36
 // column, sharing a single y-range like the graph panel. Returns a <canvas>,
 // or null when no column has enough numeric data to draw a line.
 function drawSparklines(rows, cols, xOf, playIndex = null) {
-  let min = Infinity, max = -Infinity
-  for (const row of rows) {
-    for (const c of cols) {
-      const v = row[c]
-      if (typeof v === 'number') {
-        if (v < min) min = v
-        if (v > max) max = v
-      }
-    }
-  }
   // A line needs at least two points; bail if no series qualifies.
   const drawable = cols.some(
     (c) => rows.filter((r) => typeof r[c] === 'number').length >= 2,
   )
   if (!drawable) return null
-  if (min === max) { min -= 1; max += 1 }
+
+  // Per-column y-ranges so series with very different scales each fill the height.
+  const colRanges = cols.map((c) => {
+    let min = Infinity, max = -Infinity
+    for (const row of rows) {
+      const v = row[c]
+      if (typeof v === 'number') { if (v < min) min = v; if (v > max) max = v }
+    }
+    if (!isFinite(min)) { min = -1; max = 1 }
+    if (min === max) { min -= 1; max += 1 }
+    return { min, max }
+  })
 
   let xMin = Infinity, xMax = -Infinity
   rows.forEach((row, i) => {
@@ -51,14 +52,18 @@ function drawSparklines(rows, cols, xOf, playIndex = null) {
 
   const pad = 3
   const px = (x) => pad + ((x - xMin) / xSpan) * (SPARK_W - 2 * pad)
-  const py = (v) => pad + (1 - (v - min) / (max - min)) * (SPARK_H - 2 * pad)
 
-  if (min < 0 && max > 0) {
-    g.strokeStyle = 'rgba(140,160,184,0.25)'
-    g.lineWidth = 1
-    g.beginPath(); g.moveTo(0, py(0)); g.lineTo(SPARK_W, py(0)); g.stroke()
-  }
   cols.forEach((c, ci) => {
+    const { min, max } = colRanges[ci]
+    const yRange = max - min
+    const py = (v) => pad + (1 - (v - min) / yRange) * (SPARK_H - 2 * pad)
+
+    if (min < 0 && max > 0) {
+      g.strokeStyle = `${SERIES_COLORS[ci % SERIES_COLORS.length]}44`
+      g.lineWidth = 1
+      g.beginPath(); g.moveTo(pad, py(0)); g.lineTo(SPARK_W - pad, py(0)); g.stroke()
+    }
+
     g.strokeStyle = SERIES_COLORS[ci % SERIES_COLORS.length]
     g.lineWidth = 1.25
     g.beginPath()
