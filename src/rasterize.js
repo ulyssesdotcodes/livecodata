@@ -21,9 +21,9 @@
 // seconds — after which it rests on the base until a newer pulse takes over.
 //
 // Output cache rows (dense):
-//   { frame, id, shape, px,py,pz, rx,ry,rz, color }
-// Playback indexes straight into this with stateAtFrame(); no interpolation at
-// render time.
+//   { index, id, shape, px,py,pz, rx,ry,rz, color }
+// `index` is in seconds (same unit as input events). Playback indexes straight
+// into this with stateAtFrame(); no interpolation at render time.
 // ----------------------------------------------------------------------------
 
 import { withLineage, unionLineage } from './lineage.js'
@@ -123,7 +123,7 @@ export function rasterizeRows(eventRows, maxSeconds) {
       const s = sampleObject(evs, frame)
       if (!s) continue
       out.push(withLineage({
-        frame, id: evs[0].id, shape: s.shape,
+        index: frame / FPS, id: evs[0].id, shape: s.shape,
         px: s.pos.x, py: s.pos.y, pz: s.pos.z,
         rx: s.rot.x, ry: s.rot.y, rz: s.rot.z,
         color: s.color,
@@ -139,7 +139,7 @@ export function buildFrameIndex(sceneRows) {
   const map = new Map()
   let maxFrame = 0
   for (const r of sceneRows ?? []) {
-    const f = r.frame ?? 0
+    const f = Math.round((r.index ?? 0) * FPS)
     if (!map.has(f)) map.set(f, [])
     map.get(f).push(r)
     if (f > maxFrame) maxFrame = f

@@ -248,6 +248,12 @@ html, body {
   display: inline-block;
 }
 
+.graph-range {
+  color: #607a96;
+  font-size: 10px;
+  margin-left: 3px;
+}
+
 /* ── Combined table + graph pane ── */
 #table-pane {
   flex: 1;

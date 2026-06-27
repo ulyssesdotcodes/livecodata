@@ -4,32 +4,30 @@
 // (reusing the table panel's cell formatter for consistent display).
 
 import { formatCell } from './table-panel.js'
-import { SERIES_COLORS } from './graph-panel.js'
+import { SERIES_COLORS, xTicks, tickDecimals, fmtNum } from './graph-panel.js'
 
 const SPARK_W = 220
-const SPARK_H = 36
+const SPARK_H = 50  // 36px chart area + 14px x-axis label area
 
-// A tiny multi-line chart of `cols` plotted against `xOf` (the row's `index`
-// in seconds when the table has one, else its ordinal) — one colored series per
-// column, sharing a single y-range like the graph panel. Returns a <canvas>,
-// or null when no column has enough numeric data to draw a line.
-function drawSparklines(rows, cols, xOf, playIndex = null) {
-  // A line needs at least two points; bail if no series qualifies.
+// A tiny multi-line chart of `cols` plotted against `xOf`. Each series uses its
+// own y-scale so columns with very different ranges all show their shape clearly.
+// Returns { canvas, colRanges } or null when no series has enough numeric data.
+function drawSparklines(rows, cols, xOf, hasIndex, playIndex = null) {
   const drawable = cols.some(
     (c) => rows.filter((r) => typeof r[c] === 'number').length >= 2,
   )
   if (!drawable) return null
 
-  // Per-column y-ranges so series with very different scales each fill the height.
+  // Per-column y-ranges.
   const colRanges = cols.map((c) => {
-    let min = Infinity, max = -Infinity
+    let rawMin = Infinity, rawMax = -Infinity
     for (const row of rows) {
       const v = row[c]
-      if (typeof v === 'number') { if (v < min) min = v; if (v > max) max = v }
+      if (typeof v === 'number') { if (v < rawMin) rawMin = v; if (v > rawMax) rawMax = v }
     }
-    if (!isFinite(min)) { min = -1; max = 1 }
-    if (min === max) { min -= 1; max += 1 }
-    return { min, max }
+    if (!isFinite(rawMin)) { rawMin = -1; rawMax = 1 }
+    if (rawMin === rawMax) { rawMin -= 1; rawMax += 1 }
+    return { rawMin, rawMax }
   })
 
   let xMin = Infinity, xMax = -Infinity
@@ -50,18 +48,21 @@ function drawSparklines(rows, cols, xOf, playIndex = null) {
   const g = canvas.getContext('2d')
   g.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-  const pad = 3
-  const px = (x) => pad + ((x - xMin) / xSpan) * (SPARK_W - 2 * pad)
+  const pad = { t: 3, b: 14, l: 3, r: 3 }
+  const plotH = SPARK_H - pad.t - pad.b
+  const plotW = SPARK_W - pad.l - pad.r
+
+  const px = (x) => pad.l + ((x - xMin) / xSpan) * plotW
 
   cols.forEach((c, ci) => {
-    const { min, max } = colRanges[ci]
-    const yRange = max - min
-    const py = (v) => pad + (1 - (v - min) / yRange) * (SPARK_H - 2 * pad)
+    const { rawMin, rawMax } = colRanges[ci]
+    const yRange = rawMax - rawMin
+    const py = (v) => pad.t + (1 - (v - rawMin) / yRange) * plotH
 
-    if (min < 0 && max > 0) {
+    if (rawMin < 0 && rawMax > 0) {
       g.strokeStyle = `${SERIES_COLORS[ci % SERIES_COLORS.length]}44`
       g.lineWidth = 1
-      g.beginPath(); g.moveTo(pad, py(0)); g.lineTo(SPARK_W - pad, py(0)); g.stroke()
+      g.beginPath(); g.moveTo(pad.l, py(0)); g.lineTo(SPARK_W - pad.r, py(0)); g.stroke()
     }
 
     g.strokeStyle = SERIES_COLORS[ci % SERIES_COLORS.length]
@@ -78,18 +79,32 @@ function drawSparklines(rows, cols, xOf, playIndex = null) {
   })
 
   if (playIndex != null && xSpan > 0) {
-    const cx = pad + ((playIndex - xMin) / xSpan) * (SPARK_W - 2 * pad)
-    if (cx >= 0 && cx <= SPARK_W) {
+    const cx = px(playIndex)
+    if (cx >= pad.l && cx <= SPARK_W - pad.r) {
       g.strokeStyle = '#e94560'
       g.lineWidth = 1
       g.beginPath()
-      g.moveTo(cx, 0)
-      g.lineTo(cx, SPARK_H)
+      g.moveTo(cx, pad.t)
+      g.lineTo(cx, SPARK_H - pad.b)
       g.stroke()
     }
   }
 
-  return canvas
+  // X-axis tick labels.
+  const ticks = xTicks(xMin, xMax, 3)
+  const dec = tickDecimals(ticks)
+  const suffix = hasIndex ? 's' : ''
+  g.fillStyle = '#607a96'
+  g.font = '8px system-ui'
+  g.textBaseline = 'top'
+  ticks.forEach((t, i) => {
+    const x = px(t)
+    if (x < pad.l - 2 || x > SPARK_W - pad.r + 2) return
+    g.textAlign = i === 0 ? 'left' : i === ticks.length - 1 ? 'right' : 'center'
+    g.fillText(t.toFixed(dec) + suffix, x, SPARK_H - pad.b + 2)
+  })
+
+  return { canvas, colRanges }
 }
 
 // Build a preview card for a Table: header (name · rows · cols), a sparkline of
@@ -109,17 +124,15 @@ export function buildTablePreview(table, { maxRows = 6, maxCols = 6, playIndex =
   head.textContent = `${table.name ?? 'table'} · ${rowsLabel} · ${colsLabel}`
   wrap.appendChild(head)
 
-  // Every numeric column except the index — each drawn as its own line against
-  // the index (seconds) on the x-axis, like the graph panel. A table with only
-  // an index has nothing to plot, so the graph is skipped entirely.
   const hasIndex = allCols.includes('index')
   const xOf = (row, i) => (hasIndex ? row.index : i)
   const numCols = allCols.filter(
     (c) => c !== 'index' && table.rows.some((r) => typeof r[c] === 'number'),
   )
   if (numCols.length) {
-    const spark = drawSparklines(table.rows, numCols, xOf, playIndex)
-    if (spark) {
+    const result = drawSparklines(table.rows, numCols, xOf, hasIndex, playIndex)
+    if (result) {
+      const { canvas: spark, colRanges } = result
       wrap.appendChild(spark)
       const legend = document.createElement('div')
       legend.className = 'cm-preview-spark-label'
@@ -131,6 +144,13 @@ export function buildTablePreview(table, { maxRows = 6, maxCols = 6, playIndex =
         dot.style.background = SERIES_COLORS[ci % SERIES_COLORS.length]
         item.appendChild(dot)
         item.appendChild(document.createTextNode(c))
+        if (colRanges?.[ci]) {
+          const { rawMin, rawMax } = colRanges[ci]
+          const range = document.createElement('span')
+          range.className = 'graph-range'
+          range.textContent = ` ${fmtNum(rawMin)}–${fmtNum(rawMax)}`
+          item.appendChild(range)
+        }
         legend.appendChild(item)
       })
       wrap.appendChild(legend)

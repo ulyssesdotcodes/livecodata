@@ -192,6 +192,12 @@ export function initThree(canvas) {
 
       composer.passes = [renderPass, ...ordered, outputPass]
       effectsActive = ordered.length > 0
+      // Propagate current dimensions to newly-created passes. Bypassing
+      // insertPass() means setSize() isn't called automatically, which breaks
+      // size-dependent passes like HalftonePass (width/height uniforms stay at 1).
+      const pw = composer._width * composer._pixelRatio
+      const ph = composer._height * composer._pixelRatio
+      for (const pass of ordered) pass.setSize?.(pw, ph)
     },
 
     reset() {
