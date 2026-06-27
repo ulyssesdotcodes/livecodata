@@ -2,10 +2,19 @@
 // ----------------------------------------------------------------------------
 // A reactive dataflow engine over named views (à la Houdini node cooking). A
 // program registers views with define("name", (rand, table) => <Table>); the
-// engine cooks them on demand, in dependency order, caching each result.
+// engine cooks them on demand, in dependency order.
+//
+// Cooking now builds a lazy op-graph (see dsl.ts): running a view's fn assembles
+// Table nodes (and discovers its table() dependencies) but does not compute rows.
+// After cooking, the engine *materializes* each view, reusing a previous run's
+// rows whenever a node's content hash is unchanged (a 2-generation memo). So an
+// edit that leaves the physics subgraph untouched will not re-bake physics.
 // ----------------------------------------------------------------------------
 
-import { createDSL, Table, type ViewFn, type DSLContext, type GraphSpec, type PhysicsEngine } from './dsl.js'
+import {
+  createDSL, Table, materialize,
+  type ViewFn, type DSLContext, type GraphSpec, type PhysicsEngine, type Memo, type MatCtx,
+} from './dsl.js'
 import { getLineage, withLineage, type Row } from './lineage.js'
 
 type DefEntry =
@@ -46,9 +55,17 @@ function hashString(s: string): number {
 
 export interface RuntimeOptions {
   physics?: () => PhysicsEngine | null
+  tapRows?: () => Row[] | null
 }
 
-export function createRuntime({ physics }: RuntimeOptions = {}): { run: (code: string, opts?: { seed?: number }) => RuntimeResult } {
+export interface RunOptions {
+  seed?: number
+  // Cook only these views (and their deps) instead of all — used to cheaply
+  // recompute a tempo-driven "timeline" on a beat tap without re-running the rest.
+  only?: string[]
+}
+
+export function createRuntime({ physics, tapRows }: RuntimeOptions = {}): { run: (code: string, opts?: RunOptions) => RuntimeResult } {
   let defs: Map<string, DefEntry>
   let cache: Map<string, Table>
   let deps: Map<string, string[]>
@@ -58,15 +75,32 @@ export function createRuntime({ physics }: RuntimeOptions = {}): { run: (code: s
   let groups: Map<string, string[]>
   let currentCookingView: string | null = null
 
+  // Cross-run row cache keyed by content hash. Two generations: at run start the
+  // current map rolls into `prev`, so a result survives one run of non-use before
+  // being evicted (bounds memory while still catching same-as-last-run subgraphs).
+  let curMemo = new Map<number, Row[]>()
+  let prevMemo = new Map<number, Row[]>()
+  const memo: Memo = {
+    get: (h) => curMemo.get(h) ?? prevMemo.get(h),
+    set: (h, rows) => { curMemo.set(h, rows) },
+  }
+
   function randForView(name: string): () => number {
     if (!prngs.has(name)) prngs.set(name, mulberry32((seedVal ^ hashString(name)) >>> 0))
     return prngs.get(name)!
   }
 
-  function stamp(name: string, table: Table): Table {
-    const rows = table.rows.map((r, index) =>
-      withLineage({ ...r }, [...getLineage(r), { table: name, index }]))
-    return new Table(rows, ctx)
+  // Wrap a Table in a 'stamp' node that appends this view's provenance ref
+  // ({ table: name, index }) to each row's lineage when materialized.
+  function stampNode(name: string, input: Table): Table {
+    return Table._fromNode(ctx, {
+      op: 'stamp',
+      spec: { name },
+      inputs: [input],
+      seedSensitive: false,
+      compute: (ins) => ins[0].map((r, index) =>
+        withLineage({ ...r }, [...getLineage(r), { table: name, index }])),
+    })
   }
 
   function cook(name: string, callerView: string | null, stack: string[]): Table {
@@ -84,7 +118,7 @@ export function createRuntime({ physics }: RuntimeOptions = {}): { run: (code: s
     if (callerView) deps.get(callerView)?.push(name)
 
     if (def.kind === 'const') {
-      const stamped = stamp(name, def.table)
+      const stamped = stampNode(name, def.table)
       cache.set(name, stamped)
       return stamped
     }
@@ -92,9 +126,19 @@ export function createRuntime({ physics }: RuntimeOptions = {}): { run: (code: s
     if (def.kind === 'group') {
       if (!deps.has(name)) deps.set(name, [])
       const groupStack = [...stack, name]
-      const rows: Row[] = def.members.flatMap((m) => cook(m, name, groupStack).rows)
-      rows.sort((a, b) => ((a.index as number) ?? 0) - ((b.index as number) ?? 0))
-      const stamped = stamp(name, new Table(rows, ctx))
+      const members = def.members.map((m) => cook(m, name, groupStack))
+      const groupT = Table._fromNode(ctx, {
+        op: 'group',
+        spec: { members: def.members },
+        inputs: members,
+        seedSensitive: false,
+        compute: (ins) => {
+          const rows: Row[] = ins.flat()
+          rows.sort((a, b) => ((a.index as number) ?? 0) - ((b.index as number) ?? 0))
+          return rows
+        },
+      })
+      const stamped = stampNode(name, groupT)
       cache.set(name, stamped)
       return stamped
     }
@@ -110,7 +154,7 @@ export function createRuntime({ physics }: RuntimeOptions = {}): { run: (code: s
     const result = raw instanceof Table
       ? raw
       : new Table(Array.isArray(raw) ? (raw as Row[]).map((r) => ({ ...r })) : [], ctx)
-    const stamped = stamp(name, result)
+    const stamped = stampNode(name, result)
     cache.set(name, stamped)
     return stamped
   }
@@ -125,7 +169,6 @@ export function createRuntime({ physics }: RuntimeOptions = {}): { run: (code: s
     },
     defineConst(name: string, table: Table): void {
       defs.set(name, { kind: 'const', table })
-      cache.set(name, table)
     },
     addGraph(spec: GraphSpec): void {
       graphs.push({ ...spec, viewName: currentCookingView })
@@ -134,11 +177,13 @@ export function createRuntime({ physics }: RuntimeOptions = {}): { run: (code: s
       return cook(name, null, [])
     },
     physics: () => (physics ? physics() : null),
+    tapRows: () => (tapRows ? tapRows() : null),
   }
 
   const api = createDSL(ctx)
+  const matCtx: MatCtx = { physics: () => (physics ? physics() : null) }
 
-  function run(code: string, { seed = 0 } = {}): RuntimeResult {
+  function run(code: string, { seed = 0, only }: RunOptions = {}): RuntimeResult {
     defs = new Map()
     cache = new Map()
     deps = new Map()
@@ -146,6 +191,11 @@ export function createRuntime({ physics }: RuntimeOptions = {}): { run: (code: s
     prngs = new Map()
     groups = new Map()
     seedVal = seed >>> 0
+    ctx.seed = seedVal
+
+    // Roll the memo forward one generation.
+    prevMemo = curMemo
+    curMemo = new Map()
 
     const fn = new Function(...Object.keys(api), code) as (...args: unknown[]) => void
     fn(...Object.values(api))
@@ -154,7 +204,11 @@ export function createRuntime({ physics }: RuntimeOptions = {}): { run: (code: s
       defs.set(group, { kind: 'group', members })
     }
 
-    for (const name of defs.keys()) cook(name, null, [])
+    // Cook (build the op-graphs + discover deps) then materialize, reusing
+    // unchanged subgraphs from the memo. With `only`, cook just those views.
+    const toCook = only ?? [...defs.keys()]
+    for (const name of toCook) if (defs.has(name)) cook(name, null, [])
+    for (const t of cache.values()) materialize(t, matCtx, memo)
 
     const resolvedGraphs = graphs
       .map((g): ResolvedGraph | null => {

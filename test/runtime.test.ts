@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createRuntime } from '../src/runtime.js'
+import type { Row } from '../src/lineage.js'
 
 test('cooks defined views and resolves table() dependencies', () => {
   const rt = createRuntime()
@@ -133,4 +134,34 @@ test('reproduces the zero-crossing events program end-to-end', () => {
   assert.ok(events.some((e) => e.type === 'color'), 'a zero-crossing color event exists')
   assert.deepEqual(events.map((e) => e.index), [...events.map((e) => e.index)].sort((a, b) => (a as number) - (b as number)),
     'events come out index-sorted')
+})
+
+test('incremental cooking reuses an unchanged physics subgraph across runs', () => {
+  // A fake engine that counts how many times it actually bakes.
+  let bakes = 0
+  const engine = {
+    simulate: (rows: Row[]): Row[] => {
+      bakes++
+      return [...rows, { id: 'x', type: 'update', index: 1, py: 1 }]
+    },
+  }
+  const rt = createRuntime({ physics: () => engine })
+  const codeA = `
+    define("base", () => rows([{ id: "x", type: "create", motion: "dynamic" }]))
+    define("sim", (rand, table) => physics(table("base")).simulate({ steps: 1 }))
+    define("out", (rand, table) => table("sim").map(r => ({ ...r })))
+  `
+  rt.run(codeA, { seed: 1 })
+  assert.equal(bakes, 1)
+
+  // Edit an unrelated downstream view (and even change the seed): physics is
+  // reused from the memo, so it is NOT re-baked.
+  const codeB = codeA.replace('table("sim").map(r => ({ ...r }))', 'table("sim").map(r => ({ ...r, tag: 2 }))')
+  rt.run(codeB, { seed: 2 })
+  assert.equal(bakes, 1, 'editing a downstream view did not re-bake physics')
+
+  // Changing the physics inputs (opts) does re-bake.
+  const codeC = codeA.replace('{ steps: 1 }', '{ steps: 2 }')
+  rt.run(codeC, { seed: 3 })
+  assert.equal(bakes, 2, 'changing the physics opts re-bakes')
 })

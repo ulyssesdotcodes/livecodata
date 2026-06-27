@@ -7,19 +7,27 @@ import type { Row } from './lineage.js'
 import type { SceneAPI } from './three-scene.js'
 import type { EffectEntry } from './effects.js'
 
+export interface TapControl {
+  tap(): void
+  clear(): void
+  rows(): Row[]
+}
+
 export interface PlaybackOptions {
   onTick?: (tick: number, active: Map<string, Set<number>>, srcFrame: number) => void
   onPlay?: () => void
+  tapControl?: TapControl
 }
 
 export interface PlaybackAPI {
   load(sceneRows: Row[], timelineRows: Row[], effectRows: Row[]): void
+  setTimeline(timelineRows: Row[]): void
 }
 
 export function initPlayback(
   controlsEl: HTMLElement,
   sceneAPI: SceneAPI,
-  { onTick, onPlay }: PlaybackOptions = {},
+  { onTick, onPlay, tapControl }: PlaybackOptions = {},
 ): PlaybackAPI {
   type PlayState = 'idle' | 'playing' | 'paused'
   let state: PlayState = 'idle'
@@ -31,6 +39,7 @@ export function initPlayback(
   let aliveObjects = new Set<unknown>()
   let maxIndex = 0
   let isScrubbing = false
+  let loop = true // when playback reaches the end, wrap back to the start
 
   const topRow = document.createElement('div')
   topRow.className = 'playback-row'
@@ -39,12 +48,59 @@ export function initPlayback(
   btn.id = 'play-pause-btn'
   btn.textContent = '▶  Play'
 
+  const loopBtn = document.createElement('button')
+  loopBtn.id = 'loop-btn'
+  loopBtn.textContent = '🔁 Loop'
+  loopBtn.title = 'Loop playback'
+  loopBtn.classList.toggle('active', loop)
+  loopBtn.onclick = () => {
+    loop = !loop
+    loopBtn.classList.toggle('active', loop)
+  }
+
   const timeEl = document.createElement('span')
   timeEl.id = 'playback-time'
   timeEl.textContent = '0.00s'
 
   topRow.appendChild(btn)
+  topRow.appendChild(loopBtn)
   topRow.appendChild(timeEl)
+
+  // Tap-beat row: record wall-time presses and show the tempo derived from them
+  // (the same table the DSL's beats()/tempo() read). Only when a controller is given.
+  let tapRow: HTMLDivElement | null = null
+  if (tapControl) {
+    tapRow = document.createElement('div')
+    tapRow.className = 'playback-row tap-row'
+
+    const tapBtn = document.createElement('button')
+    tapBtn.id = 'tap-beat-btn'
+    tapBtn.textContent = '🥁 Tap'
+    tapBtn.title = 'Tap a beat to set the tempo (used by beats() timelines)'
+
+    const bpmEl = document.createElement('span')
+    bpmEl.id = 'tap-bpm'
+
+    const clearBtn = document.createElement('button')
+    clearBtn.id = 'tap-clear-btn'
+    clearBtn.textContent = '✕'
+    clearBtn.title = 'Clear taps'
+
+    const showTempo = (): void => {
+      const rows = tapControl.rows()
+      const n = rows.length
+      const beat = n > 1 ? (rows[n - 1].time as number) / (n - 1) : null
+      bpmEl.textContent = beat ? `${(60 / beat).toFixed(1)} BPM` : 'tap…'
+    }
+
+    tapBtn.onclick = () => { tapControl.tap(); showTempo() }
+    clearBtn.onclick = () => { tapControl.clear(); showTempo() }
+    showTempo()
+
+    tapRow.appendChild(tapBtn)
+    tapRow.appendChild(bpmEl)
+    tapRow.appendChild(clearBtn)
+  }
 
   const scrubber = document.createElement('input')
   scrubber.type = 'range'
@@ -55,6 +111,7 @@ export function initPlayback(
   scrubber.value = '0'
 
   controlsEl.appendChild(topRow)
+  if (tapRow) controlsEl.appendChild(tapRow)
   controlsEl.appendChild(scrubber)
 
   function setFill(t: number): void {
@@ -107,17 +164,55 @@ export function initPlayback(
     if (frameIndex.map.size) applyAtIndex(t)
   }
 
+  // Where the playhead currently sits, in seconds, whatever the play state.
+  function currentTime(): number {
+    return state === 'playing' ? position() : pausedIndex
+  }
+
+  // Playback length in seconds: follow the timeline when present, else the cache.
+  function recomputeMax(): void {
+    maxIndex = (timeline.length ? timeline.length - 1 : frameIndex.maxFrame) / FPS
+    scrubber.max = String(maxIndex || 100)
+  }
+
+  // Re-anchor the clock + scrubber to time `t` (clamped) and reconcile the scene
+  // there, keeping the current play state. Shared by load() and setTimeline() so a
+  // re-cook resumes from where we were rather than rewinding. applyAtIndex diffs
+  // the scene, so swapping caches updates objects in place instead of flashing.
+  function retimeTo(t: number): void {
+    const top = maxIndex || 0
+    t = Math.min(Math.max(0, t), top)
+    pausedIndex = Math.min(pausedIndex, top)
+    if (state === 'playing') startTime = performance.now() - t * 1000
+    scrubber.value = String(t)
+    setFill(t)
+    showIndex(t)
+    if (frameIndex.map.size) {
+      applyAtIndex(t)
+    } else {
+      sceneAPI.reset()
+      aliveObjects = new Set()
+    }
+  }
+
+  // Swap in a freshly cooked frame cache (+ optional timeline). A re-evaluate
+  // does NOT move the playhead: keep the current position and play state, only
+  // replacing the baked data. (First load is at 0 because that's where we are.)
   function load(sceneRows: Row[], timelineRows: Row[], effectRows: Row[]): void {
-    state = 'idle'
-    btn.textContent = '▶  Play'
-    startTime = null
-    pausedIndex = 0
     frameIndex = buildFrameIndex(sceneRows ?? [])
     effectIndex = buildEffectIndex(effectRows ?? [])
     timeline = buildTimeline(timelineRows ?? [])
-    maxIndex = (timeline.length ? timeline.length - 1 : frameIndex.maxFrame) / FPS
-    scrubber.max = String(maxIndex || 100)
-    reset(0)
+    recomputeMax()
+    retimeTo(currentTime())
+  }
+
+  // Swap the timeline (tick → frame remap) in place — used when the tap-beat
+  // tempo changes a beats() timeline; retimes the current position without
+  // reloading the scene cache, so tapping along while it plays doesn't restart it.
+  function setTimeline(timelineRows: Row[]): void {
+    timeline = buildTimeline(timelineRows ?? [])
+    recomputeMax()
+    retimeTo(currentTime())
   }
 
   scrubber.addEventListener('input', () => {
@@ -172,7 +267,15 @@ export function initPlayback(
   function tick(): void {
     if (state !== 'playing') return
 
-    const t = position()
+    let t = position()
+
+    // Loop: once past the end, wrap back to the start and re-anchor startTime so
+    // playback time stays bounded. Skip when there is nothing to loop over.
+    if (loop && maxIndex > 0 && t >= maxIndex) {
+      t %= maxIndex
+      startTime = performance.now() - t * 1000
+    }
+
     showIndex(t)
 
     if (!isScrubbing) {
@@ -182,11 +285,12 @@ export function initPlayback(
 
     applyAtIndex(t)
 
-    if (t >= maxIndex) {
+    if (!loop && t >= maxIndex) {
       scrubber.value = String(maxIndex)
       setFill(maxIndex)
       showIndex(maxIndex)
       state = 'idle'
+      pausedIndex = maxIndex // so a re-cook keeps the playhead at the end
       btn.textContent = '▶  Play'
       return
     }
@@ -194,5 +298,5 @@ export function initPlayback(
     requestAnimationFrame(tick)
   }
 
-  return { load }
+  return { load, setTimeline }
 }

@@ -453,6 +453,46 @@ html, body {
   margin-left: auto;
 }
 
+/* Loop + tap-beat buttons share the play button's look. */
+#loop-btn,
+#tap-beat-btn,
+#tap-clear-btn {
+  background: #0f3460;
+  border: 1px solid #1a5090;
+  color: #c8d6e5;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+#loop-btn:hover,
+#tap-beat-btn:hover,
+#tap-clear-btn:hover {
+  background: #1a5090;
+  color: #fff;
+}
+
+#loop-btn.active {
+  background: #e94560;
+  border-color: #e94560;
+  color: #fff;
+}
+
+#tap-clear-btn {
+  padding: 4px 8px;
+}
+
+#tap-bpm {
+  color: #8fa9c4;
+  font-size: 12px;
+  font-family: monospace;
+  min-width: 60px;
+}
+
 #scrub-bar {
   width: 100%;
   height: 4px;

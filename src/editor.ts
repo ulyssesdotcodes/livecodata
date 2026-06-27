@@ -22,6 +22,12 @@ const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
   json:       { sig: 'json(array | string)',         detail: 'parse JSON',       info: 'Wrap a JS array or parse a JSON string into a Table.' },
   grid:       { sig: 'grid(cols, rows)',             detail: 'XZ lattice',       info: 'Generate a cols×rows lattice of XZ positions as a Table (fields: col, row, x, z).' },
   physics:    { sig: 'physics(table)',               detail: 'physics scene',    info: 'Load a base scene table into the JoltPhysics engine. Chain .simulate() to run the simulation.' },
+  field:      { sig: 'field(name)',                   detail: 'expr: read field',  info: 'A chainable expression reading row[name]. Chain .add/.sub/.mul/.div/.mod, .eq/.gt/…, .and/.or/.not, .cond(a,b). Use in filter(expr), map(template), emit(template), derive — these are diffable (no opaque closures).' },
+  lit:        { sig: 'lit(value)',                   detail: 'expr: literal',     info: 'A constant expression. Usually you can pass a raw value directly to an Expr method.' },
+  idx:        { sig: 'idx()',                         detail: 'expr: row index',   info: 'An expression yielding the row index (0-based).' },
+  beats:      { sig: 'beats(count, { fit }?)',       detail: 'beat timeline',     info: 'A looping timeline `count` beats long at the tapped tempo (🥁 Tap under the scene). Use as the "timeline" view: define("timeline", () => beats(16)). { fit: seconds } stretches a scene across the beat window.' },
+  tempo:      { sig: 'tempo(fallback?)',             detail: 'beat length (s)',   info: 'Seconds per beat derived from the tap-beat table (🥁 Tap), or `fallback` (default 0.5s = 120 BPM) until two taps are recorded.' },
+  taps:       { sig: 'taps()',                       detail: 'tap-beat table',    info: 'The tap-beat table: one row per wall-time button press ({ beat, time }).' },
   linear:     { sig: 'linear',                       detail: 'easing curve',     info: 'Linear easing (t → t). Pass as the ease field of a color-pulse row.' },
   easeIn:     { sig: 'easeIn',                       detail: 'easing curve',     info: 'Quadratic ease-in (t → t²). Starts slow, ends fast.' },
   easeOut:    { sig: 'easeOut',                      detail: 'easing curve',     info: 'Quadratic ease-out (t → 1-(1-t)²). Starts fast, ends slow.' },
@@ -29,9 +35,10 @@ const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
 }
 
 const TABLE_METHOD_DOCS: Record<string, DocEntry> = {
-  map:         { sig: '.map(row => row)',                     detail: 'transform rows',   info: 'Transform every row with a mapping function. Returns a new Table.' },
-  filter:      { sig: '.filter(row => bool)',                 detail: 'keep rows',        info: 'Keep only rows for which the predicate returns true.' },
-  filterMap:   { sig: '.filterMap(row => row | null)',        detail: 'filter + map',     info: 'Map and filter in one pass — return a new row to keep it, null/undefined to drop it.' },
+  map:         { sig: '.map(row => row | template)',          detail: 'transform rows',   info: 'Transform every row. Pass a function, or a declarative template of Expr/literals (e.g. { y: field("v").mul(2) }) — the template form is diffable.' },
+  filter:      { sig: '.filter(row => bool | Expr)',          detail: 'keep rows',        info: 'Keep rows where the predicate holds. Pass a function, or an Expr predicate (e.g. field("type").eq("collision")) — the Expr form is diffable.' },
+  filterMap:   { sig: '.filterMap(row => row | null)',        detail: 'filter + map',     info: 'Map and filter in one pass — return a new row to keep it, null/undefined to drop it. (For a diffable form, use .filter(Expr).emit(template).)' },
+  emit:        { sig: '.emit(template | [templates])',        detail: 'fan out rows',     info: 'Declarative flatMap: emit one or many rows per source row from Expr/literal templates. The diffable counterpart of filterMap; pair with .filter(Expr).' },
   concat:      { sig: '.concat(other)',                       detail: 'combine tables',   info: 'Append the rows of another Table (or array) to this one.' },
   slice:       { sig: '.slice(start, end?)',                  detail: 'subset rows',      info: 'Return a sub-range of rows, like Array.slice.' },
   fold:        { sig: '.fold(init, (acc, row) => acc)',       detail: 'reduce to value',  info: 'Reduce all rows to a single accumulated value, like Array.reduce.' },
@@ -190,16 +197,26 @@ define("effects", "events", (rand, table) =>
     { id: "trails", type: "addEffect", effect: "afterimage", input: "bloom",
       index: 0, params: { damp: 0.82 } },
   ]).concat(
+    // Declarative, diffable form: filter(Expr) + emit(template). Values are Expr
+    // nodes (field("index").add(0.05)) so the engine can hash this view and reuse
+    // it — editing here never re-bakes the physics in "sim".
     table("sim")
-      .filter(r => r.type === "collision" && r.other === "floor")
-      .filterMap(r => [
-        { id: "bloom", type: "updateEffect", index: r.index, dur: 0.05,
+      .filter(field("type").eq("collision").and(field("other").eq("floor")))
+      .emit([
+        { id: "bloom", type: "updateEffect", index: field("index"), dur: 0.05,
           params: { strength: 2.6 } },
-        { id: "bloom", type: "updateEffect", index: r.index + 0.05, dur: 0.5,
+        { id: "bloom", type: "updateEffect", index: field("index").add(0.05), dur: 0.5,
           ease: easeOut, params: { strength: 0.8 } },
       ])
   )
 )
+
+// 6. Beat-synced looping (optional). Tap the 🥁 Tap button under the scene a few
+//    times to set the tempo, then measure the timeline in beats — its length
+//    follows the tapped tempo. "Loop" (next to Play) is on by default. beats(16)
+//    loops every 16 beats; { fit: 4 } stretches this 4-second sim across the window:
+//
+// define("timeline", () => beats(16, { fit: 4 }))
 `
 
 function dslHover(getViews?: () => Map<string, Table> | undefined, getPlayIndex?: () => number) {

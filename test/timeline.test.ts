@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildTimeline } from '../src/timeline.js'
 import { createRuntime } from '../src/runtime.js'
-import { cookProgram } from '../src/replay.js'
+import { cookProgram, cookTimeline } from '../src/replay.js'
 
 const f = (frames: number): number => frames / 60
 
@@ -71,4 +71,37 @@ test('cookProgram yields no timeline rows when none is defined', () => {
   const cooked = cookProgram(rt, code, 1)
   assert.deepEqual(cooked.timelineRows, [])
   assert.equal(buildTimeline(cooked.timelineRows).length, 0)
+})
+
+test('a beats() timeline reflects the tap-beat tempo', () => {
+  const tapRows = [{ beat: 0, time: 0 }, { beat: 1, time: 0.5 }] // 0.5s/beat = 120 BPM
+  const rt = createRuntime({ tapRows: () => tapRows })
+  const code = `
+    define("base", () => rows([{ id: "s", type: "create", index: 0, shape: "sphere",
+      color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
+    define("scene", () => table("base").rasterize(2))
+    define("timeline", () => beats(4))
+  `
+  const cooked = cookProgram(rt, code, 1)
+  assert.equal(cooked.timelineRows.length, 120, '4 beats * 0.5s * 60fps')
+})
+
+test('cookTimeline recomputes only the timeline (skips the rest)', () => {
+  const tapRows = [{ beat: 0, time: 0 }, { beat: 1, time: 0.5 }]
+  const rt = createRuntime({ tapRows: () => tapRows })
+  const code = `
+    define("base", () => rows([{ id: "s", type: "create", index: 0, shape: "sphere",
+      color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
+    define("boom", () => { throw new Error("should not cook this") })
+    define("scene", () => table("base").rasterize(2))
+    define("timeline", () => beats(4))
+  `
+  const rows = cookTimeline(rt, code, 1)
+  assert.equal(rows.length, 120, '"boom" was never cooked')
+})
+
+test('cookTimeline returns [] when no timeline is defined', () => {
+  const rt = createRuntime()
+  const code = `define("base", () => rows([{ id: "s" }]))`
+  assert.deepEqual(cookTimeline(rt, code, 1), [])
 })
