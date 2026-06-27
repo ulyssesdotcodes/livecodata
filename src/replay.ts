@@ -1,0 +1,53 @@
+// livecodata replay — cook a program / replay the session to a position
+// ----------------------------------------------------------------------------
+// Pure orchestration over the runtime + the session log. No DOM. Because each
+// log entry carries the program text and the seed it ran with, replaying to any
+// session position reproduces exactly what was on screen then.
+// ----------------------------------------------------------------------------
+
+import { rasterizeRows } from './rasterize.js'
+import { effectEvents } from './effects.js'
+import type { Table } from './dsl.js'
+import type { Row } from './lineage.js'
+import type { RuntimeResult } from './runtime.js'
+import type { LogEntry, Log } from './log.js'
+
+interface ResolvedGraph {
+  table: Table
+  columns: string[]
+  viewName?: string | null
+}
+
+export interface CookedResult {
+  views: Map<string, Table>
+  graphs: ResolvedGraph[]
+  sceneRows: Row[]
+  timelineRows: Row[]
+  effectRows: Row[]
+}
+
+export interface ReplayResult extends CookedResult {
+  entry: LogEntry
+}
+
+interface Runtime {
+  run(code: string, opts?: { seed?: number }): RuntimeResult
+}
+
+export function cookProgram(runtime: Runtime, code: string, seed: number): CookedResult {
+  const result = runtime.run(code, { seed })
+  const scene = result.views.get('scene')
+  const events = result.views.get('events')
+  const sceneRows = scene ? scene.rows : events ? rasterizeRows(events.rows) : []
+  const timeline = result.views.get('timeline')
+  const timelineRows = timeline ? timeline.rows : []
+  const effects = result.views.get('effects')
+  const effectRows = effects ? effects.rows : effectEvents(events?.rows)
+  return { views: result.views, graphs: result.graphs, sceneRows, timelineRows, effectRows }
+}
+
+export function replayAt(runtime: Runtime, log: Log, pos: number): ReplayResult | null {
+  const entry = log.entryAt(pos)
+  if (!entry) return null
+  return { entry, ...cookProgram(runtime, entry.code, entry.seed) }
+}
