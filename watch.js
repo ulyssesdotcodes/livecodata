@@ -1,7 +1,9 @@
 import * as esbuild from 'esbuild'
-import { mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { mkdirSync, cpSync, readFileSync, writeFileSync } from 'fs'
 
 mkdirSync('public/assets', { recursive: true })
+mkdirSync('public/data', { recursive: true })
+cpSync('src/data', 'public/data', { recursive: true })
 
 const html = readFileSync('index.html', 'utf8')
   .replace('</head>', '    <link rel="stylesheet" href="./assets/index.css">\n  </head>')
