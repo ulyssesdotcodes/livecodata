@@ -10,6 +10,17 @@ import { cookProgram, replayAt } from './replay.js'
 import { initPhysics } from './physics.js'
 import { createLog, randomSeed } from './log.js'
 
+// Persistent cache of pre-fetched data() URLs (url → CSV text). Survives
+// re-runs so files are only downloaded once per session.
+const dataCache = new Map()
+
+// Extract all data("...") URL strings from a program without executing it.
+function extractDataUrls(code) {
+  const urls = []
+  for (const m of code.matchAll(/\bdata\(\s*["'`]([^"'`]+)["'`]\s*\)/g)) urls.push(m[1])
+  return urls
+}
+
 const sceneAPI = initThree(document.getElementById('three-canvas'))
 const tablePanel = initTablePanel(document.getElementById('table-pane'))
 const graphPanel = initGraphPanel(document.getElementById('graph-pane'))
@@ -50,10 +61,25 @@ function applyCooked({ views, graphs, sceneRows, timelineRows }) {
 // Cook the editor's program and show it. `record` appends the run to the session
 // log (and advances the session bar to latest); replays pass record:false and
 // the recorded seed so a restored/replayed run reproduces exactly.
-function evaluate(code, { setError, record = true, seed = randomSeed() } = {}) {
+async function evaluate(code, { setError, record = true, seed = randomSeed() } = {}) {
+  // Pre-fetch any data() URLs not yet in the session cache.
+  const pending = extractDataUrls(code).filter((u) => !dataCache.has(u))
+  if (pending.length) {
+    await Promise.all(pending.map(async (url) => {
+      try {
+        dataCache.set(url, await fetch(url).then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
+          return r.text()
+        }))
+      } catch (e) {
+        setError?.(`Failed to fetch ${url}: ${e.message}`)
+      }
+    }))
+  }
+
   let cooked
   try {
-    cooked = cookProgram(runtime, code, seed)
+    cooked = cookProgram(runtime, code, seed, dataCache)
   } catch (err) {
     setError?.(err.message)
     return
@@ -78,7 +104,7 @@ const editor = initEditor(document.getElementById('editor-pane'), {
 function scrubSession(pos) {
   let replayed
   try {
-    replayed = replayAt(runtime, log, pos)
+    replayed = replayAt(runtime, log, pos, dataCache)
   } catch (err) {
     editor.setError(err.message)
     return

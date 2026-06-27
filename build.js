@@ -1,8 +1,9 @@
 import * as esbuild from 'esbuild'
-import { rmSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { rmSync, mkdirSync, cpSync, readFileSync, writeFileSync } from 'fs'
 
 rmSync('public', { recursive: true, force: true })
 mkdirSync('public/assets', { recursive: true })
+cpSync('src/data', 'public/data', { recursive: true })
 
 await esbuild.build({
   entryPoints: ['src/main.js'],

@@ -11,8 +11,8 @@ import { rasterizeRows } from './rasterize.js'
 // the explicit "scene" view, or a rasterized "events" view as a fallback for
 // older programs. Also resolves the optional "timeline" view (tick → frame
 // remapping). Deterministic given (code, seed).
-export function cookProgram(runtime, code, seed) {
-  const result = runtime.run(code, { seed })
+export function cookProgram(runtime, code, seed, dataCache = new Map()) {
+  const result = runtime.run(code, { seed, dataCache })
   const scene = result.views.get('scene')
   const events = result.views.get('events')
   const sceneRows = scene ? scene.rows : events ? rasterizeRows(events.rows) : []
@@ -24,8 +24,8 @@ export function cookProgram(runtime, code, seed) {
 // Replay the session to logical position `pos`: cook the program that was live
 // then (the latest run at/under pos), using its recorded seed. Returns the entry
 // alongside the cooked result, or null if nothing exists at/under pos.
-export function replayAt(runtime, log, pos) {
+export function replayAt(runtime, log, pos, dataCache = new Map()) {
   const entry = log.entryAt(pos)
   if (!entry) return null
-  return { entry, ...cookProgram(runtime, entry.code, entry.seed) }
+  return { entry, ...cookProgram(runtime, entry.code, entry.seed, dataCache) }
 }

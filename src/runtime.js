@@ -43,13 +43,14 @@ function hashString(s) {
 export function createRuntime({ physics } = {}) {
   // Per-run state, reset by run(). cook() reads these but never swaps a
   // "current view" pointer — callerView and stack are threaded as parameters.
-  let defs    // Map<name, { kind:'lazy', fn } | { kind:'const', table }>
-  let cache   // Map<name, Table>  — cooked results
-  let deps    // Map<name, string[]> — discovered dependency edges
-  let graphs  // queued graph specs
-  let seedVal // run seed
-  let prngs   // Map<name, () => number> — per-view random streams
-  let groups  // Map<groupId, string[]> — view names tagged into each group
+  let defs      // Map<name, { kind:'lazy', fn } | { kind:'const', table }>
+  let cache     // Map<name, Table>  — cooked results
+  let deps      // Map<name, string[]> — discovered dependency edges
+  let graphs    // queued graph specs
+  let seedVal   // run seed
+  let prngs     // Map<name, () => number> — per-view random streams
+  let groups    // Map<groupId, string[]> — view names tagged into each group
+  let dataCache = new Map() // pre-fetched URL → CSV text
 
   function randForView(name) {
     if (!prngs.has(name)) prngs.set(name, mulberry32((seedVal ^ hashString(name)) >>> 0))
@@ -135,6 +136,8 @@ export function createRuntime({ physics } = {}) {
     resolve(name) {
       return cook(name, null, [])
     },
+    // Synchronous lookup for data() — populated by run() before cooking starts.
+    getData(url) { return dataCache.get(url) ?? '' },
     // Reach the (async-loaded) physics engine, or null while it's still loading.
     physics: () => (physics ? physics() : null),
   }
@@ -143,7 +146,7 @@ export function createRuntime({ physics } = {}) {
 
   // Evaluate a program and cook every view it defines. Returns the materialized
   // views (Map<name, Table>), resolved graph specs, and the dependency edges.
-  function run(code, { seed = 0 } = {}) {
+  function run(code, { seed = 0, dataCache: dc = new Map() } = {}) {
     defs = new Map()
     cache = new Map()
     deps = new Map()
@@ -151,6 +154,7 @@ export function createRuntime({ physics } = {}) {
     prngs = new Map()
     groups = new Map()
     seedVal = seed >>> 0
+    dataCache = dc
 
     const fn = new Function(...Object.keys(api), code)
     fn(...Object.values(api))

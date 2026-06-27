@@ -425,8 +425,10 @@ export function createDSL(ctx) {
     table: (name) => ctx.resolve(name),
     math: (fn) => new MathBuilder(fn, ctx),
     rows: (arr) => new Table((arr ?? []).map((r) => ({ ...r })), ctx),
-    // Inline data import: parse a pasted CSV/JSON dataset into a Table so it can
-    // be combined with other views (an async data(url) fetch is a later step).
+    // Fetch a pre-loaded dataset by URL. The runtime pre-fetches data() URLs
+    // before cooking, so this is synchronous at cook time.
+    data: (url) => new Table(parseCSV(ctx.getData(url)), ctx),
+    // Inline data import: parse a pasted CSV/JSON dataset into a Table.
     csv: (text) => new Table(parseCSV(text), ctx),
     json: (data) => new Table(
       (Array.isArray(data) ? data : typeof data === 'string' ? JSON.parse(data) : []).map((r) => ({ ...r })),
