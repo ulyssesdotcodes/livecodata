@@ -6,7 +6,7 @@
 // ----------------------------------------------------------------------------
 
 import { rasterizeRows } from './rasterize.js'
-import { effectEvents } from './effects.js'
+import { hydraRows } from './hydra.js'
 import type { Table } from './dsl.js'
 import type { Row } from './lineage.js'
 import type { RuntimeResult } from './runtime.js'
@@ -23,7 +23,7 @@ export interface CookedResult {
   graphs: ResolvedGraph[]
   sceneRows: Row[]
   timelineRows: Row[]
-  effectRows: Row[]
+  hydraRows: Row[]
 }
 
 export interface ReplayResult extends CookedResult {
@@ -51,9 +51,9 @@ export function cookProgram(runtime: Runtime, code: string, seed: number): Cooke
   const sceneRows = scene ? scene.rows : events ? rasterizeRows(events.rows) : []
   const timeline = result.views.get('timeline')
   const timelineRows = timeline ? timeline.rows : []
-  const effects = result.views.get('effects')
-  const effectRows = effects ? effects.rows : effectEvents(events?.rows)
-  return { views: result.views, graphs: result.graphs, sceneRows, timelineRows, effectRows }
+  const hydra = result.views.get('hydra')
+  const hydraSketchRows = hydra ? hydraRows(hydra.rows) : hydraRows(events?.rows)
+  return { views: result.views, graphs: result.graphs, sceneRows, timelineRows, hydraRows: hydraSketchRows }
 }
 
 export function replayAt(runtime: Runtime, log: Log, pos: number): ReplayResult | null {
