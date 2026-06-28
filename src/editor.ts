@@ -5,6 +5,7 @@ import { keymap, hoverTooltip } from '@codemirror/view'
 import { Prec } from '@codemirror/state'
 import { vim } from '@replit/codemirror-vim'
 import { buildTablePreview } from './preview.js'
+import { isExprDot } from './completion.js'
 import type { Table } from './dsl.js'
 
 interface DocEntry {
@@ -64,6 +65,26 @@ const TABLE_METHOD_DOCS: Record<string, DocEntry> = {
   save:        { sig: '.save(name)',                          detail: 'save as view',     info: 'Sugar for define(name, () => this) — register the current Table as a named view.' },
 }
 
+// Methods offered after a dot on an Expr (field("x").add(1).gt(2)…). Every Expr
+// method returns an Expr, so a chain rooted at field()/lit()/idx() stays Expr.
+const EXPR_METHOD_DOCS: Record<string, DocEntry> = {
+  add:  { sig: '.add(x)',           detail: 'expr  +',   info: 'Add. x is another Expr or a number.' },
+  sub:  { sig: '.sub(x)',           detail: 'expr  −',   info: 'Subtract x (Expr or number).' },
+  mul:  { sig: '.mul(x)',           detail: 'expr  ×',   info: 'Multiply by x (Expr or number).' },
+  div:  { sig: '.div(x)',           detail: 'expr  ÷',   info: 'Divide by x (Expr or number).' },
+  mod:  { sig: '.mod(x)',           detail: 'expr  %',   info: 'Modulo (remainder) by x.' },
+  eq:   { sig: '.eq(x)',            detail: 'expr  ===', info: 'Strict-equal test. Returns a boolean Expr (use in filter / cond).' },
+  ne:   { sig: '.ne(x)',            detail: 'expr  !==', info: 'Not-equal test. Returns a boolean Expr.' },
+  gt:   { sig: '.gt(x)',            detail: 'expr  >',   info: 'Greater-than test. Returns a boolean Expr.' },
+  gte:  { sig: '.gte(x)',           detail: 'expr  >=',  info: 'Greater-than-or-equal test. Returns a boolean Expr.' },
+  lt:   { sig: '.lt(x)',            detail: 'expr  <',   info: 'Less-than test. Returns a boolean Expr.' },
+  lte:  { sig: '.lte(x)',           detail: 'expr  <=',  info: 'Less-than-or-equal test. Returns a boolean Expr.' },
+  and:  { sig: '.and(expr)',        detail: 'expr  &&',  info: 'Logical AND of two boolean Exprs.' },
+  or:   { sig: '.or(expr)',         detail: 'expr  ||',  info: 'Logical OR of two boolean Exprs.' },
+  not:  { sig: '.not()',            detail: 'expr  !',   info: 'Logical negation of a boolean Expr.' },
+  cond: { sig: '.cond(then, else)', detail: 'ternary',   info: 'If this Expr is truthy yield `then`, else `else` (each an Expr or literal).' },
+}
+
 function makeInfoNode(sig: string, info: string): HTMLElement {
   const el = document.createElement('div')
   el.className = 'cm-completion-info'
@@ -77,7 +98,6 @@ function makeInfoNode(sig: string, info: string): HTMLElement {
 }
 
 const DSL_BUILTINS = Object.keys(DSL_BUILTIN_DOCS)
-const TABLE_METHODS = Object.keys(TABLE_METHOD_DOCS)
 
 function viewAtPos(text: string, pos: number): string | null {
   const re = /\bdefine\(\s*"([^"]+)"/g
@@ -105,10 +125,14 @@ function dslCompletions(getViews?: () => Map<string, Table> | undefined) {
     }
     const dot = context.matchBefore(/\.\w*/)
     if (dot) {
+      // Pick the method set by the chain's root: Expr methods after field()/lit()/
+      // idx() (and their chains), Table methods otherwise.
+      const docs = isExprDot(context.state.doc.toString() as string, dot.from as number)
+        ? EXPR_METHOD_DOCS : TABLE_METHOD_DOCS
       return {
         from: dot.from + 1,
-        options: TABLE_METHODS.map((label) => {
-          const d = TABLE_METHOD_DOCS[label]
+        options: Object.keys(docs).map((label) => {
+          const d = docs[label]
           return { label, type: 'method', detail: d.detail, info: () => makeInfoNode(d.sig, d.info) }
         }),
         validFor: /^\w*$/,
@@ -129,8 +153,9 @@ function dslCompletions(getViews?: () => Map<string, Table> | undefined) {
 
 export const defaultProgram = `// livecodata — define tables as views; the engine cooks them each run.
 // Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
-// Tips: Ctrl-Space completes views & Table verbs; hover a "view" name to preview
-// its table; your caret selects that view's tab on the right.
+// Tips: Ctrl-Space completes views, Table verbs, and Expr methods (the methods
+// after field()/lit()/idx() — e.g. field("v").add(1).gt(2)); hover a "view" name
+// to preview its table; your caret selects that view's tab on the right.
 
 // 1. The base scene: a static floor and three shapes to drop on it. Each create
 //    row carries physics fields — motion, spawn position (px/py/pz) and rotation
