@@ -8,7 +8,10 @@
   <body>
     <div id="app">
       <div id="canvas-pane">
+        <!-- three-canvas renders the 3D scene; hydra-canvas post-processes it
+             (it reads three-canvas as a texture) and is the visible output. -->
         <canvas id="three-canvas"></canvas>
+        <canvas id="hydra-canvas"></canvas>
         <div id="playback-controls"></div>
       </div>
       <div id="side-panels">

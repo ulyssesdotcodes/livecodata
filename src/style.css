@@ -56,10 +56,20 @@ html, body {
   min-height: 0;
 }
 
-#three-canvas {
+/* Both canvases fill the pane and overlap. three-canvas is the Three.js render
+   that hydra reads as a source; hydra-canvas sits on top as the visible output
+   (in passthrough it shows the scene unchanged). */
+#three-canvas,
+#hydra-canvas {
   display: block;
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
+}
+
+#hydra-canvas {
+  z-index: 1;
 }
 
 /* ── Editor pane ── */
@@ -423,6 +433,7 @@ html, body {
 /* ── Playback controls ── */
 #playback-controls {
   position: absolute;
+  z-index: 2;
   bottom: 20px;
   left: 50%;
   transform: translateX(-50%);

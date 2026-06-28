@@ -1,11 +1,11 @@
 import { buildFrameIndex, stateAtFrame, type FrameIndex } from './rasterize.js'
-import { buildEffectIndex, effectChainAtFrame } from './effects.js'
+import { buildHydraIndex, hydraFrameAt } from './hydra.js'
 import { buildTimeline, type Timeline } from './timeline.js'
 import { activeLineage } from './lineage.js'
 import { FPS } from './constants.js'
 import type { Row } from './lineage.js'
 import type { SceneAPI } from './three-scene.js'
-import type { EffectEntry } from './effects.js'
+import type { HydraAPI } from './hydra-scene.js'
 
 export interface TapControl {
   tap(): void
@@ -20,13 +20,14 @@ export interface PlaybackOptions {
 }
 
 export interface PlaybackAPI {
-  load(sceneRows: Row[], timelineRows: Row[], effectRows: Row[]): void
+  load(sceneRows: Row[], timelineRows: Row[], hydraRows: Row[]): void
   setTimeline(timelineRows: Row[]): void
 }
 
 export function initPlayback(
   controlsEl: HTMLElement,
   sceneAPI: SceneAPI,
+  hydraAPI: HydraAPI,
   { onTick, onPlay, tapControl }: PlaybackOptions = {},
 ): PlaybackAPI {
   type PlayState = 'idle' | 'playing' | 'paused'
@@ -34,7 +35,7 @@ export function initPlayback(
   let startTime: number | null = null
   let pausedIndex = 0
   let frameIndex: FrameIndex = buildFrameIndex([])
-  let effectIndex: Map<unknown, Row[]> = buildEffectIndex([])
+  let hydraIndex: Row[] = buildHydraIndex([])
   let timeline: Timeline = buildTimeline([])
   let aliveObjects = new Set<unknown>()
   let maxIndex = 0
@@ -151,7 +152,7 @@ export function initPlayback(
         aliveObjects.delete(id)
       }
     }
-    sceneAPI.setEffects(effectChainAtFrame(effectIndex, src) as EffectEntry[])
+    hydraAPI.setSketch(hydraFrameAt(hydraIndex, src))
     onTick?.(t, activeLineage(states), src)
   }
 
@@ -191,6 +192,7 @@ export function initPlayback(
       applyAtIndex(t)
     } else {
       sceneAPI.reset()
+      hydraAPI.reset()
       aliveObjects = new Set()
     }
   }
@@ -198,9 +200,9 @@ export function initPlayback(
   // Swap in a freshly cooked frame cache (+ optional timeline). A re-evaluate
   // does NOT move the playhead: keep the current position and play state, only
   // replacing the baked data. (First load is at 0 because that's where we are.)
-  function load(sceneRows: Row[], timelineRows: Row[], effectRows: Row[]): void {
+  function load(sceneRows: Row[], timelineRows: Row[], hydraRows: Row[]): void {
     frameIndex = buildFrameIndex(sceneRows ?? [])
-    effectIndex = buildEffectIndex(effectRows ?? [])
+    hydraIndex = buildHydraIndex(hydraRows ?? [])
     timeline = buildTimeline(timelineRows ?? [])
     recomputeMax()
     retimeTo(currentTime())

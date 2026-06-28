@@ -15,6 +15,7 @@ const ctx = await esbuild.context({
   bundle: true,
   outfile: 'public/assets/index.js',
   format: 'esm',
+  define: { global: 'globalThis' }, // see build.js
   external: ['module'], // see build.js
 })
 
