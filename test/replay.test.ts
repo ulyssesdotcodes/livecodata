@@ -42,46 +42,43 @@ test('cookProgram falls back to rasterizing events when there is no scene view',
   assert.equal(cooked.sceneRows[0].shape, 'box')
 })
 
-test('cookProgram surfaces effect rows when effects join the events group', () => {
+test('cookProgram surfaces the hydra sketch rows from the "hydra" view', () => {
   const rt = createRuntime()
   const code = `
-    define("sim", "events", () => rows([{ id: "s", type: "create", index: 0, shape: "box",
+    define("base", () => rows([{ id: "s", type: "create", index: 0, shape: "box",
       color: 1, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
-    define("effects", "events", () => rows([
-      { id: "bloom", type: "addEffect", effect: "bloom", index: 0, params: { strength: 1 } },
+    define("scene", (rand, table) => table("base").rasterize(1/60))
+    define("hydra", () => rows([
+      { index: 0, code: "src(s0).modulate(noise(amount)).out()", amount: 3 },
     ]))
-    define("scene", (rand, table) => table("events").rasterize(1/60))
   `
   const cooked = cookProgram(rt, code, 1)
-  const types = cooked.views.get('events')!.rows.map((r) => r.type).sort()
-  assert.deepEqual(types, ['addEffect', 'create'])
-  assert.equal(cooked.effectRows.length, 1)
-  assert.equal(cooked.effectRows[0].effect, 'bloom')
+  assert.equal(cooked.hydraRows.length, 1)
+  assert.equal(cooked.hydraRows[0].code, 'src(s0).modulate(noise(amount)).out()')
+  assert.equal(cooked.hydraRows[0].amount, 3)
   assert.ok(cooked.sceneRows.every((r) => r.id === 's'))
 })
 
-test('effects can be data-driven from a sibling group member without cycling', () => {
+test('hydra variables can be data-driven from another view without cycling', () => {
   const rt = createRuntime()
   const code = `
-    define("sim", "events", () => rows([
+    define("sim", () => rows([
       { id: "s", type: "create", index: 0, shape: "box", color: 1,
         px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
       { id: "s", type: "collision", index: 0.5, other: "floor" },
     ]))
-    define("effects", "events", (rand, table) =>
-      rows([{ id: "bloom", type: "addEffect", effect: "bloom", index: 0 }]).concat(
+    define("scene", (rand, table) => table("sim").rasterize(1/60))
+    define("hydra", (rand, table) =>
+      rows([{ index: 0, code: "src(s0).modulate(noise(amount)).out()", amount: 0.2 }]).concat(
         table("sim")
           .filter(r => r.type === "collision" && r.other === "floor")
-          .map(r => ({ id: "bloom", type: "updateEffect", index: r.index,
-            dur: 0.05, params: { strength: 2.6 } }))
+          .map(r => ({ index: r.index, amount: 2.6 }))
       ))
-    define("scene", (rand, table) => table("events").rasterize(1/60))
   `
   const cooked = cookProgram(rt, code, 1)
-  const update = cooked.effectRows.find((r) => r.type === 'updateEffect')
-  assert.ok(update, 'a collision-driven updateEffect was emitted')
-  assert.equal(update!.index, 0.5)
-  assert.equal((update!.params as Record<string, unknown>).strength, 2.6)
+  const bump = cooked.hydraRows.find((r) => r.amount === 2.6)
+  assert.ok(bump, 'a collision-driven variable change was emitted')
+  assert.equal(bump!.index, 0.5)
 })
 
 test('codeEntryAt reads the code+seed active at a position, from either event shape', () => {

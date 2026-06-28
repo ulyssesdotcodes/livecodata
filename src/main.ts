@@ -1,5 +1,6 @@
 import './style.css'
 import { initThree } from './three-scene.js'
+import { initHydra } from './hydra-scene.js'
 import { initEditor, defaultProgram } from './editor.js'
 import { initTablePanel, EVENTS_SUFFIX } from './table-panel.js'
 import { initPlayback } from './playback.js'
@@ -43,7 +44,13 @@ function extractDataUrls(code: string): string[] {
   return urls
 }
 
-const sceneAPI = initThree(document.getElementById('three-canvas') as HTMLCanvasElement)
+const canvasPane = document.getElementById('canvas-pane') as HTMLElement
+const threeCanvas = document.getElementById('three-canvas') as HTMLCanvasElement
+const hydraCanvas = document.getElementById('hydra-canvas') as HTMLCanvasElement
+// Three.js renders the 3D scene into three-canvas; hydra takes that as a source
+// texture and post-processes it onto the visible hydra-canvas.
+const sceneAPI = initThree(threeCanvas, canvasPane)
+const hydraAPI = initHydra(hydraCanvas, threeCanvas)
 const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLElement, editableStore, {
   onEditCell: (table, rowIndex, col, value) => {
     // The "code" cell is the program itself, not a side table: clicking it
@@ -110,6 +117,7 @@ let currentPlayIndex = 0
 const playback = initPlayback(
   document.getElementById('playback-controls') as HTMLElement,
   sceneAPI,
+  hydraAPI,
   {
     onTick: (tick, active, srcFrame) => {
       currentPlayIndex = srcFrame
@@ -147,7 +155,7 @@ interface CookedData {
   graphs: GraphSpec[]
   sceneRows: Row[]
   timelineRows: Row[]
-  effectRows: Row[]
+  hydraRows: Row[]
 }
 
 // The views shown in the table panel, plus:
@@ -166,11 +174,11 @@ function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   return display
 }
 
-function applyCooked({ views, graphs, sceneRows, timelineRows, effectRows }: CookedData): void {
+function applyCooked({ views, graphs, sceneRows, timelineRows, hydraRows }: CookedData): void {
   lastViews = views
   tablePanel.setTables(tablesForDisplay(views))
   tablePanel.setGraphs(graphs)
-  playback.load(sceneRows, timelineRows, effectRows)
+  playback.load(sceneRows, timelineRows, hydraRows)
 }
 
 // A tap changed the tempo: refresh the "taps" table, then recompute *only* the
