@@ -11,6 +11,7 @@ import { cookProgram, cookTimeline, replayAt } from './replay.js'
 import { initPhysics } from './physics.js'
 import { createLog, randomSeed } from './log.js'
 import { Table } from './dsl.js'
+import { createMidiInput } from './midi.js'
 import type { PhysicsEngineInstance } from './physics.js'
 import type { Row } from './lineage.js'
 
@@ -46,6 +47,14 @@ function clearTaps(): void {
 
 let currentPlayIndex = 0
 
+// Live MIDI: events stream in stamped with the playhead's current source position
+// (so notes pin to loop positions). The recorded table is shown as "midi", and
+// midi("c4") bindings in the program resolve against it each frame.
+const midiInput = createMidiInput({
+  getIndex: () => playback.currentSourceSeconds(),
+  onChange: () => onMidi(),
+})
+
 const playback = initPlayback(
   document.getElementById('playback-controls') as HTMLElement,
   sceneAPI,
@@ -59,8 +68,15 @@ const playback = initPlayback(
       tablePanel.resetAutoscroll()
     },
     tapControl: { tap: recordTap, clear: clearTaps, rows: tapRows },
+    midiCtxAt: (srcFrame) => midiInput.ctxAt(srcFrame),
   },
 )
+
+// A new MIDI event (or a clear) just refreshes the "midi" table — the values flow
+// into the scene live via the per-frame bindings, so there's no need to re-cook.
+function onMidi(): void {
+  tablePanel.setTables(tablesForDisplay(lastViews))
+}
 
 let physicsEngine: PhysicsEngineInstance | null = null
 const runtime = createRuntime({ physics: () => physicsEngine, tapRows: () => tapRows() })
@@ -84,11 +100,13 @@ interface CookedData {
   effectRows: Row[]
 }
 
-// The views shown in the table panel, plus a live "taps" table of wall-time
-// button presses (only injected when the program doesn't define one itself).
+// The views shown in the table panel, plus live "taps" (wall-time button presses)
+// and "midi" (recorded note events) tables — injected only when the program
+// doesn't define one itself.
 function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   const display = new Map(views)
   if (!display.has('taps')) display.set('taps', new Table(tapRows()))
+  if (!display.has('midi')) display.set('midi', new Table(midiInput.rows()))
   return display
 }
 
