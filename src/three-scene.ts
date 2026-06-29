@@ -103,7 +103,7 @@ export function initThree(canvas: HTMLCanvasElement): SceneAPI {
   renderer.setPixelRatio(window.devicePixelRatio)
 
   const scene = new THREE.Scene()
-  scene.background = new THREE.Color(0x1a1a2e)
+  scene.background = new THREE.Color(0x000000)
 
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100)
   camera.position.set(0, 0, 5)
