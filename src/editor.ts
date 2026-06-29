@@ -6,6 +6,7 @@ import { Prec } from '@codemirror/state'
 import { vim } from '@replit/codemirror-vim'
 import { buildTablePreview } from './preview.js'
 import { isExprDot } from './completion.js'
+import { SAMPLES } from './samples.js'
 import type { Table } from './dsl.js'
 
 interface DocEntry {
@@ -19,6 +20,7 @@ const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
   table:      { sig: 'table(name)',                  detail: 'resolve view',     info: 'Resolve a named view at top-level (no dependency tracking). Returns the cooked Table for that view.' },
   math:       { sig: 'math(index => value)',         detail: 'sample function',  info: 'Sample a numeric function of the row index. Chain .range(n) to emit n rows of { index, value }.' },
   rows:       { sig: 'rows([{...}, ...])',           detail: 'wrap array',       info: 'Wrap a literal array of plain objects into a Table.' },
+  data:       { sig: 'data(url)',                     detail: 'fetch dataset',    info: 'Load a pre-fetched CSV file by URL into a Table. Files in /data/ are served statically; the runtime fetches them before cooking.' },
   csv:        { sig: 'csv(string)',                  detail: 'parse CSV',        info: 'Parse a CSV string (header row + data rows) into a Table.' },
   json:       { sig: 'json(array | string)',         detail: 'parse JSON',       info: 'Wrap a JS array or parse a JSON string into a Table.' },
   grid:       { sig: 'grid(cols, rows)',             detail: 'XZ lattice',       info: 'Generate a cols×rows lattice of XZ positions as a Table (fields: col, row, x, z).' },
@@ -151,98 +153,7 @@ function dslCompletions(getViews?: () => Map<string, Table> | undefined) {
   }
 }
 
-export const defaultProgram = `// livecodata — define tables as views; the engine cooks them each run.
-// Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
-// Tips: Ctrl-Space completes views, Table verbs, and Expr methods (the methods
-// after field()/lit()/idx() — e.g. field("v").add(1).gt(2)); hover a "view" name
-// to preview its table; your caret selects that view's tab on the right.
-
-// 1. The base scene: a static floor and three shapes to drop on it. Each create
-//    row carries physics fields — motion, spawn position (px/py/pz) and rotation
-//    (rx/ry/rz). The floor's physics half-extents (hx/hy/hz) are wider than the
-//    drawn mesh, so things land instead of rolling off.
-define("base", () =>
-  rows([
-    { id: "floor", type: "create", shape: "box", color: 0x222244,
-      motion: "static", px: 0, py: -1.2, pz: 0, hx: 3, hy: 0.2, hz: 3 },
-    { id: "ball",  type: "create", shape: "sphere",   color: 0x4a9eff,
-      motion: "dynamic", px: -0.5, py: 3.0, pz: 0.0 },
-    { id: "box1",  type: "create", shape: "box",      color: 0xff6b6b,
-      motion: "dynamic", px: 0.4,  py: 4.5, pz: 0.2, rx: 0.4, ry: 0.3 },
-    { id: "cyl",   type: "create", shape: "cylinder", color: 0x51cf66,
-      motion: "dynamic", px: 0.0,  py: 6.0, pz: -0.3 },
-  ])
-)
-
-// 2. Bake a JoltPhysics simulation in the background: step the world for 240
-//    frames (~4 s at 60 fps). simulate() ADDS to the table — a per-frame "update"
-//    row for each moving body (index in seconds; the cache interpolates between
-//    them) plus a "collision" row whenever two bodies first touch.
-//    The 3rd arg tags this view into the "events" group: the engine auto-builds
-//    a view named "events" that concats every group member (index-sorted), so
-//    the motion rows here and the effect rows in step 5 merge into one "events"
-//    table — no manual .concat. "events" is the single sparse stream of
-//    everything that happens: object motion *and* the post-processing chain.
-define("sim", "events", (rand, table) =>
-  physics(table("base")).simulate({ steps: 240, gravity: -9.81 })
-)
-
-// 3. The frame cache: bake the sparse "events" into dense per-frame world state
-//    that playback indexes straight into. rasterize(seconds) sets the duration.
-define("scene", (rand, table) => table("events").rasterize(4))
-
-// 4. Collisions are just rows — pull them into their own view to inspect, and
-//    graph the ball's height over time as it bounces and settles.
-define("collisions", (rand, table) =>
-  table("events").filter(r => r.type === "collision")
-)
-
-define("ball_height", (rand, table) =>
-  table("events")
-    .filter(r => r.id === "ball" && r.type === "update")
-    .map(r => ({ index: r.index, height: r.py }))
-    .graph("height")
-)
-
-// 5. Post-processing effects layer over the rendered scene as a chain of
-//    Three.js passes. Each effect event has an event type (addEffect /
-//    updateEffect / removeEffect), an id, an effect type ("bloom", "afterimage",
-//    "dotscreen", "rgbshift", "film", "glitch", "halftone"), an optional input
-//    (another effect's id, or omitted to read the base render output), params,
-//    and an index (seconds). An updateEffect with a dur eases its params over
-//    time, just like a color pulse. Here bloom feeds an afterimage trail, and
-//    the bloom flashes on each real landing — data-driven from "sim"'s collision
-//    rows (filter the sibling member, not "events", or we'd cycle), so the flash
-//    fires exactly when a shape hits the floor, not at a guessed time. Like step
-//    2 this view is tagged into the "events" group, so its rows merge into "events".
-define("effects", "events", (rand, table) =>
-  rows([
-    { id: "bloom",  type: "addEffect", effect: "bloom", index: 0,
-      params: { strength: 0.8, radius: 0.5, threshold: 0.6 } },
-    { id: "trails", type: "addEffect", effect: "afterimage", input: "bloom",
-      index: 0, params: { damp: 0.82 } },
-  ]).concat(
-    // Declarative, diffable form: filter(Expr) + emit(template). Values are Expr
-    // nodes (field("index").add(0.05)) so the engine can hash this view and reuse
-    // it — editing here never re-bakes the physics in "sim".
-    table("sim")
-      .filter(field("type").eq("collision").and(field("other").eq("floor")))
-      .emit([
-        { id: "bloom", type: "updateEffect", index: field("index"), dur: 0.05,
-          params: { strength: 2.6 } },
-        { id: "bloom", type: "updateEffect", index: field("index").add(0.05), dur: 0.5,
-          ease: easeOut, params: { strength: 0.8 } },
-      ])
-  )
-)
-
-// 6. Beat-synced looping (optional). Tap the 🥁 Tap button under the scene a few
-//    times to set the tempo, then measure the timeline in beats — its length
-//    follows the tapped tempo. "Loop" (next to Play) is on by default. beats(16)
-//    loops every 16 beats; { fit: 4 } stretches this 4-second sim across the window:
-//
-// define("timeline", () => beats(16, { fit: 4 }))
-`
+export const defaultProgram = SAMPLES[0].code
 
 function dslHover(getViews?: () => Map<string, Table> | undefined, getPlayIndex?: () => number) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -289,6 +200,16 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
   titleEl.className = 'editor-title'
   titleEl.textContent = 'DSL'
   header.appendChild(titleEl)
+
+  const sampleSelect = document.createElement('select')
+  sampleSelect.className = 'sample-select'
+  SAMPLES.forEach((s, i) => {
+    const opt = document.createElement('option')
+    opt.value = String(i)
+    opt.textContent = s.name
+    sampleSelect.appendChild(opt)
+  })
+  header.appendChild(sampleSelect)
 
   const runBtn = document.createElement('button')
   runBtn.className = 'run-btn'
@@ -354,6 +275,11 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
 
   function setCode(code: string): void {
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } })
+  }
+
+  sampleSelect.onchange = () => {
+    const sample = SAMPLES[+sampleSelect.value]
+    if (sample) setCode(sample.code)
   }
 
   return { run, getCode: () => view.state.doc.toString(), setCode, setError }

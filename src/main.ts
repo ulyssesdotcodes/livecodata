@@ -14,6 +14,14 @@ import { Table } from './dsl.js'
 import type { PhysicsEngineInstance } from './physics.js'
 import type { Row } from './lineage.js'
 
+const dataCache = new Map<string, string>()
+
+function extractDataUrls(code: string): string[] {
+  const urls: string[] = []
+  for (const m of code.matchAll(/\bdata\(\s*["'`]([^"'`]+)["'`]\s*\)/g)) urls.push(m[1])
+  return urls
+}
+
 const sceneAPI = initThree(document.getElementById('three-canvas') as HTMLCanvasElement)
 const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLElement)
 
@@ -135,10 +143,24 @@ interface EvaluateOptions {
   seed?: number
 }
 
-function evaluate(code: string, { setError, record = true, persist = true, seed = randomSeed() }: EvaluateOptions = {}): void {
+async function evaluate(code: string, { setError, record = true, persist = true, seed = randomSeed() }: EvaluateOptions = {}): Promise<void> {
+  const pending = extractDataUrls(code).filter((u) => !dataCache.has(u))
+  if (pending.length) {
+    await Promise.all(pending.map(async (url) => {
+      try {
+        dataCache.set(url, await fetch(url).then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
+          return r.text()
+        }))
+      } catch (e) {
+        setError?.(`Failed to fetch ${url}: ${(e as Error).message}`)
+      }
+    }))
+  }
+
   let cooked: CookedData
   try {
-    cooked = cookProgram(runtime, code, seed)
+    cooked = cookProgram(runtime, code, seed, dataCache)
   } catch (err) {
     setError?.((err as Error).message)
     return
@@ -165,7 +187,7 @@ const editor = initEditor(document.getElementById('editor-pane') as HTMLElement,
 function scrubSession(pos: number): void {
   let replayed
   try {
-    replayed = replayAt(runtime, log, pos)
+    replayed = replayAt(runtime, log, pos, dataCache)
   } catch (err) {
     editor.setError((err as Error).message)
     return
