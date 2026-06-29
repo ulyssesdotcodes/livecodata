@@ -152,93 +152,86 @@ function dslCompletions(getViews?: () => Map<string, Table> | undefined) {
 }
 
 export const defaultProgram = `// livecodata — House of Cards
-// A 2-story house of playing cards collapses when a ball drops on it.
+// A triangular pyramid of playing cards collapses when a ball drops on it.
 // Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 // Tips: Ctrl-Space completes views, Table verbs, and Expr methods (the methods
 // after field()/lit()/idx() — e.g. field("v").add(1).gt(2)); hover a "view" name
 // to preview its table; your caret selects that view's tab on the right.
 
-// 1. The base scene. Cards are thin boxes: each leaning pair forms a "tent"
-//    with tops meeting at a shared apex. Positions are derived from lean angle
-//    and half-extents so the lowest corner of every card rests exactly on its
-//    support surface — no initial interpenetration.
-//    Note: hz ≥ 0.05 is required because the Jolt BoxShape always applies a
-//    0.05 convex (corner-rounding) radius, which must not exceed any half-extent.
+// 1. Build a 3-story pyramid of cards plus a falling ball.
+//    Story k has (n − k) leaning-card tent pairs and (n − k − 1) horizontal
+//    bridge cards between them. Card positions are derived analytically from the
+//    lean angle so each card's lowest rotated corner rests on its support surface.
+//    hz ≥ 0.05 is required because Jolt's BoxShape always applies a 0.05 convex
+//    (corner-rounding) radius that must not exceed any half-extent.
 define("base", () => {
-  const lean = 0.25              // radians from vertical (≈ 14°)
-  const H    = 0.35              // card half-height
-  const W    = 0.22              // card half-width
-  const T    = 0.06              // card half-thickness (≥ 0.05 for Jolt)
+  const lean = 0.25                    // radians from vertical (~14°)
+  const H = 0.35, W = 0.22, T = 0.06  // card half-height, half-width, half-thickness
   const sl = Math.sin(lean), cl = Math.cos(lean)
-  const dx = H * sl              // card-center x offset from tent apex
-  // Vertical distance from support surface to card center so the lowest
-  // rotated corner rests exactly on the surface (accounts for tilt):
-  const cy = W * sl + H * cl
+  const dx    = H * sl                 // card-center x offset from tent apex
+  const cyOff = W * sl + H * cl       // support-surface to card-center (no corner overlap)
+  const S     = 0.50                   // spacing between adjacent tent apices
+  const n     = 3                      // tents on the ground floor (try 4 for ~27 cards)
 
-  // Story 1 — two tents (left apex x = −0.60, right apex x = +0.60)
-  const cy1   = -1.0 + cy         // card center y, story 1
-  const topY1 = cy1 + H * cl      // tent apex y, story 1
+  const cards = []
+  let supportY = -1.0                  // current support surface y (floor to start)
 
-  // Bridge card — flat card spanning both story-1 tent apices
-  const bridgeCY  = topY1 + T     // bridge center y (rests on tent tops)
-  const bridgeTop = bridgeCY + T  // bridge top surface y
+  for (let k = 0; k < n; k++) {
+    const numTents = n - k
+    const cardCY   = supportY + cyOff
+    const topY     = supportY + W * sl + 2 * H * cl  // tent apex y
+    const bHx      = S / 2 + 0.03                    // bridge half-span
 
-  // Story 2 — one tent centered on the bridge
-  const cy2   = bridgeTop + cy
-  const topY2 = cy2 + H * cl
+    // Leaning card pairs — two cards per tent, tops meeting at the apex
+    for (let i = 0; i < numTents; i++) {
+      const tx = -(numTents - 1) * S / 2 + i * S     // apex x
+      cards.push(
+        { id: "s" + k + "t" + i + "a", type: "create", shape: "box", color: 0xfdf6e3,
+          motion: "dynamic", friction: 0.8, restitution: 0,
+          px: tx - dx, py: cardCY, pz: 0, hx: W, hy: H, hz: T, rz: -lean },
+        { id: "s" + k + "t" + i + "b", type: "create", shape: "box", color: 0xfdf6e3,
+          motion: "dynamic", friction: 0.8, restitution: 0,
+          px: tx + dx, py: cardCY, pz: 0, hx: W, hy: H, hz: T, rz:  lean },
+      )
+    }
+
+    // Horizontal bridge cards spanning adjacent tent apices
+    for (let i = 0; i < numTents - 1; i++) {
+      const bx = -(numTents - 1) * S / 2 + (i + 0.5) * S
+      cards.push(
+        { id: "s" + k + "b" + i, type: "create", shape: "box", color: 0xe74c3c,
+          motion: "dynamic", friction: 0.8, restitution: 0,
+          px: bx, py: topY + T, pz: 0, hx: bHx, hy: T, hz: W },
+      )
+    }
+
+    // Crown on the top-story apex (replaces bridges on the final story)
+    if (k === n - 1) {
+      cards.push(
+        { id: "crown", type: "create", shape: "box", color: 0xe74c3c,
+          motion: "dynamic", friction: 0.8, restitution: 0,
+          px: 0, py: topY + T, pz: 0, hx: bHx, hy: T, hz: W },
+      )
+    }
+
+    supportY = topY + 2 * T  // bridge top surface becomes next story's floor
+  }
 
   return rows([
     { id: "floor", type: "create", shape: "box", color: 0x1a2e1a,
       motion: "static", px: 0, py: -1.2, pz: 0, hx: 4, hy: 0.2, hz: 4 },
-
-    // Tent A — left pair
-    { id: "a1", type: "create", shape: "box", color: 0xfdf6e3,
-      motion: "dynamic", friction: 0.8, restitution: 0,
-      px: -0.60 - dx, py: cy1, pz: 0, hx: W, hy: H, hz: T, rz: -lean },
-    { id: "a2", type: "create", shape: "box", color: 0xfdf6e3,
-      motion: "dynamic", friction: 0.8, restitution: 0,
-      px: -0.60 + dx, py: cy1, pz: 0, hx: W, hy: H, hz: T, rz:  lean },
-
-    // Tent B — right pair
-    { id: "b1", type: "create", shape: "box", color: 0xfdf6e3,
-      motion: "dynamic", friction: 0.8, restitution: 0,
-      px:  0.60 - dx, py: cy1, pz: 0, hx: W, hy: H, hz: T, rz: -lean },
-    { id: "b2", type: "create", shape: "box", color: 0xfdf6e3,
-      motion: "dynamic", friction: 0.8, restitution: 0,
-      px:  0.60 + dx, py: cy1, pz: 0, hx: W, hy: H, hz: T, rz:  lean },
-
-    // Bridge — horizontal card connecting the two story-1 apices
-    { id: "bridge", type: "create", shape: "box", color: 0xe74c3c,
-      motion: "dynamic", friction: 0.8, restitution: 0,
-      px: 0, py: bridgeCY, pz: 0, hx: 0.65, hy: T, hz: W },
-
-    // Tent C — story 2, sitting on the bridge
-    { id: "c1", type: "create", shape: "box", color: 0xfdf6e3,
-      motion: "dynamic", friction: 0.8, restitution: 0,
-      px: -dx, py: cy2, pz: 0, hx: W, hy: H, hz: T, rz: -lean },
-    { id: "c2", type: "create", shape: "box", color: 0xfdf6e3,
-      motion: "dynamic", friction: 0.8, restitution: 0,
-      px:  dx, py: cy2, pz: 0, hx: W, hy: H, hz: T, rz:  lean },
-
-    // Crown — flat card on top of tent C
-    { id: "crown", type: "create", shape: "box", color: 0xe74c3c,
-      motion: "dynamic", friction: 0.8, restitution: 0,
-      px: 0, py: topY2 + T, pz: 0, hx: 0.28, hy: T, hz: W },
-
-    // Ball — falls onto the crown and topples the structure (hits ≈ 0.5 s in)
-    { id: "ball", type: "create", shape: "sphere", color: 0xf39c12,
+    { id: "ball",  type: "create", shape: "sphere", color: 0xf39c12,
       motion: "dynamic", restitution: 0.2, r: 0.12,
-      px: 0.05, py: 1.8, pz: 0 },
+      px: 0.05, py: 2.0, pz: 0 },
+    ...cards,
   ])
 })
 
 // 2. Bake a JoltPhysics simulation: 360 frames = 6 s at 60 fps. simulate()
-//    ADDS to the table — a per-frame "update" row for each moving body and a
-//    "collision" row whenever two bodies first touch. The ball hits the crown
-//    at ≈ frame 27 (0.45 s); the full cascade takes another 2–3 s to settle.
-//    Tagged "events": the engine auto-builds an "events" view that concats all
-//    group members (index-sorted), so sim rows and effects rows merge without
-//    a manual .concat.
+//    appends a per-frame "update" row for every moving body and a "collision"
+//    row whenever two bodies first touch. The ball hits the crown at ~0.5 s;
+//    the full cascade settles over the next few seconds.
+//    Tagged "events" so these rows auto-merge with the effects view below.
 define("sim", "events", (rand, table) =>
   physics(table("base")).simulate({ steps: 360, gravity: -9.81 })
 )
@@ -246,18 +239,9 @@ define("sim", "events", (rand, table) =>
 // 3. Bake the sparse "events" stream into a dense per-frame cache for playback.
 define("scene", (rand, table) => table("events").rasterize(6))
 
-// 4. Graph the crown card's height over time — starts high, plummets on impact.
-define("crown_height", (rand, table) =>
-  table("events")
-    .filter(r => r.id === "crown" && r.type === "update")
-    .map(r => ({ index: r.index, height: r.py }))
-    .graph("height")
-)
-
-// 5. Post-processing: bloom flares on each floor collision and an afterimage
-//    trail so tumbling cards leave light streaks in the frame buffer.
-//    Reads "sim" directly (not "events") to avoid a dependency cycle — sim is
-//    a sibling group member, not the already-merged events table.
+// 4. Post-processing: bloom flares on each floor collision, afterimage trails
+//    on tumbling cards. Reads "sim" directly (not "events") to avoid a cycle —
+//    sim is a sibling group member, not the already-merged events table.
 define("effects", "events", (rand, table) =>
   rows([
     { id: "bloom",  type: "addEffect", effect: "bloom", index: 0,
