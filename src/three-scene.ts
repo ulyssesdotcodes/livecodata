@@ -20,7 +20,7 @@ export interface Vec3 {
 }
 
 export interface SceneAPI {
-  createObject(id: unknown, shape: unknown, position: Vec3, rotation: Vec3, color: number | null): void
+  createObject(id: unknown, shape: unknown, position: Vec3, rotation: Vec3, color: number | null, dims: Record<string, unknown>): void
   updateObject(id: unknown, position: Vec3, rotation: Vec3): void
   setColor(id: unknown, color: number | null): void
   destroyObject(id: unknown): void
@@ -83,12 +83,26 @@ function applyEffectParams(type: string, pass: AnyPass, p: Record<string, unknow
   }
 }
 
-const SHAPE_BUILDERS: Record<string, () => THREE.BufferGeometry> = {
-  box:      () => new THREE.BoxGeometry(0.5, 0.5, 0.5),
-  sphere:   () => new THREE.SphereGeometry(0.3, 32, 32),
-  cylinder: () => new THREE.CylinderGeometry(0.2, 0.2, 0.6, 32),
-  cone:     () => new THREE.ConeGeometry(0.3, 0.6, 32),
-  torus:    () => new THREE.TorusGeometry(0.25, 0.08, 16, 64),
+const SHAPE_DEFAULTS: Record<string, Record<string, number>> = {
+  box:      { hx: 0.25, hy: 0.25, hz: 0.25 },
+  sphere:   { r: 0.3 },
+  cylinder: { r: 0.2, h: 0.3 },
+  cone:     { r: 0.3, h: 0.3 },
+  torus:    { r: 0.3 },
+}
+
+function makeGeometry(shape: string, dims: Record<string, unknown>): THREE.BufferGeometry {
+  const d = { ...(SHAPE_DEFAULTS[shape] ?? SHAPE_DEFAULTS.box), ...dims }
+  const hx = d.hx as number, hy = d.hy as number, hz = d.hz as number
+  const r  = d.r  as number, h  = d.h  as number
+  switch (shape) {
+    case 'sphere':   return new THREE.SphereGeometry(r, 32, 32)
+    case 'cylinder': return new THREE.CylinderGeometry(r, r, h * 2, 32)
+    case 'cone':     return new THREE.ConeGeometry(r, h * 2, 32)
+    case 'torus':    return new THREE.TorusGeometry(r, 0.08, 16, 64)
+    case 'box':
+    default:         return new THREE.BoxGeometry(hx * 2, hy * 2, hz * 2)
+  }
 }
 
 const PALETTE = [0x4a9eff, 0xff6b6b, 0x51cf66, 0xffd43b, 0xcc5de8, 0xff922b]
@@ -146,9 +160,9 @@ export function initThree(canvas: HTMLCanvasElement): SceneAPI {
   let colorIdx = 0
 
   return {
-    createObject(id: unknown, shape: unknown, position: Vec3, rotation: Vec3, color: number | null): void {
+    createObject(id: unknown, shape: unknown, position: Vec3, rotation: Vec3, color: number | null, dims: Record<string, unknown>): void {
       if (objects.has(id)) return
-      const geo = (SHAPE_BUILDERS[shape as string] ?? SHAPE_BUILDERS.box)()
+      const geo = makeGeometry(shape as string, dims)
       const mat = new THREE.MeshStandardMaterial({
         color: color != null ? color : PALETTE[colorIdx % PALETTE.length],
         metalness: 0.35,
