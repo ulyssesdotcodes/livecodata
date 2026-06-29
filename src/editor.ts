@@ -26,6 +26,7 @@ const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
   field:      { sig: 'field(name)',                   detail: 'expr: read field',  info: 'A chainable expression reading row[name]. Chain .add/.sub/.mul/.div/.mod, .eq/.gt/…, .and/.or/.not, .cond(a,b). Use in filter(expr), map(template), emit(template), derive — these are diffable (no opaque closures).' },
   lit:        { sig: 'lit(value)',                   detail: 'expr: literal',     info: 'A constant expression. Usually you can pass a raw value directly to an Expr method.' },
   idx:        { sig: 'idx()',                         detail: 'expr: row index',   info: 'An expression yielding the row index (0-based).' },
+  midi:       { sig: 'midi(note, channel?)',         detail: 'expr: live MIDI',   info: 'A live value from the streaming MIDI table — the most recent event for `note` (e.g. "c4", "c#4", or "cc1" for control change) at-or-before the playhead. Normalized 0–1 (note velocity / CC value). Chainable like any Expr: midi("c4").mul(2). Use in setField/map/derive; it resolves each frame, so notes you play while looping replay at the loop position they were heard. Optional 1-based `channel` filters to one channel.' },
   beats:      { sig: 'beats(count, { fit }?)',       detail: 'beat timeline',     info: 'A looping timeline `count` beats long at the tapped tempo (🥁 Tap under the scene). Use as the "timeline" view: define("timeline", () => beats(16)). { fit: seconds } stretches a scene across the beat window.' },
   tempo:      { sig: 'tempo(fallback?)',             detail: 'beat length (s)',   info: 'Seconds per beat derived from the tap-beat table (🥁 Tap), or `fallback` (default 0.5s = 120 BPM) until two taps are recorded.' },
   taps:       { sig: 'taps()',                       detail: 'tap-beat table',    info: 'The tap-beat table: one row per wall-time button press ({ beat, time }).' },
@@ -49,6 +50,7 @@ const TABLE_METHOD_DOCS: Record<string, DocEntry> = {
   orderBy:     { sig: '.orderBy(field | fn, dir?)',           detail: 'sort rows',        info: 'Sort rows by a field name or comparator function. Optional dir: "asc" (default) or "desc".' },
   derive:      { sig: '.derive({ field: row => val })',       detail: 'add fields',       info: 'Add or overwrite fields on every row using derivation functions.' },
   assign:      { sig: '.assign({ field: value })',            detail: 'set fields',       info: 'Merge a fixed object of field values into every row.' },
+  setField:    { sig: '.setField(name, value)',               detail: 'set one field',    info: 'Set one field on every row from an Expr or value. With a live source — .setField("amount", midi("c4")) — the field becomes a per-frame binding that follows the note as the loop replays; a constant Expr is baked in immediately.' },
   mapField:    { sig: '.mapField(field, val => val)',         detail: 'transform field',  info: 'Apply a function to one field of every row, replacing it in place.' },
   rescale:     { sig: '.rescale(field, [min, max]?)',         detail: 'normalize field',  info: 'Normalize a numeric field to [0, 1] (or a custom range) across all rows.' },
   lag:         { sig: '.lag(n)',                              detail: 'shift rows',       info: 'Shift rows forward by n positions, padding the start with null rows.' },
@@ -269,6 +271,18 @@ define("effects", "events", (rand, table) =>
 //    loops every 16 beats; { fit: 4 } stretches this 4-second sim across the window:
 //
 // define("timeline", () => beats(16, { fit: 4 }))
+
+// 7. Live MIDI (optional). Connect a MIDI device and play while it loops: each
+//    note is recorded against the loop position it was heard at (see the "midi"
+//    table), and midi("c4") reads its live value back every time the loop returns
+//    there. Bind it to any field with setField — here c4's velocity lifts a sphere
+//    every time the loop passes the moment you played it:
+//
+// define("scene", () =>
+//   rows([{ id: "s", type: "create", index: 0, shape: "sphere", color: 0x4a9eff,
+//           px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
+//     .setField("py", midi("c4").mul(3))
+//     .rasterize(4))
 `
 
 function dslHover(getViews?: () => Map<string, Table> | undefined, getPlayIndex?: () => number) {

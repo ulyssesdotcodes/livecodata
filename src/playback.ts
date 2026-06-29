@@ -2,6 +2,7 @@ import { buildFrameIndex, stateAtFrame, type FrameIndex } from './rasterize.js'
 import { buildEffectIndex, effectChainAtFrame } from './effects.js'
 import { buildTimeline, type Timeline } from './timeline.js'
 import { activeLineage } from './lineage.js'
+import { resolveBindings, type EvalCtx } from './dsl.js'
 import { FPS } from './constants.js'
 import type { Row } from './lineage.js'
 import type { SceneAPI } from './three-scene.js'
@@ -17,17 +18,23 @@ export interface PlaybackOptions {
   onTick?: (tick: number, active: Map<string, Set<number>>, srcFrame: number) => void
   onPlay?: () => void
   tapControl?: TapControl
+  // Streaming context for the frame being shown: resolves midi() bindings against
+  // the live MIDI table sampled at the playhead's source frame.
+  midiCtxAt?: (srcFrame: number) => EvalCtx
 }
 
 export interface PlaybackAPI {
   load(sceneRows: Row[], timelineRows: Row[], effectRows: Row[]): void
   setTimeline(timelineRows: Row[]): void
+  // The source position (seconds) currently shown — where live MIDI events get
+  // stamped so they pin to this loop position.
+  currentSourceSeconds(): number
 }
 
 export function initPlayback(
   controlsEl: HTMLElement,
   sceneAPI: SceneAPI,
-  { onTick, onPlay, tapControl }: PlaybackOptions = {},
+  { onTick, onPlay, tapControl, midiCtxAt }: PlaybackOptions = {},
 ): PlaybackAPI {
   type PlayState = 'idle' | 'playing' | 'paused'
   let state: PlayState = 'idle'
@@ -131,7 +138,11 @@ export function initPlayback(
 
   function applyAtIndex(t: number): void {
     const src = timeline.frameAt(Math.floor(t * FPS))
-    const states = stateAtFrame(frameIndex, src)
+    // Streaming context for this frame: midi() bindings baked into the scene /
+    // effects resolve here against the live MIDI table at the source frame.
+    const ctx = midiCtxAt ? midiCtxAt(src) : null
+    const baked = stateAtFrame(frameIndex, src)
+    const states = ctx ? baked.map((s) => resolveBindings(s, ctx)) : baked
     const present = new Set<unknown>()
     for (const s of states) {
       present.add(s.id)
@@ -151,8 +162,10 @@ export function initPlayback(
         aliveObjects.delete(id)
       }
     }
-    sceneAPI.setEffects(effectChainAtFrame(effectIndex, src) as EffectEntry[])
-    onTick?.(t, activeLineage(states), src)
+    let chain = effectChainAtFrame(effectIndex, src) as EffectEntry[]
+    if (ctx) chain = chain.map((e) => ({ ...e, params: resolveBindings(e.params as Row, ctx) }))
+    sceneAPI.setEffects(chain)
+    onTick?.(t, activeLineage(baked), src)
   }
 
   function reset(t: number = 0): void {
@@ -167,6 +180,13 @@ export function initPlayback(
   // Where the playhead currently sits, in seconds, whatever the play state.
   function currentTime(): number {
     return state === 'playing' ? position() : pausedIndex
+  }
+
+  // The *source* position (seconds) currently shown — playback time mapped
+  // through the timeline. This is where a live MIDI event gets stamped, so a note
+  // played while looping pins to the loop position it was heard at.
+  function currentSourceSeconds(): number {
+    return timeline.frameAt(Math.floor(currentTime() * FPS)) / FPS
   }
 
   // Playback length in seconds: follow the timeline when present, else the cache.
@@ -298,5 +318,5 @@ export function initPlayback(
     requestAnimationFrame(tick)
   }
 
-  return { load, setTimeline }
+  return { load, setTimeline, currentSourceSeconds }
 }

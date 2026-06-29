@@ -45,6 +45,11 @@ export type ExprNode =
   | { k: 'logic'; op: 'and' | 'or'; a: ExprNode; b: ExprNode }
   | { k: 'not'; a: ExprNode }
   | { k: 'cond'; t: ExprNode; a: ExprNode; b: ExprNode }
+  // A live value pulled from the streaming MIDI table at the *current frame* —
+  // the most recent event for `note` (optionally on `channel`) at-or-before the
+  // playhead's source position. Not resolvable at bake time, so any expression
+  // containing one is deferred into a per-row binding (see bakeExpr).
+  | { k: 'midi'; note: string; channel: number | null }
 
 type ExprInput = Expr | number | string | boolean | null
 
@@ -94,15 +99,38 @@ export class Expr {
 export const field = (name: string): Expr => new Expr({ k: 'field', name })
 export const lit = (v: number | string | boolean | null): Expr => new Expr({ k: 'lit', v })
 export const idx = (): Expr => new Expr({ k: 'idx' })
+// A live MIDI value, e.g. midi("c4"). Usable anywhere an Expr is — setField,
+// map(template), derive — and chainable: midi("c4").mul(2).
+export const midi = (note: string, channel: number | null = null): Expr =>
+  new Expr({ k: 'midi', note: String(note).toLowerCase(), channel })
 
-function evalExpr(n: ExprNode, row: Row, i: number): unknown {
+// Per-frame evaluation context. `midi` samples the streaming MIDI table at the
+// playhead's current source frame (supplied by playback at apply time).
+export interface EvalCtx {
+  midi?: (note: string, channel: number | null) => number
+}
+
+// True if a node reads from a streaming source (MIDI) and so cannot be resolved
+// at bake time — it must be carried as a binding and evaluated per frame.
+export function isStreamingNode(n: ExprNode): boolean {
+  switch (n.k) {
+    case 'midi': return true
+    case 'field': case 'lit': case 'idx': return false
+    case 'not': return isStreamingNode(n.a)
+    case 'bin': case 'cmp': case 'logic': return isStreamingNode(n.a) || isStreamingNode(n.b)
+    case 'cond': return isStreamingNode(n.t) || isStreamingNode(n.a) || isStreamingNode(n.b)
+  }
+}
+
+export function evalExpr(n: ExprNode, row: Row, i: number, ctx?: EvalCtx): unknown {
   switch (n.k) {
     case 'field': return row[n.name]
     case 'lit': return n.v
     case 'idx': return i
+    case 'midi': return ctx?.midi ? ctx.midi(n.note, n.channel) : 0
     case 'bin': {
-      const a = evalExpr(n.a, row, i) as number
-      const b = evalExpr(n.b, row, i) as number
+      const a = evalExpr(n.a, row, i, ctx) as number
+      const b = evalExpr(n.b, row, i, ctx) as number
       switch (n.op) {
         case 'add': return a + b
         case 'sub': return a - b
@@ -113,8 +141,8 @@ function evalExpr(n: ExprNode, row: Row, i: number): unknown {
     }
     // eslint-disable-next-line no-fallthrough
     case 'cmp': {
-      const a = evalExpr(n.a, row, i) as number
-      const b = evalExpr(n.b, row, i) as number
+      const a = evalExpr(n.a, row, i, ctx) as number
+      const b = evalExpr(n.b, row, i, ctx) as number
       switch (n.op) {
         case 'eq': return a === b
         case 'ne': return a !== b
@@ -126,12 +154,46 @@ function evalExpr(n: ExprNode, row: Row, i: number): unknown {
     }
     // eslint-disable-next-line no-fallthrough
     case 'logic': {
-      const a = evalExpr(n.a, row, i)
-      return n.op === 'and' ? (a && evalExpr(n.b, row, i)) : (a || evalExpr(n.b, row, i))
+      const a = evalExpr(n.a, row, i, ctx)
+      return n.op === 'and' ? (a && evalExpr(n.b, row, i, ctx)) : (a || evalExpr(n.b, row, i, ctx))
     }
-    case 'not': return !evalExpr(n.a, row, i)
-    case 'cond': return evalExpr(n.t, row, i) ? evalExpr(n.a, row, i) : evalExpr(n.b, row, i)
+    case 'not': return !evalExpr(n.a, row, i, ctx)
+    case 'cond': return evalExpr(n.t, row, i, ctx) ? evalExpr(n.a, row, i, ctx) : evalExpr(n.b, row, i, ctx)
   }
+}
+
+// ── Streaming bindings ───────────────────────────────────────────────────────
+// A binding is a plain, serializable marker { $expr: node } left in a row in
+// place of a value that can't be computed until a frame is shown (it reads MIDI).
+// rasterize/effects carry bindings through unchanged; playback resolves them per
+// frame against the live MIDI table (resolveBindings, with an EvalCtx).
+
+export interface Binding {
+  $expr: ExprNode
+}
+
+export const isBinding = (v: unknown): v is Binding =>
+  v !== null && typeof v === 'object' && '$expr' in (v as Record<string, unknown>)
+
+// Bake-time evaluation of an Expr: streaming expressions defer to a binding
+// (resolved later, per frame); everything else evaluates to a concrete value now.
+function bakeExpr(node: ExprNode, row: Row, i: number): unknown {
+  return isStreamingNode(node) ? { $expr: node } : evalExpr(node, row, i)
+}
+
+// Replace any { $expr } bindings in a row with their per-frame values, using the
+// (already-baked) row's own fields plus the streaming ctx. Returns the same row
+// object when there's nothing to resolve.
+export function resolveBindings(row: Row, ctx: EvalCtx): Row {
+  let out: Row | null = null
+  for (const k in row) {
+    const v = row[k]
+    if (isBinding(v)) {
+      if (!out) out = { ...row }
+      out[k] = evalExpr(v.$expr, row, 0, ctx)
+    }
+  }
+  return out ?? row
 }
 
 // A row template: a plain object whose values are Expr (evaluated per row),
@@ -140,7 +202,7 @@ function evalExpr(n: ExprNode, row: Row, i: number): unknown {
 export type Template = Record<string, unknown>
 
 function buildValue(v: unknown, row: Row, i: number): unknown {
-  if (v instanceof Expr) return evalExpr(v.node, row, i)
+  if (v instanceof Expr) return bakeExpr(v.node, row, i)
   if (Array.isArray(v)) return v.map((x) => buildValue(x, row, i))
   if (v !== null && typeof v === 'object') {
     const out: Record<string, unknown> = {}
@@ -478,7 +540,7 @@ export class Table {
       const next: Row = { ...r }
       for (const k in spec) {
         const sv = spec[k]
-        next[k] = sv instanceof Expr ? evalExpr(sv.node, r, i)
+        next[k] = sv instanceof Expr ? bakeExpr(sv.node, r, i)
           : typeof sv === 'function' ? (sv as (r: Row, i: number) => unknown)(r, i)
             : sv
       }
@@ -487,6 +549,14 @@ export class Table {
   }
 
   assign(spec: DeriveSpec): Table { return this.derive(spec) }
+
+  // Set one field on every row from an Expr (or a plain value). The headline use
+  // is a live MIDI value: .setField("amount", midi("c4")) — a streaming Expr is
+  // left as a per-frame binding, so the field follows the note as the loop
+  // replays; a plain/constant Expr is baked in immediately. Sugar over derive.
+  setField(name: string, value: Expr | unknown): Table {
+    return this.derive({ [name]: value })
+  }
 
   mapField(src: string, dst: string, fn: (val: unknown, row: Row, i: number) => unknown): Table {
     return this._xf('mapField', { src, dst, fn }, (ins) =>
@@ -692,6 +762,7 @@ export type DSLSurface = Easings & {
   field(name: string): Expr
   lit(v: number | string | boolean | null): Expr
   idx(): Expr
+  midi(note: string, channel?: number | null): Expr
   taps(): Table
   tempo(fallback?: number): number
   beats(count: number, opts?: { fallback?: number; fit?: number }): Table
@@ -728,6 +799,7 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     field,
     lit,
     idx,
+    midi,
     // The tap-beat table: one row per wall-time button press ({ beat, time } —
     // ordinal + seconds since the first tap). The source of truth for tempo.
     taps: () => new Table((ctx?.tapRows?.() ?? []).map((r) => ({ ...r })), ctx),

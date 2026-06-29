@@ -30,7 +30,30 @@ interface SampledState {
   pos: Vec3
   rot: Vec3
   color: number | null
+  extra: Row
   sources: Row[]
+}
+
+// Fields rasterize interprets itself (timing, transform, color, bookkeeping).
+// Anything else on an event — e.g. a custom field, or a { $expr } streaming
+// binding from setField("amount", midi("c4")) — is "extra": carried through to
+// each baked frame row untouched, to be read (and bindings resolved) at playback.
+const RESERVED = new Set([
+  'id', 'type', 'index', 'dur', 'ease', 'to', 'shape', 'color',
+  'px', 'py', 'pz', 'rx', 'ry', 'rz', 'frame',
+])
+
+// Accumulate the non-reserved fields visible at frame `i` (events at-or-before
+// `i`, last write wins), so a field set on create — or updated later — sticks.
+function gatherExtra(events: Row[], i: number): Row {
+  const extra: Row = {}
+  for (const e of events) {
+    if ((e.index as number) > i) continue
+    for (const k in e) {
+      if (!RESERVED.has(k)) extra[k] = e[k]
+    }
+  }
+  return extra
 }
 
 function lerp(a: number, b: number, t: number): number {
@@ -105,7 +128,7 @@ function sampleObject(events: Row[], i: number): SampledState | null {
   }
 
   const sources = [createEv, from, to, colorEv].filter((x): x is Row => x !== null)
-  return { shape: createEv.shape, pos, rot, color, sources }
+  return { shape: createEv.shape, pos, rot, color, extra: gatherExtra(events, i), sources }
 }
 
 export function rasterizeRows(eventRows: Row[] | null | undefined, maxSeconds?: number): Row[] {
@@ -121,6 +144,7 @@ export function rasterizeRows(eventRows: Row[] | null | undefined, maxSeconds?: 
       const s = sampleObject(evs, frame)
       if (!s) continue
       out.push(withLineage({
+        ...s.extra,
         frame, id: evs[0].id, shape: s.shape,
         px: s.pos.x, py: s.pos.y, pz: s.pos.z,
         rx: s.rot.x, ry: s.rot.y, rz: s.rot.z,
