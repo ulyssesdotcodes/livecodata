@@ -151,76 +151,103 @@ function dslCompletions(getViews?: () => Map<string, Table> | undefined) {
   }
 }
 
-export const defaultProgram = `// livecodata — define tables as views; the engine cooks them each run.
+export const defaultProgram = `// livecodata — House of Cards
+// A triangular pyramid of playing cards collapses when a ball drops on it.
 // Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 // Tips: Ctrl-Space completes views, Table verbs, and Expr methods (the methods
 // after field()/lit()/idx() — e.g. field("v").add(1).gt(2)); hover a "view" name
 // to preview its table; your caret selects that view's tab on the right.
 
-// 1. The base scene: a static floor and three shapes to drop on it. Each create
-//    row carries physics fields — motion, spawn position (px/py/pz) and rotation
-//    (rx/ry/rz). The floor's physics half-extents (hx/hy/hz) are wider than the
-//    drawn mesh, so things land instead of rolling off.
-define("base", () =>
-  rows([
-    { id: "floor", type: "create", shape: "box", color: 0x222244,
-      motion: "static", px: 0, py: -1.2, pz: 0, hx: 3, hy: 0.2, hz: 3 },
-    { id: "ball",  type: "create", shape: "sphere",   color: 0x4a9eff,
-      motion: "dynamic", px: -0.5, py: 3.0, pz: 0.0 },
-    { id: "box1",  type: "create", shape: "box",      color: 0xff6b6b,
-      motion: "dynamic", px: 0.4,  py: 4.5, pz: 0.2, rx: 0.4, ry: 0.3 },
-    { id: "cyl",   type: "create", shape: "cylinder", color: 0x51cf66,
-      motion: "dynamic", px: 0.0,  py: 6.0, pz: -0.3 },
+// 1. Build a 3-story pyramid of cards plus a falling ball.
+//    Story k has (n − k) leaning-card tent pairs and (n − k − 1) horizontal
+//    bridge cards between them. Card positions are derived analytically from the
+//    lean angle so each card's lowest rotated corner rests on its support surface.
+//    hz ≥ 0.05 is required because Jolt's BoxShape always applies a 0.05 convex
+//    (corner-rounding) radius that must not exceed any half-extent.
+define("base", () => {
+  const lean = 0.25                    // radians from vertical (~14°)
+  const H = 0.35, W = 0.22, T = 0.06  // card half-height, half-width, half-thickness
+  const sl = Math.sin(lean), cl = Math.cos(lean)
+  const dx    = H * sl                 // card-center x offset from tent apex
+  const cyOff = W * sl + H * cl       // support-surface to card-center (no corner overlap)
+  const S     = 0.50                   // spacing between adjacent tent apices
+  const n     = 3                      // tents on the ground floor (try 4 for ~27 cards)
+
+  const cards = []
+  let supportY = -1.0                  // current support surface y (floor to start)
+
+  for (let k = 0; k < n; k++) {
+    const numTents = n - k
+    const cardCY   = supportY + cyOff
+    const topY     = supportY + W * sl + 2 * H * cl  // tent apex y
+    const bHx      = S / 2 + 0.03                    // bridge half-span
+
+    // Leaning card pairs — two cards per tent, tops meeting at the apex
+    for (let i = 0; i < numTents; i++) {
+      const tx = -(numTents - 1) * S / 2 + i * S     // apex x
+      cards.push(
+        { id: "s" + k + "t" + i + "a", type: "create", shape: "box", color: 0xfdf6e3,
+          motion: "dynamic", friction: 0.8, restitution: 0,
+          px: tx - dx, py: cardCY, pz: 0, hx: W, hy: H, hz: T, rz: -lean },
+        { id: "s" + k + "t" + i + "b", type: "create", shape: "box", color: 0xfdf6e3,
+          motion: "dynamic", friction: 0.8, restitution: 0,
+          px: tx + dx, py: cardCY, pz: 0, hx: W, hy: H, hz: T, rz:  lean },
+      )
+    }
+
+    // Horizontal bridge cards spanning adjacent tent apices
+    for (let i = 0; i < numTents - 1; i++) {
+      const bx = -(numTents - 1) * S / 2 + (i + 0.5) * S
+      cards.push(
+        { id: "s" + k + "b" + i, type: "create", shape: "box", color: 0xe74c3c,
+          motion: "dynamic", friction: 0.8, restitution: 0,
+          px: bx, py: topY + T, pz: 0, hx: bHx, hy: T, hz: W },
+      )
+    }
+
+    // Crown on the top-story apex (replaces bridges on the final story)
+    if (k === n - 1) {
+      cards.push(
+        { id: "crown", type: "create", shape: "box", color: 0xe74c3c,
+          motion: "dynamic", friction: 0.8, restitution: 0,
+          px: 0, py: topY + T, pz: 0, hx: bHx, hy: T, hz: W },
+      )
+    }
+
+    supportY = topY + 2 * T  // bridge top surface becomes next story's floor
+  }
+
+  return rows([
+    { id: "floor", type: "create", shape: "box", color: 0x1a2e1a,
+      motion: "static", px: 0, py: -1.2, pz: 0, hx: 4, hy: 0.2, hz: 4 },
+    { id: "ball",  type: "create", shape: "sphere", color: 0xf39c12,
+      motion: "dynamic", restitution: 0.2, r: 0.12,
+      px: 0.05, py: 2.0, pz: 0 },
+    ...cards,
   ])
-)
+})
 
-// 2. Bake a JoltPhysics simulation in the background: step the world for 240
-//    frames (~4 s at 60 fps). simulate() ADDS to the table — a per-frame "update"
-//    row for each moving body (index in seconds; the cache interpolates between
-//    them) plus a "collision" row whenever two bodies first touch.
-//    The 3rd arg tags this view into the "events" group: the engine auto-builds
-//    a view named "events" that concats every group member (index-sorted), so
-//    the motion rows here and the effect rows in step 5 merge into one "events"
-//    table — no manual .concat. "events" is the single sparse stream of
-//    everything that happens: object motion *and* the post-processing chain.
+// 2. Bake a JoltPhysics simulation: 360 frames = 6 s at 60 fps. simulate()
+//    appends a per-frame "update" row for every moving body and a "collision"
+//    row whenever two bodies first touch. The ball hits the crown at ~0.5 s;
+//    the full cascade settles over the next few seconds.
+//    Tagged "events" so these rows auto-merge with the effects view below.
 define("sim", "events", (rand, table) =>
-  physics(table("base")).simulate({ steps: 240, gravity: -9.81 })
+  physics(table("base")).simulate({ steps: 360, gravity: -9.81 })
 )
 
-// 3. The frame cache: bake the sparse "events" into dense per-frame world state
-//    that playback indexes straight into. rasterize(seconds) sets the duration.
-define("scene", (rand, table) => table("events").rasterize(4))
+// 3. Bake the sparse "events" stream into a dense per-frame cache for playback.
+define("scene", (rand, table) => table("events").rasterize(6))
 
-// 4. Collisions are just rows — pull them into their own view to inspect, and
-//    graph the ball's height over time as it bounces and settles.
-define("collisions", (rand, table) =>
-  table("events").filter(r => r.type === "collision")
-)
-
-define("ball_height", (rand, table) =>
-  table("events")
-    .filter(r => r.id === "ball" && r.type === "update")
-    .map(r => ({ index: r.index, height: r.py }))
-    .graph("height")
-)
-
-// 5. Post-processing effects layer over the rendered scene as a chain of
-//    Three.js passes. Each effect event has an event type (addEffect /
-//    updateEffect / removeEffect), an id, an effect type ("bloom", "afterimage",
-//    "dotscreen", "rgbshift", "film", "glitch", "halftone"), an optional input
-//    (another effect's id, or omitted to read the base render output), params,
-//    and an index (seconds). An updateEffect with a dur eases its params over
-//    time, just like a color pulse. Here bloom feeds an afterimage trail, and
-//    the bloom flashes on each real landing — data-driven from "sim"'s collision
-//    rows (filter the sibling member, not "events", or we'd cycle), so the flash
-//    fires exactly when a shape hits the floor, not at a guessed time. Like step
-//    2 this view is tagged into the "events" group, so its rows merge into "events".
+// 4. Post-processing: bloom flares on each floor collision, afterimage trails
+//    on tumbling cards. Reads "sim" directly (not "events") to avoid a cycle —
+//    sim is a sibling group member, not the already-merged events table.
 define("effects", "events", (rand, table) =>
   rows([
     { id: "bloom",  type: "addEffect", effect: "bloom", index: 0,
-      params: { strength: 0.8, radius: 0.5, threshold: 0.6 } },
+      params: { strength: 0.7, radius: 0.4, threshold: 0.5 } },
     { id: "trails", type: "addEffect", effect: "afterimage", input: "bloom",
-      index: 0, params: { damp: 0.82 } },
+      index: 0, params: { damp: 0.88 } },
   ]).concat(
     // Declarative, diffable form: filter(Expr) + emit(template). Values are Expr
     // nodes (field("index").add(0.05)) so the engine can hash this view and reuse

@@ -138,7 +138,7 @@ export function initPlayback(
       const pos = { x: s.px as number, y: s.py as number, z: s.pz as number }
       const rot = { x: s.rx as number, y: s.ry as number, z: s.rz as number }
       if (!aliveObjects.has(s.id)) {
-        sceneAPI.createObject(s.id, s.shape, pos, rot, s.color as number | null)
+        sceneAPI.createObject(s.id, s.shape, pos, rot, s.color as number | null, s as Record<string, unknown>)
         aliveObjects.add(s.id)
       } else {
         sceneAPI.updateObject(s.id, pos, rot)
