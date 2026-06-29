@@ -5,6 +5,7 @@ import { keymap, hoverTooltip } from '@codemirror/view'
 import { Prec } from '@codemirror/state'
 import { vim } from '@replit/codemirror-vim'
 import { buildTablePreview } from './preview.js'
+import { isExprDot } from './completion.js'
 import type { Table } from './dsl.js'
 
 interface DocEntry {
@@ -22,6 +23,12 @@ const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
   json:       { sig: 'json(array | string)',         detail: 'parse JSON',       info: 'Wrap a JS array or parse a JSON string into a Table.' },
   grid:       { sig: 'grid(cols, rows)',             detail: 'XZ lattice',       info: 'Generate a cols×rows lattice of XZ positions as a Table (fields: col, row, x, z).' },
   physics:    { sig: 'physics(table)',               detail: 'physics scene',    info: 'Load a base scene table into the JoltPhysics engine. Chain .simulate() to run the simulation.' },
+  field:      { sig: 'field(name)',                   detail: 'expr: read field',  info: 'A chainable expression reading row[name]. Chain .add/.sub/.mul/.div/.mod, .eq/.gt/…, .and/.or/.not, .cond(a,b). Use in filter(expr), map(template), emit(template), derive — these are diffable (no opaque closures).' },
+  lit:        { sig: 'lit(value)',                   detail: 'expr: literal',     info: 'A constant expression. Usually you can pass a raw value directly to an Expr method.' },
+  idx:        { sig: 'idx()',                         detail: 'expr: row index',   info: 'An expression yielding the row index (0-based).' },
+  beats:      { sig: 'beats(count, { fit }?)',       detail: 'beat timeline',     info: 'A looping timeline `count` beats long at the tapped tempo (🥁 Tap under the scene). Use as the "timeline" view: define("timeline", () => beats(16)). { fit: seconds } stretches a scene across the beat window.' },
+  tempo:      { sig: 'tempo(fallback?)',             detail: 'beat length (s)',   info: 'Seconds per beat derived from the tap-beat table (🥁 Tap), or `fallback` (default 0.5s = 120 BPM) until two taps are recorded.' },
+  taps:       { sig: 'taps()',                       detail: 'tap-beat table',    info: 'The tap-beat table: one row per wall-time button press ({ beat, time }).' },
   linear:     { sig: 'linear',                       detail: 'easing curve',     info: 'Linear easing (t → t). Pass as the ease field of a color-pulse row.' },
   easeIn:     { sig: 'easeIn',                       detail: 'easing curve',     info: 'Quadratic ease-in (t → t²). Starts slow, ends fast.' },
   easeOut:    { sig: 'easeOut',                      detail: 'easing curve',     info: 'Quadratic ease-out (t → 1-(1-t)²). Starts fast, ends slow.' },
@@ -29,9 +36,10 @@ const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
 }
 
 const TABLE_METHOD_DOCS: Record<string, DocEntry> = {
-  map:         { sig: '.map(row => row)',                     detail: 'transform rows',   info: 'Transform every row with a mapping function. Returns a new Table.' },
-  filter:      { sig: '.filter(row => bool)',                 detail: 'keep rows',        info: 'Keep only rows for which the predicate returns true.' },
-  filterMap:   { sig: '.filterMap(row => row | null)',        detail: 'filter + map',     info: 'Map and filter in one pass — return a new row to keep it, null/undefined to drop it.' },
+  map:         { sig: '.map(row => row | template)',          detail: 'transform rows',   info: 'Transform every row. Pass a function, or a declarative template of Expr/literals (e.g. { y: field("v").mul(2) }) — the template form is diffable.' },
+  filter:      { sig: '.filter(row => bool | Expr)',          detail: 'keep rows',        info: 'Keep rows where the predicate holds. Pass a function, or an Expr predicate (e.g. field("type").eq("collision")) — the Expr form is diffable.' },
+  filterMap:   { sig: '.filterMap(row => row | null)',        detail: 'filter + map',     info: 'Map and filter in one pass — return a new row to keep it, null/undefined to drop it. (For a diffable form, use .filter(Expr).emit(template).)' },
+  emit:        { sig: '.emit(template | [templates])',        detail: 'fan out rows',     info: 'Declarative flatMap: emit one or many rows per source row from Expr/literal templates. The diffable counterpart of filterMap; pair with .filter(Expr).' },
   concat:      { sig: '.concat(other)',                       detail: 'combine tables',   info: 'Append the rows of another Table (or array) to this one.' },
   slice:       { sig: '.slice(start, end?)',                  detail: 'subset rows',      info: 'Return a sub-range of rows, like Array.slice.' },
   fold:        { sig: '.fold(init, (acc, row) => acc)',       detail: 'reduce to value',  info: 'Reduce all rows to a single accumulated value, like Array.reduce.' },
@@ -57,6 +65,26 @@ const TABLE_METHOD_DOCS: Record<string, DocEntry> = {
   save:        { sig: '.save(name)',                          detail: 'save as view',     info: 'Sugar for define(name, () => this) — register the current Table as a named view.' },
 }
 
+// Methods offered after a dot on an Expr (field("x").add(1).gt(2)…). Every Expr
+// method returns an Expr, so a chain rooted at field()/lit()/idx() stays Expr.
+const EXPR_METHOD_DOCS: Record<string, DocEntry> = {
+  add:  { sig: '.add(x)',           detail: 'expr  +',   info: 'Add. x is another Expr or a number.' },
+  sub:  { sig: '.sub(x)',           detail: 'expr  −',   info: 'Subtract x (Expr or number).' },
+  mul:  { sig: '.mul(x)',           detail: 'expr  ×',   info: 'Multiply by x (Expr or number).' },
+  div:  { sig: '.div(x)',           detail: 'expr  ÷',   info: 'Divide by x (Expr or number).' },
+  mod:  { sig: '.mod(x)',           detail: 'expr  %',   info: 'Modulo (remainder) by x.' },
+  eq:   { sig: '.eq(x)',            detail: 'expr  ===', info: 'Strict-equal test. Returns a boolean Expr (use in filter / cond).' },
+  ne:   { sig: '.ne(x)',            detail: 'expr  !==', info: 'Not-equal test. Returns a boolean Expr.' },
+  gt:   { sig: '.gt(x)',            detail: 'expr  >',   info: 'Greater-than test. Returns a boolean Expr.' },
+  gte:  { sig: '.gte(x)',           detail: 'expr  >=',  info: 'Greater-than-or-equal test. Returns a boolean Expr.' },
+  lt:   { sig: '.lt(x)',            detail: 'expr  <',   info: 'Less-than test. Returns a boolean Expr.' },
+  lte:  { sig: '.lte(x)',           detail: 'expr  <=',  info: 'Less-than-or-equal test. Returns a boolean Expr.' },
+  and:  { sig: '.and(expr)',        detail: 'expr  &&',  info: 'Logical AND of two boolean Exprs.' },
+  or:   { sig: '.or(expr)',         detail: 'expr  ||',  info: 'Logical OR of two boolean Exprs.' },
+  not:  { sig: '.not()',            detail: 'expr  !',   info: 'Logical negation of a boolean Expr.' },
+  cond: { sig: '.cond(then, else)', detail: 'ternary',   info: 'If this Expr is truthy yield `then`, else `else` (each an Expr or literal).' },
+}
+
 function makeInfoNode(sig: string, info: string): HTMLElement {
   const el = document.createElement('div')
   el.className = 'cm-completion-info'
@@ -70,7 +98,6 @@ function makeInfoNode(sig: string, info: string): HTMLElement {
 }
 
 const DSL_BUILTINS = Object.keys(DSL_BUILTIN_DOCS)
-const TABLE_METHODS = Object.keys(TABLE_METHOD_DOCS)
 
 function viewAtPos(text: string, pos: number): string | null {
   const re = /\bdefine\(\s*"([^"]+)"/g
@@ -98,10 +125,14 @@ function dslCompletions(getViews?: () => Map<string, Table> | undefined) {
     }
     const dot = context.matchBefore(/\.\w*/)
     if (dot) {
+      // Pick the method set by the chain's root: Expr methods after field()/lit()/
+      // idx() (and their chains), Table methods otherwise.
+      const docs = isExprDot(context.state.doc.toString() as string, dot.from as number)
+        ? EXPR_METHOD_DOCS : TABLE_METHOD_DOCS
       return {
         from: dot.from + 1,
-        options: TABLE_METHODS.map((label) => {
-          const d = TABLE_METHOD_DOCS[label]
+        options: Object.keys(docs).map((label) => {
+          const d = docs[label]
           return { label, type: 'method', detail: d.detail, info: () => makeInfoNode(d.sig, d.info) }
         }),
         validFor: /^\w*$/,
@@ -122,8 +153,9 @@ function dslCompletions(getViews?: () => Map<string, Table> | undefined) {
 
 export const defaultProgram = `// livecodata — define tables as views; the engine cooks them each run.
 // Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
-// Tips: Ctrl-Space completes views & Table verbs; hover a "view" name to preview
-// its table; your caret selects that view's tab on the right.
+// Tips: Ctrl-Space completes views, Table verbs, and Expr methods (the methods
+// after field()/lit()/idx() — e.g. field("v").add(1).gt(2)); hover a "view" name
+// to preview its table; your caret selects that view's tab on the right.
 
 // 1. The base scene: a static floor and three shapes to drop on it. Each create
 //    row carries physics fields — motion, spawn position (px/py/pz) and rotation
@@ -190,16 +222,26 @@ define("effects", "events", (rand, table) =>
     { id: "trails", type: "addEffect", effect: "afterimage", input: "bloom",
       index: 0, params: { damp: 0.82 } },
   ]).concat(
+    // Declarative, diffable form: filter(Expr) + emit(template). Values are Expr
+    // nodes (field("index").add(0.05)) so the engine can hash this view and reuse
+    // it — editing here never re-bakes the physics in "sim".
     table("sim")
-      .filter(r => r.type === "collision" && r.other === "floor")
-      .filterMap(r => [
-        { id: "bloom", type: "updateEffect", index: r.index, dur: 0.05,
+      .filter(field("type").eq("collision").and(field("other").eq("floor")))
+      .emit([
+        { id: "bloom", type: "updateEffect", index: field("index"), dur: 0.05,
           params: { strength: 2.6 } },
-        { id: "bloom", type: "updateEffect", index: r.index + 0.05, dur: 0.5,
+        { id: "bloom", type: "updateEffect", index: field("index").add(0.05), dur: 0.5,
           ease: easeOut, params: { strength: 0.8 } },
       ])
   )
 )
+
+// 6. Beat-synced looping (optional). Tap the 🥁 Tap button under the scene a few
+//    times to set the tempo, then measure the timeline in beats — its length
+//    follows the tapped tempo. "Loop" (next to Play) is on by default. beats(16)
+//    loops every 16 beats; { fit: 4 } stretches this 4-second sim across the window:
+//
+// define("timeline", () => beats(16, { fit: 4 }))
 `
 
 function dslHover(getViews?: () => Map<string, Table> | undefined, getPlayIndex?: () => number) {

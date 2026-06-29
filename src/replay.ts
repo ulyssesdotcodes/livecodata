@@ -31,7 +31,17 @@ export interface ReplayResult extends CookedResult {
 }
 
 interface Runtime {
-  run(code: string, opts?: { seed?: number }): RuntimeResult
+  run(code: string, opts?: { seed?: number; only?: string[] }): RuntimeResult
+}
+
+// Cheaply recompute just the "timeline" view (tick → frame remap), cooking only
+// it and its deps. Used when the tap-beat tempo changes a beats() timeline so
+// tapping stays responsive (the rest of the program isn't re-run). Returns the
+// timeline rows, or [] when the program defines no timeline.
+export function cookTimeline(runtime: Runtime, code: string, seed: number): Row[] {
+  const result = runtime.run(code, { seed, only: ['timeline'] })
+  const timeline = result.views.get('timeline')
+  return timeline ? timeline.rows : []
 }
 
 export function cookProgram(runtime: Runtime, code: string, seed: number): CookedResult {
