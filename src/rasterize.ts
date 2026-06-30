@@ -19,19 +19,9 @@ import { withLineage, unionLineage, type Row } from './lineage.js'
 import { mixColor } from './color.js'
 import { FPS } from './constants.js'
 
-interface Vec3 {
-  x: number
-  y: number
-  z: number
-}
-
 interface SampledState {
-  shape: unknown
-  pos: Vec3
-  rot: Vec3
-  color: number | null
+  fields: Row
   sources: Row[]
-  createFields: Row
 }
 
 function lerp(a: number, b: number, t: number): number {
@@ -73,18 +63,20 @@ function sampleObject(events: Row[], i: number): SampledState | null {
     else if (!to) to = kf
   }
 
-  let pos: Vec3
-  let rot: Vec3
+  let px: number, py: number, pz: number, rx: number, ry: number, rz: number
   if (from && to) {
     const f = (i - (from.index as number)) / ((to.index as number) - (from.index as number))
-    pos = { x: lerp(from.px as number, to.px as number, f), y: lerp(from.py as number, to.py as number, f), z: lerp(from.pz as number, to.pz as number, f) }
-    rot = { x: lerp(from.rx as number, to.rx as number, f), y: lerp(from.ry as number, to.ry as number, f), z: lerp(from.rz as number, to.rz as number, f) }
+    px = lerp(from.px as number, to.px as number, f)
+    py = lerp(from.py as number, to.py as number, f)
+    pz = lerp(from.pz as number, to.pz as number, f)
+    rx = lerp(from.rx as number, to.rx as number, f)
+    ry = lerp(from.ry as number, to.ry as number, f)
+    rz = lerp(from.rz as number, to.rz as number, f)
   } else if (from) {
-    pos = { x: from.px as number, y: from.py as number, z: from.pz as number }
-    rot = { x: from.rx as number, y: from.ry as number, z: from.rz as number }
+    px = from.px as number; py = from.py as number; pz = from.pz as number
+    rx = from.rx as number; ry = from.ry as number; rz = from.rz as number
   } else {
-    pos = { x: 0, y: 0, z: 0 }
-    rot = { x: 0, y: 0, z: 0 }
+    px = 0; py = 0; pz = 0; rx = 0; ry = 0; rz = 0
   }
 
   let colorEv: Row | null = null
@@ -106,7 +98,7 @@ function sampleObject(events: Row[], i: number): SampledState | null {
   }
 
   const sources = [createEv, from, to, colorEv].filter((x): x is Row => x !== null)
-  return { shape: createEv.shape, pos, rot, color, sources, createFields: createEv }
+  return { fields: { ...createEv, px, py, pz, rx, ry, rz, color }, sources }
 }
 
 export function rasterizeRows(eventRows: Row[] | null | undefined, maxSeconds?: number): Row[] {
@@ -121,13 +113,7 @@ export function rasterizeRows(eventRows: Row[] | null | undefined, maxSeconds?: 
     for (const evs of timelines.values()) {
       const s = sampleObject(evs, frame)
       if (!s) continue
-      out.push(withLineage({
-        ...s.createFields,
-        frame, id: evs[0].id, shape: s.shape,
-        px: s.pos.x, py: s.pos.y, pz: s.pos.z,
-        rx: s.rot.x, ry: s.rot.y, rz: s.rot.z,
-        color: s.color,
-      }, unionLineage(s.sources)))
+      out.push(withLineage({ ...s.fields, frame, id: evs[0].id }, unionLineage(s.sources)))
     }
   }
   return out
