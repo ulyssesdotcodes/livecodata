@@ -16,7 +16,6 @@
 // ----------------------------------------------------------------------------
 
 import { withLineage, unionLineage, type Row } from './lineage.js'
-import { mixColor } from './color.js'
 import { FPS } from './constants.js'
 
 interface SampledState {
@@ -26,10 +25,6 @@ interface SampledState {
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t
-}
-
-function hasPosition(e: Row): boolean {
-  return typeof e.px === 'number'
 }
 
 function toFrameEvent(e: Row): Row {
@@ -55,7 +50,7 @@ function sampleObject(events: Row[], i: number): SampledState | null {
   if (!createEv || i < (createEv.index as number)) return null
   if (events.some((e) => e.type === 'destroy' && (e.index as number) <= i)) return null
 
-  const keyframes = events.filter(hasPosition)
+  const keyframes = events.filter((e) => e.type === 'create' || e.type === 'update')
   let from: Row | null = keyframes[0] ?? null
   let to: Row | null = null
   for (const kf of keyframes) {
@@ -63,42 +58,20 @@ function sampleObject(events: Row[], i: number): SampledState | null {
     else if (!to) to = kf
   }
 
-  let px: number, py: number, pz: number, rx: number, ry: number, rz: number
+  const fields: Row = { ...createEv }
+  if (from) {
+    for (const [k, v] of Object.entries(from))
+      if (typeof v === 'number') fields[k] = v
+  }
   if (from && to) {
-    const f = (i - (from.index as number)) / ((to.index as number) - (from.index as number))
-    px = lerp(from.px as number, to.px as number, f)
-    py = lerp(from.py as number, to.py as number, f)
-    pz = lerp(from.pz as number, to.pz as number, f)
-    rx = lerp(from.rx as number, to.rx as number, f)
-    ry = lerp(from.ry as number, to.ry as number, f)
-    rz = lerp(from.rz as number, to.rz as number, f)
-  } else if (from) {
-    px = from.px as number; py = from.py as number; pz = from.pz as number
-    rx = from.rx as number; ry = from.ry as number; rz = from.rz as number
-  } else {
-    px = 0; py = 0; pz = 0; rx = 0; ry = 0; rz = 0
+    const t = (i - (from.index as number)) / ((to.index as number) - (from.index as number))
+    for (const [k, v] of Object.entries(to))
+      if (typeof v === 'number' && typeof from[k] === 'number')
+        fields[k] = lerp(from[k] as number, v, t)
   }
 
-  let colorEv: Row | null = null
-  for (const e of events) {
-    if ((e.index as number) <= i && e.color != null) colorEv = e
-  }
-  let color: number | null = (createEv.color as number | null | undefined) ?? null
-  if (colorEv) {
-    const dur = colorEv.dur as number | undefined
-    if (dur != null && dur > 0) {
-      const base = colorEv.to != null ? (colorEv.to as number | null) : ((createEv.color as number | null | undefined) ?? (colorEv.color as number | null))
-      const p = Math.min(1, Math.max(0, (i - (colorEv.index as number)) / dur))
-      const easeFn = colorEv.ease as ((t: number) => number) | undefined
-      const eased = typeof easeFn === 'function' ? easeFn(p) : p
-      color = mixColor(colorEv.color as number | null, base as number | null, eased)
-    } else {
-      color = colorEv.color as number | null
-    }
-  }
-
-  const sources = [createEv, from, to, colorEv].filter((x): x is Row => x !== null)
-  return { fields: { ...createEv, px, py, pz, rx, ry, rz, color }, sources }
+  const sources = [createEv, from, to].filter((x): x is Row => x !== null)
+  return { fields, sources }
 }
 
 export function rasterizeRows(eventRows: Row[] | null | undefined, maxSeconds?: number): Row[] {
