@@ -13,16 +13,9 @@ import { RGBShiftShader } from 'three/addons/shaders/RGBShiftShader.js'
 import type { Pass } from 'three/addons/postprocessing/Pass.js'
 import type { EffectEntry } from './effects.js'
 
-export interface Vec3 {
-  x: number
-  y: number
-  z: number
-}
-
 export interface SceneAPI {
   createObject(row: Record<string, unknown>): void
-  updateObject(id: unknown, position: Vec3, rotation: Vec3): void
-  setColor(id: unknown, color: number | null): void
+  updateObject(row: Record<string, unknown>): void
   destroyObject(id: unknown): void
   setEffects(chain: EffectEntry[]): void
   reset(): void
@@ -178,17 +171,13 @@ export function initThree(canvas: HTMLCanvasElement): SceneAPI {
       objects.set(id, mesh)
     },
 
-    updateObject(id: unknown, position: Vec3, rotation: Vec3): void {
+    updateObject(row: Record<string, unknown>): void {
+      const { id, px, py, pz, rx, ry, rz, color } = row
       const mesh = objects.get(id)
       if (!mesh) return
-      mesh.position.set(position.x, position.y, position.z)
-      mesh.rotation.set(rotation.x, rotation.y, rotation.z)
-    },
-
-    setColor(id: unknown, color: number | null): void {
-      const mesh = objects.get(id)
-      if (!mesh || color == null) return
-      ;(mesh.material as THREE.MeshStandardMaterial).color.set(color)
+      mesh.position.set(px as number, py as number, pz as number)
+      mesh.rotation.set(rx as number ?? 0, ry as number ?? 0, rz as number ?? 0)
+      if (color != null) (mesh.material as THREE.MeshStandardMaterial).color.set(color as number)
     },
 
     destroyObject(id: unknown): void {
