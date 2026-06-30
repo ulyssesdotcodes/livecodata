@@ -31,6 +31,7 @@ interface SampledState {
   rot: Vec3
   color: number | null
   sources: Row[]
+  createFields: Row
 }
 
 function lerp(a: number, b: number, t: number): number {
@@ -105,7 +106,7 @@ function sampleObject(events: Row[], i: number): SampledState | null {
   }
 
   const sources = [createEv, from, to, colorEv].filter((x): x is Row => x !== null)
-  return { shape: createEv.shape, pos, rot, color, sources }
+  return { shape: createEv.shape, pos, rot, color, sources, createFields: createEv }
 }
 
 export function rasterizeRows(eventRows: Row[] | null | undefined, maxSeconds?: number): Row[] {
@@ -121,6 +122,7 @@ export function rasterizeRows(eventRows: Row[] | null | undefined, maxSeconds?: 
       const s = sampleObject(evs, frame)
       if (!s) continue
       out.push(withLineage({
+        ...s.createFields,
         frame, id: evs[0].id, shape: s.shape,
         px: s.pos.x, py: s.pos.y, pz: s.pos.z,
         rx: s.rot.x, ry: s.rot.y, rz: s.rot.z,
