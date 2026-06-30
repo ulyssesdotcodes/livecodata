@@ -227,11 +227,14 @@ define("base", () => {
   ])
 })
 
-// 2. Bake a JoltPhysics simulation: 360 frames = 6 s at 60 fps. simulate()
-//    appends a per-frame "update" row for every moving body and a "collision"
-//    row whenever two bodies first touch. The ball hits the crown at ~0.5 s;
-//    the full cascade settles over the next few seconds.
-//    Tagged "events" so these rows auto-merge with the effects view below.
+// 2. Bake a JoltPhysics simulation in the background: step the world for 240
+//    frames (~4 s at 60 fps). simulate() ADDS to the table — a per-frame "update"
+//    row for each moving body (index in seconds; the cache interpolates between
+//    them) plus a "collision" row whenever two bodies first touch.
+//    The 3rd arg tags this view into the "events" group: the engine auto-builds
+//    a view named "events" that concats every group member (index-sorted), so
+//    multiple simulation views would merge into one "events" table — no manual
+//    .concat. "events" is the single sparse stream of object motion + collisions.
 define("sim", "events", (rand, table) =>
   physics(table("base")).simulate({ steps: 360, gravity: -9.81 })
 )
@@ -239,26 +242,41 @@ define("sim", "events", (rand, table) =>
 // 3. Bake the sparse "events" stream into a dense per-frame cache for playback.
 define("scene", (rand, table) => table("events").rasterize(6))
 
-// 4. Post-processing: bloom flares on each floor collision, afterimage trails
-//    on tumbling cards. Reads "sim" directly (not "events") to avoid a cycle —
-//    sim is a sibling group member, not the already-merged events table.
-define("effects", "events", (rand, table) =>
+// 4. Collisions are just rows — pull them into their own view to inspect, and
+//    graph the ball's height over time as it bounces and settles.
+define("collisions", (rand, table) =>
+  table("events").filter(r => r.type === "collision")
+)
+
+define("ball_height", (rand, table) =>
+  table("events")
+    .filter(r => r.id === "ball" && r.type === "update")
+    .map(r => ({ index: r.index, height: r.py }))
+    .graph("height")
+)
+
+// 5. Post-processing is a hydra sketch (ojack's hydra). The "hydra" view is a
+//    table whose \`code\` column holds a hydra sketch string and whose other
+//    columns are variables in scope while the sketch runs. s0 is the rendered 3D
+//    scene; o0 is the output, so src(s0)...out() post-processes the scene. The
+//    most-recent code row wins, and each variable holds its most-recent value
+//    until a later row changes it. Here the scene is fed through a noise
+//    modulation whose \`amount\` jumps on every real landing — data-driven from
+//    "sim"'s collision rows (filter the sibling, not "events", or we'd cycle).
+define("hydra", (rand, table) =>
   rows([
-    { id: "bloom",  type: "addEffect", effect: "bloom", index: 0,
-      params: { strength: 0.7, radius: 0.4, threshold: 0.5 } },
-    { id: "trails", type: "addEffect", effect: "afterimage", input: "bloom",
-      index: 0, params: { damp: 0.88 } },
+    { index: 0, amount: 0.12,
+      code: "src(s0).modulate(noise(2.5, 0.1), amount).out(o0)" },
   ]).concat(
     // Declarative, diffable form: filter(Expr) + emit(template). Values are Expr
-    // nodes (field("index").add(0.05)) so the engine can hash this view and reuse
-    // it — editing here never re-bakes the physics in "sim".
+    // nodes (field("index").add(0.25)) so the engine can hash this view and reuse
+    // it — editing here never re-bakes the physics in "sim". Each landing kicks
+    // \`amount\` up, then a later row settles it back down.
     table("sim")
       .filter(field("type").eq("collision").and(field("other").eq("floor")))
       .emit([
-        { id: "bloom", type: "updateEffect", index: field("index"), dur: 0.05,
-          params: { strength: 2.6 } },
-        { id: "bloom", type: "updateEffect", index: field("index").add(0.05), dur: 0.5,
-          ease: easeOut, params: { strength: 0.8 } },
+        { index: field("index"), amount: 0.6 },
+        { index: field("index").add(0.25), amount: 0.12 },
       ])
   )
 )
