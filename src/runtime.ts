@@ -63,6 +63,7 @@ export interface RunOptions {
   // Cook only these views (and their deps) instead of all — used to cheaply
   // recompute a tempo-driven "timeline" on a beat tap without re-running the rest.
   only?: string[]
+  dataCache?: Map<string, string>
 }
 
 export function createRuntime({ physics, tapRows }: RuntimeOptions = {}): { run: (code: string, opts?: RunOptions) => RuntimeResult } {
@@ -74,6 +75,7 @@ export function createRuntime({ physics, tapRows }: RuntimeOptions = {}): { run:
   let prngs: Map<string, () => number>
   let groups: Map<string, string[]>
   let currentCookingView: string | null = null
+  let dataCache = new Map<string, string>()
 
   // Cross-run row cache keyed by content hash. Two generations: at run start the
   // current map rolls into `prev`, so a result survives one run of non-use before
@@ -178,12 +180,13 @@ export function createRuntime({ physics, tapRows }: RuntimeOptions = {}): { run:
     },
     physics: () => (physics ? physics() : null),
     tapRows: () => (tapRows ? tapRows() : null),
+    getData: (url: string) => dataCache.get(url) ?? '',
   }
 
   const api = createDSL(ctx)
   const matCtx: MatCtx = { physics: () => (physics ? physics() : null) }
 
-  function run(code: string, { seed = 0, only }: RunOptions = {}): RuntimeResult {
+  function run(code: string, { seed = 0, only, dataCache: dc }: RunOptions = {}): RuntimeResult {
     defs = new Map()
     cache = new Map()
     deps = new Map()
@@ -192,6 +195,7 @@ export function createRuntime({ physics, tapRows }: RuntimeOptions = {}): { run:
     groups = new Map()
     seedVal = seed >>> 0
     ctx.seed = seedVal
+    dataCache = dc ?? new Map()
 
     // Roll the memo forward one generation.
     prevMemo = curMemo

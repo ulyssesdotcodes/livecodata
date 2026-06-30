@@ -263,6 +263,8 @@ export interface DSLContext {
   tapRows?: () => Row[] | null
   // The run seed, set by the runtime; folded into seed-sensitive node hashes.
   seed?: number
+  // Synchronous lookup for pre-fetched data() URLs.
+  getData?(url: string): string
 }
 
 export type ViewFn = (rand: () => number, table: (name: string) => Table) => Table | Row[]
@@ -686,6 +688,7 @@ export type DSLSurface = Easings & {
   math(fn: (t: number) => number): MathBuilder
   rows(arr: Row[] | null | undefined): Table
   csv(text: string): Table
+  data(url: string): Table
   json(data: Row[] | string | unknown): Table
   grid(cols: number, rowsN: number, opts?: { spacing?: number; y?: number }): Table
   physics(source: Table | Row[]): PhysicsBuilder
@@ -707,6 +710,7 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     math: (fn: (t: number) => number) => new MathBuilder(fn, ctx!),
     rows: (arr: Row[] | null | undefined) => new Table((arr ?? []).map((r) => ({ ...r })), ctx),
     csv: (text: string) => new Table(parseCSV(text), ctx),
+    data: (url: string) => new Table(parseCSV(ctx?.getData?.(url) ?? ''), ctx),
     json: (data: Row[] | string | unknown) => new Table(
       (Array.isArray(data) ? data : typeof data === 'string' ? JSON.parse(data) as Row[] : []).map((r) => ({ ...r as Row })),
       ctx,
