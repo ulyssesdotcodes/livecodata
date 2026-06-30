@@ -90,6 +90,23 @@ html, body {
   text-transform: uppercase;
 }
 
+.sample-select {
+  background: #13294b;
+  border: 1px solid #1a3a6b;
+  color: #8ca0b8;
+  font-size: 11px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+.sample-select:focus {
+  outline: none;
+  border-color: #1a5090;
+}
+
 .run-btn {
   background: #1a5090;
   border: 1px solid #1a5090;

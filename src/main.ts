@@ -5,6 +5,7 @@ import { initTablePanel } from './table-panel.js'
 import { initPlayback } from './playback.js'
 import { initSessionBar } from './session-bar.js'
 import { initSessionSelector } from './session-selector.js'
+import { SAMPLES } from './samples.js'
 import { createRuntime } from './runtime.js'
 import { createSessionStore } from './sessions.js'
 import { cookProgram, cookTimeline, replayAt } from './replay.js'
@@ -13,6 +14,14 @@ import { createLog, randomSeed } from './log.js'
 import { Table } from './dsl.js'
 import type { PhysicsEngineInstance } from './physics.js'
 import type { Row } from './lineage.js'
+
+const dataCache = new Map<string, string>()
+
+function extractDataUrls(code: string): string[] {
+  const urls: string[] = []
+  for (const m of code.matchAll(/\bdata\(\s*["'`]([^"'`]+)["'`]\s*\)/g)) urls.push(m[1])
+  return urls
+}
 
 const sceneAPI = initThree(document.getElementById('three-canvas') as HTMLCanvasElement)
 const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLElement)
@@ -135,10 +144,24 @@ interface EvaluateOptions {
   seed?: number
 }
 
-function evaluate(code: string, { setError, record = true, persist = true, seed = randomSeed() }: EvaluateOptions = {}): void {
+async function evaluate(code: string, { setError, record = true, persist = true, seed = randomSeed() }: EvaluateOptions = {}): Promise<void> {
+  const pending = extractDataUrls(code).filter((u) => !dataCache.has(u))
+  if (pending.length) {
+    await Promise.all(pending.map(async (url) => {
+      try {
+        dataCache.set(url, await fetch(url).then((r) => {
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
+          return r.text()
+        }))
+      } catch (e) {
+        setError?.(`Failed to fetch ${url}: ${(e as Error).message}`)
+      }
+    }))
+  }
+
   let cooked: CookedData
   try {
-    cooked = cookProgram(runtime, code, seed)
+    cooked = cookProgram(runtime, code, seed, dataCache)
   } catch (err) {
     setError?.((err as Error).message)
     return
@@ -165,7 +188,7 @@ const editor = initEditor(document.getElementById('editor-pane') as HTMLElement,
 function scrubSession(pos: number): void {
   let replayed
   try {
-    replayed = replayAt(runtime, log, pos)
+    replayed = replayAt(runtime, log, pos, dataCache)
   } catch (err) {
     editor.setError((err as Error).message)
     return
@@ -198,7 +221,23 @@ function newSession(): void {
 
 const editorPane = document.getElementById('editor-pane') as HTMLElement
 const sessionBar = initSessionBar({ onScrub: scrubSession })
-const sessionSelector = initSessionSelector({ onOpen: openSession, onNew: newSession })
+function openExample(index: number): void {
+  const sample = SAMPLES[index]
+  if (!sample) return
+  currentSessionId = sessionStore.newId()
+  log.clear()
+  editor.setCode(sample.code)
+  void evaluate(sample.code, { setError: editor.setError, persist: false })
+  sessionBar.setLog(log)
+  refreshSelector()
+}
+
+const sessionSelector = initSessionSelector({
+  onOpen: openSession,
+  onNew: newSession,
+  onExample: openExample,
+  examples: SAMPLES.map((s) => ({ label: s.name })),
+})
 editorPane.insertBefore(sessionBar.el, editorPane.children[1])
 editorPane.insertBefore(sessionSelector.el, sessionBar.el)
 
