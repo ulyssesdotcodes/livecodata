@@ -201,16 +201,6 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
   titleEl.textContent = 'DSL'
   header.appendChild(titleEl)
 
-  const sampleSelect = document.createElement('select')
-  sampleSelect.className = 'sample-select'
-  SAMPLES.forEach((s, i) => {
-    const opt = document.createElement('option')
-    opt.value = String(i)
-    opt.textContent = s.name
-    sampleSelect.appendChild(opt)
-  })
-  header.appendChild(sampleSelect)
-
   const runBtn = document.createElement('button')
   runBtn.className = 'run-btn'
   runBtn.textContent = 'Run ▶'
@@ -275,11 +265,6 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
 
   function setCode(code: string): void {
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } })
-  }
-
-  sampleSelect.onchange = () => {
-    const sample = SAMPLES[+sampleSelect.value]
-    if (sample) setCode(sample.code)
   }
 
   return { run, getCode: () => view.state.doc.toString(), setCode, setError }
