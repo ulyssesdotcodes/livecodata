@@ -56,6 +56,12 @@ export function initTablePanel(container: HTMLElement): TablePanel {
   tabs.className = 'table-tabs'
   header.appendChild(tabs)
 
+  const filterInput = document.createElement('input')
+  filterInput.className = 'table-filter'
+  filterInput.type = 'text'
+  filterInput.placeholder = 'filter…'
+  header.appendChild(filterInput)
+
   const countEl = document.createElement('span')
   countEl.className = 'table-count'
   header.appendChild(countEl)
@@ -95,6 +101,26 @@ export function initTablePanel(container: HTMLElement): TablePanel {
   tableEl.appendChild(tbody)
 
   let tabEls = new Map<string, HTMLButtonElement>()
+  let filterText = ''
+
+  function applyFilter(): void {
+    const q = filterText
+    let visible = 0
+    rowEls.forEach((tr) => {
+      const show = !q || tr.textContent!.toLowerCase().includes(q)
+      tr.hidden = !show
+      if (show) visible++
+    })
+    if (q && rowEls.length) {
+      const total = currentRows.length
+      countEl.textContent = `${visible} / ${total} row${total === 1 ? '' : 's'}`
+    }
+  }
+
+  filterInput.addEventListener('input', () => {
+    filterText = filterInput.value.toLowerCase()
+    applyFilter()
+  })
 
   function highlightTab(name: string | null): void {
     tabEls.forEach((el, n) => el.classList.toggle('tab-active', n === name))
@@ -211,7 +237,9 @@ export function initTablePanel(container: HTMLElement): TablePanel {
 
     countEl.textContent = t.length > MAX_ROWS
       ? `${t.length} rows (showing ${MAX_ROWS})`
-      : `${t.length} row${t.length === 1 ? '' : 's'}`
+      : `${shown.length} row${shown.length === 1 ? '' : 's'}`
+
+    applyFilter()
   }
 
   return {

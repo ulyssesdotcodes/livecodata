@@ -313,11 +313,32 @@ html, body {
   border-color: #e94560;
 }
 
+.table-filter {
+  background: #16213e;
+  color: #c8d6e5;
+  border: 1px solid #1a5090;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 2px 7px;
+  margin-left: auto;
+  width: 130px;
+  outline: none;
+}
+
+.table-filter::placeholder {
+  color: #607a96;
+}
+
+.table-filter:focus {
+  border-color: #2a70c0;
+}
+
 .table-count {
   color: #607a96;
   font-size: 11px;
   font-family: monospace;
-  margin-left: auto;
+  margin-left: 8px;
 }
 
 
