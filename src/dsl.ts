@@ -679,6 +679,100 @@ function parseCSV(text: string): Row[] {
   })
 }
 
+// ── Row builders: concise, chainable constructors for common event rows ──────
+// box/sphere/.../addEffect/... build the object-create, keyframe, and effect
+// rows that rasterize.js and effects.js already know how to read (see their
+// header comments for the field contract). Each call returns a plain row
+// object — chain setters to add more fields, then drop it straight into
+// rows([...]) or return it from a define(). Setters live on the prototype (not
+// as own properties), so `{ ...row }` — the DSL's usual way of copying rows —
+// spreads only the data fields, never the methods.
+//
+// Naming rule: a setter must NOT share its name with the field it writes.
+// `Object.assign(this, { color: c })` puts an *own* `color` property on the
+// instance, which then permanently shadows a same-named `color()` prototype
+// method for that instance — the next `.color(...)` call would throw ("not a
+// function"). Multi-field setters (pos/rot/velocity) and renamed ones
+// (motion → static/dynamic/kinematic) dodge this naturally; single-field
+// setters that mirror their field 1:1 use a `withX` name instead.
+type EaseFn = (t: number) => number
+
+class RowBuilder {
+  [key: string]: unknown
+  constructor(fields: Row) {
+    Object.assign(this, fields)
+  }
+  set(fields: Row): this {
+    Object.assign(this, fields)
+    return this
+  }
+  // The time this event happens, in seconds (rasterize/effects `index` field).
+  at(index: number | Expr): this { return this.set({ index }) }
+}
+
+// Position + rotation + color — shared by object-create rows and the "update"
+// keyframe row (a later position/color for the same id).
+class PlacementBuilder extends RowBuilder {
+  pos(px: number, py: number, pz: number = 0): this { return this.set({ px, py, pz }) }
+  rot(rx: number, ry: number = 0, rz: number = 0): this { return this.set({ rx, ry, rz }) }
+  withColor(c: number): this { return this.set({ color: c }) }
+}
+
+// An object-create row: shape + physics material on top of placement.
+class BodyBuilder extends PlacementBuilder {
+  static(): this { return this.set({ motion: 'static' }) }
+  dynamic(): this { return this.set({ motion: 'dynamic' }) }
+  kinematic(): this { return this.set({ motion: 'kinematic' }) }
+  withFriction(f: number): this { return this.set({ friction: f }) }
+  withRestitution(r: number): this { return this.set({ restitution: r }) }
+  velocity(vx: number, vy: number, vz: number = 0): this { return this.set({ vx, vy, vz }) }
+}
+
+const body = (id: unknown, shape: string, dims: Row): BodyBuilder =>
+  new BodyBuilder({ id, type: 'create', shape, motion: 'dynamic', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, ...dims })
+
+// A "color" keyframe row — pulses/steps an existing object's color.
+class ColorBuilder extends RowBuilder {
+  withDur(seconds: number): this { return this.set({ dur: seconds }) }
+  withEase(fn: EaseFn): this { return this.set({ ease: fn }) }
+  withTo(c: number): this { return this.set({ to: c }) }
+}
+
+// An effect (post-processing) row — addEffect/updateEffect/removeEffect. Pass
+// params at construction (addEffect(id, "bloom", { strength: 1 })); .withInput()
+// wires this effect's input to another effect id in the chain.
+class EffectBuilder extends RowBuilder {
+  withInput(id: unknown): this { return this.set({ input: id }) }
+  withDur(seconds: number): this { return this.set({ dur: seconds }) }
+  withEase(fn: EaseFn): this { return this.set({ ease: fn }) }
+}
+
+export type Dims = { hx?: number; hy?: number; hz?: number; r?: number; h?: number }
+
+export const box = (id: unknown, dims: Dims = {}): BodyBuilder => body(id, 'box', dims)
+export const sphere = (id: unknown, dims: Dims = {}): BodyBuilder => body(id, 'sphere', dims)
+export const cylinder = (id: unknown, dims: Dims = {}): BodyBuilder => body(id, 'cylinder', dims)
+export const cone = (id: unknown, dims: Dims = {}): BodyBuilder => body(id, 'cone', dims)
+export const torus = (id: unknown, dims: Dims = {}): BodyBuilder => body(id, 'torus', dims)
+
+// A later position/rotation/color for an id already created by box()/sphere()/…
+export const update = (id: unknown): PlacementBuilder =>
+  new PlacementBuilder({ id, type: 'update', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 })
+
+export const colorTo = (id: unknown, color: number): ColorBuilder =>
+  new ColorBuilder({ id, type: 'color', color })
+
+export const destroy = (id: unknown): RowBuilder => new RowBuilder({ id, type: 'destroy' })
+
+export const addEffect = (id: unknown, effect: string, params: Record<string, unknown> = {}): EffectBuilder =>
+  new EffectBuilder({ id, type: 'addEffect', effect, params })
+
+export const updateEffect = (id: unknown, params: Record<string, unknown> = {}): EffectBuilder =>
+  new EffectBuilder({ id, type: 'updateEffect', params })
+
+export const removeEffect = (id: unknown): EffectBuilder =>
+  new EffectBuilder({ id, type: 'removeEffect' })
+
 export type DSLSurface = Easings & {
   define(name: string, fn: ViewFn): void
   define(name: string, group: string, fn: ViewFn): void
@@ -695,6 +789,17 @@ export type DSLSurface = Easings & {
   taps(): Table
   tempo(fallback?: number): number
   beats(count: number, opts?: { fallback?: number; fit?: number }): Table
+  box(id: unknown, dims?: Dims): BodyBuilder
+  sphere(id: unknown, dims?: Dims): BodyBuilder
+  cylinder(id: unknown, dims?: Dims): BodyBuilder
+  cone(id: unknown, dims?: Dims): BodyBuilder
+  torus(id: unknown, dims?: Dims): BodyBuilder
+  update(id: unknown): PlacementBuilder
+  colorTo(id: unknown, color: number): ColorBuilder
+  destroy(id: unknown): RowBuilder
+  addEffect(id: unknown, effect: string, params?: Record<string, unknown>): EffectBuilder
+  updateEffect(id: unknown, params?: Record<string, unknown>): EffectBuilder
+  removeEffect(id: unknown): EffectBuilder
 }
 
 export function createDSL(ctx: DSLContext | null): DSLSurface {
@@ -751,6 +856,9 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       }
       return new Table(out, ctx)
     },
+    box, sphere, cylinder, cone, torus,
+    update, colorTo, destroy,
+    addEffect, updateEffect, removeEffect,
     ...EASINGS,
   }
 }

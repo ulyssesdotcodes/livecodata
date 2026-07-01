@@ -172,6 +172,73 @@ test('json wraps an array and parses a string', () => {
   assert.deepEqual(json('[{"a":2}]').rows, [{ a: 2 }])
 })
 
+test('box/sphere build chainable create rows with sensible defaults', () => {
+  const { box, sphere } = createDSL(null)
+  assert.deepEqual({ ...box('floor', { hx: 4, hy: 0.2, hz: 4 }).pos(0, -1.2, 0).withColor(0x1a2e1a).static() }, {
+    id: 'floor', type: 'create', shape: 'box', motion: 'static',
+    px: 0, py: -1.2, pz: 0, rx: 0, ry: 0, rz: 0, hx: 4, hy: 0.2, hz: 4, color: 0x1a2e1a,
+  })
+  assert.deepEqual({ ...sphere('ball', { r: 0.12 }).pos(0.05, 2, 0).withRestitution(0.2) }, {
+    id: 'ball', type: 'create', shape: 'sphere', motion: 'dynamic',
+    px: 0.05, py: 2, pz: 0, rx: 0, ry: 0, rz: 0, r: 0.12, restitution: 0.2,
+  })
+})
+
+test('a row builder spreads to plain data only — chain methods stay off the row', () => {
+  const { box } = createDSL(null)
+  const row = box('x').withColor(1).withFriction(0.5)
+  assert.deepEqual(Object.keys({ ...row }).includes('withColor'), false)
+  assert.equal(typeof row.withColor, 'function', 'the setter is still callable again on the same instance')
+  row.withColor(2)
+  assert.equal(row.color, 2)
+})
+
+test('rows([...]) accepts row builders directly, same as plain objects', () => {
+  const { rows, box, sphere } = createDSL(null)
+  const t = rows([
+    box('floor', { hx: 4, hy: 0.2, hz: 4 }).pos(0, -1.2, 0).static(),
+    sphere('ball', { r: 0.12 }).pos(0, 2, 0),
+  ])
+  assert.deepEqual(t.rows.map((r) => r.id), ['floor', 'ball'])
+  assert.equal(t.rows[0].motion, 'static')
+})
+
+test('update/colorTo/destroy build the keyframe/event rows rasterize.js expects', () => {
+  const { update, colorTo, destroy } = createDSL(null)
+  assert.deepEqual({ ...update('ball').at(1).pos(1, 2, 3) }, {
+    id: 'ball', type: 'update', px: 1, py: 2, pz: 3, rx: 0, ry: 0, rz: 0, index: 1,
+  })
+  assert.deepEqual({ ...colorTo('ball', 0xff0000).at(2).withDur(0.5).withTo(0x00ff00) }, {
+    id: 'ball', type: 'color', color: 0xff0000, index: 2, dur: 0.5, to: 0x00ff00,
+  })
+  assert.deepEqual({ ...destroy('ball').at(5) }, { id: 'ball', type: 'destroy', index: 5 })
+})
+
+test('addEffect/updateEffect/removeEffect build the effects-chain rows effects.js expects', () => {
+  const { addEffect, updateEffect, removeEffect } = createDSL(null)
+  assert.deepEqual({ ...addEffect('bloom', 'bloom', { strength: 0.7 }).at(0) }, {
+    id: 'bloom', type: 'addEffect', effect: 'bloom', params: { strength: 0.7 }, index: 0,
+  })
+  assert.deepEqual({ ...addEffect('trails', 'afterimage').withInput('bloom').at(0) }, {
+    id: 'trails', type: 'addEffect', effect: 'afterimage', params: {}, input: 'bloom', index: 0,
+  })
+  assert.deepEqual({ ...updateEffect('bloom', { strength: 2.6 }).at(0.1).withDur(0.05) }, {
+    id: 'bloom', type: 'updateEffect', params: { strength: 2.6 }, index: 0.1, dur: 0.05,
+  })
+  assert.deepEqual({ ...removeEffect('bloom').at(3) }, { id: 'bloom', type: 'removeEffect', index: 3 })
+})
+
+test('row builders drop straight into emit()/map() templates (Expr fields still evaluate)', () => {
+  const { field, updateEffect } = createDSL(null)
+  const src = new Table([{ index: 0.1, type: 'collision' }])
+  const out = src.filter(field('type').eq('collision')).emit([
+    updateEffect('bloom', { strength: 2.6 }).at(field('index')).withDur(0.05),
+  ])
+  assert.deepEqual(out.rows.map((r) => ({ id: r.id, index: r.index, dur: r.dur })), [
+    { id: 'bloom', index: 0.1, dur: 0.05 },
+  ])
+})
+
 test('grid lays out a centred cols×rows lattice', () => {
   const { grid } = createDSL(null)
   const g = grid(2, 2, { spacing: 1 })
