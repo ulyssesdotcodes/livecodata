@@ -115,10 +115,25 @@ define("effects", "events", (rand, table) =>
   )
 )
 
-// 6. Beat-synced looping (optional). Tap the 🥁 Tap button under the scene a few
-//    times to set the tempo, then measure the timeline in beats — its length
-//    follows the tapped tempo. "Loop" (next to Play) is on by default. beats(16)
-//    loops every 16 beats; { fit: 4 } stretches this 4-second sim across the window:
+// 5. Time-warp playback (the "timeline" view). pace() splits the 6-second bake
+//    at this table's event times — here every floor impact — and plays each
+//    between-event segment at its own speed: [0.35, 1.8] cycles slow-motion /
+//    fast-forward from one impact to the next. Works on events from any table
+//    (crossings(), triggers, …); delete this view to play back 1:1. Add
+//    ease: easeInOut to ramp each segment (playback kisses zero speed at each
+//    event). For hand-placed mappings use keyframe rows instead:
+//    rows([{ src: 0, dst: 0 }, { src: 3, dst: 1, ease: easeIn }]).retime()
+define("timeline", (rand, table) =>
+  table("sim")
+    .filter(field("type").eq("collision").and(field("other").eq("floor")))
+    .pace({ until: 6, speed: [0.35, 1.8] })
+)
+
+// 6. Beat-synced looping (optional alternative timeline). Tap the 🥁 Tap button
+//    under the scene a few times to set the tempo, then measure the timeline in
+//    beats — its length follows the tapped tempo. "Loop" (next to Play) is on by
+//    default. beats(16) loops every 16 beats; { fit: 4 } stretches this 4-second
+//    sim across the window:
 //
 // define("timeline", () => beats(16, { fit: 4 }))
 `,

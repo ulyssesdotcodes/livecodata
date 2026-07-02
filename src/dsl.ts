@@ -25,6 +25,7 @@
 // ----------------------------------------------------------------------------
 
 import { rasterizeRows } from './rasterize.js'
+import { warpKeyframes, paceEvents, type EaseLike, type EaseSpec, type SpeedSpec } from './timeline.js'
 import { withLineage, carry, unionLineage, getLineage, type Row } from './lineage.js'
 import { FPS } from './constants.js'
 
@@ -583,6 +584,25 @@ export class Table {
 
   rasterize(maxSeconds?: number): Table {
     return this._xf('rasterize', { maxSeconds }, (ins) => rasterizeRows(ins[0], maxSeconds), false)
+  }
+
+  // retime(): rasterize time-mapping keyframe rows { src, dst, ease? } (source
+  // seconds, playback seconds, easing to the next keyframe — a function or an
+  // EASINGS name) into the dense { index, time } rows the "timeline" view plays.
+  // opts.ease sets the default easing for keyframes without their own.
+  retime(opts: { ease?: EaseLike } = {}): Table {
+    return this._xf('retime', { opts }, (ins) =>
+      warpKeyframes(ins[0], { ...opts, easings: EASINGS }), hasFn(opts))
+  }
+
+  // pace(): warp playback speed between this table's events — rows at source
+  // times (field `at`, default "index", in seconds) split the source span
+  // [0, until] into segments, and each between-event segment plays at its own
+  // speed: a number, an array cycled per segment ([0.4, 2] alternates slow /
+  // fast), or (seg, { from, to }) => number. Returns dense "timeline" rows.
+  pace(opts: { at?: string; until?: number; speed?: SpeedSpec; ease?: EaseSpec } = {}): Table {
+    return this._xf('pace', { opts }, (ins) =>
+      paceEvents(ins[0], { ...opts, easings: EASINGS }), hasFn(opts))
   }
 
   graph(...columns: (string | string[])[]): this {
