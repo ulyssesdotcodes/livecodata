@@ -191,30 +191,4 @@ define("anomaly_annual", (rand, table) =>
     .graph("anomaly_c")
 )`,
   },
-  {
-    name: "HadUK-Grid (UK temp)",
-    code: `// HadUK-Grid UK mean surface temperature — Met Office gridded obs, monthly 1884–present.
-// Values are °C. The dataset covers the UK land area at 1 km resolution; this
-// series is the area-average for the whole UK.
-// Run \`npm run fetch-data\` once to download src/data/haduk-meantemp-monthly.csv.
-// Source: Met Office HadOBS (HadUK-Grid)
-
-define("haduk", () => data("/data/haduk-meantemp-monthly.csv"))
-
-// Monthly temperatures — the seasonal cycle dominates
-define("uk_monthly", (rand, table) =>
-  table("haduk")
-    .map(r => ({ ...r, temp_c: +r.temp_c }))
-    .graph("temp_c")
-)
-
-// Annual mean — strips the seasonal cycle, reveals the warming trend
-define("uk_annual", (rand, table) =>
-  table("haduk")
-    .derive({ year: r => r.year_month.slice(0, 4), temp_c: r => +r.temp_c })
-    .groupBy("year")
-    .agg({ year: rs => rs[0].year, temp_c: rs => +(rs.reduce((s, r) => s + r.temp_c, 0) / rs.length).toFixed(3) })
-    .graph("temp_c")
-)`,
-  },
 ]
