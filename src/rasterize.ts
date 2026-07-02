@@ -31,6 +31,22 @@ interface SampledState {
   rot: Vec3
   color: number | null
   sources: Row[]
+  extra: Row
+}
+
+// Fields computed explicitly per frame (position/rotation/color/bookkeeping) —
+// everything else on a create event (hx/hy/hz, r, texture, …) is a static shape
+// dimension/dressing field that should pass through to every rasterized frame.
+const COMPUTED_FIELDS = new Set([
+  'id', 'type', 'index', 'dur', 'ease', 'to', 'shape', 'px', 'py', 'pz', 'rx', 'ry', 'rz', 'color', 'frame',
+])
+
+function extraDims(createEv: Row): Row {
+  const extra: Row = {}
+  for (const [k, v] of Object.entries(createEv)) {
+    if (!COMPUTED_FIELDS.has(k)) extra[k] = v
+  }
+  return extra
 }
 
 function lerp(a: number, b: number, t: number): number {
@@ -105,7 +121,7 @@ function sampleObject(events: Row[], i: number): SampledState | null {
   }
 
   const sources = [createEv, from, to, colorEv].filter((x): x is Row => x !== null)
-  return { shape: createEv.shape, pos, rot, color, sources }
+  return { shape: createEv.shape, pos, rot, color, sources, extra: extraDims(createEv) }
 }
 
 export function rasterizeRows(eventRows: Row[] | null | undefined, maxSeconds?: number): Row[] {
@@ -121,6 +137,7 @@ export function rasterizeRows(eventRows: Row[] | null | undefined, maxSeconds?: 
       const s = sampleObject(evs, frame)
       if (!s) continue
       out.push(withLineage({
+        ...s.extra,
         frame, id: evs[0].id, shape: s.shape,
         px: s.pos.x, py: s.pos.y, pz: s.pos.z,
         rx: s.rot.x, ry: s.rot.y, rz: s.rot.z,

@@ -191,4 +191,73 @@ define("anomaly_annual", (rand, table) =>
     .graph("anomaly_c")
 )`,
   },
+  {
+    name: "UFO sightings (globe)",
+    code: `// Global UFO sightings on a textured globe — NUFORC reports, 1950–2014.
+// Geocoded to city lat/lon. A lighthearted stand-in for "earthquakes but not
+// macabre": a worldwide point cloud with a date and a location, nothing more.
+// Source: github.com/planetsig/ufo-reports (NUFORC data, scrubbed + geocoded)
+// Earth texture: mrdoob/three.js example assets
+
+define("sightings", () => data("/data/ufo-sightings.csv"))
+
+// Reports per year — volume climbs sharply after ~1995 (more reporting, not
+// more sightings)
+define("sightings_per_year", (rand, table) =>
+  table("sightings")
+    .groupBy("year")
+    .agg({ year: rs => rs[0].year, count: rs => rs.length })
+    .graph("count")
+)
+
+const EARTH_R = 2
+
+// Convert lat/lon (degrees) to a point on a sphere of radius r. Matches the
+// standard equirectangular texture orientation (prime meridian centered).
+function latLonToXYZ(lat, lon, r) {
+  const phi = (90 - lat) * Math.PI / 180
+  const theta = (lon + 180) * Math.PI / 180
+  return {
+    x: -r * Math.sin(phi) * Math.cos(theta),
+    y:  r * Math.cos(phi),
+    z:  r * Math.sin(phi) * Math.sin(theta),
+  }
+}
+
+const SHAPE_COLORS = {
+  light: 0xffe066, circle: 0x4a9eff, triangle: 0xe9ecef, fireball: 0xff922b,
+  sphere: 0x51cf66, disk: 0xcc5de8, oval: 0x22d3ee, unknown: 0x8ca0b8,
+}
+
+// The globe: a single static sphere, textured with an Earth image. Tagged into
+// "events" so it merges with the sighting markers below into one scene.
+define("globe", "events", () =>
+  rows([
+    { id: "globe", type: "create", index: 0, shape: "sphere",
+      px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, r: EARTH_R, color: 0xffffff,
+      texture: "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/textures/planets/earth_atmos_2048.jpg" },
+  ])
+)
+
+// Sighting markers: one small sphere per report, placed on the globe surface
+// from its lat/lon, appearing in chronological order over a 20s playback
+// window. Stride through the rows to keep the mesh count light (~500 markers).
+define("markers", "events", (rand, table) => {
+  const sample = table("sightings").rows.filter((_, i) => i % 8 === 0)
+  const duration = 20
+  return rows(
+    sample.map((r, i) => {
+      const p = latLonToXYZ(r.lat, r.lon, EARTH_R * 1.01)
+      return {
+        id: "sighting" + i, type: "create", shape: "sphere",
+        index: (i / sample.length) * duration,
+        px: p.x, py: p.y, pz: p.z, rx: 0, ry: 0, rz: 0, r: 0.025,
+        color: SHAPE_COLORS[r.shape] ?? SHAPE_COLORS.unknown,
+      }
+    })
+  )
+})
+
+define("scene", (rand, table) => table("events").rasterize(20))`,
+  },
 ]

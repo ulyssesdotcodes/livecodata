@@ -107,6 +107,19 @@ function makeGeometry(shape: string, dims: Record<string, unknown>): THREE.Buffe
 
 const PALETTE = [0x4a9eff, 0xff6b6b, 0x51cf66, 0xffd43b, 0xcc5de8, 0xff922b]
 
+// Textures are keyed by URL and shared across objects/re-creates (e.g. rescrubbing
+// playback destroys and recreates meshes, which would otherwise re-fetch the image).
+const textureLoader = new THREE.TextureLoader()
+const textureCache = new Map<string, THREE.Texture>()
+
+function loadTexture(url: string): THREE.Texture {
+  let tex = textureCache.get(url)
+  if (tex) return tex
+  tex = textureLoader.load(url, (t) => { t.colorSpace = THREE.SRGBColorSpace })
+  textureCache.set(url, tex)
+  return tex
+}
+
 interface PassEntry {
   type: string
   pass: AnyPass
@@ -163,8 +176,12 @@ export function initThree(canvas: HTMLCanvasElement): SceneAPI {
     createObject(id: unknown, shape: unknown, position: Vec3, rotation: Vec3, color: number | null, dims: Record<string, unknown>): void {
       if (objects.has(id)) return
       const geo = makeGeometry(shape as string, dims)
+      const textureUrl = dims.texture as string | undefined
       const mat = new THREE.MeshStandardMaterial({
-        color: color != null ? color : PALETTE[colorIdx % PALETTE.length],
+        // A textured object shows the image's true colors — an explicit `color`
+        // would tint it, so only fall back to the palette when there's no texture.
+        color: textureUrl ? 0xffffff : (color != null ? color : PALETTE[colorIdx % PALETTE.length]),
+        map: textureUrl ? loadTexture(textureUrl) : null,
         metalness: 0.35,
         roughness: 0.4,
       })

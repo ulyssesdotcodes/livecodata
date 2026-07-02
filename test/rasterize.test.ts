@@ -118,3 +118,16 @@ test('empty input yields an empty cache', () => {
   assert.equal(fi.maxFrame, 0)
   assert.deepEqual(stateAtFrame(fi, 0), [])
 })
+
+test('extra create-event fields (shape dims, texture, …) pass through to every frame', () => {
+  const rows = rasterizeRows([create({ r: 2, texture: 'https://example.com/earth.jpg', hx: 3 })], f(2))
+  assert.ok(rows.every((r) => r.r === 2 && r.texture === 'https://example.com/earth.jpg' && r.hx === 3))
+})
+
+test('extra fields do not override the computed per-frame fields', () => {
+  const rows = rasterizeRows([
+    create({ px: 0, py: 0, pz: 0 }),
+    { id: 's', type: 'update', index: f(4), px: 4, py: 0, pz: 0 },
+  ], f(4))
+  assert.equal(rows.at(-1)!.px, 4)
+})
