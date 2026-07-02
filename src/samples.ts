@@ -14,11 +14,9 @@ export const SAMPLES = [
 //    Story k has (n − k) leaning-card tent pairs and (n − k − 1) horizontal
 //    bridge cards between them. Card positions are derived analytically from the
 //    lean angle so each card's lowest rotated corner rests on its support surface.
-//    hz ≥ 0.05 is required because Jolt's BoxShape always applies a 0.05 convex
-//    (corner-rounding) radius that must not exceed any half-extent.
 define("base", () => {
   const lean = 0.25                    // radians from vertical (~14°)
-  const H = 0.35, W = 0.22, T = 0.06  // card half-height, half-width, half-thickness
+  const H = 0.35, W = 0.22, T = 0.04  // card half-height, half-width, half-thickness
   const sl = Math.sin(lean), cl = Math.cos(lean)
   const dx    = H * sl                 // card-center x offset from tent apex
   const cyOff = W * sl + H * cl       // support-surface to card-center (no corner overlap)
