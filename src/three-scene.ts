@@ -13,16 +13,9 @@ import { RGBShiftShader } from 'three/addons/shaders/RGBShiftShader.js'
 import type { Pass } from 'three/addons/postprocessing/Pass.js'
 import type { EffectEntry } from './effects.js'
 
-export interface Vec3 {
-  x: number
-  y: number
-  z: number
-}
-
 export interface SceneAPI {
-  createObject(id: unknown, shape: unknown, position: Vec3, rotation: Vec3, color: number | null, dims: Record<string, unknown>): void
-  updateObject(id: unknown, position: Vec3, rotation: Vec3): void
-  setColor(id: unknown, color: number | null): void
+  createObject(row: Record<string, unknown>): void
+  updateObject(row: Record<string, unknown>): void
   destroyObject(id: unknown): void
   setEffects(chain: EffectEntry[]): void
   reset(): void
@@ -160,34 +153,31 @@ export function initThree(canvas: HTMLCanvasElement): SceneAPI {
   let colorIdx = 0
 
   return {
-    createObject(id: unknown, shape: unknown, position: Vec3, rotation: Vec3, color: number | null, dims: Record<string, unknown>): void {
+    createObject(row: Record<string, unknown>): void {
+      const { id, shape, px, py, pz, rx, ry, rz, color } = row
       if (objects.has(id)) return
-      const geo = makeGeometry(shape as string, dims)
+      const geo = makeGeometry(shape as string, row)
       const mat = new THREE.MeshStandardMaterial({
-        color: color != null ? color : PALETTE[colorIdx % PALETTE.length],
+        color: color != null ? color as number : PALETTE[colorIdx % PALETTE.length],
         metalness: 0.35,
         roughness: 0.4,
       })
       colorIdx++
       const mesh = new THREE.Mesh(geo, mat)
       mesh.name = String(id)
-      mesh.position.set(position.x, position.y, position.z)
-      mesh.rotation.set(rotation.x, rotation.y, rotation.z)
+      mesh.position.set(px as number, py as number, pz as number)
+      mesh.rotation.set(rx as number ?? 0, ry as number ?? 0, rz as number ?? 0)
       scene.add(mesh)
       objects.set(id, mesh)
     },
 
-    updateObject(id: unknown, position: Vec3, rotation: Vec3): void {
+    updateObject(row: Record<string, unknown>): void {
+      const { id, px, py, pz, rx, ry, rz, color } = row
       const mesh = objects.get(id)
       if (!mesh) return
-      mesh.position.set(position.x, position.y, position.z)
-      mesh.rotation.set(rotation.x, rotation.y, rotation.z)
-    },
-
-    setColor(id: unknown, color: number | null): void {
-      const mesh = objects.get(id)
-      if (!mesh || color == null) return
-      ;(mesh.material as THREE.MeshStandardMaterial).color.set(color)
+      mesh.position.set(px as number, py as number, pz as number)
+      mesh.rotation.set(rx as number ?? 0, ry as number ?? 0, rz as number ?? 0)
+      if (color != null) (mesh.material as THREE.MeshStandardMaterial).color.set(color as number)
     },
 
     destroyObject(id: unknown): void {
