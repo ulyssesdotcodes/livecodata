@@ -31,7 +31,7 @@ export interface ReplayResult extends CookedResult {
 }
 
 interface Runtime {
-  run(code: string, opts?: { seed?: number; only?: string[] }): RuntimeResult
+  run(code: string, opts?: { seed?: number; only?: string[]; dataCache?: Map<string, string> }): RuntimeResult
 }
 
 // Cheaply recompute just the "timeline" view (tick → frame remap), cooking only
@@ -44,8 +44,8 @@ export function cookTimeline(runtime: Runtime, code: string, seed: number): Row[
   return timeline ? timeline.rows : []
 }
 
-export function cookProgram(runtime: Runtime, code: string, seed: number): CookedResult {
-  const result = runtime.run(code, { seed })
+export function cookProgram(runtime: Runtime, code: string, seed: number, dataCache?: Map<string, string>): CookedResult {
+  const result = runtime.run(code, { seed, dataCache })
   const scene = result.views.get('scene')
   const events = result.views.get('events')
   const sceneRows = scene ? scene.rows : events ? rasterizeRows(events.rows) : []
@@ -56,8 +56,8 @@ export function cookProgram(runtime: Runtime, code: string, seed: number): Cooke
   return { views: result.views, graphs: result.graphs, sceneRows, timelineRows, effectRows }
 }
 
-export function replayAt(runtime: Runtime, log: Log, pos: number): ReplayResult | null {
+export function replayAt(runtime: Runtime, log: Log, pos: number, dataCache?: Map<string, string>): ReplayResult | null {
   const entry = log.entryAt(pos)
   if (!entry) return null
-  return { entry, ...cookProgram(runtime, entry.code, entry.seed) }
+  return { entry, ...cookProgram(runtime, entry.code, entry.seed, dataCache) }
 }
