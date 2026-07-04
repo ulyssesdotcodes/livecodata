@@ -226,11 +226,11 @@ define("effects", "events", (rand, table) =>
 //    there. Bind it to any field with setField — here c4's velocity lifts a sphere
 //    every time the loop passes the moment you played it:
 //
-// define("scene", () =>
-//   rows([{ id: "s", type: "create", index: 0, shape: "sphere", color: 0x4a9eff,
-//           px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
-//     .setField("py", midi("c4").mul(3))
-//     .rasterize(4))
+ define("scene", () =>
+   rows([{ id: "s", type: "create", index: 0, shape: "sphere", color: 0x4a9eff,
+           px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
+     .setField("py", midi("cc49").mul(3))
+     .rasterize(4))
 `
 
 function dslHover(getViews?: () => Map<string, Table> | undefined, getPlayIndex?: () => number) {

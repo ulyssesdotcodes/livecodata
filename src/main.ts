@@ -47,13 +47,14 @@ function clearTaps(): void {
 
 let currentPlayIndex = 0
 
-// Live MIDI: events stream in stamped with the playhead's current *tick*
-// position (un-mapped/loop-relative — see Playback.currentTickSeconds), so
-// notes pin to loop positions and stay there even if the timeline's content
-// mapping changes later. The recorded table is shown as "midi", and midi("c4")
-// bindings in the program resolve against it each tick.
+// Live MIDI: events stream in stamped with the playhead's current content/
+// source position (see Playback.currentSourceSeconds) — the same coordinate the
+// baked scene is keyed to — so a recorded sweep's speed follows the timeline
+// mapping: if it changes later, the sweep speeds up or slows down along with
+// everything else on screen. The recorded table is shown as "midi", and
+// midi("c4") bindings in the program resolve against it each frame.
 const midiInput = createMidiInput({
-  getIndex: () => playback.currentTickSeconds(),
+  getIndex: () => playback.currentSourceSeconds(),
   onChange: () => onMidi(),
 })
 
@@ -71,7 +72,7 @@ const playback = initPlayback(
     },
     onLoop: () => midiInput.startNewLoop(),
     tapControl: { tap: recordTap, clear: clearTaps, rows: tapRows },
-    midiCtxAt: (tickFrame) => midiInput.ctxAt(tickFrame),
+    midiCtxAt: (srcFrame) => midiInput.ctxAt(srcFrame),
   },
 )
 

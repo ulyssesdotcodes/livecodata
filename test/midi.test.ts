@@ -4,6 +4,7 @@ import {
   noteToNumber, numberToNote, decodeMidi, midiRow,
   buildMidiIndex, sampleMidiAt, createMidiInput,
 } from '../src/midi.js'
+import { buildTimeline } from '../src/timeline.js'
 import type { Row } from '../src/lineage.js'
 
 // ── Note names ↔ numbers ────────────────────────────────────────────────────
@@ -183,4 +184,32 @@ test('same note/channel but different index (frame) both survive', () => {
 
   const c4rows = input.rows().filter((r) => r.note === 'c4')
   assert.equal(c4rows.length, 2, 'different frames are independent rows')
+})
+
+// ── Recording tracks the timeline mapping ────────────────────────────────────
+// MIDI is recorded at the playhead's *content/source* position (see
+// Playback.currentSourceSeconds) — the same coordinate the whole baked scene is
+// keyed to — not raw wall-clock/tick time. That's what makes a recorded sweep's
+// speed follow the timeline: remap the timeline to run slower, and the same
+// recorded points are reached later, stretching the sweep along with everything
+// else on screen, regardless of what mapping was active when it was recorded.
+
+test('a sweep recorded under an identity mapping takes 2x as long once the timeline is remapped 2x slower', () => {
+  // Recorded while the timeline was identity (1:1): c4 on at content 0s, off at
+  // content 1s — as if performed over 1 real second with no active remap.
+  const events: Row[] = [
+    { type: 'midi', note: 'c4', channel: 1, value: 1, index: 0 },
+    { type: 'midi', note: 'c4', channel: 1, value: 0, index: 1 },
+  ]
+  const index = buildMidiIndex(events)
+
+  // Remap the timeline to run 2x slower: content(tick) = tick / 2.
+  const slow = buildTimeline(Array.from({ length: 3 * 60 }, (_, i) => ({ time: (i / 60) / 2 })))
+  const valueAtTick = (tickSeconds: number): number =>
+    sampleMidiAt(index, 'c4', 1, slow.frameAt(Math.floor(tickSeconds * 60)))
+
+  assert.equal(valueAtTick(0), 1, 'on at tick 0 (content 0)')
+  assert.equal(valueAtTick(1), 1, 'still on at tick 1 (content reached only 0.5s)')
+  assert.equal(valueAtTick(1.9), 1, 'still on just before content reaches 1s')
+  assert.equal(valueAtTick(2), 0, 'off once content reaches 1s — the sweep now took 2 real seconds, not 1')
 })

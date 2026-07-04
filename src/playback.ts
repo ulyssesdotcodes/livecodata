@@ -23,22 +23,21 @@ export interface PlaybackOptions {
   onLoop?: () => void
   tapControl?: TapControl
   // Streaming context for the frame being shown: resolves midi() bindings against
-  // the live MIDI table, sampled at the playhead's *tick* frame (un-mapped —
-  // before the timeline remaps it into content/source space). See
-  // currentTickSeconds() for why: it's what keeps a recording's position stable
-  // relative to the loop even if the timeline mapping (fit/tempo) later changes.
-  midiCtxAt?: (tickFrame: number) => EvalCtx
+  // the live MIDI table, sampled at the playhead's *source* frame — the same
+  // content-space coordinate events are recorded in (see currentSourceSeconds).
+  midiCtxAt?: (srcFrame: number) => EvalCtx
 }
 
 export interface PlaybackAPI {
   load(sceneRows: Row[], timelineRows: Row[], effectRows: Row[]): void
   setTimeline(timelineRows: Row[]): void
-  // The playhead's *tick* position (seconds) — its raw loop-relative position,
-  // before the timeline maps it into content/source space. Live MIDI events are
-  // stamped here (not at the mapped source position) so a note's recorded
-  // position is relative to the loop structure itself: it stays where you played
-  // it even if the timeline's fit/tempo changes afterwards.
-  currentTickSeconds(): number
+  // The content/source position (seconds) currently on screen — playback time
+  // mapped through the (loop-wrapped) timeline. Live MIDI events are stamped
+  // here, so a recorded sweep's speed follows the timeline mapping: if it
+  // changes later (e.g. a slower fit), the sweep speeds up or slows down right
+  // along with everything else on screen, rather than staying fixed to
+  // wall-clock time.
+  currentSourceSeconds(): number
 }
 
 export function initPlayback(
@@ -147,14 +146,15 @@ export function initPlayback(
   }
 
   function applyAtIndex(t: number): void {
-    const tickFrame = Math.floor(t * FPS)
-    const src = timeline.frameAt(tickFrame)
+    const src = timeline.frameAt(Math.floor(t * FPS))
     // Streaming context for this frame: midi() bindings baked into the scene /
-    // effects resolve against the live MIDI table at the *tick* frame (the
-    // un-mapped, loop-relative position) — the same domain events are recorded
-    // in, so a note replays at the loop position it was heard at regardless of
-    // how the timeline maps ticks into content/source space.
-    const ctx = midiCtxAt ? midiCtxAt(tickFrame) : null
+    // effects resolve against the live MIDI table at the *source* frame — the
+    // same content-space coordinate the whole baked scene is keyed to (and the
+    // domain events are recorded in). That's what makes a recorded sweep track
+    // the timeline: if the mapping later changes (e.g. a slower fit), tick sweeps
+    // through this shared coordinate at a different rate, so the recorded points
+    // are reached sooner/later right along with everything else on screen.
+    const ctx = midiCtxAt ? midiCtxAt(src) : null
     const baked = stateAtFrame(frameIndex, src)
     const states = ctx ? baked.map((s) => resolveBindings(s, ctx)) : baked
     const present = new Set<unknown>()
@@ -198,14 +198,18 @@ export function initPlayback(
     return state === 'playing' ? position() : pausedIndex
   }
 
-  // The playhead's raw loop-relative ("tick") position, in seconds — before the
-  // timeline maps it into content/source space. Wrapped by the loop the same way
-  // tick() wraps it for rendering, so a MIDI event recorded here (see main.ts)
-  // lines up with what's on screen at the moment it was played.
-  function currentTickSeconds(): number {
+  // The content/source position (seconds) currently on screen — the playhead's
+  // tick wrapped by the loop exactly as rendering wraps it (tick()), then mapped
+  // through the timeline, exactly as applyAtIndex computes `src`. This is where
+  // a live MIDI event gets stamped: recording this shared content coordinate
+  // (rather than raw tick/wall-clock time) is what makes a recorded sweep follow
+  // the timeline — if the mapping changes later (e.g. a slower fit), tick moves
+  // through this same coordinate at a different rate, speeding up or slowing
+  // down the recorded sweep right along with everything else on screen.
+  function currentSourceSeconds(): number {
     let t = currentTime()
     if (loop && maxIndex > 0 && t >= maxIndex) t %= maxIndex
-    return t
+    return timeline.frameAt(Math.floor(t * FPS)) / FPS
   }
 
   // Playback length in seconds: follow the timeline when present, else the cache.
@@ -338,5 +342,5 @@ export function initPlayback(
     requestAnimationFrame(tick)
   }
 
-  return { load, setTimeline, currentTickSeconds }
+  return { load, setTimeline, currentSourceSeconds }
 }
