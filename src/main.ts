@@ -86,7 +86,7 @@ let physicsEngine: PhysicsEngineInstance | null = null
 const runtime = createRuntime({
   physics: () => physicsEngine,
   tapRows: () => tapRows(),
-  editableRows: (name, schema) => editableStore.ensure(name, schema),
+  editableRows: (name, schema, seedRows) => editableStore.ensure(name, schema, seedRows),
 })
 const log = createLog()
 
