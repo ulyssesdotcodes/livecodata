@@ -146,11 +146,14 @@ define("ball_height", (rand, table) =>
 //    columns are variables in scope while the sketch runs. s0 is the rendered 3D
 //    scene; o0 is the output, so src(s0)...out() post-processes the scene. The
 //    most-recent code row wins, and each variable holds its most-recent value
-//    until a later row changes it. Here the scene is fed through an oscillator
-//    modulation whose \`amount\` jumps on every real landing — data-driven from
-//    "sim"'s collision rows (filter the sibling, not "events", or we'd cycle).
+//    until a later row changes it.
+//    The base sketch lives in the EDITABLE "sketch" table (seeded below): click
+//    its code cell to open the sketch in this editor, tweak, Ctrl-Enter to
+//    apply — the edit is appended to the table's event log (see sketch·events)
+//    and the viewer re-cooks. The collision-driven \`amount\` rows then layer on
+//    top — data-driven from "sim" (filter the sibling, not "events", or we'd cycle).
 define("hydra", (rand, table) =>
-  rows([
+  editable("sketch", { index: "number", code: "code", amount: "number" }, [
     { index: 0, amount: 0.12,
       code: "src(s0).modulate(osc(2.5, 0.1), amount).out(o0)" },
   ]).concat(
