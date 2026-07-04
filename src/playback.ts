@@ -15,22 +15,30 @@ export interface TapControl {
 }
 
 export interface PlaybackOptions {
-  onTick?: (tick: number, active: Map<string, Set<number>>, srcFrame: number) => void
+  // srcSeconds: the source/content position shown, in seconds (converted from
+  // the internal frame count) — the unit graphed tables' `index` columns use.
+  onTick?: (tick: number, active: Map<string, Set<number>>, srcSeconds: number) => void
   onPlay?: () => void
   // Called each time the loop wraps (the playhead passes the end and jumps back).
   onLoop?: () => void
   tapControl?: TapControl
   // Streaming context for the frame being shown: resolves midi() bindings against
-  // the live MIDI table sampled at the playhead's source frame.
-  midiCtxAt?: (srcFrame: number) => EvalCtx
+  // the live MIDI table, sampled at the playhead's *tick* frame (un-mapped —
+  // before the timeline remaps it into content/source space). See
+  // currentTickSeconds() for why: it's what keeps a recording's position stable
+  // relative to the loop even if the timeline mapping (fit/tempo) later changes.
+  midiCtxAt?: (tickFrame: number) => EvalCtx
 }
 
 export interface PlaybackAPI {
   load(sceneRows: Row[], timelineRows: Row[], effectRows: Row[]): void
   setTimeline(timelineRows: Row[]): void
-  // The source position (seconds) currently shown — where live MIDI events get
-  // stamped so they pin to this loop position.
-  currentSourceSeconds(): number
+  // The playhead's *tick* position (seconds) — its raw loop-relative position,
+  // before the timeline maps it into content/source space. Live MIDI events are
+  // stamped here (not at the mapped source position) so a note's recorded
+  // position is relative to the loop structure itself: it stays where you played
+  // it even if the timeline's fit/tempo changes afterwards.
+  currentTickSeconds(): number
 }
 
 export function initPlayback(
@@ -139,10 +147,14 @@ export function initPlayback(
   }
 
   function applyAtIndex(t: number): void {
-    const src = timeline.frameAt(Math.floor(t * FPS))
+    const tickFrame = Math.floor(t * FPS)
+    const src = timeline.frameAt(tickFrame)
     // Streaming context for this frame: midi() bindings baked into the scene /
-    // effects resolve here against the live MIDI table at the source frame.
-    const ctx = midiCtxAt ? midiCtxAt(src) : null
+    // effects resolve against the live MIDI table at the *tick* frame (the
+    // un-mapped, loop-relative position) — the same domain events are recorded
+    // in, so a note replays at the loop position it was heard at regardless of
+    // how the timeline maps ticks into content/source space.
+    const ctx = midiCtxAt ? midiCtxAt(tickFrame) : null
     const baked = stateAtFrame(frameIndex, src)
     const states = ctx ? baked.map((s) => resolveBindings(s, ctx)) : baked
     const present = new Set<unknown>()
@@ -167,7 +179,9 @@ export function initPlayback(
     let chain = effectChainAtFrame(effectIndex, src) as EffectEntry[]
     if (ctx) chain = chain.map((e) => ({ ...e, params: resolveBindings(e.params as Row, ctx) }))
     sceneAPI.setEffects(chain)
-    onTick?.(t, activeLineage(baked), src)
+    // Graphed/table views key their rows by `index` in seconds, so report the
+    // source position in seconds too (src is an internal frame count).
+    onTick?.(t, activeLineage(baked), src / FPS)
   }
 
   function reset(t: number = 0): void {
@@ -184,11 +198,14 @@ export function initPlayback(
     return state === 'playing' ? position() : pausedIndex
   }
 
-  // The *source* position (seconds) currently shown — playback time mapped
-  // through the timeline. This is where a live MIDI event gets stamped, so a note
-  // played while looping pins to the loop position it was heard at.
-  function currentSourceSeconds(): number {
-    return timeline.frameAt(Math.floor(currentTime() * FPS)) / FPS
+  // The playhead's raw loop-relative ("tick") position, in seconds — before the
+  // timeline maps it into content/source space. Wrapped by the loop the same way
+  // tick() wraps it for rendering, so a MIDI event recorded here (see main.ts)
+  // lines up with what's on screen at the moment it was played.
+  function currentTickSeconds(): number {
+    let t = currentTime()
+    if (loop && maxIndex > 0 && t >= maxIndex) t %= maxIndex
+    return t
   }
 
   // Playback length in seconds: follow the timeline when present, else the cache.
@@ -321,5 +338,5 @@ export function initPlayback(
     requestAnimationFrame(tick)
   }
 
-  return { load, setTimeline, currentSourceSeconds }
+  return { load, setTimeline, currentTickSeconds }
 }

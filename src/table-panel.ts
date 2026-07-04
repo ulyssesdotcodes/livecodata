@@ -26,6 +26,8 @@ export interface TablePanel {
   selectTable(name: string | null): void
   setTables(newStore: Map<string, Table>): void
   setGraphs(newSpecs: GraphSpec[] | null): void
+  // idx: the playhead's source position in *seconds* — the same unit rows'
+  // `index` column uses, and what the chart's x-axis is drawn in.
   highlightIndex(idx: number): void
   highlightLineage(active: Map<string, Set<number>> | null): void
   resetAutoscroll(): void
@@ -120,9 +122,16 @@ export function initTablePanel(container: HTMLElement): TablePanel {
   }
 
   function render(name: string | null): void {
+    // A refresh of the *same* table (e.g. a MIDI/tap tick) shouldn't fight the
+    // user's scroll position the way switching tabs should — rebuilding tbody
+    // below drops the browser's scroll offset, so save/restore it when we're not
+    // actually changing which table is shown.
+    const switchingTable = name !== current
+    const savedScrollTop = switchingTable ? 0 : scroll.scrollTop
+
     current = name
     highlightTab(name)
-    userScrolled = false
+    if (switchingTable) userScrolled = false
 
     ro.disconnect()
 
@@ -178,10 +187,18 @@ export function initTablePanel(container: HTMLElement): TablePanel {
     currentRows = []
     indexCol = null
 
-    if (!name) return
+    const restoreScroll = (): void => {
+      if (switchingTable) return
+      suppressScrollEvent = true
+      scroll.scrollTop = savedScrollTop
+      requestAnimationFrame(() => { suppressScrollEvent = false })
+    }
+
+    if (!name) { restoreScroll(); return }
     const t = store.get(name)
     if (!t || !t.length) {
       countEl.textContent = t ? '0 rows' : ''
+      restoreScroll()
       return
     }
 
@@ -212,6 +229,8 @@ export function initTablePanel(container: HTMLElement): TablePanel {
     countEl.textContent = t.length > MAX_ROWS
       ? `${t.length} rows (showing ${MAX_ROWS})`
       : `${t.length} row${t.length === 1 ? '' : 's'}`
+
+    restoreScroll()
   }
 
   return {
@@ -220,18 +239,25 @@ export function initTablePanel(container: HTMLElement): TablePanel {
     },
 
     setTables(newStore: Map<string, Table>): void {
+      const prevNames = [...store.keys()]
       store = newStore
       const names = [...store.keys()]
-      tabs.innerHTML = ''
-      tabEls = new Map()
-      names.forEach((n) => {
-        const tab = document.createElement('button')
-        tab.className = 'table-tab'
-        tab.textContent = n
-        tab.onclick = () => render(n)
-        tabs.appendChild(tab)
-        tabEls.set(n, tab)
-      })
+      // Rebuilding the tab bar on every call is wasted work (and visual flicker)
+      // when the same tables are just refreshing their data — e.g. a live MIDI
+      // table growing — so only touch it when the set of tables actually changed.
+      const namesChanged = names.length !== prevNames.length || names.some((n, i) => n !== prevNames[i])
+      if (namesChanged) {
+        tabs.innerHTML = ''
+        tabEls = new Map()
+        names.forEach((n) => {
+          const tab = document.createElement('button')
+          tab.className = 'table-tab'
+          tab.textContent = n
+          tab.onclick = () => render(n)
+          tabs.appendChild(tab)
+          tabEls.set(n, tab)
+        })
+      }
       if (!names.length) { render(null); return }
       let next = names.includes(current ?? '') ? current : null
       if (!next) next = names.includes('events') ? 'events' : names[names.length - 1]

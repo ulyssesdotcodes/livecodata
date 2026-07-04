@@ -47,11 +47,13 @@ function clearTaps(): void {
 
 let currentPlayIndex = 0
 
-// Live MIDI: events stream in stamped with the playhead's current source position
-// (so notes pin to loop positions). The recorded table is shown as "midi", and
-// midi("c4") bindings in the program resolve against it each frame.
+// Live MIDI: events stream in stamped with the playhead's current *tick*
+// position (un-mapped/loop-relative — see Playback.currentTickSeconds), so
+// notes pin to loop positions and stay there even if the timeline's content
+// mapping changes later. The recorded table is shown as "midi", and midi("c4")
+// bindings in the program resolve against it each tick.
 const midiInput = createMidiInput({
-  getIndex: () => playback.currentSourceSeconds(),
+  getIndex: () => playback.currentTickSeconds(),
   onChange: () => onMidi(),
 })
 
@@ -59,9 +61,9 @@ const playback = initPlayback(
   document.getElementById('playback-controls') as HTMLElement,
   sceneAPI,
   {
-    onTick: (tick, active, srcFrame) => {
-      currentPlayIndex = srcFrame
-      tablePanel.highlightIndex(srcFrame)
+    onTick: (tick, active, srcSeconds) => {
+      currentPlayIndex = srcSeconds
+      tablePanel.highlightIndex(srcSeconds)
       tablePanel.highlightLineage(active)
     },
     onPlay: () => {
@@ -69,14 +71,25 @@ const playback = initPlayback(
     },
     onLoop: () => midiInput.startNewLoop(),
     tapControl: { tap: recordTap, clear: clearTaps, rows: tapRows },
-    midiCtxAt: (srcFrame) => midiInput.ctxAt(srcFrame),
+    midiCtxAt: (tickFrame) => midiInput.ctxAt(tickFrame),
   },
 )
 
-// A new MIDI event (or a clear) just refreshes the "midi" table — the values flow
-// into the scene live via the per-frame bindings, so there's no need to re-cook.
+// A new MIDI event (or a clear) refreshes the "midi" table for display. The
+// scene itself updates live every rAF tick via the per-frame bindings
+// regardless of this — so this refresh is purely cosmetic and can lag behind.
+// Coalesced to at most once per animation frame: a knob sweep can fire 100+
+// MIDI messages/sec, and re-rendering the table panel per message (rather than
+// per frame) was stalling the main thread badly enough to visibly delay both
+// the console/table and the on-screen scene response.
+let midiDisplayScheduled = false
 function onMidi(): void {
-  tablePanel.setTables(tablesForDisplay(lastViews))
+  if (midiDisplayScheduled) return
+  midiDisplayScheduled = true
+  requestAnimationFrame(() => {
+    midiDisplayScheduled = false
+    tablePanel.setTables(tablesForDisplay(lastViews))
+  })
 }
 
 let physicsEngine: PhysicsEngineInstance | null = null

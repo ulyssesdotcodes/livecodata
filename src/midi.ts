@@ -2,17 +2,22 @@
 // ----------------------------------------------------------------------------
 // MIDI is a *streaming* source: notes arrive live, while the timeline plays. We
 // treat them like every other dataset — as table rows — but with one twist that
-// makes them loop-friendly: each event is stamped with the timeline's *source*
-// position at the moment it arrived (seconds; the current frame while looping),
-// not wall-clock time. So a note played when the loop is at 1s is recorded at
-// index 1s, and replays every time the loop passes 1s.
+// makes them loop-friendly: each event is stamped with the playhead's *tick*
+// position at the moment it arrived (seconds; the un-mapped, loop-relative
+// position — see Playback.currentTickSeconds), not wall-clock time and not the
+// timeline-mapped content position. So a note played 1s into the loop is
+// recorded at index 1s and replays every time the loop passes 1s — and stays
+// there even if the timeline's mapping (e.g. a beats() fit/tempo) later changes,
+// since it's stored relative to the loop structure, not the content it happened
+// to be driving at the time.
 //
 //   { type:"midi", note:"c4", noteNum:60, channel:1, value:0.8, index:1.0 }
 //
 // At a given frame the *active* value of a note is the most recent event for it
 // at-or-before that frame — exactly how rasterize/effects sample sparse events.
 // The DSL's midi("c4") (an Expr) becomes a per-row binding that playback resolves
-// each frame against this table (see resolveBindings in dsl.ts).
+// each tick against this table (see resolveBindings in dsl.ts), sampled at the
+// same tick frame events are recorded at.
 // ----------------------------------------------------------------------------
 
 import { FPS } from './constants.js'
@@ -114,8 +119,10 @@ export function sampleMidiAt(index: MidiIndex, note: string, channel: number | n
 // ── Live input ───────────────────────────────────────────────────────────────
 
 export interface MidiInputOptions {
-  // Current source position (seconds) — where new events get stamped. While
-  // looping this is the loop's current frame, so notes pin to loop positions.
+  // The playhead's current *tick* position (seconds) — where new events get
+  // stamped. Un-mapped/loop-relative (Playback.currentTickSeconds), not the
+  // timeline-mapped content position, so notes pin to loop positions and stay
+  // there even if the content mapping (fit/tempo) changes later.
   getIndex: () => number
   // Called after an event is recorded (or taps cleared) so the UI can refresh.
   onChange?: () => void
@@ -130,8 +137,9 @@ export interface MidiInput {
   // touch carry forward unchanged.
   startNewLoop(): void
   // A per-frame evaluation context for resolveBindings: midi(note) samples the
-  // recorded table at `srcFrame`.
-  ctxAt(srcFrame: number): EvalCtx
+  // recorded table at `tickFrame` (the same un-mapped tick domain events are
+  // stamped in — see Playback.currentTickSeconds).
+  ctxAt(tickFrame: number): EvalCtx
   // Feed a raw message (exposed for the browser listener and for tests).
   feed(data: ArrayLike<number>): void
 }
@@ -178,10 +186,10 @@ export function createMidiInput({ getIndex, onChange }: MidiInputOptions): MidiI
       console.log('[midi] access granted, inputs:', inputs.length)
       for (const input of inputs) {
         console.log('[midi] subscribing to input:', (input as unknown as { name?: string }).name ?? input)
-        input.onmidimessage = (e) => {
-          console.log('[midi] message:', Array.from(e.data))
-          feed(e.data)
-        }
+        // Not logged per-message: a fast CC sweep can be 100+ messages/sec, and
+        // console logging (plus the array allocation) at that rate is enough to
+        // stall the render loop — the "midi" table is how you inspect messages.
+        input.onmidimessage = (e) => feed(e.data)
       }
     }).catch((err) => { console.warn('[midi] access denied:', err) })
   } else {
@@ -192,8 +200,8 @@ export function createMidiInput({ getIndex, onChange }: MidiInputOptions): MidiI
     rows: () => events.map((r) => ({ ...r })),
     clear: () => { events = []; index = null; clearedThisLoop = new Set(); onChange?.() },
     startNewLoop: () => { clearedThisLoop = new Set() },
-    ctxAt: (srcFrame: number): EvalCtx => ({
-      midi: (note, channel) => sampleMidiAt(idx(), note, channel, srcFrame),
+    ctxAt: (tickFrame: number): EvalCtx => ({
+      midi: (note, channel) => sampleMidiAt(idx(), note, channel, tickFrame),
     }),
     feed,
   }
