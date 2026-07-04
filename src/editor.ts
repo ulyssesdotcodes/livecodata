@@ -25,7 +25,7 @@ const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
   json:       { sig: 'json(array | string)',         detail: 'parse JSON',       info: 'Wrap a JS array or parse a JSON string into a Table.' },
   grid:       { sig: 'grid(cols, rows)',             detail: 'XZ lattice',       info: 'Generate a cols×rows lattice of XZ positions as a Table (fields: col, row, x, z).' },
   physics:    { sig: 'physics(table)',               detail: 'physics scene',    info: 'Load a base scene table into the JoltPhysics engine. Chain .simulate() to run the simulation.' },
-  editable:   { sig: 'editable(name, schema)',       detail: 'user table',      info: 'A user-editable table: rows are entered/edited in the table panel, not computed — edits persist across runs. schema maps column name to "number" | "string" | "boolean"; number columns get a slider when a cell is selected.' },
+  editable:   { sig: 'editable(name, schema, seedRows?)', detail: 'user table', info: 'A user-editable table: rows are edited in the table panel, not computed — every edit is an appended event and the visible table is the fold (see the name·events tab). schema maps column name to "number" | "string" | "boolean" | "code"; number cells get a slider, code cells open in this editor. seedRows fill the table when first created.' },
   field:      { sig: 'field(name)',                   detail: 'expr: read field',  info: 'A chainable expression reading row[name]. Chain .add/.sub/.mul/.div/.mod, .eq/.gt/…, .and/.or/.not, .cond(a,b). Use in filter(expr), map(template), emit(template), derive — these are diffable (no opaque closures).' },
   lit:        { sig: 'lit(value)',                   detail: 'expr: literal',     info: 'A constant expression. Usually you can pass a raw value directly to an Expr method.' },
   idx:        { sig: 'idx()',                         detail: 'expr: row index',   info: 'An expression yielding the row index (0-based).' },
@@ -189,6 +189,11 @@ export interface EditorAPI {
   getCode(): string
   setCode(code: string): void
   setError(msg: string | null): void
+  // Point the editor at a single table cell (e.g. hydra[0].code): the program
+  // text is stashed, the cell's text loads, and Run/Ctrl-Enter calls onCommit
+  // with the current text instead of running the program. The "◂ code" button
+  // (or an external setCode) returns to the program.
+  editCell(label: string, code: string, onCommit: (text: string) => void): void
 }
 
 export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, getPlayIndex }: EditorOptions = {}): EditorAPI {
@@ -201,6 +206,13 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
   titleEl.className = 'editor-title'
   titleEl.textContent = 'DSL'
   header.appendChild(titleEl)
+
+  const backBtn = document.createElement('button')
+  backBtn.className = 'editor-back-btn'
+  backBtn.textContent = '◂ code'
+  backBtn.title = 'Back to the program'
+  backBtn.style.display = 'none'
+  header.appendChild(backBtn)
 
   const runBtn = document.createElement('button')
   runBtn.className = 'run-btn'
@@ -228,9 +240,41 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
     }
   }
 
+  // When set, the editor is a window onto one table cell rather than the
+  // program: Run commits the text back to the cell (an event append upstream).
+  let cellTarget: { label: string; onCommit: (text: string) => void } | null = null
+  let stashedProgram = ''
+
   function run(): void {
-    onRun?.(view.state.doc.toString(), { setError })
+    const text = view.state.doc.toString()
+    if (cellTarget) cellTarget.onCommit(text)
+    else onRun?.(text, { setError })
   }
+
+  function setDoc(code: string): void {
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } })
+  }
+
+  function exitCell(restoreProgram: boolean): void {
+    if (!cellTarget) return
+    cellTarget = null
+    titleEl.textContent = 'DSL'
+    runBtn.textContent = 'Run ▶'
+    backBtn.style.display = 'none'
+    if (restoreProgram) setDoc(stashedProgram)
+  }
+
+  function editCell(label: string, code: string, onCommit: (text: string) => void): void {
+    if (!cellTarget) stashedProgram = view.state.doc.toString()
+    cellTarget = { label, onCommit }
+    titleEl.textContent = label
+    runBtn.textContent = 'Apply ▶'
+    backBtn.style.display = ''
+    setDoc(code)
+    view.focus()
+  }
+
+  backBtn.onclick = () => exitCell(true)
 
   let lastCaretView: string | null = null
 
@@ -264,9 +308,12 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
 
   runBtn.onclick = run
 
+  // External loads (session scrub, examples) always mean "show the program" —
+  // leave any cell target without restoring its stash (the new code wins).
   function setCode(code: string): void {
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } })
+    exitCell(false)
+    setDoc(code)
   }
 
-  return { run, getCode: () => view.state.doc.toString(), setCode, setError }
+  return { run, getCode: () => view.state.doc.toString(), setCode, setError, editCell }
 }

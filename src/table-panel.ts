@@ -5,11 +5,14 @@
 //
 // Two kinds of tables share the tab strip: code-generated *views* (from the
 // current run's cook, read-only) and user *editable tables* (from the
-// EditableTableStore — created with the "+ table" button, or declared in the
-// DSL via editable(name, schema)). Editable tables render with inline
-// controls (add/rename/retype column, add/remove row, click-to-edit cells;
-// number columns get a slider) and survive re-runs since they don't come from
-// the cook.
+// event-sourced EditableTableStore — created with the "+ table" button, or
+// declared in the DSL via editable(name, schema)). Editable tables render with
+// inline controls (add/rename/retype column, add/remove row, click-to-edit
+// cells; number columns get a slider). Every edit appends a change event to
+// the store's log; the interactive tab shows the fold (current state) while a
+// read-only `name·events` tab (injected by main as a plain view) shows the
+// history. Cells of type "code" don't edit inline — clicking one hands the
+// text to the main code editor via onEditCell.
 
 import { SERIES_COLORS, resolveSpec, drawChartToCanvas, fmtNum, type GraphSpec, type ChartData } from './graph-panel.js'
 import type { Table } from './dsl.js'
@@ -17,7 +20,11 @@ import type { Row } from './lineage.js'
 import type { EditableTableStore, ColumnType, EditableColumn } from './editable-tables.js'
 
 const MAX_ROWS = 1000
-const COLUMN_TYPES: ColumnType[] = ['number', 'string', 'boolean']
+const COLUMN_TYPES: ColumnType[] = ['number', 'string', 'boolean', 'code']
+
+// Suffix of the injected read-only edit-history views (`foo·events`). Kept out
+// of auto-charting: their numeric seq/t columns aren't data to plot.
+export const EVENTS_SUFFIX = '·events'
 
 export function formatCell(col: string, value: unknown): string {
   if (value == null) return ''
@@ -41,6 +48,12 @@ function formatEditableCell(type: ColumnType, value: unknown): string {
     return Number.isInteger(n) ? String(n) : n.toFixed(3)
   }
   return String(value)
+}
+
+export interface TablePanelOptions {
+  // Clicking a code-typed cell routes here (the main editor takes over) instead
+  // of opening an inline input.
+  onEditCell?: (table: string, rowIndex: number, col: string, value: string) => void
 }
 
 // A slider range/step for a number cell: spans at least the current column's
@@ -67,7 +80,11 @@ export interface TablePanel {
   resetAutoscroll(): void
 }
 
-export function initTablePanel(container: HTMLElement, editableStore: EditableTableStore): TablePanel {
+export function initTablePanel(
+  container: HTMLElement,
+  editableStore: EditableTableStore,
+  { onEditCell }: TablePanelOptions = {},
+): TablePanel {
   container.innerHTML = ''
 
   let store = new Map<string, Table>()
@@ -175,7 +192,15 @@ export function initTablePanel(container: HTMLElement, editableStore: EditableTa
   }
 
   function allNames(): string[] {
-    const names = [...store.keys()]
+    const names: string[] = []
+    for (const n of store.keys()) {
+      // Keep an editable table's interactive tab right before its history tab.
+      if (n.endsWith(EVENTS_SUFFIX)) {
+        const base = n.slice(0, -EVENTS_SUFFIX.length)
+        if (editableStore.has(base) && !names.includes(base)) names.push(base)
+      }
+      if (!names.includes(n)) names.push(n)
+    }
     for (const n of editableStore.listNames()) if (!names.includes(n)) names.push(n)
     return names
   }
@@ -364,18 +389,30 @@ export function initTablePanel(container: HTMLElement, editableStore: EditableTa
 
   // A single editable cell: click to open an editor in place (slider + number
   // box for numbers, checkbox for booleans, text box otherwise); collapses
-  // back to a plain display on commit or on an outside click.
+  // back to a plain display on commit or on an outside click. Committing
+  // appends a set-cell event to the store — the edit *is* the event; the
+  // re-render that follows shows the folded state. Code-typed cells instead
+  // hand their text to the main editor (onEditCell).
   function makeEditableCell(td: HTMLTableCellElement, name: string, rowIndex: number, col: EditableColumn): void {
     const showDisplay = (): void => {
       if (closeActiveEdit === showDisplay) closeActiveEdit = null
       td.classList.remove('editing')
       td.innerHTML = ''
       const span = document.createElement('span')
-      span.className = 'cell-value'
+      span.className = col.type === 'code' ? 'cell-value cell-code' : 'cell-value'
       const raw = editableStore.get(name)?.rows[rowIndex]?.[col.name]
       span.textContent = formatEditableCell(col.type, raw)
       td.appendChild(span)
-      td.onclick = showEdit
+      td.onclick = col.type === 'code'
+        ? () => onEditCell?.(name, rowIndex, col.name, raw == null ? '' : String(raw))
+        : showEdit
+    }
+
+    const commit = (value: unknown): void => {
+      // Guard the Enter-then-blur double fire: only an open editor commits.
+      if (!td.classList.contains('editing')) return
+      editableStore.setCell(name, rowIndex, col.name, value)
+      showDisplay()
     }
 
     const showEdit = (): void => {
@@ -391,10 +428,7 @@ export function initTablePanel(container: HTMLElement, editableStore: EditableTa
         const cb = document.createElement('input')
         cb.type = 'checkbox'
         cb.checked = !!raw
-        cb.addEventListener('change', () => {
-          editableStore.setCell(name, rowIndex, col.name, cb.checked)
-          showDisplay()
-        })
+        cb.addEventListener('change', () => commit(cb.checked))
         td.appendChild(cb)
         cb.focus()
       } else if (col.type === 'number') {
@@ -419,19 +453,21 @@ export function initTablePanel(container: HTMLElement, editableStore: EditableTa
         num.value = String(cur)
         num.step = String(step)
 
-        slider.addEventListener('input', () => {
-          num.value = slider.value
-          editableStore.setCell(name, rowIndex, col.name, Number(slider.value))
-        })
-        num.addEventListener('input', () => {
-          const v = Number(num.value)
-          if (Number.isFinite(v)) {
-            slider.value = String(v)
-            editableStore.setCell(name, rowIndex, col.name, v)
+        // Live-track in the number box while dragging; the event is appended
+        // once, when the drag ends ('change') — one gesture, one event.
+        slider.addEventListener('input', () => { num.value = slider.value })
+        slider.addEventListener('change', () => commit(Number(slider.value)))
+        num.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            const v = Number(num.value)
+            commit(Number.isFinite(v) ? v : cur)
           }
         })
-        num.addEventListener('keydown', (e) => { if (e.key === 'Enter') showDisplay() })
-        num.addEventListener('blur', () => showDisplay())
+        num.addEventListener('blur', (e) => {
+          if ((e as FocusEvent).relatedTarget === slider) return
+          const v = Number(num.value)
+          commit(Number.isFinite(v) ? v : cur)
+        })
 
         wrap.append(slider, num)
         td.appendChild(wrap)
@@ -442,10 +478,7 @@ export function initTablePanel(container: HTMLElement, editableStore: EditableTa
         inp.className = 'cell-text'
         inp.value = raw == null ? '' : String(raw)
         inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur() })
-        inp.addEventListener('blur', () => {
-          editableStore.setCell(name, rowIndex, col.name, inp.value)
-          showDisplay()
-        })
+        inp.addEventListener('blur', () => commit(inp.value))
         td.appendChild(inp)
         inp.focus()
         inp.select()
@@ -521,7 +554,9 @@ export function initTablePanel(container: HTMLElement, editableStore: EditableTa
     editToolbar.style.display = 'none'
 
     let spec = name ? graphByName.get(name) : undefined
-    if (!spec && name) {
+    // Auto-chart data views only — event-history tables (`foo·events`, `code`)
+    // have numeric seq/t columns that aren't worth plotting.
+    if (!spec && name && !name.endsWith(EVENTS_SUFFIX) && name !== 'code') {
       const t = store.get(name)
       if (t && t.rows.length) {
         const numericCols = t.columns.filter(

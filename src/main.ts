@@ -1,7 +1,7 @@
 import './style.css'
 import { initThree } from './three-scene.js'
 import { initEditor, defaultProgram } from './editor.js'
-import { initTablePanel } from './table-panel.js'
+import { initTablePanel, EVENTS_SUFFIX } from './table-panel.js'
 import { initPlayback } from './playback.js'
 import { initSessionBar } from './session-bar.js'
 import { initSessionSelector } from './session-selector.js'
@@ -26,7 +26,16 @@ function extractDataUrls(code: string): string[] {
 }
 
 const sceneAPI = initThree(document.getElementById('three-canvas') as HTMLCanvasElement)
-const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLElement, editableStore)
+const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLElement, editableStore, {
+  // A code-typed cell edits in the main editor: Ctrl-Enter there appends the
+  // set-cell event; the store change then re-cooks the program so everything
+  // fed by the table (including the visible table itself) catches up.
+  onEditCell: (table, rowIndex, col, value) => {
+    editor.editCell(`${table}[${rowIndex}].${col}`, value, (text) => {
+      editableStore.setCell(table, rowIndex, col, text)
+    })
+  },
+})
 
 // Tap-beat: the only state is the raw wall-clock presses. The tap-beat *table*
 // and any tempo are derived from these (see the DSL's taps()/tempo()/beats()), so
@@ -99,11 +108,36 @@ interface CookedData {
   effectRows: Row[]
 }
 
-// The views shown in the table panel, plus a live "taps" table of wall-time
-// button presses (only injected when the program doesn't define one itself).
+// One-line preview of a program for a table cell (the editor is the real view).
+function codePreview(code: string): string {
+  const flat = code.replace(/\s+/g, ' ').trim()
+  return flat.length > 120 ? flat.slice(0, 120) + '…' : flat
+}
+
+// The views shown in the table panel, plus:
+//  - a live "taps" table of wall-time button presses
+//  - the session run log as tables: "code" (the fold — latest run) and
+//    "code·events" (every run event) — the same current-state/edit-history
+//    pair every editable table gets, since both ride the same event log; the
+//    code editor is simply the interactive surface of "code"
+//  - each editable table's "name·events" history
+// (each only when the program doesn't define a view of that name itself).
 function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   const display = new Map(views)
   if (!display.has('taps')) display.set('taps', new Table(tapRows()))
+  if (liveCode != null && !display.has('code')) {
+    display.set('code', new Table([{ seed: liveSeed, code: codePreview(liveCode) }]))
+  }
+  if (!display.has('code' + EVENTS_SUFFIX)) {
+    display.set('code' + EVENTS_SUFFIX, new Table(
+      log.all().map((e) => ({ seq: e.seq, t: e.t, kind: e.kind, seed: e.seed, code: codePreview(e.code) })),
+    ))
+  }
+  for (const name of editableStore.listNames()) {
+    const key = name + EVENTS_SUFFIX
+    if (display.has(key)) continue
+    display.set(key, new Table((editableStore.get(name)?.events ?? []).map((r) => ({ ...r }))))
+  }
   return display
 }
 
@@ -122,10 +156,13 @@ function onTap(): void {
   tablePanel.setTables(tablesForDisplay(lastViews))
   if (liveCode == null) return
   let timelineRows: Row[]
+  cooking = true
   try {
     timelineRows = cookTimeline(runtime, liveCode, liveSeed)
   } catch {
     return
+  } finally {
+    cooking = false
   }
   playback.setTimeline(timelineRows)
 }
@@ -150,6 +187,10 @@ interface EvaluateOptions {
   seed?: number
 }
 
+// True while a cook is running: editable() appends create/schema events during
+// the cook itself, and reacting to those would loop the cook forever.
+let cooking = false
+
 async function evaluate(code: string, { setError, record = true, persist = true, seed = randomSeed() }: EvaluateOptions = {}): Promise<void> {
   const pending = extractDataUrls(code).filter((u) => !dataCache.has(u))
   if (pending.length) {
@@ -166,11 +207,14 @@ async function evaluate(code: string, { setError, record = true, persist = true,
   }
 
   let cooked: CookedData
+  cooking = true
   try {
     cooked = cookProgram(runtime, code, seed, dataCache)
   } catch (err) {
     setError?.((err as Error).message)
     return
+  } finally {
+    cooking = false
   }
   setError?.(null)
   liveCode = code
@@ -191,13 +235,35 @@ const editor = initEditor(document.getElementById('editor-pane') as HTMLElement,
   getPlayIndex: () => currentPlayIndex,
 })
 
+// A table-change event landed (cell edit, add row, …): re-cook the live
+// program so views built on the table — and the scene/hydra they feed — follow
+// the fold. Not recorded as a run (the program text didn't change; the table
+// event log already captured the edit). Coalesced per animation frame, and
+// ignored while the cook itself is appending create/schema events.
+let storeRefreshScheduled = false
+editableStore.onChange(() => {
+  if (cooking || storeRefreshScheduled) return
+  storeRefreshScheduled = true
+  requestAnimationFrame(() => {
+    storeRefreshScheduled = false
+    if (liveCode != null) {
+      void evaluate(liveCode, { setError: editor.setError, record: false, seed: liveSeed })
+    } else {
+      tablePanel.setTables(tablesForDisplay(lastViews))
+    }
+  })
+})
+
 function scrubSession(pos: number): void {
   let replayed
+  cooking = true
   try {
     replayed = replayAt(runtime, log, pos, dataCache)
   } catch (err) {
     editor.setError((err as Error).message)
     return
+  } finally {
+    cooking = false
   }
   if (!replayed) return
   editor.setError(null)

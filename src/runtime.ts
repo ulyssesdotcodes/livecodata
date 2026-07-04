@@ -57,7 +57,7 @@ function hashString(s: string): number {
 export interface RuntimeOptions {
   physics?: () => PhysicsEngine | null
   tapRows?: () => Row[] | null
-  editableRows?: (name: string, schema: Record<string, ColumnType>) => Row[]
+  editableRows?: (name: string, schema: Record<string, ColumnType>, seedRows?: Row[]) => Row[]
 }
 
 export interface RunOptions {
@@ -183,7 +183,8 @@ export function createRuntime({ physics, tapRows, editableRows }: RuntimeOptions
     physics: () => (physics ? physics() : null),
     tapRows: () => (tapRows ? tapRows() : null),
     getData: (url: string) => dataCache.get(url) ?? '',
-    editableRows: (name: string, schema: Record<string, ColumnType>) => (editableRows ? editableRows(name, schema) : []),
+    editableRows: (name: string, schema: Record<string, ColumnType>, seedRows?: Row[]) =>
+      (editableRows ? editableRows(name, schema, seedRows) : []),
   }
 
   const api = createDSL(ctx)

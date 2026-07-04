@@ -203,3 +203,17 @@ test('editable() edits survive across runs (unlike a computed view)', () => {
   const { views } = rt.run(code, { seed: 2 })
   assert.deepEqual(views.get('t')!.rows.map((r) => r.value), [99])
 })
+
+test('editable() seeds rows on first create only', () => {
+  const store = createEditableTableStore(memStorage())
+  const rt = createRuntime({ editableRows: (name, schema, seedRows) => store.ensure(name, schema, seedRows) })
+  const code = `define("h", () => editable("h", { index: "number", code: "code" }, [{ index: 0, code: "src(s0).out()" }]))`
+
+  const first = rt.run(code, { seed: 1 })
+  assert.deepEqual(first.views.get('h')!.rows.map((r) => r.code), ['src(s0).out()'])
+
+  // A user edit sticks; the seed rows are not re-applied on later runs.
+  store.setCell('h', 0, 'code', 'osc(4).out()')
+  const second = rt.run(code, { seed: 2 })
+  assert.deepEqual(second.views.get('h')!.rows.map((r) => r.code), ['osc(4).out()'])
+})
