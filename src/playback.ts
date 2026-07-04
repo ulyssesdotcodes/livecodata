@@ -17,6 +17,8 @@ export interface TapControl {
 export interface PlaybackOptions {
   onTick?: (tick: number, active: Map<string, Set<number>>, srcFrame: number) => void
   onPlay?: () => void
+  // Called each time the loop wraps (the playhead passes the end and jumps back).
+  onLoop?: () => void
   tapControl?: TapControl
   // Streaming context for the frame being shown: resolves midi() bindings against
   // the live MIDI table sampled at the playhead's source frame.
@@ -34,7 +36,7 @@ export interface PlaybackAPI {
 export function initPlayback(
   controlsEl: HTMLElement,
   sceneAPI: SceneAPI,
-  { onTick, onPlay, tapControl, midiCtxAt }: PlaybackOptions = {},
+  { onTick, onPlay, onLoop, tapControl, midiCtxAt }: PlaybackOptions = {},
 ): PlaybackAPI {
   type PlayState = 'idle' | 'playing' | 'paused'
   let state: PlayState = 'idle'
@@ -294,6 +296,7 @@ export function initPlayback(
     if (loop && maxIndex > 0 && t >= maxIndex) {
       t %= maxIndex
       startTime = performance.now() - t * 1000
+      onLoop?.()
     }
 
     showIndex(t)

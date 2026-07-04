@@ -67,6 +67,7 @@ const playback = initPlayback(
     onPlay: () => {
       tablePanel.resetAutoscroll()
     },
+    onLoop: () => midiInput.startNewLoop(),
     tapControl: { tap: recordTap, clear: clearTaps, rows: tapRows },
     midiCtxAt: (srcFrame) => midiInput.ctxAt(srcFrame),
   },

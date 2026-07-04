@@ -124,6 +124,11 @@ export interface MidiInputOptions {
 export interface MidiInput {
   rows(): Row[]
   clear(): void
+  // Call when the loop wraps. The next event on each note will first clear
+  // that note's history from previous loops before recording — so playing in a
+  // new loop replaces the old recording for that note, while notes you don't
+  // touch carry forward unchanged.
+  startNewLoop(): void
   // A per-frame evaluation context for resolveBindings: midi(note) samples the
   // recorded table at `srcFrame`.
   ctxAt(srcFrame: number): EvalCtx
@@ -134,12 +139,22 @@ export interface MidiInput {
 export function createMidiInput({ getIndex, onChange }: MidiInputOptions): MidiInput {
   let events: Row[] = []
   let index: MidiIndex | null = null // cached; invalidated on change
+  // Notes that have been cleared in the current loop (so a second play of the
+  // same note in the same loop just adds, rather than clearing again).
+  let clearedThisLoop = new Set<string>()
 
   const idx = (): MidiIndex => (index ??= buildMidiIndex(events))
 
   function feed(data: ArrayLike<number>): void {
     const decoded = decodeMidi(data)
     if (!decoded) return
+    // On first play of a note after a loop wrap: drop its history from previous
+    // loops so this new take cleanly replaces the old recording for that note.
+    const key = decoded.note
+    if (!clearedThisLoop.has(key)) {
+      events = events.filter((e) => (e.note as string) !== key)
+      clearedThisLoop.add(key)
+    }
     events.push(midiRow(decoded, getIndex()))
     index = null
     onChange?.()
@@ -152,23 +167,16 @@ export function createMidiInput({ getIndex, onChange }: MidiInputOptions): MidiI
   }).requestMIDIAccess
   if (typeof access === 'function') {
     access.call(navigator).then((midi) => {
-      const inputs = [...midi.inputs.values()]
-      console.log('[midi] access granted, inputs:', inputs.length)
-      for (const input of inputs) {
-        console.log('[midi] subscribing to input:', (input as unknown as { name?: string }).name ?? input)
-        input.onmidimessage = (e) => {
-          console.log('[midi] message:', Array.from(e.data))
-          feed(e.data)
-        }
+      for (const input of midi.inputs.values()) {
+        input.onmidimessage = (e) => feed(e.data)
       }
-    }).catch((err) => { console.warn('[midi] access denied:', err) })
-  } else {
-    console.warn('[midi] Web MIDI API not available in this browser')
+    }).catch(() => { /* no MIDI access — fine */ })
   }
 
   return {
     rows: () => events.map((r) => ({ ...r })),
-    clear: () => { events = []; index = null; onChange?.() },
+    clear: () => { events = []; index = null; clearedThisLoop = new Set(); onChange?.() },
+    startNewLoop: () => { clearedThisLoop = new Set() },
     ctxAt: (srcFrame: number): EvalCtx => ({
       midi: (note, channel) => sampleMidiAt(idx(), note, channel, srcFrame),
     }),

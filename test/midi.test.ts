@@ -99,3 +99,47 @@ test('createMidiInput notifies on change and clears', () => {
   assert.equal(input.rows().length, 0)
   assert.equal(changes, 2)
 })
+
+// ── Loop-aware clearing: each new loop replaces the previous take per note ───
+
+test('startNewLoop: first play after a loop wrap replaces that note\'s history', () => {
+  let src = 0
+  const input = createMidiInput({ getIndex: () => src })
+
+  // Loop 1: play c4 at 1s, d4 at 2s
+  src = 1; input.feed([0x90, 60, 127]) // c4 on
+  src = 2; input.feed([0x90, 62, 100]) // d4 on
+
+  // Loop wraps
+  input.startNewLoop()
+
+  // Loop 2: play c4 at 0.5s — should replace the 1s c4 from loop 1
+  src = 0.5; input.feed([0x90, 60, 64]) // c4 on, new position
+
+  const rows = input.rows()
+  const c4rows = rows.filter((r) => r.note === 'c4')
+  const d4rows = rows.filter((r) => r.note === 'd4')
+
+  assert.equal(c4rows.length, 1, 'old c4 recording cleared; only new one survives')
+  assert.equal(c4rows[0].index, 0.5, 'new c4 is at 0.5s, not 1s')
+  assert.equal(c4rows[0].value, 64 / 127)
+  assert.equal(d4rows.length, 1, 'd4 was not played in loop 2 — it carries forward')
+})
+
+test('a second play of the same note in the same loop only adds (no extra clear)', () => {
+  let src = 0
+  const input = createMidiInput({ getIndex: () => src })
+
+  // Loop 1
+  src = 1; input.feed([0x90, 60, 127]) // c4 on
+
+  input.startNewLoop()
+
+  // Loop 2: play c4 twice — first clears loop-1 history; second just adds
+  src = 0.5; input.feed([0x90, 60, 100]) // first play: clears + records
+  src = 1.5; input.feed([0x90, 60, 50])  // second play: no extra clear
+
+  const c4rows = input.rows().filter((r) => r.note === 'c4')
+  assert.equal(c4rows.length, 2, 'both loop-2 events kept')
+  assert.deepEqual(c4rows.map((r) => r.index), [0.5, 1.5])
+})
