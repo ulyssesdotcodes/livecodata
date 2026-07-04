@@ -14,6 +14,7 @@ import { initPhysics } from './physics.js'
 import { randomSeed } from './event-log.js'
 import { Table } from './dsl.js'
 import { createEditableTableStore, type ColumnType } from './editable-tables.js'
+import { createMidiInput } from './midi.js'
 import type { PhysicsEngineInstance } from './physics.js'
 import type { Row } from './lineage.js'
 
@@ -114,22 +115,53 @@ function clearTaps(): void {
 
 let currentPlayIndex = 0
 
+// Live MIDI: an append-only event log on the shared primitive. Each event is
+// stamped with wall time (by the log), the current loop iteration, and the
+// playhead's content/source position (Playback.currentSourceSeconds) — the
+// coordinate the baked scene is keyed to, so a recorded sweep's speed follows
+// the timeline mapping. The folded "midi" table (per note, the latest loop's
+// take) is what midi("c4") bindings resolve against each frame; the raw log
+// shows as "midi·events".
+let loopCount = 0
+const midiInput = createMidiInput({
+  getIndex: () => playback.currentSourceSeconds(),
+  getLoop: () => loopCount,
+  onChange: () => onMidi(),
+})
+
 const playback = initPlayback(
   document.getElementById('playback-controls') as HTMLElement,
   sceneAPI,
   hydraAPI,
   {
-    onTick: (tick, active, srcFrame) => {
-      currentPlayIndex = srcFrame
-      tablePanel.highlightIndex(srcFrame)
+    onTick: (tick, active, srcSeconds) => {
+      currentPlayIndex = srcSeconds
+      tablePanel.highlightIndex(srcSeconds)
       tablePanel.highlightLineage(active)
     },
     onPlay: () => {
       tablePanel.resetAutoscroll()
     },
+    onLoop: () => { loopCount++ },
     tapControl: { tap: recordTap, clear: clearTaps, rows: tapRows, anchor: tapAnchor },
+    midiCtxAt: (srcFrame) => midiInput.ctxAt(srcFrame),
   },
 )
+
+// A new MIDI event refreshes the "midi"/"midi·events" display tables. The scene
+// itself updates live every rAF tick via the per-frame bindings regardless —
+// this refresh is purely cosmetic. Coalesced to once per animation frame: a
+// knob sweep can fire 100+ messages/sec, and re-rendering the panel per message
+// stalls the main thread.
+let midiDisplayScheduled = false
+function onMidi(): void {
+  if (midiDisplayScheduled) return
+  midiDisplayScheduled = true
+  requestAnimationFrame(() => {
+    midiDisplayScheduled = false
+    tablePanel.setTables(tablesForDisplay(lastViews))
+  })
+}
 
 let physicsEngine: PhysicsEngineInstance | null = null
 const runtime = createRuntime({
@@ -160,12 +192,15 @@ interface CookedData {
 
 // The views shown in the table panel, plus:
 //  - a live "taps" table of wall-time button presses
+//  - a live "midi"/"midi·events" pair (streaming input, not an editable table)
 //  - every editable table's "name·events" history (this generically covers
 //    "code·events" too, now that the program is just another editable table)
 // (each only when the program doesn't define a view of that name itself).
 function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   const display = new Map(views)
   if (!display.has('taps')) display.set('taps', new Table(tapRows()))
+  if (!display.has('midi')) display.set('midi', new Table(midiInput.rows()))
+  if (!display.has('midi' + EVENTS_SUFFIX)) display.set('midi' + EVENTS_SUFFIX, new Table(midiInput.eventRows()))
   for (const name of editableStore.listNames()) {
     const key = name + EVENTS_SUFFIX
     if (display.has(key)) continue

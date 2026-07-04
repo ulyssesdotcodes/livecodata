@@ -2,6 +2,7 @@ import { buildFrameIndex, stateAtFrame, type FrameIndex } from './rasterize.js'
 import { buildHydraIndex, hydraFrameAt } from './hydra.js'
 import { buildTimeline, type Timeline } from './timeline.js'
 import { activeLineage } from './lineage.js'
+import { resolveBindings, type EvalCtx } from './dsl.js'
 import { FPS } from './constants.js'
 import type { Row } from './lineage.js'
 import type { SceneAPI } from './three-scene.js'
@@ -34,21 +35,36 @@ export function wallAlignedTick(nowMs: number, anchorMs: number, loopSeconds: nu
 }
 
 export interface PlaybackOptions {
-  onTick?: (tick: number, active: Map<string, Set<number>>, srcFrame: number) => void
+  // srcSeconds: the source/content position shown, in seconds (converted from
+  // the internal frame count) — the unit graphed tables' `index` columns use.
+  onTick?: (tick: number, active: Map<string, Set<number>>, srcSeconds: number) => void
   onPlay?: () => void
+  // Called each time the loop wraps (the playhead passes the end and jumps back).
+  onLoop?: () => void
   tapControl?: TapControl
+  // Streaming context for the frame being shown: resolves midi() bindings against
+  // the live MIDI table, sampled at the playhead's *source* frame — the same
+  // content-space coordinate events are recorded in (see currentSourceSeconds).
+  midiCtxAt?: (srcFrame: number) => EvalCtx
 }
 
 export interface PlaybackAPI {
   load(sceneRows: Row[], timelineRows: Row[], hydraRows: Row[]): void
   setTimeline(timelineRows: Row[]): void
+  // The content/source position (seconds) currently on screen — playback time
+  // mapped through the (loop-wrapped) timeline. Live MIDI events are stamped
+  // here, so a recorded sweep's speed follows the timeline mapping: if it
+  // changes later (e.g. a slower fit), the sweep speeds up or slows down right
+  // along with everything else on screen, rather than staying fixed to
+  // wall-clock time.
+  currentSourceSeconds(): number
 }
 
 export function initPlayback(
   controlsEl: HTMLElement,
   sceneAPI: SceneAPI,
   hydraAPI: HydraAPI,
-  { onTick, onPlay, tapControl }: PlaybackOptions = {},
+  { onTick, onPlay, onLoop, tapControl, midiCtxAt }: PlaybackOptions = {},
 ): PlaybackAPI {
   type PlayState = 'idle' | 'playing' | 'paused'
   let state: PlayState = 'idle'
@@ -152,7 +168,16 @@ export function initPlayback(
 
   function applyAtIndex(t: number): void {
     const src = timeline.frameAt(Math.floor(t * FPS))
-    const states = stateAtFrame(frameIndex, src)
+    // Streaming context for this frame: midi() bindings baked into the scene /
+    // effects resolve against the live MIDI table at the *source* frame — the
+    // same content-space coordinate the whole baked scene is keyed to (and the
+    // domain events are recorded in). That's what makes a recorded sweep track
+    // the timeline: if the mapping later changes (e.g. a slower fit), tick sweeps
+    // through this shared coordinate at a different rate, so the recorded points
+    // are reached sooner/later right along with everything else on screen.
+    const ctx = midiCtxAt ? midiCtxAt(src) : null
+    const baked = stateAtFrame(frameIndex, src)
+    const states = ctx ? baked.map((s) => resolveBindings(s, ctx)) : baked
     const present = new Set<unknown>()
     for (const s of states) {
       present.add(s.id)
@@ -169,8 +194,11 @@ export function initPlayback(
         aliveObjects.delete(id)
       }
     }
-    hydraAPI.setSketch(hydraFrameAt(hydraIndex, src))
-    onTick?.(t, activeLineage(states), src)
+    const sketch = hydraFrameAt(hydraIndex, src)
+    hydraAPI.setSketch(sketch && ctx ? { ...sketch, vars: resolveBindings(sketch.vars, ctx) } : sketch)
+    // Graphed/table views key their rows by `index` in seconds, so report the
+    // source position in seconds too (src is an internal frame count).
+    onTick?.(t, activeLineage(states), src / FPS)
   }
 
   function reset(t: number = 0): void {
@@ -193,6 +221,20 @@ export function initPlayback(
     const anchorMs = tapControl?.anchor?.() ?? null
     if (anchorMs == null || maxIndex <= 0) return null
     return wallAlignedTick(Date.now(), anchorMs, maxIndex)
+  }
+
+  // The content/source position (seconds) currently on screen — the playhead's
+  // tick wrapped by the loop exactly as rendering wraps it (tick()), then mapped
+  // through the timeline, exactly as applyAtIndex computes `src`. This is where
+  // a live MIDI event gets stamped: recording this shared content coordinate
+  // (rather than raw tick/wall-clock time) is what makes a recorded sweep follow
+  // the timeline — if the mapping changes later (e.g. a slower fit), tick moves
+  // through this same coordinate at a different rate, speeding up or slowing
+  // down the recorded sweep right along with everything else on screen.
+  function currentSourceSeconds(): number {
+    let t = currentTime()
+    if (loop && maxIndex > 0 && t >= maxIndex) t %= maxIndex
+    return timeline.frameAt(Math.floor(t * FPS)) / FPS
   }
 
   // Playback length in seconds: follow the timeline when present, else the cache.
@@ -317,6 +359,7 @@ export function initPlayback(
     if (loop && maxIndex > 0 && t >= maxIndex) {
       t = wallAlignedPhase() ?? (t % maxIndex)
       startTime = performance.now() - t * 1000
+      onLoop?.()
     }
 
     showIndex(t)
@@ -341,5 +384,5 @@ export function initPlayback(
     requestAnimationFrame(tick)
   }
 
-  return { load, setTimeline }
+  return { load, setTimeline, currentSourceSeconds }
 }

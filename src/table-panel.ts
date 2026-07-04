@@ -60,6 +60,8 @@ export interface TablePanel {
   selectTable(name: string | null): void
   setTables(newStore: Map<string, Table>): void
   setGraphs(newSpecs: GraphSpec[] | null): void
+  // idx: the playhead's source position in *seconds* — the same unit rows'
+  // `index` column uses, and what the chart's x-axis is drawn in.
   highlightIndex(idx: number): void
   highlightLineage(active: Map<string, Set<number>> | null): void
   resetAutoscroll(): void
@@ -282,14 +284,21 @@ export function initTablePanel(
 
   function rebuildTabs(): void {
     const names = allNames()
-    tabs.innerHTML = ''
-    tabEls = new Map()
-    names.forEach((n) => {
-      const tab = makeTab(n)
-      tabs.appendChild(tab)
-      tabEls.set(n, tab)
-    })
-    tabs.appendChild(addTableBtn)
+    // Rebuilding the tab bar on every call is wasted work (and visual flicker)
+    // when the same tables are just refreshing their data — e.g. the live MIDI
+    // tables growing — so only touch it when the set of tables actually changed.
+    const prevNames = [...tabEls.keys()]
+    const namesChanged = names.length !== prevNames.length || names.some((n, i) => n !== prevNames[i])
+    if (namesChanged) {
+      tabs.innerHTML = ''
+      tabEls = new Map()
+      names.forEach((n) => {
+        const tab = makeTab(n)
+        tabs.appendChild(tab)
+        tabEls.set(n, tab)
+      })
+      tabs.appendChild(addTableBtn)
+    }
 
     if (!names.length) { render(null); return }
     let next = names.includes(current ?? '') ? current : null
@@ -497,10 +506,25 @@ export function initTablePanel(
     applyFilter()
   }
 
+  // A refresh of the *same* table (a MIDI tick, an edit re-fold) shouldn't
+  // fight the user's scroll position the way switching tabs should — rebuilding
+  // tbody drops the browser's scroll offset, so save/restore it when the shown
+  // table isn't changing.
   function render(name: string | null): void {
+    const switchingTable = name !== current
+    const savedScrollTop = switchingTable ? 0 : scroll.scrollTop
+    renderInner(name, switchingTable)
+    if (!switchingTable) {
+      suppressScrollEvent = true
+      scroll.scrollTop = savedScrollTop
+      requestAnimationFrame(() => { suppressScrollEvent = false })
+    }
+  }
+
+  function renderInner(name: string | null, switchingTable: boolean): void {
     current = name
     highlightTab(name)
-    userScrolled = false
+    if (switchingTable) userScrolled = false
 
     ro.disconnect()
     currentChart = null
