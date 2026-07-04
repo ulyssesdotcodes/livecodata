@@ -155,7 +155,14 @@ export function createMidiInput({ getIndex, onChange }: MidiInputOptions): MidiI
       events = events.filter((e) => (e.note as string) !== key)
       clearedThisLoop.add(key)
     }
-    events.push(midiRow(decoded, getIndex()))
+    // At most one row per (note, channel, index/frame): a burst of messages
+    // landing at the same source frame (e.g. rapid CC/velocity) replaces rather
+    // than piling up — the table stays one value per channel per index.
+    const indexSeconds = getIndex()
+    const frame = Math.round(indexSeconds * FPS)
+    events = events.filter((e) =>
+      !(e.note === decoded.note && e.channel === decoded.channel && Math.round((e.index as number) * FPS) === frame))
+    events.push(midiRow(decoded, indexSeconds))
     index = null
     onChange?.()
   }
@@ -167,10 +174,18 @@ export function createMidiInput({ getIndex, onChange }: MidiInputOptions): MidiI
   }).requestMIDIAccess
   if (typeof access === 'function') {
     access.call(navigator).then((midi) => {
-      for (const input of midi.inputs.values()) {
-        input.onmidimessage = (e) => feed(e.data)
+      const inputs = [...midi.inputs.values()]
+      console.log('[midi] access granted, inputs:', inputs.length)
+      for (const input of inputs) {
+        console.log('[midi] subscribing to input:', (input as unknown as { name?: string }).name ?? input)
+        input.onmidimessage = (e) => {
+          console.log('[midi] message:', Array.from(e.data))
+          feed(e.data)
+        }
       }
-    }).catch(() => { /* no MIDI access — fine */ })
+    }).catch((err) => { console.warn('[midi] access denied:', err) })
+  } else {
+    console.warn('[midi] Web MIDI API not available in this browser')
   }
 
   return {

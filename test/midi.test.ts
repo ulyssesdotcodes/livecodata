@@ -143,3 +143,44 @@ test('a second play of the same note in the same loop only adds (no extra clear)
   assert.equal(c4rows.length, 2, 'both loop-2 events kept')
   assert.deepEqual(c4rows.map((r) => r.index), [0.5, 1.5])
 })
+
+// ── At most one row per (note, channel, index) ──────────────────────────────
+
+test('a burst of messages at the same frame replaces rather than piling up', () => {
+  let src = 1
+  const input = createMidiInput({ getIndex: () => src })
+
+  // Same note, same channel, same source position — e.g. rapid velocity/CC
+  // messages landing within the same frame — should collapse to one row.
+  input.feed([0x90, 60, 10])
+  input.feed([0x90, 60, 64])
+  input.feed([0x90, 60, 127])
+
+  const c4rows = input.rows().filter((r) => r.note === 'c4')
+  assert.equal(c4rows.length, 1, 'only the latest value at this index survives')
+  assert.equal(c4rows[0].value, 1, 'last write wins')
+})
+
+test('same note/index but different channels keep one row per channel', () => {
+  let src = 2
+  const input = createMidiInput({ getIndex: () => src })
+
+  input.feed([0x90, 60, 100]) // c4, channel 1
+  input.feed([0x91, 60, 50])  // c4, channel 2, same index
+
+  const c4rows = input.rows().filter((r) => r.note === 'c4')
+  assert.equal(c4rows.length, 2, 'distinct channels are not deduped against each other')
+  assert.deepEqual(c4rows.map((r) => r.channel).sort(), [1, 2])
+})
+
+test('same note/channel but different index (frame) both survive', () => {
+  let src = 1
+  const input = createMidiInput({ getIndex: () => src })
+
+  input.feed([0x90, 60, 100])
+  src = 1.5
+  input.feed([0x90, 60, 50])
+
+  const c4rows = input.rows().filter((r) => r.note === 'c4')
+  assert.equal(c4rows.length, 2, 'different frames are independent rows')
+})
