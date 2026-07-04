@@ -420,6 +420,210 @@ html, body {
   color: #c8d6e5;
 }
 
+/* ── Editable tables ── */
+.table-tab-add {
+  background: transparent;
+  color: #6fbf73;
+  border: 1px dashed #2f6b3a;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 2px 10px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.table-tab-add:hover {
+  color: #9be09e;
+  border-color: #4a9a54;
+  background: rgba(111, 191, 115, 0.08);
+}
+
+.table-tab-editable {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-style: dashed;
+}
+
+.tab-label {
+  pointer-events: none;
+}
+
+.tab-del {
+  color: #607a96;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.tab-del:hover {
+  color: #e94560;
+}
+
+.tab-rename-input {
+  background: #16213e;
+  color: #fff;
+  border: 1px solid #2a70c0;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 4px;
+  width: 90px;
+}
+
+.edit-toolbar {
+  flex-shrink: 0;
+  padding: 5px 8px;
+  border-top: 1px solid #0f3460;
+  background: #12203c;
+}
+
+.add-row-btn,
+.add-col-btn,
+.col-confirm-btn {
+  background: #16213e;
+  color: #6fbf73;
+  border: 1px solid #2f6b3a;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.add-row-btn:hover,
+.add-col-btn:hover,
+.col-confirm-btn:hover {
+  color: #9be09e;
+  border-color: #4a9a54;
+}
+
+.row-del-head {
+  background: #0f3460;
+  width: 20px;
+}
+
+.row-del-btn,
+.col-del-btn {
+  background: transparent;
+  color: #607a96;
+  border: none;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.row-del-btn:hover,
+.col-del-btn:hover {
+  color: #e94560;
+}
+
+.editable-col-head {
+  display: table-cell;
+  white-space: nowrap;
+}
+
+.editable-col-head .col-name-input {
+  background: transparent;
+  color: #c8d6e5;
+  border: none;
+  border-bottom: 1px solid transparent;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  width: 70px;
+  padding: 1px 2px;
+}
+
+.editable-col-head .col-name-input:focus {
+  outline: none;
+  border-bottom-color: #2a70c0;
+}
+
+.col-type-select {
+  background: #0f3460;
+  color: #607a96;
+  border: 1px solid #1a5090;
+  border-radius: 3px;
+  font-size: 9px;
+  font-family: inherit;
+  margin-left: 3px;
+  padding: 0 2px;
+}
+
+.add-col-head {
+  background: #0f3460;
+}
+
+.new-col-name {
+  background: #16213e;
+  color: #c8d6e5;
+  border: 1px solid #1a5090;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 11px;
+  width: 70px;
+  padding: 1px 4px;
+  margin-right: 3px;
+}
+
+.editable-cell {
+  cursor: pointer;
+  min-width: 60px;
+}
+
+.editable-cell:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.editable-cell.editing {
+  background: rgba(42, 112, 192, 0.12);
+  cursor: default;
+}
+
+.cell-value {
+  display: block;
+  min-height: 1em;
+}
+
+.cell-text {
+  background: #16213e;
+  color: #fff;
+  border: 1px solid #2a70c0;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 11px;
+  width: 100%;
+  padding: 1px 4px;
+}
+
+.cell-slider-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 130px;
+}
+
+.cell-slider {
+  flex: 1;
+  accent-color: #e94560;
+}
+
+.cell-number {
+  background: #16213e;
+  color: #fff;
+  border: 1px solid #2a70c0;
+  border-radius: 3px;
+  font: inherit;
+  font-size: 11px;
+  width: 56px;
+  padding: 1px 3px;
+}
+
 /* ── Playback controls ── */
 #playback-controls {
   position: absolute;

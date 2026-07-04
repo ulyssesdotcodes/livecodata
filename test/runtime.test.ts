@@ -1,7 +1,16 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createRuntime } from '../src/runtime.js'
+import { createEditableTableStore } from '../src/editable-tables.js'
 import type { Row } from '../src/lineage.js'
+
+function memStorage(): { getItem(k: string): string | null; setItem(k: string, v: string): void } {
+  const map = new Map<string, string>()
+  return {
+    getItem: (k) => map.get(k) ?? null,
+    setItem: (k, v) => { map.set(k, v) },
+  }
+}
 
 test('cooks defined views and resolves table() dependencies', () => {
   const rt = createRuntime()
@@ -164,4 +173,33 @@ test('incremental cooking reuses an unchanged physics subgraph across runs', () 
   const codeC = codeA.replace('{ steps: 1 }', '{ steps: 2 }')
   rt.run(codeC, { seed: 3 })
   assert.equal(bakes, 2, 'changing the physics opts re-bakes')
+})
+
+test('editable() reads rows from the editable-table store and is usable like any table', () => {
+  const store = createEditableTableStore(memStorage())
+  store.createTable('scores')
+  store.addRow('scores')
+  store.setCell('scores', 0, 'value', 5)
+
+  const rt = createRuntime({ editableRows: (name, schema) => store.ensure(name, schema) })
+  const code = `
+    define("scores", () => editable("scores", { value: "number" }))
+    define("doubled", (rand, table) => table("scores").map(r => ({ value: r.value * 2 })))
+  `
+  const { views } = rt.run(code, { seed: 1 })
+  assert.deepEqual(views.get('scores')!.rows.map((r) => r.value), [5])
+  assert.deepEqual(views.get('doubled')!.rows.map((r) => r.value), [10])
+})
+
+test('editable() edits survive across runs (unlike a computed view)', () => {
+  const store = createEditableTableStore(memStorage())
+  const rt = createRuntime({ editableRows: (name, schema) => store.ensure(name, schema) })
+  const code = `define("t", () => editable("t", { value: "number" }))`
+
+  rt.run(code, { seed: 1 })
+  store.addRow('t')
+  store.setCell('t', 0, 'value', 99)
+
+  const { views } = rt.run(code, { seed: 2 })
+  assert.deepEqual(views.get('t')!.rows.map((r) => r.value), [99])
 })

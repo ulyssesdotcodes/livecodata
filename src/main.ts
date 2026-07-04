@@ -12,10 +12,12 @@ import { cookProgram, cookTimeline, replayAt } from './replay.js'
 import { initPhysics } from './physics.js'
 import { createLog, randomSeed } from './log.js'
 import { Table } from './dsl.js'
+import { createEditableTableStore } from './editable-tables.js'
 import type { PhysicsEngineInstance } from './physics.js'
 import type { Row } from './lineage.js'
 
 const dataCache = new Map<string, string>()
+const editableStore = createEditableTableStore()
 
 function extractDataUrls(code: string): string[] {
   const urls: string[] = []
@@ -24,7 +26,7 @@ function extractDataUrls(code: string): string[] {
 }
 
 const sceneAPI = initThree(document.getElementById('three-canvas') as HTMLCanvasElement)
-const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLElement)
+const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLElement, editableStore)
 
 // Tap-beat: the only state is the raw wall-clock presses. The tap-beat *table*
 // and any tempo are derived from these (see the DSL's taps()/tempo()/beats()), so
@@ -72,7 +74,11 @@ const playback = initPlayback(
 )
 
 let physicsEngine: PhysicsEngineInstance | null = null
-const runtime = createRuntime({ physics: () => physicsEngine, tapRows: () => tapRows() })
+const runtime = createRuntime({
+  physics: () => physicsEngine,
+  tapRows: () => tapRows(),
+  editableRows: (name, schema) => editableStore.ensure(name, schema),
+})
 const log = createLog()
 
 const sessionStore = createSessionStore()

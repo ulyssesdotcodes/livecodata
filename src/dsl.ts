@@ -27,6 +27,7 @@
 import { rasterizeRows } from './rasterize.js'
 import { withLineage, carry, unionLineage, getLineage, type Row } from './lineage.js'
 import { FPS } from './constants.js'
+import type { ColumnType } from './editable-tables.js'
 
 // ── Expr: a small, serializable, chainable expression over a row ─────────────
 // Each Expr wraps a plain-JSON `node` (no functions), so it serializes for
@@ -265,6 +266,9 @@ export interface DSLContext {
   seed?: number
   // Synchronous lookup for pre-fetched data() URLs.
   getData?(url: string): string
+  // User-editable table storage: returns the live rows for a table with this
+  // column schema, creating it (or reconciling its columns) on first use.
+  editableRows?(name: string, schema: Record<string, ColumnType>): Row[]
 }
 
 export type ViewFn = (rand: () => number, table: (name: string) => Table) => Table | Row[]
@@ -692,6 +696,10 @@ export type DSLSurface = Easings & {
   json(data: Row[] | string | unknown): Table
   grid(cols: number, rowsN: number, opts?: { spacing?: number; y?: number }): Table
   physics(source: Table | Row[]): PhysicsBuilder
+  // A user-editable table: rows are entered/edited in the table panel (not
+  // computed), keyed by `name` so edits persist across runs. `schema` declares
+  // the column names + types (number columns get a slider in the table panel).
+  editable(name: string, schema: Record<string, ColumnType>): Table
   field(name: string): Expr
   lit(v: number | string | boolean | null): Expr
   idx(): Expr
@@ -729,6 +737,10 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       return new Table(out, ctx)
     },
     physics: (source: Table | Row[]) => new PhysicsBuilder(source, ctx!),
+    editable: (name: string, schema: Record<string, ColumnType>): Table => {
+      const rows = (ctx?.editableRows?.(name, schema) ?? []).map((r) => ({ ...r }))
+      return new Table(rows, ctx).save(name)
+    },
     field,
     lit,
     idx,
