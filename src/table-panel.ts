@@ -8,7 +8,7 @@
 // event-sourced EditableTableStore — created with the "+ table" button, or
 // declared in the DSL via editable(name, schema)). Editable tables render with
 // inline controls (add/rename/retype column, add/remove row, click-to-edit
-// cells; number columns get a slider). Every edit appends a change event to
+// cells). Every edit appends a change event to
 // the store's log; the interactive tab shows the fold (current state) while a
 // read-only `name·events` tab (injected by main as a plain view) shows the
 // history. Cells of type "code" don't edit inline — clicking one hands the
@@ -54,21 +54,6 @@ export interface TablePanelOptions {
   // Clicking a code-typed cell routes here (the main editor takes over) instead
   // of opening an inline input.
   onEditCell?: (table: string, rowIndex: number, col: string, value: string) => void
-}
-
-// A slider range/step for a number cell: spans at least the current column's
-// values (and 0..10), padded so the slider always has room to move.
-function numericRange(values: number[], cur: number): { lo: number; hi: number; step: number } {
-  const finite = values.filter((v) => Number.isFinite(v))
-  let lo = Math.min(0, cur, ...finite)
-  let hi = Math.max(10, cur, ...finite)
-  if (!Number.isFinite(lo)) lo = 0
-  if (!Number.isFinite(hi)) hi = 10
-  if (lo === hi) hi = lo + 10
-  const span = hi - lo
-  const allInts = Number.isInteger(cur) && finite.every((v) => Number.isInteger(v))
-  const step = allInts && span <= 1000 ? 1 : span / 100
-  return { lo, hi, step: step || 1 }
 }
 
 export interface TablePanel {
@@ -387,12 +372,12 @@ export function initTablePanel(
     return th
   }
 
-  // A single editable cell: click to open an editor in place (slider + number
-  // box for numbers, checkbox for booleans, text box otherwise); collapses
-  // back to a plain display on commit or on an outside click. Committing
-  // appends a set-cell event to the store — the edit *is* the event; the
-  // re-render that follows shows the folded state. Code-typed cells instead
-  // hand their text to the main editor (onEditCell).
+  // A single editable cell: click to open an editor in place (number box for
+  // numbers, checkbox for booleans, text box otherwise); collapses back to a
+  // plain display on commit or on an outside click. Committing appends a
+  // set-cell event to the store — the edit *is* the event; the re-render that
+  // follows shows the folded state. Code-typed cells instead hand their text
+  // to the main editor (onEditCell).
   function makeEditableCell(td: HTMLTableCellElement, name: string, rowIndex: number, col: EditableColumn): void {
     const showDisplay = (): void => {
       if (closeActiveEdit === showDisplay) closeActiveEdit = null
@@ -433,45 +418,20 @@ export function initTablePanel(
         cb.focus()
       } else if (col.type === 'number') {
         const cur = Number(raw) || 0
-        const values = (data?.rows ?? []).map((r) => Number(r[col.name]))
-        const { lo, hi, step } = numericRange(values, cur)
-
-        const wrap = document.createElement('div')
-        wrap.className = 'cell-slider-wrap'
-
-        const slider = document.createElement('input')
-        slider.type = 'range'
-        slider.className = 'cell-slider'
-        slider.min = String(lo)
-        slider.max = String(hi)
-        slider.step = String(step)
-        slider.value = String(cur)
-
         const num = document.createElement('input')
         num.type = 'number'
         num.className = 'cell-number'
         num.value = String(cur)
-        num.step = String(step)
-
-        // Live-track in the number box while dragging; the event is appended
-        // once, when the drag ends ('change') — one gesture, one event.
-        slider.addEventListener('input', () => { num.value = slider.value })
-        slider.addEventListener('change', () => commit(Number(slider.value)))
-        num.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            const v = Number(num.value)
-            commit(Number.isFinite(v) ? v : cur)
-          }
-        })
-        num.addEventListener('blur', (e) => {
-          if ((e as FocusEvent).relatedTarget === slider) return
+        num.step = 'any'
+        const commitNum = (): void => {
           const v = Number(num.value)
-          commit(Number.isFinite(v) ? v : cur)
-        })
-
-        wrap.append(slider, num)
-        td.appendChild(wrap)
-        slider.focus()
+          commit(Number.isFinite(v) && num.value.trim() !== '' ? v : cur)
+        }
+        num.addEventListener('keydown', (e) => { if (e.key === 'Enter') commitNum() })
+        num.addEventListener('blur', commitNum)
+        td.appendChild(num)
+        num.focus()
+        num.select()
       } else {
         const inp = document.createElement('input')
         inp.type = 'text'

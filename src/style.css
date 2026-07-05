@@ -601,18 +601,6 @@ html, body {
   padding: 1px 4px;
 }
 
-.cell-slider-wrap {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 130px;
-}
-
-.cell-slider {
-  flex: 1;
-  accent-color: #e94560;
-}
-
 .cell-number {
   background: #16213e;
   color: #fff;
@@ -620,8 +608,8 @@ html, body {
   border-radius: 3px;
   font: inherit;
   font-size: 11px;
-  width: 56px;
-  padding: 1px 3px;
+  width: 100%;
+  padding: 1px 4px;
 }
 
 /* Code cells: one-line monospace preview; click hands the text to the editor. */

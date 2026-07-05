@@ -209,7 +209,9 @@ export function createEditableTableStore(
 
     createTable(name: string): void {
       if (tables.has(name)) return
-      append({ kind: 'create', table: name, columns: [{ name: 'value', type: 'number' }] })
+      // New tables start with an "index" column — the convention every other
+      // table here keys time by (seconds).
+      append({ kind: 'create', table: name, columns: [{ name: 'index', type: 'number' }] })
     },
 
     removeTable(name: string): void {

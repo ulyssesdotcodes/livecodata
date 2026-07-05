@@ -10,12 +10,12 @@ function memStorage(): { getItem(k: string): string | null; setItem(k: string, v
   }
 }
 
-test('createTable seeds a default numeric column', () => {
+test('createTable seeds a default index column', () => {
   const store = createEditableTableStore(memStorage())
   store.createTable('t1')
   assert.ok(store.has('t1'))
   const t = store.get('t1')!
-  assert.deepEqual(t.columns, [{ name: 'value', type: 'number' }])
+  assert.deepEqual(t.columns, [{ name: 'index', type: 'number' }])
   assert.deepEqual(t.rows, [])
 })
 
@@ -24,22 +24,22 @@ test('addRow / setCell / removeRow', () => {
   store.createTable('t1')
   store.addRow('t1')
   store.addRow('t1')
-  assert.deepEqual(store.get('t1')!.rows, [{ value: 0 }, { value: 0 }])
-  store.setCell('t1', 0, 'value', 42)
-  assert.equal(store.get('t1')!.rows[0].value, 42)
+  assert.deepEqual(store.get('t1')!.rows, [{ index: 0 }, { index: 0 }])
+  store.setCell('t1', 0, 'index', 42)
+  assert.equal(store.get('t1')!.rows[0].index, 42)
   store.removeRow('t1', 0)
-  assert.deepEqual(store.get('t1')!.rows, [{ value: 0 }])
+  assert.deepEqual(store.get('t1')!.rows, [{ index: 0 }])
 })
 
 test('every edit is stored as an event; the visible table is the fold', () => {
   const store = createEditableTableStore(memStorage())
   store.createTable('t1')
   store.addRow('t1')
-  store.setCell('t1', 0, 'value', 3)
-  store.setCell('t1', 0, 'value', 7)
+  store.setCell('t1', 0, 'index', 3)
+  store.setCell('t1', 0, 'index', 7)
 
   // The current state reflects only the latest value…
-  assert.deepEqual(store.get('t1')!.rows, [{ value: 7 }])
+  assert.deepEqual(store.get('t1')!.rows, [{ index: 7 }])
 
   // …but the history keeps both writes, in order, with stamps.
   const events = store.get('t1')!.events
@@ -53,8 +53,8 @@ test('addColumn backfills existing rows with a default; removeColumn drops it', 
   store.createTable('t1')
   store.addRow('t1')
   store.addColumn('t1', 'label', 'string')
-  assert.deepEqual(store.get('t1')!.rows, [{ value: 0, label: '' }])
-  store.removeColumn('t1', 'value')
+  assert.deepEqual(store.get('t1')!.rows, [{ index: 0, label: '' }])
+  store.removeColumn('t1', 'index')
   assert.deepEqual(store.get('t1')!.rows, [{ label: '' }])
 })
 
@@ -62,8 +62,8 @@ test('renameColumn moves the value under the new key', () => {
   const store = createEditableTableStore(memStorage())
   store.createTable('t1')
   store.addRow('t1')
-  store.setCell('t1', 0, 'value', 7)
-  assert.ok(store.renameColumn('t1', 'value', 'score'))
+  store.setCell('t1', 0, 'index', 7)
+  assert.ok(store.renameColumn('t1', 'index', 'score'))
   assert.deepEqual(store.get('t1')!.rows, [{ score: 7 }])
   assert.deepEqual(store.get('t1')!.columns, [{ name: 'score', type: 'number' }])
 })
@@ -108,12 +108,12 @@ test('persists the event log: a second store instance re-folds the same state', 
   const storage = memStorage()
   const a = createEditableTableStore(storage)
   a.createTable('t1')
-  a.setCell('t1', 0, 'value', 1) // no row yet — invalid, appends nothing
+  a.setCell('t1', 0, 'index', 1) // no row yet — invalid, appends nothing
   a.addRow('t1')
-  a.setCell('t1', 0, 'value', 9)
+  a.setCell('t1', 0, 'index', 9)
 
   const b = createEditableTableStore(storage)
-  assert.deepEqual(b.get('t1')!.rows, [{ value: 9 }])
+  assert.deepEqual(b.get('t1')!.rows, [{ index: 9 }])
   assert.deepEqual(b.get('t1')!.events.map((e) => e.kind), ['create', 'add-row', 'set-cell'])
 })
 

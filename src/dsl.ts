@@ -700,7 +700,7 @@ export type DSLSurface = Easings & {
   // A user-editable table: rows are entered/edited in the table panel (not
   // computed), keyed by `name` so edits persist across runs — stored as change
   // *events*, of which the visible table is the fold. `schema` declares the
-  // column names + types (number → slider on select; code → opens in the main
+  // column names + types (number → numeric input; code → opens in the main
   // editor). `seedRows` populate the table the first time it's created.
   editable(name: string, schema: Record<string, ColumnType>, seedRows?: Row[]): Table
   field(name: string): Expr
