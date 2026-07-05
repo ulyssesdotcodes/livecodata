@@ -154,7 +154,7 @@ export function startMultiplayerServer(
 
   return new Promise((resolve, reject) => {
     server.once('error', reject)
-    server.listen(port, () => {
+    server.listen(port, "0.0.0.0", () => {
       const address = server.address()
       const boundPort = typeof address === 'object' && address ? address.port : port
       resolve({
