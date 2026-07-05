@@ -79,9 +79,9 @@ test('rehydrate returns false for empty, missing, and corrupt stores', () => {
   corrupt.setItem('livecodata.session', '{not valid json')
   assert.equal(createLog().rehydrate(corrupt), false, 'corrupt store does not throw')
 
-  const noEntries = fakeStorage()
-  noEntries.setItem('livecodata.session', JSON.stringify({ version: 1, entries: [] }))
-  assert.equal(createLog().rehydrate(noEntries), false, 'valid but empty → false')
+  const noEvents = fakeStorage()
+  noEvents.setItem('livecodata.session', JSON.stringify({ version: 1, start: null, events: [] }))
+  assert.equal(createLog().rehydrate(noEvents), false, 'valid but empty → false')
 })
 
 test('clear empties the log and removes the persisted copy', () => {

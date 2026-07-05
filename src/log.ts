@@ -56,20 +56,6 @@ export function randomSeed(): number {
 export function createLog(): Log {
   const events = createEventLog()
 
-  function load(json: string | unknown): boolean {
-    try {
-      const data = typeof json === 'string' ? JSON.parse(json) as Record<string, unknown> : json as Record<string, unknown>
-      if (!data) return false
-      // Accept both the current event-log format ({ start, events }) and the
-      // pre-refactor session format ({ sessionStart, entries }).
-      const list = Array.isArray(data.events) ? data.events : data.entries
-      if (!Array.isArray(list)) return false
-      return events.load({ version: 1, start: data.start ?? data.sessionStart ?? null, events: list })
-    } catch {
-      return false
-    }
-  }
-
   return {
     append({ kind = 'run', code, seed = 0 }: AppendParams): LogEntry {
       return events.append({ kind, code, seed }) as LogEntry
@@ -85,7 +71,7 @@ export function createLog(): Log {
     },
 
     serialize: () => events.serialize(),
-    load,
+    load: (json) => events.load(json),
 
     persist(storage: MinimalStorage = globalThis.localStorage as MinimalStorage): void {
       try { storage?.setItem(STORAGE_KEY, events.serialize()) } catch { /* quota / no storage */ }
@@ -95,7 +81,7 @@ export function createLog(): Log {
       try {
         const raw = storage?.getItem(STORAGE_KEY)
         if (!raw) return false
-        return load(raw) && events.length > 0
+        return events.load(raw) && events.length > 0
       } catch {
         return false
       }
