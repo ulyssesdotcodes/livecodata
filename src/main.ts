@@ -40,9 +40,14 @@ const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLE
 // Tap-beat: the only state is the raw wall-clock presses. The tap-beat *table*
 // and any tempo are derived from these (see the DSL's taps()/tempo()/beats()), so
 // there's no dedicated tap-beat class — just data plus record/clear.
+// Timestamps are Date.now() (real wall-clock epoch ms), not performance.now()
+// (which is relative to this page load and meaningless to compare across a
+// reload or another machine) — that's what lets playback anchor "beat 0" to
+// the tap itself (see Playback.wallAlignedTick) instead of to whenever Play
+// was pressed, which is what keeps independently-started clients in phase.
 const TAP_RESET_GAP_MS = 2000 // a long pause starts a fresh tempo
 const TAP_MAX = 16            // keep a rolling window so BPM tracks recent tapping
-let tapTimes: number[] = []   // performance.now() timestamps, oldest → newest
+let tapTimes: number[] = []   // Date.now() epoch ms, oldest → newest
 
 // One row per press — { beat, time } (ordinal + seconds since the first tap).
 function tapRows(): Row[] {
@@ -50,8 +55,14 @@ function tapRows(): Row[] {
   return tapTimes.map((t, i) => ({ beat: i, time: (t - t0) / 1000 }))
 }
 
+// The epoch (ms) "beat 0" is anchored to — the most recent tap — once at
+// least two taps have established a tempo; null otherwise.
+function tapAnchor(): number | null {
+  return tapTimes.length >= 2 ? tapTimes[tapTimes.length - 1] : null
+}
+
 function recordTap(): void {
-  const now = performance.now()
+  const now = Date.now()
   if (tapTimes.length && now - tapTimes[tapTimes.length - 1] > TAP_RESET_GAP_MS) tapTimes = []
   tapTimes.push(now)
   if (tapTimes.length > TAP_MAX) tapTimes = tapTimes.slice(-TAP_MAX)
@@ -78,7 +89,7 @@ const playback = initPlayback(
     onPlay: () => {
       tablePanel.resetAutoscroll()
     },
-    tapControl: { tap: recordTap, clear: clearTaps, rows: tapRows },
+    tapControl: { tap: recordTap, clear: clearTaps, rows: tapRows, anchor: tapAnchor },
   },
 )
 
