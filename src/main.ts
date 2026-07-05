@@ -15,6 +15,7 @@ import { randomSeed } from './event-log.js'
 import { Table } from './dsl.js'
 import { createEditableTableStore, type ColumnType } from './editable-tables.js'
 import { createMidiInput } from './midi.js'
+import { createTapLog } from './tap-log.js'
 import { connectMultiplayer } from './multiplayer.js'
 import type { MultiplayerConnection, MultiplayerStatus } from './multiplayer.js'
 import type { PhysicsEngineInstance } from './physics.js'
@@ -88,43 +89,25 @@ const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLE
   },
 })
 
-// Tap-beat: the only state is the raw wall-clock presses. The tap-beat *table*
-// and any tempo are derived from these (see the DSL's taps()/tempo()/beats()), so
-// there's no dedicated tap-beat class — just data plus record/clear.
-// Timestamps are Date.now() (real wall-clock epoch ms), not performance.now()
-// (which is relative to this page load and meaningless to compare across a
-// reload or another machine) — that's what lets playback anchor "beat 0" to
-// the tap itself (see Playback.wallAlignedTick) instead of to whenever Play
-// was pressed, which is what keeps independently-started clients in phase.
-const TAP_RESET_GAP_MS = 2000 // a long pause starts a fresh tempo
-const TAP_MAX = 16            // keep a rolling window so BPM tracks recent tapping
-let tapTimes: number[] = []   // Date.now() epoch ms, oldest → newest
-
-// One row per press — { beat, time } (ordinal + seconds since the first tap).
-function tapRows(): Row[] {
-  const t0 = tapTimes[0] ?? 0
-  return tapTimes.map((t, i) => ({ beat: i, time: (t - t0) / 1000 }))
-}
-
-// The epoch (ms) "beat 0" is anchored to — the *first* tap of the current
-// sequence (a person tapping a tempo starts on beat 1, so that's the tap that
-// actually landed on the grid; later taps only refine the interval) — once at
-// least two taps have established a tempo. Null otherwise.
-function tapAnchor(): number | null {
-  return tapTimes.length >= 2 ? tapTimes[0] : null
-}
+// Tap-beat: event-sourced like any other table (see tap-log.ts), so it's
+// synced over multiplayer the same way. The tap-beat *table* and any tempo are
+// derived from the log's fold (see the DSL's taps()/tempo()/beats()). Taps are
+// stamped with wall-clock Date.now() (see tap-log.ts), which is what lets
+// playback anchor "beat 0" to the tap itself (see Playback.wallAlignedTick
+// and TapLog.anchor()) instead of to whenever Play was pressed — that's what
+// keeps independently-started (or multiplayer-synced) clients in phase.
+const tapLog = createTapLog()
+const tapRows = (): Row[] => tapLog.rows()
+const tapAnchor = (): number | null => tapLog.anchor()
 
 function recordTap(): void {
-  const now = Date.now()
-  if (tapTimes.length && now - tapTimes[tapTimes.length - 1] > TAP_RESET_GAP_MS) tapTimes = []
-  tapTimes.push(now)
-  if (tapTimes.length > TAP_MAX) tapTimes = tapTimes.slice(-TAP_MAX)
+  tapLog.tap()
   onTap()
 }
 
 function clearTaps(): void {
-  if (!tapTimes.length) return
-  tapTimes = []
+  if (!tapLog.rows().length) return
+  tapLog.clear()
   onTap()
 }
 
@@ -559,11 +542,14 @@ if (roomName) {
     if (!latest || (latest.code === liveCode && latest.seed === liveSeed)) return
     void evaluate(latest.code, { setError: editor.setError, seed: latest.seed })
   })
+  // A collaborator's tap arrived: refresh the "taps" table and retime the
+  // tempo, same as a local tap (see onTap).
+  tapLog.log.onMerge(() => onTap())
   chipStatus('connecting', 0)
   multiplayer = connectMultiplayer({
     url: multiplayerUrl(),
     room: roomName,
-    logs: { session: editableStore.log },
+    logs: { session: editableStore.log, taps: tapLog.log },
     onStatus: chipStatus,
   })
 } else {

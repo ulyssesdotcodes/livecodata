@@ -7,6 +7,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createEventLog } from '../src/event-log.js'
 import { createEditableTableStore } from '../src/editable-tables.js'
+import { createTapLog } from '../src/tap-log.js'
 import { connectMultiplayer } from '../src/multiplayer.js'
 import { startMultiplayerServer } from '../server/server.js'
 
@@ -72,12 +73,13 @@ test('rooms sync history on join and relay live appends both ways', async () => 
     // a has prior work; it joins first and seeds the room.
     const logA = createEventLog({ src: 'a' })
     const tablesA = createEventLog({ src: 'a' })
+    const tapsA = createTapLog({ src: 'a' })
     logA.append({ kind: 'run', code: 'view("x")', seed: 1 })
 
     let peersA = 0
     conns.push(connectMultiplayer({
       url, room: 'jam',
-      logs: { session: logA, tables: tablesA },
+      logs: { session: logA, tables: tablesA, taps: tapsA.log },
       onStatus: (_s, p) => { peersA = p },
     }))
     await until(() => server.roomLog('jam', 'session').length === 1, 'a to seed the room')
@@ -85,7 +87,8 @@ test('rooms sync history on join and relay live appends both ways', async () => 
     // b joins empty and receives a's history via the sync.
     const logB = createEventLog({ src: 'b' })
     const tablesB = createEventLog({ src: 'b' })
-    conns.push(connectMultiplayer({ url, room: 'jam', logs: { session: logB, tables: tablesB } }))
+    const tapsB = createTapLog({ src: 'b' })
+    conns.push(connectMultiplayer({ url, room: 'jam', logs: { session: logB, tables: tablesB, taps: tapsB.log } }))
     await until(() => logB.length === 1, 'b to receive room history')
     assert.equal(logB.last()!.code, 'view("x")')
     await until(() => peersA === 2, 'peer count to reach a')
@@ -99,6 +102,13 @@ test('rooms sync history on join and relay live appends both ways', async () => 
     tablesA.append({ kind: 'create', table: 'notes', columns: [] })
     await until(() => tablesB.length === 1, 'a\'s table event to reach b')
     assert.equal(tablesB.last()!.kind, 'create')
+
+    // Tap-beat is shared the same way: b's taps reach a and fold identically.
+    tapsB.tap()
+    tapsB.tap()
+    await until(() => tapsA.log.length === 2, 'b\'s taps to reach a')
+    assert.deepEqual(tapsA.rows(), tapsB.rows())
+    assert.equal(tapsA.rows().length, 2)
 
     // Replicas and the room hold the same log.
     assert.deepEqual(logA.all(), logB.all())
