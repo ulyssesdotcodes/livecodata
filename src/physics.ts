@@ -129,8 +129,15 @@ function makeShape(Jolt: JoltModule, row: Row): JoltModule {
       return new Jolt.CylinderShape((row.h as number | undefined) ?? d.h, (row.r as number | undefined) ?? d.r, 0.05, null)
     case 'box':
     default: {
-      const half = new Jolt.Vec3((row.hx as number | undefined) ?? d.hx, (row.hy as number | undefined) ?? d.hy, (row.hz as number | undefined) ?? d.hz)
-      const s = new Jolt.BoxShape(half, 0.05, null)
+      const hx = (row.hx as number | undefined) ?? d.hx
+      const hy = (row.hy as number | undefined) ?? d.hy
+      const hz = (row.hz as number | undefined) ?? d.hz
+      // Jolt's BoxShape convex radius must be strictly less than every half-extent.
+      // Stay at the proven-stable 0.05 when possible; only shrink it for thin
+      // shapes, keeping it close to the thinnest half-extent for contact stability.
+      const convexRadius = Math.min(0.05, 0.9 * Math.min(hx, hy, hz))
+      const half = new Jolt.Vec3(hx, hy, hz)
+      const s = new Jolt.BoxShape(half, convexRadius, null)
       Jolt.destroy(half)
       return s
     }

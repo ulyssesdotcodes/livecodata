@@ -135,14 +135,11 @@ export function initPlayback(
     const present = new Set<unknown>()
     for (const s of states) {
       present.add(s.id)
-      const pos = { x: s.px as number, y: s.py as number, z: s.pz as number }
-      const rot = { x: s.rx as number, y: s.ry as number, z: s.rz as number }
       if (!aliveObjects.has(s.id)) {
-        sceneAPI.createObject(s.id, s.shape, pos, rot, s.color as number | null, s as Record<string, unknown>)
+        sceneAPI.createObject(s as Record<string, unknown>)
         aliveObjects.add(s.id)
       } else {
-        sceneAPI.updateObject(s.id, pos, rot)
-        sceneAPI.setColor(s.id, s.color as number | null)
+        sceneAPI.updateObject(s as Record<string, unknown>)
       }
     }
     for (const id of aliveObjects) {
