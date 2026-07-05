@@ -4,14 +4,6 @@ import { createRuntime } from '../src/runtime.js'
 import { createEditableTableStore } from '../src/editable-tables.js'
 import type { Row } from '../src/lineage.js'
 
-function memStorage(): { getItem(k: string): string | null; setItem(k: string, v: string): void } {
-  const map = new Map<string, string>()
-  return {
-    getItem: (k) => map.get(k) ?? null,
-    setItem: (k, v) => { map.set(k, v) },
-  }
-}
-
 test('cooks defined views and resolves table() dependencies', () => {
   const rt = createRuntime()
   const code = `
@@ -176,7 +168,7 @@ test('incremental cooking reuses an unchanged physics subgraph across runs', () 
 })
 
 test('editable() reads rows from the editable-table store and is usable like any table', () => {
-  const store = createEditableTableStore(memStorage())
+  const store = createEditableTableStore()
   store.createTable('scores')
   store.addRow('scores')
   store.setCell('scores', 0, 'value', 5)
@@ -192,7 +184,7 @@ test('editable() reads rows from the editable-table store and is usable like any
 })
 
 test('editable() edits survive across runs (unlike a computed view)', () => {
-  const store = createEditableTableStore(memStorage())
+  const store = createEditableTableStore()
   const rt = createRuntime({ editableRows: (name, schema) => store.ensure(name, schema) })
   const code = `define("t", () => editable("t", { value: "number" }))`
 
@@ -205,7 +197,7 @@ test('editable() edits survive across runs (unlike a computed view)', () => {
 })
 
 test('editable() seeds rows on first create only', () => {
-  const store = createEditableTableStore(memStorage())
+  const store = createEditableTableStore()
   const rt = createRuntime({ editableRows: (name, schema, seedRows) => store.ensure(name, schema, seedRows) })
   const code = `define("h", () => editable("h", { index: "number", code: "code" }, [{ index: 0, code: "src(s0).out()" }]))`
 

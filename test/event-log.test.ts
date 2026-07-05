@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createEventLog, foldEvents } from '../src/event-log.js'
+import { createEventLog, foldEvents, randomSeed } from '../src/event-log.js'
 
 test('append stamps seq (monotonic) and t (ms since first event)', () => {
   const log = createEventLog()
@@ -60,4 +60,11 @@ test('foldEvents derives state from the event list', () => {
   log.append({ kind: 'mul', n: 10 })
   const total = foldEvents(log.all(), (s, e) => (e.kind === 'add' ? s + (e.n as number) : s * (e.n as number)), 0)
   assert.equal(total, 50)
+})
+
+test('randomSeed produces unsigned 32-bit integers', () => {
+  for (let i = 0; i < 50; i++) {
+    const s = randomSeed()
+    assert.ok(Number.isInteger(s) && s >= 0 && s <= 0xffffffff, `seed in range: ${s}`)
+  }
 })

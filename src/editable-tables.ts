@@ -3,13 +3,22 @@
 // User-authored tables, as opposed to the code-generated views produced by
 // running the DSL program. What is *stored* is never the table itself but the
 // append-only log of change events — add-row, set-cell, rename-column, … —
-// on the same event-log primitive that backs the session's run log. The
-// visible table is a fold of those events up to now, so every editable table
-// is really two tables: the interactive current state (`name`) and the
-// read-only edit history (`name·events`). Editing a cell doesn't overwrite
-// anything; it appends.
+// on the shared event-log primitive. The visible table is a fold of those
+// events up to now, so every editable table is really two tables: the
+// interactive current state (`name`) and the read-only edit history
+// (`name·events`). Editing a cell doesn't overwrite anything; it appends.
 //
-// A program reads one via the DSL's editable(name, schema) — see dsl.ts —
+// The whole store — every table — rides ONE event log, so its serialize/load
+// round-trips the entire store in one shot: that's the unit a session
+// persists (see sessions.ts/main.ts). The store itself holds no storage
+// reference of its own; the caller owns if/when/where it's saved.
+//
+// The main program is not exempt from this: it lives here too, as an
+// editable table named "code" (columns `code`/`seed`, always exactly one
+// row) that main.ts writes on every Run — so "the session" is nothing more
+// than this store's events, and "code·events" is the run history for free.
+//
+// A program reads a table via the DSL's editable(name, schema) — see dsl.ts —
 // which appends a create (or schema-reconcile) event on first sight and
 // returns the folded rows. That's the "specify types in the code editor"
 // path; the table panel's own +table / +column UI is the other way to
@@ -32,13 +41,6 @@ export interface EditableTableData {
   rows: Row[]
   // The edit history, as display rows for the read-only `name·events` table.
   events: Row[]
-}
-
-const STORAGE_KEY = 'livecodata.tableEvents'
-
-interface MinimalStorage {
-  getItem(key: string): string | null
-  setItem(key: string, value: string): void
 }
 
 function defaultFor(type: ColumnType): unknown {
@@ -135,6 +137,11 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
       if (row) row[e.col as string] = e.value
       break
     }
+    case 'set-row': {
+      const row = t.rows[e.row as number]
+      if (row) Object.assign(row, e.values as Record<string, unknown>)
+      break
+    }
     case 'rename-table': {
       const to = e.to as string
       if (!to || tables.has(to)) break
@@ -166,33 +173,37 @@ export interface EditableTableStore {
   addRow(name: string): void
   removeRow(name: string, index: number): void
   setCell(name: string, index: number, colName: string, value: unknown): void
+  // Atomically set several cells of one row in a single event — e.g. a
+  // program Run sets `code` and `seed` together, so the pair is always one
+  // history entry rather than two, and is never observed half-updated.
+  setRow(name: string, index: number, values: Record<string, unknown>): void
   // Fired after any change event lands (a fold consumer should re-read).
   onChange(cb: () => void): void
+  // The whole store as one serialized blob (every table's events) — the unit
+  // a session persists. load() replaces the store's entire history and
+  // re-folds every table from scratch; clear() empties it. Both notify like
+  // any other change.
+  serialize(): string
+  load(json: string | unknown): boolean
+  clear(): void
 }
 
-export function createEditableTableStore(
-  storage: MinimalStorage | null = typeof localStorage !== 'undefined' ? localStorage : null,
-): EditableTableStore {
+export function createEditableTableStore(): EditableTableStore {
   const log = createEventLog()
   // The fold, kept incrementally: append() applies the new event to this map.
   let tables = new Map<string, TableState>()
   const listeners: (() => void)[] = []
+  const notify = (): void => listeners.forEach((cb) => cb())
 
   function refold(): void {
     tables = new Map()
     for (const e of log.all()) applyEvent(tables, e)
   }
 
-  try {
-    const raw = storage?.getItem(STORAGE_KEY)
-    if (raw && log.load(raw)) refold()
-  } catch { /* corrupt / no storage — start empty */ }
-
   function append(payload: Record<string, unknown> & { kind: string; table: string }): void {
     const e = log.append(payload)
     applyEvent(tables, e)
-    try { storage?.setItem(STORAGE_KEY, log.serialize()) } catch { /* quota / no storage */ }
-    listeners.forEach((cb) => cb())
+    notify()
   }
 
   const schemaColumns = (schema: Record<string, ColumnType>): EditableColumn[] =>
@@ -280,8 +291,28 @@ export function createEditableTableStore(
       append({ kind: 'set-cell', table: name, row: index, col: colName, value })
     },
 
+    setRow(name: string, index: number, values: Record<string, unknown>): void {
+      if (!tables.get(name)?.rows[index]) return
+      append({ kind: 'set-row', table: name, row: index, values })
+    },
+
     onChange(cb: () => void): void {
       listeners.push(cb)
+    },
+
+    serialize: () => log.serialize(),
+
+    load(json: string | unknown): boolean {
+      if (!log.load(json)) return false
+      refold()
+      notify()
+      return true
+    },
+
+    clear(): void {
+      log.clear()
+      tables = new Map()
+      notify()
     },
   }
 }

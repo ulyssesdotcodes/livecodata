@@ -112,3 +112,9 @@ export function foldEvents<S>(events: StampedEvent[], reducer: (state: S, event:
   for (const e of events) state = reducer(state, e)
   return state
 }
+
+// A run seed: unsigned 32-bit, deterministic once picked (feeds the DSL's
+// per-view PRNGs — see runtime.ts), fresh and unpredictable when generated.
+export function randomSeed(): number {
+  return (Math.random() * 0x100000000) >>> 0
+}

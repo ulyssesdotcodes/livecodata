@@ -1,7 +1,13 @@
 // livecodata multi-session store
 // ----------------------------------------------------------------------------
 // Persists *multiple* authoring sessions to localStorage so past sessions can be
-// browsed and reopened from the session selector.
+// browsed and reopened from the session selector. A session is nothing but the
+// editable-table store's serialized event log (see editable-tables.ts) — the
+// program ("code"), its run history ("code·events"), and every other editable
+// table all ride that one log, so this is the *entire* durable state; the
+// generated view names are kept alongside purely to label the session in the
+// dropdown ("base, sim, events, scene · 2026-01-01 12:00"), not to reconstruct
+// anything — that's re-derived by re-running "code"'s current program.
 // ----------------------------------------------------------------------------
 
 const STORAGE_KEY = 'livecodata.sessions'
@@ -17,7 +23,7 @@ interface SessionRecord {
   createdAt: number
   updatedAt: number
   tables: string[]
-  log: string
+  events: string
 }
 
 export interface SessionSummary {
@@ -35,7 +41,7 @@ interface StoredData {
 export interface SessionStore {
   newId(): string
   list(): SessionSummary[]
-  save(id: string, data: { serialized: string; tables?: string[] }): SessionRecord
+  save(id: string, data: { events: string; tables?: string[] }): SessionRecord
   load(id: string): string | null
   remove(id: string): void
 }
@@ -76,12 +82,12 @@ export function createSessionStore(storage: MinimalStorage = globalThis.localSto
         .map(({ _pos: _unused, ...s }) => s)
     },
 
-    save(id: string, { serialized, tables = [] }: { serialized: string; tables?: string[] }): SessionRecord {
+    save(id: string, { events, tables = [] }: { events: string; tables?: string[] }): SessionRecord {
       const sessions = readAll()
       const now = Date.now()
       const idx = sessions.findIndex((s) => s.id === id)
       const createdAt = idx >= 0 ? sessions[idx].createdAt ?? now : now
-      const record: SessionRecord = { id, createdAt, updatedAt: now, tables, log: serialized }
+      const record: SessionRecord = { id, createdAt, updatedAt: now, tables, events }
       if (idx >= 0) sessions[idx] = record
       else sessions.push(record)
       writeAll(sessions)
@@ -90,7 +96,7 @@ export function createSessionStore(storage: MinimalStorage = globalThis.localSto
 
     load(id: string): string | null {
       const s = readAll().find((s) => s.id === id)
-      return s ? s.log : null
+      return s ? s.events : null
     },
 
     remove(id: string): void {
