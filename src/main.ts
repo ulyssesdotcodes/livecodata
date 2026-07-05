@@ -55,10 +55,12 @@ function tapRows(): Row[] {
   return tapTimes.map((t, i) => ({ beat: i, time: (t - t0) / 1000 }))
 }
 
-// The epoch (ms) "beat 0" is anchored to — the most recent tap — once at
-// least two taps have established a tempo; null otherwise.
+// The epoch (ms) "beat 0" is anchored to — the *first* tap of the current
+// sequence (a person tapping a tempo starts on beat 1, so that's the tap that
+// actually landed on the grid; later taps only refine the interval) — once at
+// least two taps have established a tempo. Null otherwise.
 function tapAnchor(): number | null {
-  return tapTimes.length >= 2 ? tapTimes[tapTimes.length - 1] : null
+  return tapTimes.length >= 2 ? tapTimes[0] : null
 }
 
 function recordTap(): void {

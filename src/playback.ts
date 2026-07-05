@@ -11,19 +11,21 @@ export interface TapControl {
   tap(): void
   clear(): void
   rows(): Row[]
-  // Wall-clock epoch (ms) of the most recent tap, once at least two taps have
-  // established a tempo — the instant "beat 0" is anchored to. Null before
-  // that (no tempo yet), in which case phase follows whenever Play was
-  // pressed, same as before tap-tempo existed.
+  // Wall-clock epoch (ms) of the first tap in the current sequence, once at
+  // least two taps have established a tempo — the instant "beat 0" is
+  // anchored to (a person tapping a tempo starts on beat 1, so that first tap
+  // is the one that actually landed on the grid). Null before that (no tempo
+  // yet), in which case phase follows whenever Play was pressed, same as
+  // before tap-tempo existed.
   anchor?(): number | null
 }
 
 // The tick value "now" should show, if a tap-established tempo is locked to
-// the real-world clock: elapsed time since the most recent tap, wrapped into
-// one loop. Anchoring phase to that instant (rather than to whenever Play was
-// pressed) means "beat 0" always falls at the same absolute moment — which is
-// what keeps independently-started clients (or repeated Play presses) in
-// phase with each other.
+// the real-world clock: elapsed time since the sequence's first tap, wrapped
+// into one loop. Anchoring phase to that instant (rather than to whenever
+// Play was pressed) means "beat 0" always falls at the same absolute moment —
+// which is what keeps independently-started clients (or repeated Play
+// presses) in phase with each other.
 export function wallAlignedTick(nowMs: number, anchorMs: number, loopSeconds: number): number {
   if (loopSeconds <= 0) return 0
   let phase = ((nowMs - anchorMs) / 1000) % loopSeconds
