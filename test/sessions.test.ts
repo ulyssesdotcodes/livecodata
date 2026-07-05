@@ -27,15 +27,15 @@ test('newId produces distinct ids', () => {
 
 test('save then load round-trips the serialized log', () => {
   const store = createSessionStore(fakeStorage())
-  store.save('a', { serialized: '{"entries":[1]}', tables: ['scene'] })
+  store.save('a', { events: '{"entries":[1]}', tables: ['scene'] })
   assert.equal(store.load('a'), '{"entries":[1]}')
   assert.equal(store.load('missing'), null)
 })
 
 test('save upserts: same id updates in place and preserves createdAt', () => {
   const store = createSessionStore(fakeStorage())
-  const first = store.save('a', { serialized: 'v0', tables: ['x'] })
-  const second = store.save('a', { serialized: 'v1', tables: ['x', 'y'] })
+  const first = store.save('a', { events: 'v0', tables: ['x'] })
+  const second = store.save('a', { events: 'v1', tables: ['x', 'y'] })
   assert.equal(store.list().length, 1, 'one record, not two')
   assert.equal(store.load('a'), 'v1')
   assert.equal(second.createdAt, first.createdAt, 'createdAt preserved across updates')
@@ -44,18 +44,18 @@ test('save upserts: same id updates in place and preserves createdAt', () => {
 
 test('list returns summaries (with tables) newest-updated first, no log payload', () => {
   const store = createSessionStore(fakeStorage())
-  store.save('a', { serialized: 'a', tables: ['one'] })
-  store.save('b', { serialized: 'b', tables: ['two', 'three'] })
+  store.save('a', { events: 'a', tables: ['one'] })
+  store.save('b', { events: 'b', tables: ['two', 'three'] })
   const list = store.list()
   assert.deepEqual(list.map((s) => s.id), ['b', 'a'], 'newest first')
   assert.deepEqual(list[0].tables, ['two', 'three'])
-  assert.equal('log' in list[0], false, 'summaries omit the serialized log')
+  assert.equal('events' in list[0], false, 'summaries omit the serialized events')
 })
 
 test('remove deletes a single session', () => {
   const store = createSessionStore(fakeStorage())
-  store.save('a', { serialized: 'a' })
-  store.save('b', { serialized: 'b' })
+  store.save('a', { events: 'a' })
+  store.save('b', { events: 'b' })
   store.remove('a')
   assert.equal(store.load('a'), null)
   assert.equal(store.load('b'), 'b')
@@ -69,13 +69,13 @@ test('survives an empty, missing, or corrupt store without throwing', () => {
   corrupt.setItem('livecodata.sessions', '{not valid json')
   assert.deepEqual(createSessionStore(corrupt).list(), [], 'corrupt → empty list')
   const store = createSessionStore(corrupt)
-  store.save('a', { serialized: 'a', tables: [] })
+  store.save('a', { events: 'a', tables: [] })
   assert.equal(store.load('a'), 'a')
 })
 
 test('a new store instance sees sessions persisted by another (same storage)', () => {
   const storage = fakeStorage()
-  createSessionStore(storage).save('a', { serialized: 'a', tables: ['t'] })
+  createSessionStore(storage).save('a', { events: 'a', tables: ['t'] })
   const reopened = createSessionStore(storage)
   assert.equal(reopened.load('a'), 'a')
   assert.deepEqual(reopened.list().map((s) => s.id), ['a'])

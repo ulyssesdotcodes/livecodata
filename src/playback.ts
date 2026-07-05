@@ -11,6 +11,26 @@ export interface TapControl {
   tap(): void
   clear(): void
   rows(): Row[]
+  // Wall-clock epoch (ms) of the first tap in the current sequence, once at
+  // least two taps have established a tempo — the instant "beat 0" is
+  // anchored to (a person tapping a tempo starts on beat 1, so that first tap
+  // is the one that actually landed on the grid). Null before that (no tempo
+  // yet), in which case phase follows whenever Play was pressed, same as
+  // before tap-tempo existed.
+  anchor?(): number | null
+}
+
+// The tick value "now" should show, if a tap-established tempo is locked to
+// the real-world clock: elapsed time since the sequence's first tap, wrapped
+// into one loop. Anchoring phase to that instant (rather than to whenever
+// Play was pressed) means "beat 0" always falls at the same absolute moment —
+// which is what keeps independently-started clients (or repeated Play
+// presses) in phase with each other.
+export function wallAlignedTick(nowMs: number, anchorMs: number, loopSeconds: number): number {
+  if (loopSeconds <= 0) return 0
+  let phase = ((nowMs - anchorMs) / 1000) % loopSeconds
+  if (phase < 0) phase += loopSeconds
+  return phase
 }
 
 export interface PlaybackOptions {
@@ -166,6 +186,14 @@ export function initPlayback(
     return state === 'playing' ? position() : pausedIndex
   }
 
+  // The wall-clock-aligned tick for right now, or null when there's no tap
+  // tempo (or nothing to loop over) to lock to.
+  function wallAlignedPhase(): number | null {
+    const anchorMs = tapControl?.anchor?.() ?? null
+    if (anchorMs == null || maxIndex <= 0) return null
+    return wallAlignedTick(Date.now(), anchorMs, maxIndex)
+  }
+
   // Playback length in seconds: follow the timeline when present, else the cache.
   function recomputeMax(): void {
     maxIndex = (timeline.length ? timeline.length - 1 : frameIndex.maxFrame) / FPS
@@ -205,11 +233,18 @@ export function initPlayback(
 
   // Swap the timeline (tick → frame remap) in place — used when the tap-beat
   // tempo changes a beats() timeline; retimes the current position without
-  // reloading the scene cache, so tapping along while it plays doesn't restart it.
+  // reloading the scene cache, so tapping along while it plays doesn't restart
+  // it. While playing, a new tap re-anchors "beat 0" to itself immediately
+  // (rather than waiting for the next loop wrap) — each tap you add is
+  // supposed to line the beat grid up with itself right away. Only while
+  // playing: retimeTo doesn't persist a paused position (see its pausedIndex
+  // comment), so snapping while idle would show a phase the next Play press
+  // wouldn't actually resume from.
   function setTimeline(timelineRows: Row[]): void {
     timeline = buildTimeline(timelineRows ?? [])
     recomputeMax()
-    retimeTo(currentTime())
+    const aligned = state === 'playing' ? wallAlignedPhase() : null
+    retimeTo(aligned ?? currentTime())
   }
 
   scrubber.addEventListener('input', () => {
@@ -248,9 +283,13 @@ export function initPlayback(
   }
 
   function startFresh(): void {
-    reset(0)
-    pausedIndex = 0
-    startTime = performance.now()
+    // Start already in phase with the tap-established tempo (if any), instead
+    // of always at t=0 — so pressing Play doesn't reset "beat 0" to this
+    // moment, it joins the beat grid wherever it currently is.
+    const aligned = wallAlignedPhase() ?? 0
+    reset(aligned)
+    pausedIndex = aligned
+    startTime = performance.now() - aligned * 1000
     state = 'playing'
     btn.textContent = '⏸  Pause'
     onPlay?.()
@@ -268,8 +307,13 @@ export function initPlayback(
 
     // Loop: once past the end, wrap back to the start and re-anchor startTime so
     // playback time stays bounded. Skip when there is nothing to loop over.
+    // Re-derives the wall-aligned phase (rather than just `t %= maxIndex`) so a
+    // tap tempo stays locked to the real-world clock on every wrap — self-
+    // correcting any drift between performance.now() and Date.now(), and (the
+    // point of it) keeping independently-started clients in phase with each
+    // other, not just internally consistent.
     if (loop && maxIndex > 0 && t >= maxIndex) {
-      t %= maxIndex
+      t = wallAlignedPhase() ?? (t % maxIndex)
       startTime = performance.now() - t * 1000
     }
 

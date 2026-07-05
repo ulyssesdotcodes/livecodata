@@ -16,6 +16,7 @@ import {
   type ViewFn, type DSLContext, type GraphSpec, type PhysicsEngine, type Memo, type MatCtx,
 } from './dsl.js'
 import { getLineage, withLineage, type Row } from './lineage.js'
+import type { ColumnType } from './editable-tables.js'
 
 type DefEntry =
   | { kind: 'lazy'; fn: ViewFn }
@@ -56,6 +57,7 @@ function hashString(s: string): number {
 export interface RuntimeOptions {
   physics?: () => PhysicsEngine | null
   tapRows?: () => Row[] | null
+  editableRows?: (name: string, schema: Record<string, ColumnType>, seedRows?: Row[]) => Row[]
 }
 
 export interface RunOptions {
@@ -66,7 +68,7 @@ export interface RunOptions {
   dataCache?: Map<string, string>
 }
 
-export function createRuntime({ physics, tapRows }: RuntimeOptions = {}): { run: (code: string, opts?: RunOptions) => RuntimeResult } {
+export function createRuntime({ physics, tapRows, editableRows }: RuntimeOptions = {}): { run: (code: string, opts?: RunOptions) => RuntimeResult } {
   let defs: Map<string, DefEntry>
   let cache: Map<string, Table>
   let deps: Map<string, string[]>
@@ -181,6 +183,8 @@ export function createRuntime({ physics, tapRows }: RuntimeOptions = {}): { run:
     physics: () => (physics ? physics() : null),
     tapRows: () => (tapRows ? tapRows() : null),
     getData: (url: string) => dataCache.get(url) ?? '',
+    editableRows: (name: string, schema: Record<string, ColumnType>, seedRows?: Row[]) =>
+      (editableRows ? editableRows(name, schema, seedRows) : []),
   }
 
   const api = createDSL(ctx)

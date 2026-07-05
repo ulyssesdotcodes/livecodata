@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createRuntime } from '../src/runtime.js'
+import { createEditableTableStore } from '../src/editable-tables.js'
 import type { Row } from '../src/lineage.js'
 
 test('cooks defined views and resolves table() dependencies', () => {
@@ -164,4 +165,47 @@ test('incremental cooking reuses an unchanged physics subgraph across runs', () 
   const codeC = codeA.replace('{ steps: 1 }', '{ steps: 2 }')
   rt.run(codeC, { seed: 3 })
   assert.equal(bakes, 2, 'changing the physics opts re-bakes')
+})
+
+test('editable() reads rows from the editable-table store and is usable like any table', () => {
+  const store = createEditableTableStore()
+  store.createTable('scores')
+  store.addRow('scores')
+  store.setCell('scores', 0, 'value', 5)
+
+  const rt = createRuntime({ editableRows: (name, schema) => store.ensure(name, schema) })
+  const code = `
+    define("scores", () => editable("scores", { value: "number" }))
+    define("doubled", (rand, table) => table("scores").map(r => ({ value: r.value * 2 })))
+  `
+  const { views } = rt.run(code, { seed: 1 })
+  assert.deepEqual(views.get('scores')!.rows.map((r) => r.value), [5])
+  assert.deepEqual(views.get('doubled')!.rows.map((r) => r.value), [10])
+})
+
+test('editable() edits survive across runs (unlike a computed view)', () => {
+  const store = createEditableTableStore()
+  const rt = createRuntime({ editableRows: (name, schema) => store.ensure(name, schema) })
+  const code = `define("t", () => editable("t", { value: "number" }))`
+
+  rt.run(code, { seed: 1 })
+  store.addRow('t')
+  store.setCell('t', 0, 'value', 99)
+
+  const { views } = rt.run(code, { seed: 2 })
+  assert.deepEqual(views.get('t')!.rows.map((r) => r.value), [99])
+})
+
+test('editable() seeds rows on first create only', () => {
+  const store = createEditableTableStore()
+  const rt = createRuntime({ editableRows: (name, schema, seedRows) => store.ensure(name, schema, seedRows) })
+  const code = `define("h", () => editable("h", { index: "number", code: "code" }, [{ index: 0, code: "src(s0).out()" }]))`
+
+  const first = rt.run(code, { seed: 1 })
+  assert.deepEqual(first.views.get('h')!.rows.map((r) => r.code), ['src(s0).out()'])
+
+  // A user edit sticks; the seed rows are not re-applied on later runs.
+  store.setCell('h', 0, 'code', 'osc(4).out()')
+  const second = rt.run(code, { seed: 2 })
+  assert.deepEqual(second.views.get('h')!.rows.map((r) => r.code), ['osc(4).out()'])
 })

@@ -2,6 +2,42 @@
 // /data/ and loaded at run time via data(url) — no inline embedding needed.
 export const SAMPLES = [
   {
+    name: "Editable Table",
+    code: `// livecodata — a sphere moved by an editable table
+// Unlike every other example here, the path below isn't computed by code —
+// it's data you edit directly, live, in the table panel on the right.
+// Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
+
+// 1. editable(name, schema, seedRows?) declares a user-editable table: rows
+//    are entered/edited in the table panel (its own "path" tab), not
+//    computed — edits persist across runs, unlike a normal view. Try it: open
+//    the "path" tab, click a cell to change a coordinate, or hit "+ row" to
+//    add a keyframe, then press Run again to see the sphere follow the new
+//    path. (Every edit is recorded as an event too — see the "path·events" tab.)
+define("path", () =>
+  editable("path", { index: "number", px: "number", py: "number", pz: "number" }, [
+    { index: 0, px: -1, py: 0,   pz: 0 },
+    { index: 1, px: 1,  py: 1,   pz: 0 },
+    { index: 2, px: 0,  py: 0.3, pz: -1 },
+  ])
+)
+
+// 2. Turn the path's keyframes into a moving sphere: the first row (sorted by
+//    index, in case rows were added out of order) creates it; every later row
+//    is an update, and playback interpolates position between consecutive
+//    rows by their \`index\` (seconds).
+define("events", (rand, table) =>
+  table("path").orderBy("index").map((r, i) => ({
+    id: "ball", type: i === 0 ? "create" : "update", index: r.index,
+    shape: "sphere", color: 0x4a9eff, px: r.px, py: r.py, pz: r.pz, rx: 0, ry: 0, rz: 0,
+  }))
+)
+
+// 3. Bake the sparse keyframes into a dense per-frame cache for playback.
+define("scene", (rand, table) => table("events").rasterize(3))
+`,
+  },
+  {
     name: "House of Cards",
     code: `// livecodata — House of Cards
 // A triangular pyramid of playing cards collapses when a ball drops on it.
