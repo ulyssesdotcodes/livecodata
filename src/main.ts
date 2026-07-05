@@ -282,21 +282,26 @@ const editor = initEditor(document.getElementById('editor-pane') as HTMLElement,
 
 // A table-change event landed (cell edit, add row, …): re-cook the live
 // program so views built on the table — and the scene it feeds — follow the
-// fold. Not recorded as a run (the program text didn't change; whatever
-// table's own event log already captured the edit). Coalesced per animation
-// frame, and ignored while a cook (or our own recording/session load) is
-// already in flight.
+// fold, and persist the session so the edit isn't lost on reload even if the
+// user never presses Run afterward (a session *is* the store's events now —
+// see sessions.ts — so any change to it needs saving, not just a run). Not
+// recorded as a run itself (the program text didn't change; whatever table's
+// own event log already captured the edit). Coalesced per animation frame,
+// and ignored while a cook (or our own recording/session load) is in flight.
 let storeRefreshScheduled = false
 editableStore.onChange(() => {
   if (cooking || storeRefreshScheduled) return
   storeRefreshScheduled = true
   requestAnimationFrame(() => {
     storeRefreshScheduled = false
-    if (liveCode != null) {
-      void evaluate(liveCode, { setError: editor.setError, record: false, seed: liveSeed })
-    } else {
-      tablePanel.setTables(tablesForDisplay(lastViews))
-    }
+    void (async () => {
+      if (liveCode != null) {
+        await evaluate(liveCode, { setError: editor.setError, record: false, seed: liveSeed })
+      } else {
+        tablePanel.setTables(tablesForDisplay(lastViews))
+      }
+      persistSession()
+    })()
   })
 })
 
