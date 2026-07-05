@@ -10,7 +10,9 @@
 //
 // The whole store — every table — rides ONE event log, so its serialize/load
 // round-trips the entire store in one shot: that's the unit a session
-// persists (see sessions.ts/main.ts). The store itself holds no storage
+// persists (see sessions.ts/main.ts) and also the unit multiplayer syncs (see
+// multiplayer.ts) — merging in another replica's events refolds every table
+// (including "code") from the union. The store itself holds no storage
 // reference of its own; the caller owns if/when/where it's saved.
 //
 // The main program is not exempt from this: it lives here too, as an
@@ -30,7 +32,7 @@
 // editor (click the cell) rather than inline.
 // ----------------------------------------------------------------------------
 
-import { createEventLog, type StampedEvent } from './event-log.js'
+import { createEventLog, type EventLog, type StampedEvent } from './event-log.js'
 import type { Row } from './lineage.js'
 
 export type ColumnType = 'number' | 'string' | 'boolean' | 'code'
@@ -184,6 +186,9 @@ function foldEventsMap(events: StampedEvent[]): Map<string, TableState> {
 }
 
 export interface EditableTableStore {
+  // The underlying event log — the unit multiplayer syncs. Remote events
+  // merged into it refold the store and fire onChange.
+  readonly log: EventLog
   listNames(): string[]
   has(name: string): boolean
   get(name: string): EditableTableData | undefined
@@ -232,8 +237,8 @@ export interface EditableTableStore {
   clear(): void
 }
 
-export function createEditableTableStore(): EditableTableStore {
-  const log = createEventLog()
+export function createEditableTableStore({ src }: { src?: string } = {}): EditableTableStore {
+  const log = createEventLog({ src })
   // The live head fold, kept incrementally: append() applies the new event to
   // this map. Always the full log — replay views are separate (below).
   let tables = new Map<string, TableState>()
@@ -260,10 +265,21 @@ export function createEditableTableStore(): EditableTableStore {
     notify()
   }
 
+  // Remote events (multiplayer) can land between existing ones, so the
+  // incremental fold can't absorb them — rebuild it from the merged log. Any
+  // in-progress replay view is dropped too: it's a fold of a log prefix, and
+  // that prefix's meaning can shift once earlier history changes underneath it.
+  log.onMerge(() => {
+    replay = null
+    refold()
+    notify()
+  })
+
   const schemaColumns = (schema: Record<string, ColumnType>): EditableColumn[] =>
     Object.entries(schema).map(([n, t]) => ({ name: n, type: t }))
 
   return {
+    log,
     listNames: () => [...view().keys()],
     has: (name) => view().has(name),
 
