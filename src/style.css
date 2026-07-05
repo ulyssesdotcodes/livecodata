@@ -185,6 +185,40 @@ html, body {
   border-color: #1a5090;
 }
 
+/* Multiplayer room chip: solo it invites ("jam"), in a room it shows status. */
+.multiplayer-chip {
+  background: transparent;
+  border: 1px solid #1a5090;
+  color: #8ca0b8;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.multiplayer-chip:hover {
+  background: #1a5090;
+  color: #fff;
+  border-color: #1a5090;
+}
+
+.multiplayer-chip.connecting {
+  border-color: #e9a23b;
+  color: #e9a23b;
+}
+
+.multiplayer-chip.connected {
+  border-color: #3fbf7f;
+  color: #3fbf7f;
+}
+
+.multiplayer-chip.connected:hover,
+.multiplayer-chip.connecting:hover {
+  background: #16324f;
+}
+
 .session-bar {
   display: flex;
   align-items: center;

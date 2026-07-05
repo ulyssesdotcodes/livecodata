@@ -15,6 +15,8 @@ import { randomSeed } from './event-log.js'
 import { Table } from './dsl.js'
 import { createEditableTableStore, type ColumnType } from './editable-tables.js'
 import { createMidiInput } from './midi.js'
+import { connectMultiplayer } from './multiplayer.js'
+import type { MultiplayerConnection, MultiplayerStatus } from './multiplayer.js'
 import type { PhysicsEngineInstance } from './physics.js'
 import type { Row } from './lineage.js'
 
@@ -185,6 +187,39 @@ const runtime = createRuntime({
 
 const sessionStore = createSessionStore()
 let currentSessionId = sessionStore.newId()
+
+// --- multiplayer -----------------------------------------------------------
+// A shared room is named in the URL (?room=x). Everyone in it syncs the store
+// — one event log covering "code" (the program), its run history, and every
+// other editable table — over a WebSocket (see multiplayer.ts); all visible
+// state follows from the fold. A room's log is also persisted locally under a
+// stable session id, so rejoining resumes the jam even before the server
+// answers.
+const urlParams = new URLSearchParams(location.search)
+const roomName = urlParams.get('room')
+let multiplayer: MultiplayerConnection | null = null
+
+const roomSessionId = (room: string): string => 'room:' + room
+
+// The server that serves the app also carries the room socket at /ws;
+// ?server= overrides for dev setups where the page comes from esbuild.
+function multiplayerUrl(): string {
+  const override = urlParams.get('server')
+  if (override) return override
+  return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'
+}
+
+if (roomName) {
+  currentSessionId = roomSessionId(roomName)
+  const saved = sessionStore.load(currentSessionId)
+  if (saved) {
+    editableStore.load(saved)
+    const savedRuns = sessionStore.runs(currentSessionId)
+    if (savedRuns.length) editableStore.setRuns(savedRuns)
+    else editableStore.deriveRunsFromCode()
+  }
+}
+// ---------------------------------------------------------------------------
 
 import type { GraphSpec } from './graph-panel.js'
 
@@ -395,7 +430,20 @@ function scrubSession(pos: number): void {
   applyCooked(cooked)
 }
 
+// Switching sessions while in a room would union the newly-loaded log into the
+// room — leave the room first so sessions stay what they were.
+function exitRoomMode(): void {
+  if (!multiplayer) return
+  multiplayer.close()
+  multiplayer = null
+  const u = new URL(location.href)
+  u.searchParams.delete('room')
+  history.replaceState(null, '', u)
+  chipSolo()
+}
+
 function openSession(id: string): void {
+  exitRoomMode()
   const events = sessionStore.load(id)
   if (events == null) return
   const ok = quietly(() => editableStore.load(events))
@@ -411,6 +459,7 @@ function openSession(id: string): void {
 }
 
 function newSession(): void {
+  exitRoomMode()
   currentSessionId = sessionStore.newId()
   quietly(() => editableStore.clear())
   editor.setCode(defaultProgram)
@@ -424,6 +473,7 @@ const sessionBar = initSessionBar({ onScrub: scrubSession })
 function openExample(index: number): void {
   const sample = SAMPLES[index]
   if (!sample) return
+  exitRoomMode()
   currentSessionId = sessionStore.newId()
   quietly(() => editableStore.clear())
   editor.setCode(sample.code)
@@ -441,8 +491,83 @@ const sessionSelector = initSessionSelector({
 editorPane.insertBefore(sessionBar.el, editorPane.children[1])
 editorPane.insertBefore(sessionSelector.el, sessionBar.el)
 
+// The room chip: solo it starts a jam (pick a room, seed it with the current
+// session, reload into it); in a room it shows status/peers and leaves on click.
+const mpChip = document.createElement('button')
+mpChip.className = 'multiplayer-chip'
+sessionSelector.el.appendChild(mpChip)
+
+function chipSolo(): void {
+  mpChip.classList.remove('connected', 'connecting')
+  mpChip.textContent = '⇄ jam'
+  mpChip.title = 'start or join a shared room'
+}
+
+function chipStatus(status: MultiplayerStatus, peers: number): void {
+  if (status === 'closed') return
+  mpChip.classList.toggle('connected', status === 'connected')
+  mpChip.classList.toggle('connecting', status === 'connecting')
+  mpChip.textContent = status === 'connected' ? `⇄ ${roomName} · ${peers}` : `⇄ ${roomName} …`
+  mpChip.title = status === 'connected'
+    ? `in room "${roomName}" (${peers} connected) — click to leave`
+    : `connecting to room "${roomName}" — click to leave`
+}
+
+mpChip.onclick = () => {
+  const u = new URL(location.href)
+  if (multiplayer) {
+    u.searchParams.delete('room')
+  } else {
+    const name = prompt('Room name to share this session:')?.trim()
+    if (!name) return
+    // Seed the room with what's on screen: park the store under the room's
+    // session id so the reload (and then the server) picks it up.
+    if (editableStore.has('code')) {
+      sessionStore.save(roomSessionId(name), {
+        events: editableStore.serialize(),
+        runs: editableStore.runs(),
+        tables: [...lastViews.keys()],
+      })
+    }
+    u.searchParams.set('room', name)
+  }
+  location.href = u.toString()
+}
+
+if (roomName) {
+  // A collaborator's run changed "code" (or the room's history synced in):
+  // treat it like they pressed Apply for us too — evaluate() cooks against the
+  // now-merged tables, records our own local run bookmark for it (session
+  // scrubbing is per-replica; each of us can still scrub back through it), and
+  // persists. setCodeRow's identical-write skip means this never adds a
+  // duplicate "code" event to the shared log. A remote edit to any *other*
+  // table needs nothing here: the generic onChange reaction above already
+  // refreshes the table panel and persists, matching how a local pending edit
+  // behaves (visible, but not applied until an explicit Apply).
+  editableStore.log.onMerge(() => {
+    const latest = editableStore.get('code')?.rows[0] as { code: string; seed: number } | undefined
+    if (!latest || (latest.code === liveCode && latest.seed === liveSeed)) return
+    void evaluate(latest.code, { setError: editor.setError, seed: latest.seed })
+  })
+  chipStatus('connecting', 0)
+  multiplayer = connectMultiplayer({
+    url: multiplayerUrl(),
+    room: roomName,
+    logs: { session: editableStore.log },
+    onStatus: chipStatus,
+  })
+} else {
+  chipSolo()
+}
+
 function firstRun(): void {
-  evaluate(editor.getCode(), { setError: editor.setError, persist: false })
+  if (sessionLength()) {
+    // Rejoined a room whose store we already had locally: resume it, don't
+    // append a new run.
+    scrubSession(sessionLength() - 1)
+  } else {
+    evaluate(editor.getCode(), { setError: editor.setError, persist: false })
+  }
   sessionBar.setLog({ length: sessionLength() })
   refreshSelector()
 }
