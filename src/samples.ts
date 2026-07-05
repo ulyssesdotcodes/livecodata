@@ -38,10 +38,10 @@ define("base", () => {
       cards.push(
         { id: "s" + k + "t" + i + "a", type: "create", shape: "box", color: 0xfdf6e3,
           motion: "dynamic", friction: 0.8, restitution: 0,
-          px: tx - dx, py: cardCY, pz: 0, hx: W, hy: H, hz: T, rz: -lean },
+          px: tx - dx, py: cardCY, pz: 0, hx: T, hy: H, hz: W, rz: -lean },
         { id: "s" + k + "t" + i + "b", type: "create", shape: "box", color: 0xfdf6e3,
           motion: "dynamic", friction: 0.8, restitution: 0,
-          px: tx + dx, py: cardCY, pz: 0, hx: W, hy: H, hz: T, rz:  lean },
+          px: tx + dx, py: cardCY, pz: 0, hx: T, hy: H, hz: W, rz:  lean },
       )
     }
 
