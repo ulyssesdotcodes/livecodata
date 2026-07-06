@@ -98,6 +98,34 @@ html, body {
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  flex: 1;
+}
+
+.collapse-btn {
+  background: transparent;
+  border: 1px solid #1a5090;
+  color: #8ca0b8;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 4px;
+  margin-right: 8px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.collapse-btn:hover {
+  background: #1a5090;
+  color: #fff;
+}
+
+/* Collapsed: only the header stays visible; the panel shrinks to fit it. */
+#editor-pane.editor-collapsed {
+  flex: 0 0 auto;
+}
+
+#editor-pane.editor-collapsed > *:not(.editor-header) {
+  display: none;
 }
 
 .run-btn {

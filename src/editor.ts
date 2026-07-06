@@ -202,6 +202,10 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
   const header = document.createElement('div')
   header.className = 'editor-header'
 
+  const collapseBtn = document.createElement('button')
+  collapseBtn.className = 'collapse-btn'
+  header.appendChild(collapseBtn)
+
   const titleEl = document.createElement('span')
   titleEl.className = 'editor-title'
   titleEl.textContent = 'DSL'
@@ -220,6 +224,15 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
   header.appendChild(runBtn)
 
   parent.appendChild(header)
+
+  function setCollapsed(collapsed: boolean): void {
+    parent.classList.toggle('editor-collapsed', collapsed)
+    collapseBtn.textContent = collapsed ? '▸' : '▾'
+    collapseBtn.setAttribute('aria-label', collapsed ? 'Expand code panel' : 'Collapse code panel')
+  }
+
+  collapseBtn.onclick = () => setCollapsed(!parent.classList.contains('editor-collapsed'))
+  setCollapsed(window.matchMedia('(max-width: 767px)').matches)
 
   const host = document.createElement('div')
   host.className = 'editor-host'
