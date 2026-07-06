@@ -9,7 +9,7 @@ import { initSessionSelector } from './session-selector.js'
 import { SAMPLES } from './samples.js'
 import { createRuntime } from './runtime.js'
 import { createSessionStore } from './sessions.js'
-import { cookProgram, cookTimeline, replayAt } from './replay.js'
+import { cookProgram, cookTimeline } from './replay.js'
 import { initPhysics } from './physics.js'
 import { randomSeed } from './event-log.js'
 import { Table } from './dsl.js'
@@ -34,9 +34,11 @@ function setCodeRow(code: string, seed: number): void {
   else editableStore.ensure('code', CODE_SCHEMA, [{ code, seed }])
 }
 
-// How many runs "code" has recorded — the session bar's scrub range.
+// How many runs the session has recorded — the session bar's scrub range. A
+// run is an Apply (Ctrl-Enter) bookmark spanning *every* editable table (see
+// editableStore.recordRun), not just "code"'s history.
 function sessionLength(): number {
-  return editableStore.get('code')?.events.length ?? 0
+  return editableStore.runs().length
 }
 
 function extractDataUrls(code: string): string[] {
@@ -237,8 +239,12 @@ function onTap(): void {
 
 function persistSession(): void {
   if (!editableStore.has('code')) return
+  // The session is the whole store's event data plus the run list — see
+  // sessions.ts. Serialize the *head* log (a scrubbed replay view mustn't leak
+  // into what's saved); editableStore.runs() is always the full run list.
   sessionStore.save(currentSessionId, {
     events: editableStore.serialize(),
+    runs: editableStore.runs(),
     tables: [...lastViews.keys()],
   })
   refreshSelector()
@@ -290,6 +296,10 @@ async function evaluate(code: string, { setError, record = true, persist = true,
 
   cooking = true
   try {
+    // Applying / cooking always operates on the live head, never a scrubbed
+    // replay view — return to head first so ensure() reads (and records against)
+    // current table state.
+    editableStore.setReplayView(null)
     let cooked: CookedData
     try {
       cooked = cookProgram(runtime, code, seed, dataCache)
@@ -305,8 +315,12 @@ async function evaluate(code: string, { setError, record = true, persist = true,
     // applyCooked renders the table panel below, so its first render already
     // sees "code" (otherwise the onChange reaction that would normally pick up
     // a newly-created table is itself suppressed by `cooking` right now).
+    // recordRun then snapshots every editable table's log index (including the
+    // "code" row just written, and any table the cook above created via ensure)
+    // as one Apply bookmark — the unit the session bar scrubs.
     if (record) {
       setCodeRow(code, seed)
+      editableStore.recordRun()
       sessionBar.setLog({ length: sessionLength() })
     }
     applyCooked(cooked)
@@ -348,29 +362,38 @@ editableStore.onChange(() => {
   })
 })
 
-// Scrub to run `pos` in "code"'s own history (see codeEntryAt in replay.ts) —
-// a non-destructive preview: it re-cooks and displays that historical program
-// but does not touch the "code" table's row (still the latest run) or record
-// anything, so pressing Run afterward forks forward from here as a new run
-// rather than rewriting history.
+// Scrub to run `pos` — a non-destructive preview that restores *every* editable
+// table to its state at that run (editableStore.setReplayView folds the shared
+// log up to the run's index) and re-cooks the program that was live then (the
+// "code" row at that run). It touches nothing in the head log and records no
+// run, so pressing Run afterward forks forward from head as a new run rather
+// than rewriting history. The newest position is the live head (replay view
+// off), so any edits made since the last Apply stay visible there.
 function scrubSession(pos: number): void {
-  const events = editableStore.get('code')?.events ?? []
-  let replayed
+  const runs = editableStore.runs()
+  if (runs.length === 0) return
+  const clamped = Math.max(0, Math.min(pos, runs.length - 1))
+  const atLatest = clamped >= runs.length - 1
   cooking = true
+  editableStore.setReplayView(atLatest ? null : runs[clamped])
+  let cooked: CookedData
   try {
-    replayed = replayAt(runtime, events, pos, dataCache)
+    const codeRow = editableStore.get('code')?.rows[0]
+    if (!codeRow || typeof codeRow.code !== 'string') return
+    const code = codeRow.code
+    const seed = typeof codeRow.seed === 'number' ? codeRow.seed : 0
+    cooked = cookProgram(runtime, code, seed, dataCache)
+    liveCode = code
+    liveSeed = seed
+    editor.setCode(code)
   } catch (err) {
     editor.setError((err as Error).message)
     return
   } finally {
     cooking = false
   }
-  if (!replayed) return
   editor.setError(null)
-  liveCode = replayed.entry.code
-  liveSeed = replayed.entry.seed
-  editor.setCode(replayed.entry.code)
-  applyCooked(replayed)
+  applyCooked(cooked)
 }
 
 function openSession(id: string): void {
@@ -379,8 +402,12 @@ function openSession(id: string): void {
   const ok = quietly(() => editableStore.load(events))
   if (!ok) return
   currentSessionId = id
-  scrubSession(Math.max(0, sessionLength() - 1))
+  // Restore the saved run list; a legacy session that predates runs derives
+  // them from "code"'s recorded program history so its history stays scrubbable.
+  const savedRuns = sessionStore.runs(id)
+  quietly(() => (savedRuns.length ? editableStore.setRuns(savedRuns) : editableStore.deriveRunsFromCode()))
   sessionBar.setLog({ length: sessionLength() })
+  scrubSession(Math.max(0, sessionLength() - 1))
   refreshSelector()
 }
 

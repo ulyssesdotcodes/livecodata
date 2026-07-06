@@ -1,10 +1,12 @@
-// livecodata replay — cook a program / replay the "code" table to a position
+// livecodata replay — cook a program to its scene/timeline/hydra outputs
 // ----------------------------------------------------------------------------
-// Pure orchestration over the runtime + the "code" editable table's own event
-// history (see editable-tables.ts — every Run sets that table's one row, so
-// its events *are* the run history). Because each of those events carries the
-// program text and the seed it ran with, replaying to any position in that
-// history reproduces exactly what was on screen then.
+// Pure orchestration over the runtime: turn a program (code + seed) into the
+// rows the scene, timeline and hydra panels consume. This is the one cook
+// helper both a live Run and a scrubbed session replay share — replaying a past
+// run is "restore every editable table to that run (editableStore.setReplayView
+// in main.ts) then cook the program that was live then" — so replay no longer
+// treats the "code" table specially; it's just another editable table folded to
+// the run's index like the rest.
 // ----------------------------------------------------------------------------
 
 import { rasterizeRows } from './rasterize.js'
@@ -25,15 +27,6 @@ export interface CookedResult {
   sceneRows: Row[]
   timelineRows: Row[]
   hydraRows: Row[]
-}
-
-export interface CodeEntry {
-  code: string
-  seed: number
-}
-
-export interface ReplayResult extends CookedResult {
-  entry: CodeEntry
 }
 
 interface Runtime {
@@ -60,28 +53,4 @@ export function cookProgram(runtime: Runtime, code: string, seed: number, dataCa
   const hydra = result.views.get('hydra')
   const hydraSketchRows = hydra ? hydraRows(hydra.rows) : hydraRows(events?.rows)
   return { views: result.views, graphs: result.graphs, sceneRows, timelineRows, hydraRows: hydraSketchRows }
-}
-
-// The code+seed active at position `pos` (0-based index) in the "code" table's
-// own event list (editableStore.get('code').events — see editable-tables.ts) —
-// clamped past the end to the latest entry, null before the first (or if
-// there's no history yet). Each entry is a raw table-store event: the first
-// run is a 'create' (seed rows under `.rows[0]`), every later one a 'set-row'
-// (values under `.values`) — the two shapes main.ts's setCodeRow can produce.
-export function codeEntryAt(events: readonly Row[], pos: number): CodeEntry | null {
-  if (pos < 0 || events.length === 0) return null
-  const e = events[Math.min(pos, events.length - 1)]
-  const src = e.kind === 'set-row' ? (e.values as Row | undefined)
-    : e.kind === 'create' ? (e.rows as Row[] | undefined)?.[0]
-    : undefined
-  if (!src || typeof src.code !== 'string') return null
-  return { code: src.code, seed: typeof src.seed === 'number' ? src.seed : 0 }
-}
-
-export function replayAt(
-  runtime: Runtime, events: readonly Row[], pos: number, dataCache?: Map<string, string>,
-): ReplayResult | null {
-  const entry = codeEntryAt(events, pos)
-  if (!entry) return null
-  return { entry, ...cookProgram(runtime, entry.code, entry.seed, dataCache) }
 }
