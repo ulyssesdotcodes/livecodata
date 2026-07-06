@@ -15,8 +15,12 @@
 //
 // The main program is not exempt from this: it lives here too, as an
 // editable table named "code" (columns `code`/`seed`, always exactly one
-// row) that main.ts writes on every Run — so "the session" is nothing more
-// than this store's events, and "code·events" is the run history for free.
+// row) that main.ts writes on every Run. Clicking Apply/Ctrl-Enter records a
+// "run" (see recordRun/SessionRun) — a bookmark of every table's log index at
+// that moment, spanning the whole store rather than just "code" — and the
+// session bar scrubs those runs, folding the log back to any of them
+// (setReplayView) to reproduce the exact state then. So "the session" is this
+// store's events *plus* its list of runs (persisted together — see sessions.ts).
 //
 // A program reads a table via the DSL's editable(name, schema) — see dsl.ts —
 // which appends a create (or schema-reconcile) event on first sight and
@@ -30,6 +34,21 @@ import { createEventLog, type StampedEvent } from './event-log.js'
 import type { Row } from './lineage.js'
 
 export type ColumnType = 'number' | 'string' | 'boolean' | 'code'
+
+// A "run": the session bookmark recorded when the user clicks Apply (Ctrl-Enter)
+// after a batch of edits. It captures, per editable table, how many of that
+// table's log events had landed at that moment (its name·events length) — the
+// "index per editable table event log" the session scrubs over. Because the
+// whole store rides ONE ordered log, that snapshot is exactly a prefix of the
+// log: `at` is its length, and re-folding the log up to `at` reconstructs every
+// table's state as it was at that run. `tables` is the same cut expressed the
+// way the user thinks of it (one index per table) — kept for display and so the
+// serialized session literally is "the event data + a list of per-table
+// indices", but replay uses `at`, which stays correct across renames/removes.
+export interface SessionRun {
+  at: number
+  tables: Record<string, number>
+}
 
 export interface EditableColumn {
   name: string
@@ -155,6 +174,15 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
   }
 }
 
+// Fold a list of events into the table-state map — the whole store's state at
+// the end of that list. Folding a *prefix* of the log (see setReplayView)
+// reconstructs the store as it was at an earlier run.
+function foldEventsMap(events: StampedEvent[]): Map<string, TableState> {
+  const tables = new Map<string, TableState>()
+  for (const e of events) applyEvent(tables, e)
+  return tables
+}
+
 export interface EditableTableStore {
   listNames(): string[]
   has(name: string): boolean
@@ -179,10 +207,26 @@ export interface EditableTableStore {
   setRow(name: string, index: number, values: Record<string, unknown>): void
   // Fired after any change event lands (a fold consumer should re-read).
   onChange(cb: () => void): void
-  // The whole store as one serialized blob (every table's events) — the unit
-  // a session persists. load() replaces the store's entire history and
-  // re-folds every table from scratch; clear() empties it. Both notify like
-  // any other change.
+  // --- runs (session history) ---------------------------------------------
+  // Record the current per-table log indices as a new run (the Apply/Ctrl-Enter
+  // bookmark) and return it. The runs are the coordinates the session bar
+  // scrubs over; the serialized list rides alongside the event data in a saved
+  // session (see sessions.ts).
+  recordRun(): SessionRun
+  runs(): SessionRun[]
+  setRuns(runs: SessionRun[]): void
+  // Reconstruct runs from a legacy session that saved no run list, one per
+  // recorded program Run in "code"'s own history (best-effort backward compat).
+  deriveRunsFromCode(): void
+  // Show the store as it was at `run` — reads (get/has/listNames/ensure) serve
+  // that historical fold and ensure() appends nothing, so a scrubbed replay is
+  // a pure preview. `null` returns to the live head. Any real mutation also
+  // returns to head (you edit the head, never rewrite history).
+  setReplayView(run: SessionRun | null): void
+  // The whole store as one serialized blob (every table's events) — the event
+  // data half of what a session persists (runs are the other half). load()
+  // replaces the store's entire history and re-folds every table from scratch,
+  // resetting runs; clear() empties it. Both notify like any other change.
   serialize(): string
   load(json: string | unknown): boolean
   clear(): void
@@ -190,17 +234,27 @@ export interface EditableTableStore {
 
 export function createEditableTableStore(): EditableTableStore {
   const log = createEventLog()
-  // The fold, kept incrementally: append() applies the new event to this map.
+  // The live head fold, kept incrementally: append() applies the new event to
+  // this map. Always the full log — replay views are separate (below).
   let tables = new Map<string, TableState>()
+  // The recorded runs (Apply bookmarks) — the session bar's scrub coordinates.
+  let runs: SessionRun[] = []
+  // When set (a scrubbed replay), reads serve this historical fold instead of
+  // `tables`, and ensure() is read-only. Null = live head. Any append() clears
+  // it, so an edit always lands on the head, never on a past run.
+  let replay: Map<string, TableState> | null = null
   const listeners: (() => void)[] = []
   const notify = (): void => listeners.forEach((cb) => cb())
 
+  // Which fold reads resolve against — the replay view while scrubbing, else head.
+  const view = (): Map<string, TableState> => replay ?? tables
+
   function refold(): void {
-    tables = new Map()
-    for (const e of log.all()) applyEvent(tables, e)
+    tables = foldEventsMap(log.all())
   }
 
   function append(payload: Record<string, unknown> & { kind: string; table: string }): void {
+    replay = null
     const e = log.append(payload)
     applyEvent(tables, e)
     notify()
@@ -210,11 +264,11 @@ export function createEditableTableStore(): EditableTableStore {
     Object.entries(schema).map(([n, t]) => ({ name: n, type: t }))
 
   return {
-    listNames: () => [...tables.keys()],
-    has: (name) => tables.has(name),
+    listNames: () => [...view().keys()],
+    has: (name) => view().has(name),
 
     get(name: string): EditableTableData | undefined {
-      const t = tables.get(name)
+      const t = view().get(name)
       return t ? { columns: t.columns, rows: t.rows, events: t.events } : undefined
     },
 
@@ -239,6 +293,14 @@ export function createEditableTableStore(): EditableTableStore {
 
     ensure(name: string, schema: Record<string, ColumnType>, seedRows?: Row[]): Row[] {
       const wantCols = schemaColumns(schema)
+      // Replay is a read-only preview: a cook running against a past run must
+      // not append create/schema events. Serve the historical rows (or the
+      // seed, if the program references a table that didn't exist at that run).
+      if (replay) {
+        const t = replay.get(name)
+        if (t) return t.rows
+        return (seedRows ?? []).map((r) => conformRow(r, wantCols))
+      }
       const existing = tables.get(name)
       if (!existing) {
         append({ kind: 'create', table: name, columns: wantCols, rows: seedRows })
@@ -300,10 +362,42 @@ export function createEditableTableStore(): EditableTableStore {
       listeners.push(cb)
     },
 
+    recordRun(): SessionRun {
+      replay = null
+      const tableIdx: Record<string, number> = {}
+      for (const [name, t] of tables) tableIdx[name] = t.events.length
+      const run: SessionRun = { at: log.length, tables: tableIdx }
+      runs.push(run)
+      return run
+    },
+
+    runs: () => runs.map((r) => ({ at: r.at, tables: { ...r.tables } })),
+
+    setRuns(next: SessionRun[]): void {
+      runs = next.map((r) => ({ at: r.at, tables: { ...r.tables } }))
+    },
+
+    deriveRunsFromCode(): void {
+      const code = tables.get('code')
+      const all = log.all()
+      runs = (code?.events ?? []).map((e) => {
+        const at = (e.seq as number) + 1
+        const tableIdx: Record<string, number> = {}
+        for (const [name, t] of foldEventsMap(all.slice(0, at))) tableIdx[name] = t.events.length
+        return { at, tables: tableIdx }
+      })
+    },
+
+    setReplayView(run: SessionRun | null): void {
+      replay = run ? foldEventsMap(log.all().slice(0, run.at)) : null
+    },
+
     serialize: () => log.serialize(),
 
     load(json: string | unknown): boolean {
       if (!log.load(json)) return false
+      replay = null
+      runs = []
       refold()
       notify()
       return true
@@ -312,6 +406,8 @@ export function createEditableTableStore(): EditableTableStore {
     clear(): void {
       log.clear()
       tables = new Map()
+      replay = null
+      runs = []
       notify()
     },
   }
