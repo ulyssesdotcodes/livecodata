@@ -43,7 +43,10 @@ export function initHydra(canvas: HTMLCanvasElement, source: HTMLCanvasElement):
   // The current sketch's variables (see hydra.ts's HydraFrame.vars), read fresh
   // by hydra-ts on every draw call — this is what lets a variable's value
   // change every frame without recompiling: `props` is invoked live, not
-  // captured at compile time.
+  // captured at compile time. hydra-ts merges this object with its own
+  // per-frame fields (time, bpm, fps, resolution, speed, stats) LAST, so a
+  // sketch variable sharing one of those names is always shadowed — it will
+  // read hydra's own value instead of the table's.
   let currentVars: Record<string, unknown> = {}
 
   const hydra = new Hydra({ regl, width, height, props: () => currentVars })

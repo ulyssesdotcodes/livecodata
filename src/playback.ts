@@ -202,13 +202,20 @@ export function initPlayback(
     onTick?.(t, activeLineage(states), src / FPS)
   }
 
+  // Is there anything to play? A program can define a hydra sketch with no 3D
+  // scene at all (see the "Hydra Sketch" sample), so playback isn't gated on
+  // frameIndex alone.
+  function hasContent(): boolean {
+    return frameIndex.map.size > 0 || hydraIndex.length > 0
+  }
+
   function reset(t: number = 0): void {
     sceneAPI.reset()
     aliveObjects = new Set()
     scrubber.value = String(t)
     setFill(t)
     showIndex(t)
-    if (frameIndex.map.size) applyAtIndex(t)
+    if (hasContent()) applyAtIndex(t)
   }
 
   // Where the playhead currently sits, in seconds, whatever the play state.
@@ -238,9 +245,13 @@ export function initPlayback(
     return timeline.frameAt(Math.floor(t * FPS)) / FPS
   }
 
-  // Playback length in seconds: follow the timeline when present, else the cache.
+  // Playback length in seconds: follow the timeline when present, else the
+  // longer of the scene cache and the hydra sketch's own last keyframe (a
+  // hydra-only program has no scene at all to size the loop from).
   function recomputeMax(): void {
-    maxIndex = (timeline.length ? timeline.length - 1 : frameIndex.maxFrame) / FPS
+    const hydraMaxFrame = hydraIndex.length ? (hydraIndex[hydraIndex.length - 1].index as number) : 0
+    const contentMax = Math.max(frameIndex.maxFrame, hydraMaxFrame)
+    maxIndex = (timeline.length ? timeline.length - 1 : contentMax) / FPS
     scrubber.max = String(maxIndex || 100)
   }
 
@@ -256,7 +267,7 @@ export function initPlayback(
     scrubber.value = String(t)
     setFill(t)
     showIndex(t)
-    if (frameIndex.map.size) {
+    if (hasContent()) {
       applyAtIndex(t)
     } else {
       sceneAPI.reset()
@@ -297,7 +308,7 @@ export function initPlayback(
     const t = parseFloat(scrubber.value)
     showIndex(t)
     setFill(t)
-    if (frameIndex.map.size) applyAtIndex(t)
+    if (hasContent()) applyAtIndex(t)
   })
 
   window.addEventListener('pointerup', () => {
@@ -311,7 +322,7 @@ export function initPlayback(
   btn.onclick = toggle
 
   function toggle(): void {
-    if (!frameIndex.map.size) return
+    if (!hasContent()) return
     if (state === 'playing') {
       state = 'paused'
       pausedIndex = position()
