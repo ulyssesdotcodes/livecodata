@@ -84,3 +84,29 @@ test('empty / negative-frame inputs yield no sketch', () => {
   assert.equal(frameAt(null, 0), null)
   assert.equal(frameAt([{ index: 0, code: 'src(s0).out()' }], -1), null)
 })
+
+test('a `beat` column places rows on the loop 1-indexed, scaled by beatSeconds', () => {
+  // beat b sits at (b-1)*beatSeconds seconds → *FPS frames. With a half-second
+  // beat, beat 1 is frame 0 and beat 9 is frame (9-1)*0.5*60 = 240.
+  const idx = buildHydraIndex([
+    { beat: 9, freq: 12 },
+    { beat: 1, code: 'osc(freq).out(o0)', freq: 3 },
+  ], 0.5)
+  assert.deepEqual(idx.map((r) => r.index), [0, 240])
+  // The `beat` control column is not injected as a sketch variable.
+  assert.deepEqual(hydraFrameAt(idx, 0)!.vars, { freq: 3 })
+  assert.deepEqual(hydraFrameAt(idx, 239)!.vars, { freq: 3 })
+  assert.deepEqual(hydraFrameAt(idx, 240)!.vars, { freq: 12 })
+})
+
+test('beatSeconds scales beat placement (tempo change moves the rows)', () => {
+  const rows: Row[] = [{ beat: 5, code: 'osc(1).out(o0)' }]
+  // beat 5 → (5-1)*beatSeconds seconds.
+  assert.equal(buildHydraIndex(rows, 0.5)[0].index, Math.round(4 * 0.5 * 60)) // 120
+  assert.equal(buildHydraIndex(rows, 0.25)[0].index, Math.round(4 * 0.25 * 60)) // 60
+})
+
+test('`beat` wins over `index` when a row carries both', () => {
+  const idx = buildHydraIndex([{ beat: 3, index: 99, code: 'osc(1).out(o0)' }], 0.5)
+  assert.equal(idx[0].index, Math.round(2 * 0.5 * 60)) // beat 3, not index 99
+})

@@ -3,7 +3,7 @@ import { buildHydraIndex, hydraFrameAt } from './hydra.js'
 import { buildTimeline, type Timeline } from './timeline.js'
 import { activeLineage } from './lineage.js'
 import { resolveBindings, type EvalCtx } from './dsl.js'
-import { FPS } from './constants.js'
+import { FPS, DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS } from './constants.js'
 import type { Row } from './lineage.js'
 import type { SceneAPI } from './three-scene.js'
 import type { HydraAPI } from './hydra-scene.js'
@@ -71,12 +71,29 @@ export function initPlayback(
   let startTime: number | null = null
   let pausedIndex = 0
   let frameIndex: FrameIndex = buildFrameIndex([])
+  // The hydra sketch rows as cooked (raw `beat`/`index`), kept so the frame
+  // index can be rebuilt when the tempo changes (beat placement is tempo-scaled).
+  let hydraSourceRows: Row[] = []
   let hydraIndex: Row[] = buildHydraIndex([])
   let timeline: Timeline = buildTimeline([])
   let aliveObjects = new Set<unknown>()
   let maxIndex = 0
   let isScrubbing = false
   let loop = true // when playback reaches the end, wrap back to the start
+  // How many beats one loop lasts when nothing else sizes it (no timeline, no
+  // 3D scene) — a pure hydra sketch. User-settable via the loop-length control;
+  // combined with the tempo it sets the loop's seconds, so the last sketch row
+  // no longer has to sit exactly at the loop boundary (where it was invisible).
+  let loopBeats = DEFAULT_LOOP_BEATS
+
+  // Seconds per beat, from the tapped tempo (average interval) or the shared
+  // default until two taps set one — the same rule the DSL's beats()/tempo()
+  // use, so a beat-synced sketch and a beats() timeline agree on the grid.
+  function beatSeconds(): number {
+    const rows = tapControl?.rows()
+    if (rows && rows.length > 1) return (rows[rows.length - 1].time as number) / (rows.length - 1)
+    return DEFAULT_BEAT_SECONDS
+  }
 
   const topRow = document.createElement('div')
   topRow.className = 'playback-row'
@@ -95,12 +112,38 @@ export function initPlayback(
     loopBtn.classList.toggle('active', loop)
   }
 
+  // Loop length in beats — how long one loop lasts (at the current tempo) for a
+  // program with no timeline/scene to size it. Changing it re-lengths the loop
+  // live so the last sketch keyframe is no longer stuck on the loop boundary.
+  const loopLenWrap = document.createElement('label')
+  loopLenWrap.className = 'loop-len'
+  loopLenWrap.title = 'Loop length in beats'
+  const loopLenInput = document.createElement('input')
+  loopLenInput.id = 'loop-beats'
+  loopLenInput.type = 'number'
+  loopLenInput.min = '1'
+  loopLenInput.step = '1'
+  loopLenInput.value = String(loopBeats)
+  const loopLenLabel = document.createElement('span')
+  loopLenLabel.textContent = 'beats'
+  loopLenWrap.appendChild(loopLenInput)
+  loopLenWrap.appendChild(loopLenLabel)
+  loopLenInput.onchange = () => {
+    const n = Math.max(1, Math.round(parseFloat(loopLenInput.value) || DEFAULT_LOOP_BEATS))
+    loopLenInput.value = String(n)
+    if (n === loopBeats) return
+    loopBeats = n
+    recomputeMax()
+    retimeTo(currentTime())
+  }
+
   const timeEl = document.createElement('span')
   timeEl.id = 'playback-time'
   timeEl.textContent = '0.00s'
 
   topRow.appendChild(btn)
   topRow.appendChild(loopBtn)
+  topRow.appendChild(loopLenWrap)
   topRow.appendChild(timeEl)
 
   // Tap-beat row: record wall-time presses and show the tempo derived from them
@@ -245,12 +288,20 @@ export function initPlayback(
     return timeline.frameAt(Math.floor(t * FPS)) / FPS
   }
 
-  // Playback length in seconds: follow the timeline when present, else the
-  // longer of the scene cache and the hydra sketch's own last keyframe (a
-  // hydra-only program has no scene at all to size the loop from).
+  // Playback length in seconds: follow the timeline when present; else the scene
+  // cache when there's a 3D scene; else — a pure hydra sketch — the loop-length
+  // control (loopBeats at the current tempo). Sizing a hydra-only loop from the
+  // beat grid rather than the sketch's last keyframe is what keeps that last
+  // keyframe visible instead of landing exactly on the loop boundary.
   function recomputeMax(): void {
-    const hydraMaxFrame = hydraIndex.length ? (hydraIndex[hydraIndex.length - 1].index as number) : 0
-    const contentMax = Math.max(frameIndex.maxFrame, hydraMaxFrame)
+    let contentMax: number
+    if (frameIndex.maxFrame > 0) {
+      contentMax = frameIndex.maxFrame
+    } else if (hydraIndex.length) {
+      contentMax = Math.round(loopBeats * beatSeconds() * FPS)
+    } else {
+      contentMax = 0
+    }
     maxIndex = (timeline.length ? timeline.length - 1 : contentMax) / FPS
     scrubber.max = String(maxIndex || 100)
   }
@@ -281,7 +332,8 @@ export function initPlayback(
   // replacing the baked data. (First load is at 0 because that's where we are.)
   function load(sceneRows: Row[], timelineRows: Row[], hydraRows: Row[]): void {
     frameIndex = buildFrameIndex(sceneRows ?? [])
-    hydraIndex = buildHydraIndex(hydraRows ?? [])
+    hydraSourceRows = hydraRows ?? []
+    hydraIndex = buildHydraIndex(hydraSourceRows, beatSeconds())
     timeline = buildTimeline(timelineRows ?? [])
     recomputeMax()
     retimeTo(currentTime())
@@ -298,6 +350,9 @@ export function initPlayback(
   // wouldn't actually resume from.
   function setTimeline(timelineRows: Row[]): void {
     timeline = buildTimeline(timelineRows ?? [])
+    // A tap also moves the beat grid, so re-place beat-based sketch rows at the
+    // new tempo (index-based rows are unaffected, but rebuilding is cheap).
+    hydraIndex = buildHydraIndex(hydraSourceRows, beatSeconds())
     recomputeMax()
     const aligned = state === 'playing' ? wallAlignedPhase() : null
     retimeTo(aligned ?? currentTime())

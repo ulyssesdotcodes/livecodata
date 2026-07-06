@@ -47,7 +47,7 @@ define("scene", (rand, table) => table("events").rasterize(3))
 // define("hydra", ...) supplies the sketch. A row's \`code\` column is a hydra
 // sketch string ending in .out(o0). Any OTHER column (here \`freq\`) is a
 // variable in scope while the sketch runs — the most-recent value at each
-// frame wins, same as \`code\`.
+// beat wins, same as \`code\`.
 // Reference a variable as a FUNCTION — (props) => props.freq — rather than
 // the bare name: hydra calls it fresh every frame, so the value tracks the
 // table live, during playback, with no recompile/rerun. A bare \`freq\` would
@@ -56,20 +56,25 @@ define("scene", (rand, table) => table("events").rasterize(3))
 // fps, resolution, speed, stats) — those always win over an injected value
 // of the same name, so e.g. naming this variable \`speed\` would silently be
 // overridden by hydra's own playback-speed multiplier instead of your data.
+//
+// The \`beat\` column places a row on the loop: beat 1 is the top of the loop,
+// and the loop is as many beats long as the "beats" control under the scene
+// (16 by default). So the freq change at beat 9 comes in halfway through the
+// loop (the start of the 3rd measure) and stays until the loop wraps — the
+// last row is fully visible now, because the loop length is set by the beats
+// control, not by wherever the last row happens to sit. Tap 🥁 to change the
+// tempo (how long a beat lasts); change "beats" to make the loop longer/shorter.
+//
 // editable(name, schema, seedRows?) makes this table live-editable in the
 // table panel (its own "sketch" tab): click the code cell to open the sketch
 // in this editor; edit \`freq\`, or add a row that just changes \`freq\` at a
-// later \`index\` (like the row below, which kicks it up at 1.5s) right in the
-// table — no code change needed. (Every edit is an event too — see the
-// "sketch·events" tab.) With no 3D scene, the hydra table's own last row sets
-// the loop length — the trailing row below just holds \`freq\` steady out to 4s
-// so there's room to see it before the loop wraps back to the start.
+// later \`beat\` (like the row below at beat 9) right in the table — no code
+// change needed. (Every edit is an event too — see the "sketch·events" tab.)
 define("hydra", () =>
-  editable("sketch", { index: "number", code: "code", freq: "number" }, [
-    { index: 0, freq: 3,
+  editable("sketch", { beat: "number", code: "code", freq: "number" }, [
+    { beat: 1, freq: 3,
       code: "osc((props) => props.freq, 0.1, 1.5).kaleid(5).out(o0)" },
-    { index: 1.5, freq: 12 },
-    { index: 4, freq: 12 },
+    { beat: 9, freq: 12 },
   ])
 )
 `,
@@ -187,6 +192,10 @@ define("ball_height", (rand, table) =>
 //    rather than the bare name, so every collision's new value takes effect
 //    immediately, without recompiling the sketch (a recompile would restart its
 //    oscillator phase, visible as a stutter on every landing).
+//    Here the rows are keyed by \`index\` (source seconds) rather than \`beat\`
+//    (loop beat, as in the "Hydra Sketch" sample): the \`amount\` bumps are
+//    driven by physics collisions, which land at content times, so they're
+//    synced to the scene's clock, not the beat grid.
 //    The base sketch lives in the EDITABLE "sketch" table (seeded below): click
 //    its code cell to open the sketch in this editor, tweak, Ctrl-Enter to
 //    apply — the edit is appended to the table's event log (see sketch·events)

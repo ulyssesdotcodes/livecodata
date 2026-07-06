@@ -26,7 +26,7 @@
 
 import { rasterizeRows } from './rasterize.js'
 import { withLineage, carry, unionLineage, getLineage, type Row } from './lineage.js'
-import { FPS } from './constants.js'
+import { FPS, DEFAULT_BEAT_SECONDS } from './constants.js'
 import type { ColumnType } from './editable-tables.js'
 
 // ── Expr: a small, serializable, chainable expression over a row ─────────────
@@ -824,13 +824,13 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     taps: () => new Table((ctx?.tapRows?.() ?? []).map((r) => ({ ...r })), ctx),
     // Seconds per beat derived from the tap-beat table (the average interval), or
     // `fallback` (default 0.5s = 120 BPM) until two taps are recorded.
-    tempo: (fallback = 0.5): number => beatSecondsFromTaps(ctx?.tapRows?.()) ?? fallback,
+    tempo: (fallback = DEFAULT_BEAT_SECONDS): number => beatSecondsFromTaps(ctx?.tapRows?.()) ?? fallback,
     // A looping timeline `count` beats long at the tapped tempo — measure playback
     // length in beats (e.g. beats(16) is a 16-beat loop). Each row is one playback
     // frame; `time` (seconds) is the source time it maps to. By default time runs
     // identity (0 → count·beat seconds) so the baked scene plays once per loop;
     // pass { fit } in source-seconds to stretch a scene across the beat window.
-    beats: (count: number, { fallback = 0.5, fit }: { fallback?: number; fit?: number } = {}): Table => {
+    beats: (count: number, { fallback = DEFAULT_BEAT_SECONDS, fit }: { fallback?: number; fit?: number } = {}): Table => {
       const beat = beatSecondsFromTaps(ctx?.tapRows?.()) ?? fallback
       const totalSeconds = Math.max(0, count) * beat
       const frames = Math.max(1, Math.round(totalSeconds * FPS))
