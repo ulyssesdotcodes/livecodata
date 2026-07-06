@@ -1,22 +1,24 @@
-// livecodata hydra — table-driven video synth (ojack's hydra)
+// livecodata hydra — table-driven video synth (hydra-ts, a port of ojack's hydra)
 // ----------------------------------------------------------------------------
-// Replaces the Three.js post-processing chain with hydra (hydra-synth). Instead
-// of a chain of effect passes, the visuals are post-processed by a *hydra
-// sketch* — and that sketch lives in a table, exactly like every other thing in
-// livecodata.
+// Replaces the Three.js post-processing chain with hydra. Instead of a chain of
+// effect passes, the visuals are post-processed by a *hydra sketch* — and that
+// sketch lives in a table, exactly like every other thing in livecodata.
 //
 // The "hydra" view is a table of sketch keyframe rows, ordered by `index`
 // (seconds). Each row may carry:
-//   - code : a hydra sketch string, e.g. "src(s0).modulate(noise(speed)).out()"
+//   - code : a hydra sketch string, e.g. "src(s0).modulate(noise(2)).out()"
 //            (s0 is the rendered Three.js scene; o0 is the output).
 //   - any other column : a *variable* in scope while the sketch runs (speed,
 //            amount, …). These are the "variables which are used by the sketch".
+//            Reference one as a function, e.g. `osc((props) => props.speed)` —
+//            hydra-ts calls it fresh every frame, so its value can change
+//            without recompiling the sketch (see hydra-scene.ts).
 //
 // Sampling at a frame yields the most-recent code plus the most-recent value of
 // each variable seen at/before that frame, so both the sketch and the values
 // driving it are plain table data the user can inspect and wire up from the rest
-// of the dataflow (physics, beats, math, …). This module is pure (no hydra-synth
-// / DOM dependency); the actual GPU rendering lives in hydra-scene.ts.
+// of the dataflow (physics, beats, math, …). This module is pure (no hydra-ts /
+// DOM dependency); the actual GPU rendering lives in hydra-scene.ts.
 // ----------------------------------------------------------------------------
 
 import { FPS } from './constants.js'

@@ -196,6 +196,7 @@ export function initPlayback(
     }
     const sketch = hydraFrameAt(hydraIndex, src)
     hydraAPI.setSketch(sketch && ctx ? { ...sketch, vars: resolveBindings(sketch.vars, ctx) } : sketch)
+    hydraAPI.tick(src / FPS)
     // Graphed/table views key their rows by `index` in seconds, so report the
     // source position in seconds too (src is an internal frame count).
     onTick?.(t, activeLineage(states), src / FPS)
