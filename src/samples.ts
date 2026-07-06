@@ -38,6 +38,39 @@ define("scene", (rand, table) => table("events").rasterize(3))
 `,
   },
   {
+    name: "Hydra Sketch",
+    code: `// livecodata — post-processing with hydra (ojack's hydra-synth)
+// The rendered 3D scene becomes just another texture hydra can feed through a
+// video-synth sketch. Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play.
+
+// 1. A single sphere — just something on screen for the sketch to process.
+//    (A sparse "create" event, baked to a dense per-frame cache by rasterize —
+//    same pipeline every scene in these samples uses; see "Editable Table".)
+define("events", () => rows([
+  { id: "ball", type: "create", index: 0, shape: "sphere", color: 0x4a9eff,
+    px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
+]))
+
+define("scene", (rand, table) => table("events").rasterize(3))
+
+// 2. define("hydra", ...) supplies the post-processing sketch. A row's \`code\`
+//    column is a hydra sketch string: s0 is the rendered 3D scene, o0 is the
+//    output, so src(s0)...out(o0) reads the scene and writes what's shown.
+//    Any OTHER column (here \`speed\`) is a variable in scope while the sketch
+//    runs — the most-recent value at each frame wins, same as \`code\`.
+//    editable(name, schema, seedRows?) makes this table live-editable in the
+//    table panel (its own "sketch" tab): click the code cell to open the
+//    sketch in this editor; edit \`speed\` right in the table, no code change
+//    needed. (Every edit is an event too — see the "sketch·events" tab.)
+define("hydra", () =>
+  editable("sketch", { index: "number", code: "code", speed: "number" }, [
+    { index: 0, speed: 3,
+      code: "src(s0).modulate(osc(speed, 0.1).rotate(0.5), 0.1).out(o0)" },
+  ])
+)
+`,
+  },
+  {
     name: "House of Cards",
     code: `// livecodata — House of Cards
 // A triangular pyramid of playing cards collapses when a ball drops on it.
