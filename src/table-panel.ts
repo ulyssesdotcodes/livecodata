@@ -126,15 +126,6 @@ export function initTablePanel(
   // tabs/select swap between desktop and mobile layouts.
   header.appendChild(addTableBtn)
 
-  // Lives in the header (not below the table) so it can't get pushed off
-  // the bottom of a short mobile viewport by a tall table. Shown only when
-  // the current tab is an editable table (see renderInner/renderEditableTable).
-  const addRowBtn = document.createElement('button')
-  addRowBtn.className = 'table-tab-add'
-  addRowBtn.textContent = '+ row'
-  addRowBtn.style.display = 'none'
-  header.appendChild(addRowBtn)
-
   const filterInput = document.createElement('input')
   filterInput.className = 'table-filter'
   filterInput.type = 'text'
@@ -199,6 +190,15 @@ export function initTablePanel(
   tableEl.appendChild(thead)
   const tbody = document.createElement('tbody')
   tableEl.appendChild(tbody)
+
+  const editToolbar = document.createElement('div')
+  editToolbar.className = 'edit-toolbar'
+  editToolbar.style.display = 'none'
+  const addRowBtn = document.createElement('button')
+  addRowBtn.className = 'add-row-btn'
+  addRowBtn.textContent = '+ row'
+  editToolbar.appendChild(addRowBtn)
+  content.appendChild(editToolbar)
 
   let tabEls = new Map<string, HTMLButtonElement>()
   let filterText = ''
@@ -497,7 +497,7 @@ export function initTablePanel(
   }
 
   function renderEditableTable(name: string): void {
-    addRowBtn.style.display = 'inline-block'
+    editToolbar.style.display = 'flex'
     addRowBtn.onclick = () => { editableStore.addRow(name); render(name) }
 
     thead.innerHTML = ''
@@ -574,7 +574,7 @@ export function initTablePanel(
       return
     }
 
-    addRowBtn.style.display = 'none'
+    editToolbar.style.display = 'none'
 
     let spec = name ? graphByName.get(name) : undefined
     // Auto-chart data views only — event-history tables (`foo·events`, `code`)

@@ -560,6 +560,14 @@ html, body {
   width: 90px;
 }
 
+.edit-toolbar {
+  flex-shrink: 0;
+  padding: 5px 8px;
+  border-top: 1px solid #0f3460;
+  background: #12203c;
+}
+
+.add-row-btn,
 .add-col-btn,
 .col-confirm-btn {
   background: #16213e;
@@ -572,6 +580,7 @@ html, body {
   cursor: pointer;
 }
 
+.add-row-btn:hover,
 .add-col-btn:hover,
 .col-confirm-btn:hover {
   color: #9be09e;
