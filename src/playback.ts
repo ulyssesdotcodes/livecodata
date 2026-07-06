@@ -247,11 +247,15 @@ export function initPlayback(
 
   // Playback length in seconds: follow the timeline when present, else the
   // longer of the scene cache and the hydra sketch's own last keyframe (a
-  // hydra-only program has no scene at all to size the loop from).
+  // hydra-only program has no scene at all to size the loop from). One frame
+  // past the last frame with real content: the loop wraps the instant t
+  // reaches maxIndex, discarding whatever was showing rather than rendering
+  // it — so without this, the very last frame (e.g. a hydra variable's final
+  // value) never actually gets a chance to appear before looping back to 0.
   function recomputeMax(): void {
     const hydraMaxFrame = hydraIndex.length ? (hydraIndex[hydraIndex.length - 1].index as number) : 0
-    const contentMax = Math.max(frameIndex.maxFrame, hydraMaxFrame)
-    maxIndex = (timeline.length ? timeline.length - 1 : contentMax) / FPS
+    const lastContentFrame = Math.max(frameIndex.maxFrame, hydraMaxFrame)
+    maxIndex = (timeline.length ? timeline.length : lastContentFrame + 1) / FPS
     scrubber.max = String(maxIndex || 100)
   }
 
