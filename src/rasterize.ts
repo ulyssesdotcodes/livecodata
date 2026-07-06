@@ -23,6 +23,28 @@ interface SampledState {
   sources: Row[]
 }
 
+// Fields rasterize interprets itself (timing, transform, color, bookkeeping).
+// Anything else on an event — e.g. a custom field, or a { $expr } streaming
+// binding from setField("amount", midi("c4")) — is "extra": carried through to
+// each baked frame row untouched, to be read (and bindings resolved) at playback.
+const RESERVED = new Set([
+  'id', 'type', 'index', 'dur', 'ease', 'to', 'shape', 'color',
+  'px', 'py', 'pz', 'rx', 'ry', 'rz', 'frame',
+])
+
+// Accumulate the non-reserved fields visible at frame `i` (events at-or-before
+// `i`, last write wins), so a field set on create — or updated later — sticks.
+function gatherExtra(events: Row[], i: number): Row {
+  const extra: Row = {}
+  for (const e of events) {
+    if ((e.index as number) > i) continue
+    for (const k in e) {
+      if (!RESERVED.has(k)) extra[k] = e[k]
+    }
+  }
+  return extra
+}
+
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t
 }
@@ -69,6 +91,10 @@ function sampleObject(events: Row[], i: number): SampledState | null {
       if (typeof v === 'number' && typeof from[k] === 'number')
         fields[k] = lerp(from[k] as number, v, t)
   }
+  // Non-numeric custom fields — e.g. a { $expr } streaming binding from
+  // setField("amount", midi("c4")) — don't lerp; carry the most recent
+  // event's value through untouched (resolved per frame at playback).
+  Object.assign(fields, gatherExtra(events, i))
 
   const sources = [createEv, from, to].filter((x): x is Row => x !== null)
   return { fields, sources }
