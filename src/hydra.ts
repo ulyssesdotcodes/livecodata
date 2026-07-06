@@ -8,11 +8,14 @@
 // (seconds). Each row may carry:
 //   - code : a hydra sketch string, e.g. "src(s0).modulate(noise(2)).out()"
 //            (s0 is the rendered Three.js scene; o0 is the output).
-//   - any other column : a *variable* in scope while the sketch runs (speed,
+//   - any other column : a *variable* in scope while the sketch runs (freq,
 //            amount, …). These are the "variables which are used by the sketch".
-//            Reference one as a function, e.g. `osc((props) => props.speed)` —
+//            Reference one as a function, e.g. `osc((props) => props.freq)` —
 //            hydra-ts calls it fresh every frame, so its value can change
-//            without recompiling the sketch (see hydra-scene.ts).
+//            without recompiling the sketch (see hydra-scene.ts). Avoid naming
+//            a variable after one of hydra's own per-frame fields (time, bpm,
+//            fps, resolution, speed, stats) — those always win over an
+//            injected value of the same name (see hydra-scene.ts's `props`).
 //
 // Sampling at a frame yields the most-recent code plus the most-recent value of
 // each variable seen at/before that frame, so both the sketch and the values

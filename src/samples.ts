@@ -39,40 +39,37 @@ define("scene", (rand, table) => table("events").rasterize(3))
   },
   {
     name: "Hydra Sketch",
-    code: `// livecodata — post-processing with hydra (hydra-ts, a port of ojack's hydra)
-// The rendered 3D scene becomes just another texture hydra can feed through a
-// video-synth sketch. Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play.
+    code: `// livecodata — a video-synth sketch with hydra (hydra-ts, a port of ojack's hydra)
+// A generative hydra sketch — no 3D scene involved (see "House of Cards" for
+// hydra post-processing a rendered scene via src(s0)). Press "Run ▶" (or
+// Cmd/Ctrl-Enter), then hit Play.
 
-// 1. A single sphere — just something on screen for the sketch to process.
-//    (A sparse "create" event, baked to a dense per-frame cache by rasterize —
-//    same pipeline every scene in these samples uses; see "Editable Table".)
-define("events", () => rows([
-  { id: "ball", type: "create", index: 0, shape: "sphere", color: 0x4a9eff,
-    px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
-]))
-
-define("scene", (rand, table) => table("events").rasterize(4))
-
-// 2. define("hydra", ...) supplies the post-processing sketch. A row's \`code\`
-//    column is a hydra sketch string: s0 is the rendered 3D scene, o0 is the
-//    output, so src(s0)...out(o0) reads the scene and writes what's shown.
-//    Any OTHER column (here \`speed\`) is a variable in scope while the sketch
-//    runs — the most-recent value at each frame wins, same as \`code\`.
-//    Reference a variable as a FUNCTION — (props) => props.speed — rather
-//    than the bare name: hydra calls it fresh every frame, so the value
-//    tracks the table live, during playback, with no recompile/rerun. A bare
-//    \`speed\` would only ever see the value from when the sketch was compiled.
-//    editable(name, schema, seedRows?) makes this table live-editable in the
-//    table panel (its own "sketch" tab): click the code cell to open the
-//    sketch in this editor; edit \`speed\`, or add a row that just changes
-//    \`speed\` at a later \`index\` (like the row below, which kicks it up at
-//    2s) right in the table — no code change needed. (Every edit is an event
-//    too — see the "sketch·events" tab.)
+// define("hydra", ...) supplies the sketch. A row's \`code\` column is a hydra
+// sketch string ending in .out(o0). Any OTHER column (here \`freq\`) is a
+// variable in scope while the sketch runs — the most-recent value at each
+// frame wins, same as \`code\`.
+// Reference a variable as a FUNCTION — (props) => props.freq — rather than
+// the bare name: hydra calls it fresh every frame, so the value tracks the
+// table live, during playback, with no recompile/rerun. A bare \`freq\` would
+// only ever see the value from when the sketch was compiled.
+// Pick variable names that aren't hydra's OWN per-frame fields (time, bpm,
+// fps, resolution, speed, stats) — those always win over an injected value
+// of the same name, so e.g. naming this variable \`speed\` would silently be
+// overridden by hydra's own playback-speed multiplier instead of your data.
+// editable(name, schema, seedRows?) makes this table live-editable in the
+// table panel (its own "sketch" tab): click the code cell to open the sketch
+// in this editor; edit \`freq\`, or add a row that just changes \`freq\` at a
+// later \`index\` (like the row below, which kicks it up at 1.5s) right in the
+// table — no code change needed. (Every edit is an event too — see the
+// "sketch·events" tab.) With no 3D scene, the hydra table's own last row sets
+// the loop length — the trailing row below just holds \`freq\` steady out to 4s
+// so there's room to see it before the loop wraps back to the start.
 define("hydra", () =>
-  editable("sketch", { index: "number", code: "code", speed: "number" }, [
-    { index: 0, speed: 3,
-      code: "src(s0).modulate(osc((props) => props.speed, 0.1).rotate(0.5), 0.1).out(o0)" },
-    { index: 2, speed: 12 },
+  editable("sketch", { index: "number", code: "code", freq: "number" }, [
+    { index: 0, freq: 3,
+      code: "osc((props) => props.freq, 0.1, 1.5).kaleid(5).out(o0)" },
+    { index: 1.5, freq: 12 },
+    { index: 4, freq: 12 },
   ])
 )
 `,
