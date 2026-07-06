@@ -5,6 +5,7 @@ import {
 } from '../src/dsl.js'
 import { rasterizeRows } from '../src/rasterize.js'
 import { buildMidiIndex, sampleMidiAt, midiRow, decodeMidi } from '../src/midi.js'
+import { buildHydraIndex, hydraFrameAt } from '../src/hydra.js'
 import type { Row } from '../src/lineage.js'
 
 const t = (rows: Row[]): Table => new Table(rows)
@@ -92,4 +93,19 @@ test('a note recorded at 1s drives the field every time the loop passes 1s', () 
   assert.equal(rowAt(60).amount, 1, 'loop reaches 1s: note on')
   assert.equal(rowAt(90).amount, 1, 'still held at 1.5s')
   assert.equal(rowAt(120).amount, 0, 'released at 2s')
+})
+
+// ── The same carry-through, but for a hydra sketch variable ─────────────────
+
+test('a midi binding in a hydra sketch variable survives to hydraFrameAt and resolves at playback', () => {
+  const row = t([{ index: 0, code: 'osc(speed).out()' }]).setField('speed', midi('c4')).rows[0]
+  assert.ok(isBinding(row.speed), 'the sketch variable is deferred, like a scene field')
+
+  const idx = buildHydraIndex([row])
+  const frame = hydraFrameAt(idx, 0)
+  assert.ok(frame)
+  assert.ok(isBinding(frame!.vars.speed), 'the binding survives hydraFrameAt untouched')
+
+  const resolved = resolveBindings(frame!.vars, { midi: () => 0.6 })
+  assert.equal(resolved.speed, 0.6)
 })
