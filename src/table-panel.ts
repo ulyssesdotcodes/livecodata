@@ -105,6 +105,13 @@ export function initTablePanel(
   tabs.className = 'table-tabs'
   header.appendChild(tabs)
 
+  // Mobile substitute for the tab strip — a native <select> is far easier to
+  // use with a thumb than a wrapping row of small buttons.
+  const tabSelect = document.createElement('select')
+  tabSelect.className = 'table-tab-select'
+  tabSelect.onchange = () => render(tabSelect.value)
+  header.appendChild(tabSelect)
+
   const addTableBtn = document.createElement('button')
   addTableBtn.className = 'table-tab-add'
   addTableBtn.textContent = '+ table'
@@ -115,6 +122,9 @@ export function initTablePanel(
     current = name
     rebuildTabs()
   }
+  // Always visible (not tucked inside the tab strip) so it survives the
+  // tabs/select swap between desktop and mobile layouts.
+  header.appendChild(addTableBtn)
 
   const filterInput = document.createElement('input')
   filterInput.className = 'table-filter'
@@ -134,6 +144,27 @@ export function initTablePanel(
 
   const graphSection = document.createElement('div')
   graphSection.className = 'tab-graph'
+
+  // Collapse toggle lives in its own row so it survives graphLegend being
+  // cleared and rebuilt on every render.
+  const graphHeader = document.createElement('div')
+  graphHeader.className = 'graph-header'
+  const graphCollapseBtn = document.createElement('button')
+  graphCollapseBtn.className = 'collapse-btn'
+  graphHeader.appendChild(graphCollapseBtn)
+  const graphTitleEl = document.createElement('span')
+  graphTitleEl.className = 'graph-title'
+  graphTitleEl.textContent = 'Graph'
+  graphHeader.appendChild(graphTitleEl)
+  graphSection.appendChild(graphHeader)
+
+  function setGraphCollapsed(collapsed: boolean): void {
+    graphSection.classList.toggle('graph-collapsed', collapsed)
+    graphCollapseBtn.textContent = collapsed ? '▸' : '▾'
+    graphCollapseBtn.setAttribute('aria-label', collapsed ? 'Expand graph' : 'Collapse graph')
+  }
+  graphCollapseBtn.onclick = () => setGraphCollapsed(!graphSection.classList.contains('graph-collapsed'))
+  setGraphCollapsed(window.matchMedia('(max-width: 767px)').matches)
 
   const graphLegend = document.createElement('div')
   graphLegend.className = 'graph-legend'
@@ -213,6 +244,7 @@ export function initTablePanel(
 
   function highlightTab(name: string | null): void {
     tabEls.forEach((el, n) => el.classList.toggle('tab-active', n === name))
+    if (name != null) tabSelect.value = name
   }
 
   function drawCurrentChart(): void {
@@ -297,7 +329,14 @@ export function initTablePanel(
         tabs.appendChild(tab)
         tabEls.set(n, tab)
       })
-      tabs.appendChild(addTableBtn)
+
+      tabSelect.innerHTML = ''
+      names.forEach((n) => {
+        const opt = document.createElement('option')
+        opt.value = n
+        opt.textContent = editableStore.has(n) ? `✎ ${n}` : n
+        tabSelect.appendChild(opt)
+      })
     }
 
     if (!names.length) { render(null); return }
