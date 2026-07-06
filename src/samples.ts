@@ -39,7 +39,7 @@ define("scene", (rand, table) => table("events").rasterize(3))
   },
   {
     name: "Hydra Sketch",
-    code: `// livecodata — post-processing with hydra (ojack's hydra-synth)
+    code: `// livecodata — post-processing with hydra (hydra-ts, a port of ojack's hydra)
 // The rendered 3D scene becomes just another texture hydra can feed through a
 // video-synth sketch. Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play.
 
@@ -51,21 +51,28 @@ define("events", () => rows([
     px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
 ]))
 
-define("scene", (rand, table) => table("events").rasterize(3))
+define("scene", (rand, table) => table("events").rasterize(4))
 
 // 2. define("hydra", ...) supplies the post-processing sketch. A row's \`code\`
 //    column is a hydra sketch string: s0 is the rendered 3D scene, o0 is the
 //    output, so src(s0)...out(o0) reads the scene and writes what's shown.
 //    Any OTHER column (here \`speed\`) is a variable in scope while the sketch
 //    runs — the most-recent value at each frame wins, same as \`code\`.
+//    Reference a variable as a FUNCTION — (props) => props.speed — rather
+//    than the bare name: hydra calls it fresh every frame, so the value
+//    tracks the table live, during playback, with no recompile/rerun. A bare
+//    \`speed\` would only ever see the value from when the sketch was compiled.
 //    editable(name, schema, seedRows?) makes this table live-editable in the
 //    table panel (its own "sketch" tab): click the code cell to open the
-//    sketch in this editor; edit \`speed\` right in the table, no code change
-//    needed. (Every edit is an event too — see the "sketch·events" tab.)
+//    sketch in this editor; edit \`speed\`, or add a row that just changes
+//    \`speed\` at a later \`index\` (like the row below, which kicks it up at
+//    2s) right in the table — no code change needed. (Every edit is an event
+//    too — see the "sketch·events" tab.)
 define("hydra", () =>
   editable("sketch", { index: "number", code: "code", speed: "number" }, [
     { index: 0, speed: 3,
-      code: "src(s0).modulate(osc(speed, 0.1).rotate(0.5), 0.1).out(o0)" },
+      code: "src(s0).modulate(osc((props) => props.speed, 0.1).rotate(0.5), 0.1).out(o0)" },
+    { index: 2, speed: 12 },
   ])
 )
 `,
@@ -174,12 +181,15 @@ define("ball_height", (rand, table) =>
     .graph("height")
 )
 
-// 5. Post-processing is a hydra sketch (ojack's hydra). The "hydra" view is a
+// 5. Post-processing is a hydra sketch (hydra-ts). The "hydra" view is a
 //    table whose \`code\` column holds a hydra sketch string and whose other
 //    columns are variables in scope while the sketch runs. s0 is the rendered 3D
 //    scene; o0 is the output, so src(s0)...out() post-processes the scene. The
 //    most-recent code row wins, and each variable holds its most-recent value
-//    until a later row changes it.
+//    until a later row changes it — referenced as (props) => props.amount
+//    rather than the bare name, so every collision's new value takes effect
+//    immediately, without recompiling the sketch (a recompile would restart its
+//    oscillator phase, visible as a stutter on every landing).
 //    The base sketch lives in the EDITABLE "sketch" table (seeded below): click
 //    its code cell to open the sketch in this editor, tweak, Ctrl-Enter to
 //    apply — the edit is appended to the table's event log (see sketch·events)
@@ -188,7 +198,7 @@ define("ball_height", (rand, table) =>
 define("hydra", (rand, table) =>
   editable("sketch", { index: "number", code: "code", amount: "number" }, [
     { index: 0, amount: 0.12,
-      code: "src(s0).modulate(osc(2.5, 0.1), amount).out(o0)" },
+      code: "src(s0).modulate(osc(2.5, 0.1), (props) => props.amount).out(o0)" },
   ]).concat(
     // Declarative, diffable form: filter(Expr) + emit(template). Values are Expr
     // nodes (field("index").add(0.25)) so the engine can hash this view and reuse
