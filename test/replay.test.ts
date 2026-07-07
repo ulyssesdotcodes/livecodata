@@ -1,14 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createRuntime } from '../src/runtime.js'
-import { cookProgram, replayAt, codeEntryAt } from '../src/replay.js'
-import type { Row } from '../src/lineage.js'
-
-// The "code" editable table's own event shapes (see editable-tables.ts): the
-// first run is a 'create' (seed row under `.rows[0]`), every later one a
-// 'set-row' (values under `.values`) — replayAt/codeEntryAt read either.
-const createEvent = (code: string, seed: number): Row => ({ kind: 'create', rows: [{ code, seed }] })
-const runEvent = (code: string, seed: number): Row => ({ kind: 'set-row', values: { code, seed } })
+import { cookProgram } from '../src/replay.js'
 
 const PROG = (n: number): string => `
   define("base", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
@@ -81,46 +74,13 @@ test('hydra variables can be data-driven from another view without cycling', () 
   assert.equal(bump!.beat, 3)
 })
 
-test('codeEntryAt reads the code+seed active at a position, from either event shape', () => {
-  const events = [createEvent('a', 1), runEvent('b', 2), runEvent('c', 3)]
-  assert.deepEqual(codeEntryAt(events, 0), { code: 'a', seed: 1 })
-  assert.deepEqual(codeEntryAt(events, 1), { code: 'b', seed: 2 })
-  assert.deepEqual(codeEntryAt(events, 2), { code: 'c', seed: 3 })
-  assert.deepEqual(codeEntryAt(events, 99), { code: 'c', seed: 3 }, 'past the end clamps to the last entry')
-  assert.equal(codeEntryAt(events, -1), null, 'before the first entry → null')
-  assert.equal(codeEntryAt([], 0), null, 'no history yet → null')
-})
-
-test('replayAt selects the program live at a session position', () => {
+test('cookProgram reproduces exactly what was authored for a given seed', () => {
   const rt = createRuntime()
-  const events = [createEvent(PROG(3), 10), runEvent(PROG(5), 20), runEvent(PROG(9), 30)]
-
-  assert.equal(replayAt(rt, events, 0)!.views.get('noise')!.length, 3)
-  assert.equal(replayAt(rt, events, 1)!.views.get('noise')!.length, 5)
-  assert.equal(replayAt(rt, events, 2)!.views.get('noise')!.length, 9)
-  assert.equal(replayAt(rt, events, 99)!.views.get('noise')!.length, 9)
-  assert.equal(replayAt(rt, events, -1), null)
-})
-
-test('replayAt reproduces exactly what was authored (recorded seed)', () => {
-  const rt = createRuntime()
-  const events = [createEvent(PROG(6), 777)]
-
   const authored = cookProgram(rt, PROG(6), 777)
-  const replayed = replayAt(rt, events, 0)!
+  const again = cookProgram(rt, PROG(6), 777)
   assert.deepEqual(
-    replayed.views.get('noise')!.rows.map((r) => r.value),
+    again.views.get('noise')!.rows.map((r) => r.value),
     authored.views.get('noise')!.rows.map((r) => r.value),
   )
-  assert.deepEqual(replayed.sceneRows, authored.sceneRows)
-  assert.equal(replayed.entry.code, PROG(6))
-})
-
-test('replaying every position in order walks the whole history', () => {
-  const rt = createRuntime()
-  const sizes = [2, 4, 7]
-  const events = sizes.map((n, i) => (i === 0 ? createEvent(PROG(n), i + 1) : runEvent(PROG(n), i + 1)))
-
-  const walked = events.map((_e, i) => replayAt(rt, events, i)!.views.get('noise')!.length)
-  assert.deepEqual(walked, sizes)
+  assert.deepEqual(again.sceneRows, authored.sceneRows)
 })

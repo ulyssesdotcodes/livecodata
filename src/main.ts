@@ -9,7 +9,7 @@ import { initSessionSelector } from './session-selector.js'
 import { SAMPLES } from './samples.js'
 import { createRuntime } from './runtime.js'
 import { createSessionStore } from './sessions.js'
-import { cookProgram, replayAt } from './replay.js'
+import { cookProgram } from './replay.js'
 import { initPhysics } from './physics.js'
 import { randomSeed } from './event-log.js'
 import { Table } from './dsl.js'
@@ -30,13 +30,24 @@ const editableStore = createEditableTableStore()
 const CODE_SCHEMA: Record<string, ColumnType> = { code: 'code', seed: 'number' }
 
 function setCodeRow(code: string, seed: number): void {
-  if (editableStore.has('code')) editableStore.setRow('code', 0, { code, seed })
-  else editableStore.ensure('code', CODE_SCHEMA, [{ code, seed }])
+  if (!editableStore.has('code')) {
+    editableStore.ensure('code', CODE_SCHEMA, [{ code, seed }])
+    return
+  }
+  // Skip an identical write so re-applying an unchanged program (e.g. a code-cell
+  // Apply, which re-cooks against edited table data but leaves the program text
+  // alone) doesn't spam "code·events" with duplicate rows — the run is still
+  // recorded, it just carries no new code event.
+  const cur = editableStore.get('code')?.rows[0]
+  if (cur && cur.code === code && cur.seed === seed) return
+  editableStore.setRow('code', 0, { code, seed })
 }
 
-// How many runs "code" has recorded — the session bar's scrub range.
+// How many runs the session has recorded — the session bar's scrub range. A
+// run is an Apply (Ctrl-Enter) bookmark spanning *every* editable table (see
+// editableStore.recordRun), not just "code"'s history.
 function sessionLength(): number {
-  return editableStore.get('code')?.events.length ?? 0
+  return editableStore.runs().length
 }
 
 function extractDataUrls(code: string): string[] {
@@ -63,12 +74,14 @@ const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLE
       return
     }
     // Any other code-typed cell (e.g. a hydra-style sketch column) edits in
-    // the main editor via cell-target mode: Ctrl-Enter there appends the
-    // set-cell event; the store change then re-cooks the program so
-    // everything fed by the table (including the visible table itself)
-    // catches up.
+    // the main editor via cell-target mode. Its "Apply ▶" (Ctrl-Enter) is an
+    // explicit apply: commit the cell, then re-cook the program against the
+    // edited tables and record a run — keeping the current seed so tweaking a
+    // sketch doesn't re-randomize the scene. (Plain inline edits stay pending
+    // until an apply; this one is the apply.)
     editor.editCell(`${table}[${rowIndex}].${col}`, value, (text) => {
       editableStore.setCell(table, rowIndex, col, text)
+      if (liveCode != null) void evaluate(liveCode, { setError: editor.setError, seed: liveSeed })
     })
   },
 })
@@ -227,8 +240,12 @@ function onTap(): void {
 
 function persistSession(): void {
   if (!editableStore.has('code')) return
+  // The session is the whole store's event data plus the run list — see
+  // sessions.ts. Serialize the *head* log (a scrubbed replay view mustn't leak
+  // into what's saved); editableStore.runs() is always the full run list.
   sessionStore.save(currentSessionId, {
     events: editableStore.serialize(),
+    runs: editableStore.runs(),
     tables: [...lastViews.keys()],
   })
   refreshSelector()
@@ -240,7 +257,9 @@ function refreshSelector(): void {
 
 interface EvaluateOptions {
   setError?: ((msg: string | null) => void) | null
-  record?: boolean
+  // Persist the session after applying. Off for the initial cook of a fresh
+  // session/example, which shouldn't be saved until the user actually edits or
+  // runs; the run itself is always recorded either way.
   persist?: boolean
   seed?: number
 }
@@ -263,7 +282,10 @@ function quietly<T>(fn: () => T): T {
   }
 }
 
-async function evaluate(code: string, { setError, record = true, persist = true, seed = randomSeed() }: EvaluateOptions = {}): Promise<void> {
+// Apply a program: cook it against the current (head) table state, record a run,
+// render, and (unless told otherwise) persist. This is the *only* thing that
+// applies pending table edits — inline edits just accumulate until an apply.
+async function evaluate(code: string, { setError, persist = true, seed = randomSeed() }: EvaluateOptions = {}): Promise<void> {
   const pending = extractDataUrls(code).filter((u) => !dataCache.has(u))
   if (pending.length) {
     await Promise.all(pending.map(async (url) => {
@@ -280,6 +302,10 @@ async function evaluate(code: string, { setError, record = true, persist = true,
 
   cooking = true
   try {
+    // Applying / cooking always operates on the live head, never a scrubbed
+    // replay view — return to head first so ensure() reads (and records against)
+    // current table state.
+    editableStore.setReplayView(null)
     let cooked: CookedData
     try {
       cooked = cookProgram(runtime, code, seed, dataCache)
@@ -291,16 +317,18 @@ async function evaluate(code: string, { setError, record = true, persist = true,
     liveCode = code
     liveSeed = seed
 
-    // Record the run — and so create/update the "code" table — *before*
-    // applyCooked renders the table panel below, so its first render already
-    // sees "code" (otherwise the onChange reaction that would normally pick up
-    // a newly-created table is itself suppressed by `cooking` right now).
-    if (record) {
-      setCodeRow(code, seed)
-      sessionBar.setLog({ length: sessionLength() })
-    }
+    // Write the "code" table row (if the program changed) and record the run —
+    // *before* applyCooked renders the table panel below, so its first render
+    // already sees "code" (otherwise the onChange reaction that would normally
+    // pick up a newly-created table is itself suppressed by `cooking` right now).
+    // recordRun snapshots every editable table's log index (including the "code"
+    // row just written, and any table the cook above created via ensure) as one
+    // Apply bookmark — the unit the session bar scrubs.
+    setCodeRow(code, seed)
+    editableStore.recordRun()
+    sessionBar.setLog({ length: sessionLength() })
     applyCooked(cooked)
-    if (record && persist) persistSession()
+    if (persist) persistSession()
   } finally {
     cooking = false
   }
@@ -313,54 +341,58 @@ const editor = initEditor(document.getElementById('editor-pane') as HTMLElement,
   getPlayIndex: () => currentPlayIndex,
 })
 
-// A table-change event landed (cell edit, add row, …): re-cook the live
-// program so views built on the table — and the scene it feeds — follow the
-// fold, and persist the session so the edit isn't lost on reload even if the
-// user never presses Run afterward (a session *is* the store's events now —
-// see sessions.ts — so any change to it needs saving, not just a run). Not
-// recorded as a run itself (the program text didn't change; whatever table's
-// own event log already captured the edit). Coalesced per animation frame,
-// and ignored while a cook (or our own recording/session load) is in flight.
+// A table-change event landed (cell edit, add row, …). Edits are *pending*:
+// they are NOT applied to the running program here — the cooked views and the
+// scene keep their last state until the user presses Run/Apply (Ctrl-Enter),
+// which re-cooks against the edited tables and records a run. We only refresh
+// the table panel so the edit shows in its own editable tab (and name·events
+// history), and persist the event data so a not-yet-applied edit still survives
+// a reload (a session *is* the store's events now — see sessions.ts — so any
+// change needs saving, not just a run). Coalesced per animation frame, and
+// ignored while a cook (or our own recording/session load) is in flight.
 let storeRefreshScheduled = false
 editableStore.onChange(() => {
   if (cooking || storeRefreshScheduled) return
   storeRefreshScheduled = true
   requestAnimationFrame(() => {
     storeRefreshScheduled = false
-    void (async () => {
-      if (liveCode != null) {
-        await evaluate(liveCode, { setError: editor.setError, record: false, seed: liveSeed })
-      } else {
-        tablePanel.setTables(tablesForDisplay(lastViews))
-      }
-      persistSession()
-    })()
+    tablePanel.setTables(tablesForDisplay(lastViews))
+    persistSession()
   })
 })
 
-// Scrub to run `pos` in "code"'s own history (see codeEntryAt in replay.ts) —
-// a non-destructive preview: it re-cooks and displays that historical program
-// but does not touch the "code" table's row (still the latest run) or record
-// anything, so pressing Run afterward forks forward from here as a new run
-// rather than rewriting history.
+// Scrub to run `pos` — a non-destructive preview that restores *every* editable
+// table to its state at that run (editableStore.setReplayView folds the shared
+// log up to the run's index) and re-cooks the program that was live then (the
+// "code" row at that run). It touches nothing in the head log and records no
+// run, so pressing Run afterward forks forward from head as a new run rather
+// than rewriting history. The newest position is the live head (replay view
+// off), so any edits made since the last Apply stay visible there.
 function scrubSession(pos: number): void {
-  const events = editableStore.get('code')?.events ?? []
-  let replayed
+  const runs = editableStore.runs()
+  if (runs.length === 0) return
+  const clamped = Math.max(0, Math.min(pos, runs.length - 1))
+  const atLatest = clamped >= runs.length - 1
   cooking = true
+  editableStore.setReplayView(atLatest ? null : runs[clamped])
+  let cooked: CookedData
   try {
-    replayed = replayAt(runtime, events, pos, dataCache)
+    const codeRow = editableStore.get('code')?.rows[0]
+    if (!codeRow || typeof codeRow.code !== 'string') return
+    const code = codeRow.code
+    const seed = typeof codeRow.seed === 'number' ? codeRow.seed : 0
+    cooked = cookProgram(runtime, code, seed, dataCache)
+    liveCode = code
+    liveSeed = seed
+    editor.setCode(code)
   } catch (err) {
     editor.setError((err as Error).message)
     return
   } finally {
     cooking = false
   }
-  if (!replayed) return
   editor.setError(null)
-  liveCode = replayed.entry.code
-  liveSeed = replayed.entry.seed
-  editor.setCode(replayed.entry.code)
-  applyCooked(replayed)
+  applyCooked(cooked)
 }
 
 function openSession(id: string): void {
@@ -369,8 +401,12 @@ function openSession(id: string): void {
   const ok = quietly(() => editableStore.load(events))
   if (!ok) return
   currentSessionId = id
-  scrubSession(Math.max(0, sessionLength() - 1))
+  // Restore the saved run list; a legacy session that predates runs derives
+  // them from "code"'s recorded program history so its history stays scrubbable.
+  const savedRuns = sessionStore.runs(id)
+  quietly(() => (savedRuns.length ? editableStore.setRuns(savedRuns) : editableStore.deriveRunsFromCode()))
   sessionBar.setLog({ length: sessionLength() })
+  scrubSession(Math.max(0, sessionLength() - 1))
   refreshSelector()
 }
 

@@ -32,6 +32,17 @@ test('save then load round-trips the serialized log', () => {
   assert.equal(store.load('missing'), null)
 })
 
+test('save then runs round-trips the run list; legacy sessions report none', () => {
+  const store = createSessionStore(fakeStorage())
+  const runs = [{ at: 2, tables: { code: 1, nums: 1 } }, { at: 4, tables: { code: 2, nums: 2 } }]
+  store.save('a', { events: 'e', tables: ['nums'], runs })
+  assert.deepEqual(store.runs('a'), runs)
+
+  store.save('b', { events: 'e' }) // no runs supplied — a legacy/empty session
+  assert.deepEqual(store.runs('b'), [])
+  assert.deepEqual(store.runs('missing'), [])
+})
+
 test('save upserts: same id updates in place and preserves createdAt', () => {
   const store = createSessionStore(fakeStorage())
   const first = store.save('a', { events: 'v0', tables: ['x'] })

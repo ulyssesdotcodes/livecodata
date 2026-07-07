@@ -166,3 +166,112 @@ test('code is a valid column type (defaults to empty string)', () => {
   store.setCell('h', 0, 'code', 'src(s0).out()')
   assert.equal(store.get('h')!.rows[0].code, 'src(s0).out()')
 })
+
+test('recordRun snapshots every table\'s log index as one Apply bookmark', () => {
+  const store = createEditableTableStore()
+  store.ensure('code', { code: 'code' }, [{ code: 'a' }]) // 1 event
+  store.createTable('nums')                               // 1 event
+  store.addRow('nums')                                    // 1 event
+  const run = store.recordRun()
+
+  assert.equal(run.tables.code, 1, 'one code event so far')
+  assert.equal(run.tables.nums, 2, 'create + add-row')
+  assert.equal(run.at, 3, 'the run is a prefix of the whole shared log')
+  assert.deepEqual(store.runs().map((r) => r.at), [3])
+})
+
+test('setReplayView restores every table to its state at a past run', () => {
+  const store = createEditableTableStore()
+  store.ensure('code', { code: 'code' }, [{ code: 'v1' }])
+  store.createTable('nums')
+  store.addRow('nums')
+  store.setCell('nums', 0, 'beat', 10)
+  const run1 = store.recordRun()
+
+  // A second batch of edits, then a second run.
+  store.setRow('code', 0, { code: 'v2' })
+  store.setCell('nums', 0, 'beat', 99)
+  store.addRow('nums')
+  store.recordRun()
+
+  // Head shows the latest state.
+  assert.equal(store.get('code')!.rows[0].code, 'v2')
+  assert.deepEqual(store.get('nums')!.rows, [{ beat: 99 }, { beat: 0 }])
+
+  // Scrub back to run 1 — reads serve the historical fold.
+  store.setReplayView(run1)
+  assert.equal(store.get('code')!.rows[0].code, 'v1')
+  assert.deepEqual(store.get('nums')!.rows, [{ beat: 10 }])
+
+  // Returning to head restores the latest state.
+  store.setReplayView(null)
+  assert.equal(store.get('code')!.rows[0].code, 'v2')
+  assert.deepEqual(store.get('nums')!.rows, [{ beat: 99 }, { beat: 0 }])
+})
+
+test('ensure is read-only while replaying — a scrubbed cook appends nothing', () => {
+  const store = createEditableTableStore()
+  store.ensure('code', { code: 'code' }, [{ code: 'a' }])
+  const run = store.recordRun()
+  const lenBefore = store.get('code')!.events.length
+
+  store.setReplayView(run)
+  // A table the historical program references but that didn't exist then:
+  // returns the seed without mutating the log.
+  assert.deepEqual(store.ensure('ghost', { v: 'number' }, [{ v: 5 }]), [{ v: 5 }])
+  store.setReplayView(null)
+  assert.ok(!store.has('ghost'), 'no create event leaked from the replay cook')
+  assert.equal(store.get('code')!.events.length, lenBefore, 'code untouched')
+})
+
+test('an edit while replaying returns to head, never rewriting history', () => {
+  const store = createEditableTableStore()
+  store.createTable('nums')
+  store.addRow('nums')
+  store.setCell('nums', 0, 'beat', 1)
+  const run1 = store.recordRun()
+  store.setCell('nums', 0, 'beat', 2)
+  store.recordRun()
+
+  store.setReplayView(run1)
+  assert.equal(store.get('nums')!.rows[0].beat, 1, 'viewing the past')
+  // Editing lands on the head (beat 2 → 3), not on the replayed past.
+  store.setCell('nums', 0, 'beat', 3)
+  assert.equal(store.get('nums')!.rows[0].beat, 3)
+  assert.equal(store.runs().length, 2, 'no new run recorded by a plain edit')
+})
+
+test('deriveRunsFromCode reconstructs one run per recorded program Run (legacy sessions)', () => {
+  const store = createEditableTableStore()
+  store.ensure('code', { code: 'code' }, [{ code: 'r1' }]) // code Run 1 (create)
+  store.createTable('nums')
+  store.setRow('code', 0, { code: 'r2' })                  // code Run 2 (set-row)
+
+  store.deriveRunsFromCode()
+  const runs = store.runs()
+  assert.equal(runs.length, 2, 'one run per code event')
+
+  // Replaying the derived first run shows the program as it was at Run 1,
+  // before "nums" existed.
+  store.setReplayView(runs[0])
+  assert.equal(store.get('code')!.rows[0].code, 'r1')
+  assert.ok(!store.has('nums'), 'nums was created after Run 1')
+  store.setReplayView(null)
+  assert.equal(store.get('code')!.rows[0].code, 'r2')
+})
+
+test('load and clear reset the run list', () => {
+  const store = createEditableTableStore()
+  store.createTable('t')
+  store.recordRun()
+  assert.equal(store.runs().length, 1)
+
+  const other = createEditableTableStore()
+  other.createTable('x')
+  assert.ok(store.load(other.serialize()))
+  assert.equal(store.runs().length, 0, 'load resets runs')
+
+  store.recordRun()
+  store.clear()
+  assert.equal(store.runs().length, 0, 'clear resets runs')
+})
