@@ -7,7 +7,7 @@
 import initJolt from 'jolt-physics'
 import type { Row } from './lineage.js'
 import type { SimulateOptions } from './dsl.js'
-import { secondsToBeat } from './constants.js'
+import { FPS, secondsToBeat } from './constants.js'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type JoltModule = any
@@ -157,7 +157,7 @@ export function simulateScene(Jolt: JoltModule, baseRows: Row[], opts: SimulateO
   const {
     steps = 120,
     gravity = -9.81,
-    fps = 60,
+    fps = FPS,
     sampleEvery = 1,
     collisions = true,
   } = opts
