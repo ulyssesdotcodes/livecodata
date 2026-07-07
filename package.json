@@ -10,17 +10,22 @@
     "typecheck": "tsc --noEmit",
     "watch": "node --import tsx/esm watch.js",
     "serve": "node --import tsx/esm server/server.ts",
-    "fetch-data": "node scripts/fetch-data.js"
+    "fetch-data": "node scripts/fetch-data.js",
+    "cf:typecheck": "tsc --noEmit -p worker/tsconfig.json",
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "wrangler deploy"
   },
   "author": "",
   "license": "BSD-3-Clause",
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260702.1",
     "@types/node": "^26.0.1",
     "@types/three": "^0.185.0",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.28.1",
     "tsx": "^4.22.4",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "wrangler": "^4.107.0"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",

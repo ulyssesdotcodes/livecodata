@@ -17,6 +17,12 @@
 // merge() dedups, so re-sending is always safe. Local appends are published
 // live via each log's onAppend hook; remote events arrive via merge(), which
 // never fires onAppend, so nothing echoes.
+//
+// The room also rides along on the connection URL as ?room= (in addition to
+// the join message): the Node server ignores it (its WebSocketServer path
+// match only looks at the pathname), but a Cloudflare Worker backend (see
+// worker/index.ts) has to pick which Durable Object to route the upgrade to
+// *before* any message — including "join" — can be read off the socket.
 // ----------------------------------------------------------------------------
 
 import { localSource, type EventLog, type StampedEvent } from './event-log.js'
@@ -93,7 +99,9 @@ export function connectMultiplayer({ url, room, logs, onStatus }: MultiplayerOpt
   function connect(): void {
     if (closed) return
     setStatus('connecting')
-    ws = new WebSocket(url)
+    const target = new URL(url)
+    target.searchParams.set('room', room)
+    ws = new WebSocket(target.toString())
     ws.onopen = () => {
       retries = 0
       const snapshot: Record<string, StampedEvent[]> = {}

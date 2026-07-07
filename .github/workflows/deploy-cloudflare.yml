@@ -1,0 +1,40 @@
+name: Deploy to Cloudflare Workers
+
+# Builds the static app (into public/, which wrangler uploads as the Worker's
+# [assets]) and deploys the Worker + Durable Object (worker/, wrangler.jsonc)
+# with Cloudflare's official wrangler-action. Scoped to this branch for now —
+# widen to `main` once this replaces (or runs alongside) the GitHub Pages
+# deploy in static.yml.
+on:
+  push:
+    branches:
+      - claude/cloudflare-durable-objects
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build app bundle
+        run: npm run build
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
