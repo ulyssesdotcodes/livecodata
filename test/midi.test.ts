@@ -5,7 +5,7 @@ import {
   buildMidiIndex, sampleMidiAt, createMidiInput,
 } from '../src/midi.js'
 import { buildTimeline } from '../src/timeline.js'
-import { frameToBeat } from '../src/constants.js'
+import { frameToBeat, beatToFrame } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
 
 // The 1-indexed source `beat` that maps to a given cache frame (30 frames/beat).
@@ -206,21 +206,22 @@ test('same note/channel but different frame both survive', () => {
 // else on screen, regardless of what mapping was active when it was recorded.
 
 test('a sweep recorded under an identity mapping takes 2x as long once the timeline is remapped 2x slower', () => {
-  // Recorded while the timeline was identity (1:1): c4 on at source frame 0, off
-  // at source frame 60 — as if performed over 60 frames with no active remap.
+  // Recorded while the timeline was identity: c4 on at source beat 1, off at
+  // source beat 3 (two beats of note).
   const events: Row[] = [
-    { type: 'midi', note: 'c4', channel: 1, value: 1, beat: b(0) },
-    { type: 'midi', note: 'c4', channel: 1, value: 0, beat: b(60) },
+    { type: 'midi', note: 'c4', channel: 1, value: 1, beat: 1 },
+    { type: 'midi', note: 'c4', channel: 1, value: 0, beat: 3 },
   ]
   const index = buildMidiIndex(events)
 
-  // Remap the timeline to run 2x slower: source frame = tick / 2.
-  const slow = buildTimeline(Array.from({ length: 3 * 60 }, (_, i) => ({ source: b(i / 2) })))
-  const valueAtTick = (tickSeconds: number): number =>
-    sampleMidiAt(index, 'c4', 1, slow.frameAt(Math.floor(tickSeconds * 60)))
+  // Remap 2x slower: source advances half as fast as the playback beat
+  // (playback beats 1..9 sweep source beats 1..5).
+  const slow = buildTimeline([{ beat: 1, source: 1 }, { beat: 9, source: 5 }])
+  const valueAtBeat = (playbackBeat: number): number =>
+    sampleMidiAt(index, 'c4', 1, beatToFrame(slow.sourceBeatAt(playbackBeat)))
 
-  assert.equal(valueAtTick(0), 1, 'on at tick 0 (source frame 0)')
-  assert.equal(valueAtTick(1), 1, 'still on at tick 1 (source reached only frame 30)')
-  assert.equal(valueAtTick(1.9), 1, 'still on just before source reaches frame 60')
-  assert.equal(valueAtTick(2), 0, 'off once source reaches frame 60 — the sweep took 2x as long')
+  assert.equal(valueAtBeat(1), 1, 'on at playback beat 1 (source beat 1)')
+  assert.equal(valueAtBeat(3), 1, 'still on at beat 3 (source only reached beat 2)')
+  assert.equal(valueAtBeat(4.9), 1, 'still on just before source reaches beat 3')
+  assert.equal(valueAtBeat(5), 0, 'off at beat 5 — the sweep took 4 playback beats, not 2')
 })

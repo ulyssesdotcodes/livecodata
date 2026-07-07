@@ -146,3 +146,39 @@ export function stateAtFrame(frameIndex: FrameIndex, i: number): Row[] {
   if (f < 0) return []
   return frameIndex.map.get(f) ?? []
 }
+
+// Transform fields interpolated between adjacent cache frames. Everything else
+// (color, shape, id, streaming bindings, …) is discrete: it takes the earlier
+// frame's value, never a blend.
+const INTERP_FIELDS = ['px', 'py', 'pz', 'rx', 'ry', 'rz'] as const
+
+// State at a *fractional* frame: the floored frame's rows with their transform
+// fields eased toward the next frame by the fractional part. The dense cache is
+// already baked at 60fps, so this is what keeps motion smooth when the playhead
+// crosses cache frames slower than one-per-render (a slow tempo, or a >60Hz
+// display). An object present at the floor frame but not the next (about to be
+// destroyed) is left un-eased. Falls back to a plain lookup at integer frames.
+export function sampleFrame(frameIndex: FrameIndex, frameFloat: number): Row[] {
+  const f0 = Math.floor(frameFloat)
+  if (f0 < 0) return []
+  const a = frameIndex.map.get(f0) ?? []
+  const frac = frameFloat - f0
+  if (frac <= 0 || f0 >= frameIndex.maxFrame) return a
+
+  const b = frameIndex.map.get(f0 + 1)
+  if (!b) return a
+  const bById = new Map(b.map((r) => [r.id, r]))
+  return a.map((row) => {
+    const next = bById.get(row.id)
+    if (!next) return row
+    let out: Row | null = null
+    for (const k of INTERP_FIELDS) {
+      const va = row[k], vb = next[k]
+      if (typeof va === 'number' && typeof vb === 'number' && va !== vb) {
+        out ??= { ...row }
+        out[k] = va + (vb - va) * frac
+      }
+    }
+    return out ?? row
+  })
+}

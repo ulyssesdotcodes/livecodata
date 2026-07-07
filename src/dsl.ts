@@ -28,7 +28,7 @@
 
 import { rasterizeRows } from './rasterize.js'
 import { withLineage, carry, unionLineage, getLineage, type Row } from './lineage.js'
-import { FPS, FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS } from './constants.js'
+import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS } from './constants.js'
 import type { ColumnType } from './editable-tables.js'
 
 // ── Expr: a small, serializable, chainable expression over a row ─────────────
@@ -860,26 +860,22 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     // ordinal + seconds since the first tap). The source of truth for tempo.
     taps: () => new Table((ctx?.tapRows?.() ?? []).map((r) => ({ ...r })), ctx),
     // Seconds per beat derived from the tap-beat table (the average interval), or
-    // `fallback` (default 0.5s = 120 BPM) until two taps are recorded. This is the
-    // one place the tapped tempo enters: it sets how fast the loop below plays,
-    // not where content sits on the (fixed) beat grid.
+    // `fallback` (default 0.5s = 120 BPM) until two taps are recorded. The
+    // playhead already advances at this tempo automatically; tempo() is here for
+    // programs that want the number.
     tempo: (fallback = DEFAULT_BEAT_SECONDS): number => beatSecondsFromTaps(ctx?.tapRows?.()) ?? fallback,
-    // A looping timeline `count` beats long. Its wall-clock length follows the
-    // tapped tempo (that's what makes tapping speed the loop up or down); each row
-    // is one playback frame, mapping a playback `beat` (1-indexed) to the `source`
-    // beat of the baked content it shows. By default source runs identity (the
-    // content plays once per loop); pass { fit } in source-beats to stretch a
-    // shorter/longer stretch of content across the whole beat window.
-    beats: (count: number, { fallback = DEFAULT_BEAT_SECONDS, fit }: { fallback?: number; fit?: number } = {}): Table => {
-      const beatSec = beatSecondsFromTaps(ctx?.tapRows?.()) ?? fallback
-      const frames = Math.max(1, Math.round(Math.max(0, count) * beatSec * FPS))
+    // A timeline that loops every `count` playback beats. Tempo is automatic
+    // (the playhead runs at the tapped tempo regardless), so this is purely a
+    // RETIME: two keyframes mapping the count-beat loop onto a span of `source`
+    // beats. Identity by default (content plays once per loop); pass { fit } in
+    // source-beats to stretch a shorter/longer stretch of content across the
+    // window — e.g. beats(16, { fit: 8 }) plays 8 beats of content at half speed.
+    beats: (count: number, { fit }: { fit?: number } = {}): Table => {
       const spanBeats = fit != null ? fit : count
-      const out: Row[] = new Array(frames)
-      for (let i = 0; i < frames; i++) {
-        const frac = frames > 1 ? i / (frames - 1) : 0
-        out[i] = { beat: frac * count + 1, source: frac * spanBeats + 1 }
-      }
-      return new Table(out, ctx)
+      return new Table([
+        { beat: 1, source: 1 },
+        { beat: count + 1, source: spanBeats + 1 },
+      ], ctx)
     },
     ...EASINGS,
   }

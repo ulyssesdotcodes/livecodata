@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { rasterizeRows, buildFrameIndex, stateAtFrame } from '../src/rasterize.js'
+import { rasterizeRows, buildFrameIndex, stateAtFrame, sampleFrame } from '../src/rasterize.js'
 import { frameToBeat, framesToBeats } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
 
@@ -114,6 +114,38 @@ test('buildFrameIndex + stateAtFrame give O(1) lookups', () => {
   assert.deepEqual(stateAtFrame(fi, 2.9).map((r) => r.id).sort(), ['a', 'b'])
   assert.deepEqual(stateAtFrame(fi, 99), [])
   assert.deepEqual(stateAtFrame(fi, -1), [])
+})
+
+test('sampleFrame eases transform fields between cache frames', () => {
+  const rows = rasterizeRows([
+    create({ px: 0, py: 0, ry: 0 }),
+    { id: 's', type: 'update', beat: b(10), px: 10, py: 20, pz: 0, rx: 0, ry: 4, rz: 0 },
+  ], mb(10))
+  const fi = buildFrameIndex(rows)
+
+  // Frame 4 bakes px=4; frame 5 bakes px=5. Halfway between → 4.5.
+  const half = sampleFrame(fi, 4.5)[0]
+  assert.equal(half.px, 4.5, 'position eased half a frame')
+  assert.equal(half.ry, 1.8, 'rotation eased half a frame')
+
+  // Integer frames and frac 0 are plain lookups.
+  assert.equal(sampleFrame(fi, 4)[0].px, 4)
+  // Past the last frame, no next frame to ease toward → hold.
+  assert.equal(sampleFrame(fi, 10)[0].px, 10)
+})
+
+test('sampleFrame does not blend discrete fields (color) or eased ids that vanish', () => {
+  const rows = rasterizeRows([
+    create({ id: 'a', color: 0x111111, px: 0 }),
+    { id: 'a', type: 'update', beat: b(4), px: 8 },
+    create({ id: 'b', beat: b(2), px: 0 }),
+    { id: 'b', type: 'destroy', beat: b(3) },
+  ], mb(4))
+  const fi = buildFrameIndex(rows)
+  const at = sampleFrame(fi, 1.5)
+  const a = at.find((r) => r.id === 'a')!
+  assert.equal(a.color, 0x111111, 'color is not interpolated')
+  assert.equal(a.px, 3, 'a eased between frame 1 (px=2) and 2 (px=4)')
 })
 
 test('empty input yields an empty cache', () => {

@@ -9,7 +9,7 @@ import { initSessionSelector } from './session-selector.js'
 import { SAMPLES } from './samples.js'
 import { createRuntime } from './runtime.js'
 import { createSessionStore } from './sessions.js'
-import { cookProgram, cookTimeline, replayAt } from './replay.js'
+import { cookProgram, replayAt } from './replay.js'
 import { initPhysics } from './physics.js'
 import { randomSeed } from './event-log.js'
 import { Table } from './dsl.js'
@@ -216,23 +216,13 @@ function applyCooked({ views, graphs, sceneRows, timelineRows, hydraRows }: Cook
   playback.load(sceneRows, timelineRows, hydraRows)
 }
 
-// A tap changed the tempo: refresh the "taps" table, then recompute *only* the
-// timeline (cheap — physics is reused from the memo) so a beats() timeline adopts
-// the new beat length, and retime playback in place. Keeps the last timeline on
-// failure.
+// A tap changed the tempo: refresh the "taps" table and re-anchor playback to
+// the new tempo. Nothing re-cooks — content sits on a fixed beat grid, so the
+// timeline (a tempo-independent beat remap) is unaffected; only the rate the
+// playhead sweeps the loop changes.
 function onTap(): void {
   tablePanel.setTables(tablesForDisplay(lastViews))
-  if (liveCode == null) return
-  let timelineRows: Row[]
-  cooking = true
-  try {
-    timelineRows = cookTimeline(runtime, liveCode, liveSeed)
-  } catch {
-    return
-  } finally {
-    cooking = false
-  }
-  playback.setTimeline(timelineRows)
+  playback.retempo()
 }
 
 function persistSession(): void {
