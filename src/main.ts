@@ -530,6 +530,10 @@ if (roomName) {
   editableStore.log.onMerge(() => {
     const latest = editableStore.get('code')?.rows[0] as { code: string; seed: number } | undefined
     if (!latest || (latest.code === liveCode && latest.seed === liveSeed)) return
+    // evaluate() assumes the editor is already showing the code it's given
+    // (true for a local Run) — a remote program needs pushing into the editor
+    // ourselves, the same way scrubSession() does for a historical run.
+    editor.setCode(latest.code)
     void evaluate(latest.code, { setError: editor.setError, seed: latest.seed })
   })
   // A collaborator's tap arrived: refresh the "taps" table and retime the
