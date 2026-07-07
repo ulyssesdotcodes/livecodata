@@ -220,9 +220,9 @@ export function createEditableTableStore(): EditableTableStore {
 
     createTable(name: string): void {
       if (tables.has(name)) return
-      // New tables start with an "index" column — the convention every other
-      // table here keys time by (seconds).
-      append({ kind: 'create', table: name, columns: [{ name: 'index', type: 'number' }] })
+      // New tables start with a "beat" column — the convention every other table
+      // here keys time by (1-indexed beats).
+      append({ kind: 'create', table: name, columns: [{ name: 'beat', type: 'number' }] })
     },
 
     removeTable(name: string): void {

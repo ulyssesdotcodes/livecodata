@@ -1,21 +1,24 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildTimeline } from '../src/timeline.js'
+import { frameToBeat } from '../src/constants.js'
 import { createRuntime } from '../src/runtime.js'
 import { cookProgram, cookTimeline } from '../src/replay.js'
 
-const f = (frames: number): number => frames / 60
+// The 1-indexed source `beat` that maps back to a given cache frame.
+const src = (frame: number): number => frameToBeat(frame)
 
 test('no timeline rows → identity mapping, length 0', () => {
   const tl = buildTimeline([])
   assert.equal(tl.length, 0)
+  assert.equal(tl.beats, 0)
   assert.equal(tl.frameAt(0), 0)
   assert.equal(tl.frameAt(7), 7)
   assert.equal(tl.frameAt(3.9), 3, 'floors fractional ticks')
 })
 
-test('maps tick → source frame via time field (seconds), clamping the tick', () => {
-  const tl = buildTimeline([{ time: f(10) }, { time: f(20) }, { time: f(30.6) }])
+test('maps tick → source frame via the source-beat field, clamping the tick', () => {
+  const tl = buildTimeline([{ source: src(10) }, { source: src(20) }, { source: src(30.6) }])
   assert.equal(tl.length, 3)
   assert.equal(tl.frameAt(0), 10)
   assert.equal(tl.frameAt(1), 20)
@@ -25,8 +28,8 @@ test('maps tick → source frame via time field (seconds), clamping the tick', (
   assert.equal(tl.frameAt(-5), 10, 'negative tick clamps to the first row')
 })
 
-test('loop: first second (60 frames) repeats across a 6-second timeline', () => {
-  const rows = Array.from({ length: 360 }, (_, i) => ({ time: (i / 60) % 1 }))
+test('loop: first 60 frames repeat across a 360-frame timeline', () => {
+  const rows = Array.from({ length: 360 }, (_, i) => ({ source: src(i % 60) }))
   const tl = buildTimeline(rows)
   assert.equal(tl.length, 360)
   assert.equal(tl.frameAt(0), 0)
@@ -35,15 +38,15 @@ test('loop: first second (60 frames) repeats across a 6-second timeline', () => 
   assert.equal(tl.frameAt(125), 5)
 })
 
-test('reverse: time runs backwards', () => {
-  const rows = Array.from({ length: 100 }, (_, i) => ({ time: (99 - i) / 60 }))
+test('reverse: source runs backwards', () => {
+  const rows = Array.from({ length: 100 }, (_, i) => ({ source: src(99 - i) }))
   const tl = buildTimeline(rows)
   assert.equal(tl.frameAt(0), 99)
   assert.equal(tl.frameAt(99), 0)
   assert.equal(tl.frameAt(40), 59)
 })
 
-test('falls back to identity when a row omits time', () => {
+test('falls back to identity when a row omits source', () => {
   const tl = buildTimeline([{}, {}, {}])
   assert.equal(tl.frameAt(2), 2)
 })
@@ -51,10 +54,10 @@ test('falls back to identity when a row omits time', () => {
 test('cookProgram surfaces timelineRows from a defined timeline view', () => {
   const rt = createRuntime()
   const code = `
-    define("base", () => rows([{ id: "s", type: "create", index: 0, shape: "sphere",
+    define("base", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
     define("scene", () => table("base").rasterize(2))
-    define("timeline", () => math(t => t % 0.5).range(2).map(r => ({ time: r.value })))
+    define("timeline", () => math(t => (t % 1) + 1).range(4).map(r => ({ source: r.value })))
   `
   const cooked = cookProgram(rt, code, 1)
   assert.equal(cooked.timelineRows.length, 120)
@@ -65,7 +68,7 @@ test('cookProgram surfaces timelineRows from a defined timeline view', () => {
 test('cookProgram yields no timeline rows when none is defined', () => {
   const rt = createRuntime()
   const code = `
-    define("events", () => rows([{ id: "s", type: "create", index: 0, shape: "box",
+    define("events", () => rows([{ id: "s", type: "create", beat: 1, shape: "box",
       color: 1, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
   `
   const cooked = cookProgram(rt, code, 1)
@@ -77,7 +80,7 @@ test('a beats() timeline reflects the tap-beat tempo', () => {
   const tapRows = [{ beat: 0, time: 0 }, { beat: 1, time: 0.5 }] // 0.5s/beat = 120 BPM
   const rt = createRuntime({ tapRows: () => tapRows })
   const code = `
-    define("base", () => rows([{ id: "s", type: "create", index: 0, shape: "sphere",
+    define("base", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
     define("scene", () => table("base").rasterize(2))
     define("timeline", () => beats(4))
@@ -90,7 +93,7 @@ test('cookTimeline recomputes only the timeline (skips the rest)', () => {
   const tapRows = [{ beat: 0, time: 0 }, { beat: 1, time: 0.5 }]
   const rt = createRuntime({ tapRows: () => tapRows })
   const code = `
-    define("base", () => rows([{ id: "s", type: "create", index: 0, shape: "sphere",
+    define("base", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
     define("boom", () => { throw new Error("should not cook this") })
     define("scene", () => table("base").rasterize(2))

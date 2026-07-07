@@ -6,8 +6,8 @@
 // carries three time stamps:
 //   t     — wall-clock ms since the first event (from the event log)
 //   loop  — which loop iteration the playhead was in when it arrived
-//   index — the playhead's *content/source* position (seconds — see
-//           Playback.currentSourceSeconds), the coordinate the baked scene is
+//   beat  — the playhead's *content/source* position (a 1-indexed beat — see
+//           Playback.currentSourceBeats), the coordinate the baked scene is
 //           keyed to. Recording this (not wall time) is what makes a recorded
 //           sweep's speed track the timeline mapping: remap the timeline 2x
 //           slower and the sweep takes 2x as long, with everything else.
@@ -18,7 +18,7 @@
 // forward), deduped to one row per (channel, frame). The raw log itself is the
 // read-only "midi·events" table — history is never rewritten, only re-derived.
 //
-//   { type:"midi", note:"c4", noteNum:60, channel:1, value:0.8, index:1.0, loop:2 }
+//   { type:"midi", note:"c4", noteNum:60, channel:1, value:0.8, beat:3.0, loop:2 }
 //
 // At a given frame the *active* value of a note is the most recent row for it
 // at-or-before that frame — exactly how rasterize/effects sample sparse events.
@@ -27,7 +27,7 @@
 // at the same source frame events are recorded at.
 // ----------------------------------------------------------------------------
 
-import { FPS } from './constants.js'
+import { beatToFrame } from './constants.js'
 import { createEventLog, type StampedEvent } from './event-log.js'
 import type { Row } from './lineage.js'
 import type { EvalCtx } from './dsl.js'
@@ -77,9 +77,9 @@ export function decodeMidi(data: ArrayLike<number>): DecodedMidi | null {
   return null
 }
 
-// A decoded event + the source position (seconds) it landed at → a table row.
-export function midiRow(d: DecodedMidi, indexSeconds: number): Row {
-  return { type: 'midi', note: d.note, noteNum: d.noteNum, channel: d.channel, value: d.value, index: indexSeconds }
+// A decoded event + the source position (a 1-indexed beat) it landed at → a row.
+export function midiRow(d: DecodedMidi, beat: number): Row {
+  return { type: 'midi', note: d.note, noteNum: d.noteNum, channel: d.channel, value: d.value, beat }
 }
 
 // ── Indexing + sampling ──────────────────────────────────────────────────────
@@ -93,8 +93,8 @@ interface MidiSample {
 export type MidiIndex = Map<string, MidiSample[]>
 
 // Group rows by note name, each list sorted ascending by frame, for fast
-// "most recent at-or-before" lookups. Event indices (seconds) are pre-converted
-// to frames to compare against the playhead's source frame.
+// "most recent at-or-before" lookups. Event beats are pre-converted to frames to
+// compare against the playhead's source frame.
 export function buildMidiIndex(rows: Row[] | null | undefined): MidiIndex {
   const map: MidiIndex = new Map()
   for (const r of rows ?? []) {
@@ -102,7 +102,7 @@ export function buildMidiIndex(rows: Row[] | null | undefined): MidiIndex {
     if (!note) continue
     if (!map.has(note)) map.set(note, [])
     map.get(note)!.push({
-      frame: Math.round(((r.index as number | undefined) ?? 0) * FPS),
+      frame: beatToFrame((r.beat as number | undefined) ?? 1),
       channel: (r.channel as number | undefined) ?? 0,
       value: (r.value as number | undefined) ?? 0,
     })
@@ -144,25 +144,25 @@ export function currentMidiRows(events: StampedEvent[]): Row[] {
     } else if (loop < entry.loop) {
       continue // stale (shouldn't happen with a monotonic loop counter)
     }
-    const frame = Math.round(((e.index as number | undefined) ?? 0) * FPS)
+    const frame = beatToFrame((e.beat as number | undefined) ?? 1)
     entry.byKey.set(`${e.channel as number}:${frame}`, {
       type: 'midi', note, noteNum: e.noteNum, channel: e.channel,
-      value: e.value, index: e.index, loop,
+      value: e.value, beat: e.beat, loop,
     })
   }
   const out: Row[] = []
   for (const entry of perNote.values()) out.push(...entry.byKey.values())
-  out.sort((a, b) => ((a.index as number) - (b.index as number)) || ((a.channel as number) - (b.channel as number)))
+  out.sort((a, b) => ((a.beat as number) - (b.beat as number)) || ((a.channel as number) - (b.channel as number)))
   return out
 }
 
 // ── Live input ───────────────────────────────────────────────────────────────
 
 export interface MidiInputOptions {
-  // The playhead's current content/source position (seconds) — where new events
-  // get stamped (Playback.currentSourceSeconds). The same coordinate the baked
-  // scene is keyed to, so a recorded sweep's speed tracks the timeline mapping
-  // rather than staying fixed to wall-clock time.
+  // The playhead's current content/source position (a 1-indexed beat) — where new
+  // events get stamped (Playback.currentSourceBeats). The same coordinate the
+  // baked scene is keyed to, so a recorded sweep's speed tracks the timeline
+  // mapping rather than staying fixed to wall-clock time.
   getIndex: () => number
   // The current loop iteration (increments each time playback wraps). Folded
   // into each event so the current table can be derived per note from the most
@@ -182,7 +182,7 @@ export interface MidiInput {
   clear(): void
   // A per-frame evaluation context for resolveBindings: midi(note) samples the
   // folded table at `srcFrame` (the same content/source domain events are
-  // stamped in — see Playback.currentSourceSeconds).
+  // stamped in — see Playback.currentSourceBeats).
   ctxAt(srcFrame: number): EvalCtx
   // Feed a raw message (exposed for the browser listener and for tests).
   feed(data: ArrayLike<number>): void
@@ -205,7 +205,7 @@ export function createMidiInput({ getIndex, getLoop, onChange }: MidiInputOption
     log.append({
       kind: 'midi',
       note: decoded.note, noteNum: decoded.noteNum, channel: decoded.channel, value: decoded.value,
-      index: getIndex(),
+      beat: getIndex(),
       loop: getLoop?.() ?? 0,
     })
     onChange?.()
@@ -234,8 +234,8 @@ export function createMidiInput({ getIndex, getLoop, onChange }: MidiInputOption
 
   return {
     rows: () => rows().map((r) => ({ ...r })),
-    eventRows: () => log.all().map(({ kind, seq, t, loop, index: i, note, channel, value }) =>
-      ({ seq, t, kind, loop, index: i, note, channel, value })),
+    eventRows: () => log.all().map(({ kind, seq, t, loop, beat, note, channel, value }) =>
+      ({ seq, t, kind, loop, beat, note, channel, value })),
     clear: () => { log.append({ kind: 'clear' }); onChange?.() },
     ctxAt: (srcFrame: number): EvalCtx => ({
       midi: (note, channel) => sampleMidiAt(idx(), note, channel, srcFrame),

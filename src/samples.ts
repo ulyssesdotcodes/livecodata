@@ -10,31 +10,33 @@ export const SAMPLES = [
 
 // 1. editable(name, schema, seedRows?) declares a user-editable table: rows
 //    are entered/edited in the table panel (its own "path" tab), not
-//    computed — edits persist across runs, unlike a normal view. Try it: open
+//    computed — edits persist across runs, unlike a normal view. Each keyframe
+//    sits on a beat (1-indexed: beat 1 is the top of the loop). Try it: open
 //    the "path" tab, click a cell to change a coordinate, or hit "+ row" to
 //    add a keyframe, then press Run again to see the sphere follow the new
 //    path. (Every edit is recorded as an event too — see the "path·events" tab.)
 define("path", () =>
-  editable("path", { index: "number", px: "number", py: "number", pz: "number" }, [
-    { index: 0, px: -1, py: 0,   pz: 0 },
-    { index: 1, px: 1,  py: 1,   pz: 0 },
-    { index: 2, px: 0,  py: 0.3, pz: -1 },
+  editable("path", { beat: "number", px: "number", py: "number", pz: "number" }, [
+    { beat: 1, px: -1, py: 0,   pz: 0 },
+    { beat: 3, px: 1,  py: 1,   pz: 0 },
+    { beat: 5, px: 0,  py: 0.3, pz: -1 },
   ])
 )
 
 // 2. Turn the path's keyframes into a moving sphere: the first row (sorted by
-//    index, in case rows were added out of order) creates it; every later row
+//    beat, in case rows were added out of order) creates it; every later row
 //    is an update, and playback interpolates position between consecutive
-//    rows by their \`index\` (seconds).
+//    rows by their \`beat\`.
 define("events", (rand, table) =>
-  table("path").orderBy("index").map((r, i) => ({
-    id: "ball", type: i === 0 ? "create" : "update", index: r.index,
+  table("path").orderBy("beat").map((r, i) => ({
+    id: "ball", type: i === 0 ? "create" : "update", beat: r.beat,
     shape: "sphere", color: 0x4a9eff, px: r.px, py: r.py, pz: r.pz, rx: 0, ry: 0, rz: 0,
   }))
 )
 
-// 3. Bake the sparse keyframes into a dense per-frame cache for playback.
-define("scene", (rand, table) => table("events").rasterize(3))
+// 3. Bake the sparse keyframes into a dense per-frame cache for playback —
+//    8 beats long, so the sphere holds its last pose before the loop wraps.
+define("scene", (rand, table) => table("events").rasterize(8))
 `,
   },
   {
@@ -155,20 +157,23 @@ define("base", () => {
   ])
 })
 
-// 2. Bake a JoltPhysics simulation in the background: step the world for 240
-//    frames (~4 s at 60 fps). simulate() ADDS to the table — a per-frame "update"
-//    row for each moving body (index in seconds; the cache interpolates between
-//    them) plus a "collision" row whenever two bodies first touch.
+// 2. Bake a JoltPhysics simulation in the background: step the world for 360
+//    frames (12 beats at the fixed 30-frames-per-beat grid). simulate() ADDS to
+//    the table — a per-frame "update" row for each moving body (\`beat\`, in
+//    beats; the cache interpolates between them) plus a "collision" row whenever
+//    two bodies first touch. Physics runs in real seconds internally and lands
+//    its output on the beat grid, so a collision at beat 4 always sits at beat 4.
 //    The 3rd arg tags this view into the "events" group: the engine auto-builds
-//    a view named "events" that concats every group member (index-sorted), so
+//    a view named "events" that concats every group member (beat-sorted), so
 //    multiple simulation views would merge into one "events" table — no manual
 //    .concat. "events" is the single sparse stream of object motion + collisions.
 define("sim", "events", (rand, table) =>
   physics(table("base")).simulate({ steps: 360, gravity: -9.81 })
 )
 
-// 3. Bake the sparse "events" stream into a dense per-frame cache for playback.
-define("scene", (rand, table) => table("events").rasterize(6))
+// 3. Bake the sparse "events" stream into a dense per-frame cache for playback
+//    (12 beats — the full simulation).
+define("scene", (rand, table) => table("events").rasterize(12))
 
 // 4. Collisions are just rows — pull them into their own view to inspect, and
 //    graph the ball's height over time as it bounces and settles.
@@ -179,7 +184,7 @@ define("collisions", (rand, table) =>
 define("ball_height", (rand, table) =>
   table("events")
     .filter(r => r.id === "ball" && r.type === "update")
-    .map(r => ({ index: r.index, height: r.py }))
+    .map(r => ({ beat: r.beat, height: r.py }))
     .graph("height")
 )
 
@@ -192,39 +197,39 @@ define("ball_height", (rand, table) =>
 //    rather than the bare name, so every collision's new value takes effect
 //    immediately, without recompiling the sketch (a recompile would restart its
 //    oscillator phase, visible as a stutter on every landing).
-//    Here the rows are keyed by \`index\` (source seconds) rather than \`beat\`
-//    (loop beat, as in the "Hydra Sketch" sample): the \`amount\` bumps are
-//    driven by physics collisions, which land at content times, so they're
-//    synced to the scene's clock, not the beat grid.
+//    Every row sits on a \`beat\` — the base sketch at beat 1, and each
+//    collision-driven \`amount\` bump at the beat its landing baked to (physics
+//    and hydra share the one beat grid, so the bumps line up with the crash).
 //    The base sketch lives in the EDITABLE "sketch" table (seeded below): click
 //    its code cell to open the sketch in this editor, tweak, Ctrl-Enter to
 //    apply — the edit is appended to the table's event log (see sketch·events)
 //    and the viewer re-cooks. The collision-driven \`amount\` rows then layer on
 //    top — data-driven from "sim" (filter the sibling, not "events", or we'd cycle).
 define("hydra", (rand, table) =>
-  editable("sketch", { index: "number", code: "code", amount: "number" }, [
-    { index: 0, amount: 0.12,
+  editable("sketch", { beat: "number", code: "code", amount: "number" }, [
+    { beat: 1, amount: 0.12,
       code: "src(s0).modulate(osc(2.5, 0.1), (props) => props.amount).out(o0)" },
   ]).concat(
     // Declarative, diffable form: filter(Expr) + emit(template). Values are Expr
-    // nodes (field("index").add(0.25)) so the engine can hash this view and reuse
+    // nodes (field("beat").add(0.5)) so the engine can hash this view and reuse
     // it — editing here never re-bakes the physics in "sim". Each landing kicks
-    // \`amount\` up, then a later row settles it back down.
+    // \`amount\` up, then half a beat later a row settles it back down.
     table("sim")
       .filter(field("type").eq("collision").and(field("other").eq("floor")))
       .emit([
-        { index: field("index"), amount: 0.6 },
-        { index: field("index").add(0.25), amount: 0.12 },
+        { beat: field("beat"), amount: 0.6 },
+        { beat: field("beat").add(0.5), amount: 0.12 },
       ])
   )
 )
 
 // 6. Beat-synced looping (optional). Tap the 🥁 Tap button under the scene a few
-//    times to set the tempo, then measure the timeline in beats — its length
-//    follows the tapped tempo. "Loop" (next to Play) is on by default. beats(16)
-//    loops every 16 beats; { fit: 4 } stretches this 4-second sim across the window:
+//    times to set the tempo; the timeline's wall-clock length then follows it —
+//    tap faster and the whole loop plays faster. "Loop" (next to Play) is on by
+//    default. beats(16) loops every 16 beats; { fit: 12 } stretches this 12-beat
+//    sim across the window so it plays once per loop:
 //
-// define("timeline", () => beats(16, { fit: 4 }))
+// define("timeline", () => beats(16, { fit: 12 }))
 `,
   },
   {

@@ -117,14 +117,14 @@ let currentPlayIndex = 0
 
 // Live MIDI: an append-only event log on the shared primitive. Each event is
 // stamped with wall time (by the log), the current loop iteration, and the
-// playhead's content/source position (Playback.currentSourceSeconds) — the
+// playhead's content/source position (Playback.currentSourceBeats) — the
 // coordinate the baked scene is keyed to, so a recorded sweep's speed follows
 // the timeline mapping. The folded "midi" table (per note, the latest loop's
 // take) is what midi("c4") bindings resolve against each frame; the raw log
 // shows as "midi·events".
 let loopCount = 0
 const midiInput = createMidiInput({
-  getIndex: () => playback.currentSourceSeconds(),
+  getIndex: () => playback.currentSourceBeats(),
   getLoop: () => loopCount,
   onChange: () => onMidi(),
 })
@@ -134,9 +134,9 @@ const playback = initPlayback(
   sceneAPI,
   hydraAPI,
   {
-    onTick: (tick, active, srcSeconds) => {
-      currentPlayIndex = srcSeconds
-      tablePanel.highlightIndex(srcSeconds)
+    onTick: (tick, active, srcBeats) => {
+      currentPlayIndex = srcBeats
+      tablePanel.highlightIndex(srcBeats)
       tablePanel.highlightLineage(active)
     },
     onPlay: () => {

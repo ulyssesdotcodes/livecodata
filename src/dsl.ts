@@ -2,10 +2,12 @@
 // ----------------------------------------------------------------------------
 // A tiny, JavaScript-flavoured DSL for generating tables and using those tables
 // to drive visuals. Tables are arrays of plain row objects. All timing uses
-// **seconds** — math().range(duration) samples over `duration` seconds at 60 fps,
-// event `index`/`dur` fields are in seconds, and rasterize(maxSeconds) sets the
-// animation length in seconds. Every builder returns a new Table, so everything
-// chains.
+// **beats** — a row's `beat` column (1-indexed: beat 1 is the first frame) is
+// where it sits on the loop, math().range(beats) samples over `beats` beats,
+// rasterize(maxBeats) sets the animation length in beats, and retime()/shift()
+// move a table along the beat axis. There are no seconds in the data model; the
+// beats() timeline maps the tapped tempo onto this beat grid. Every builder
+// returns a new Table, so everything chains.
 //
 // Deferred / diffable
 // -------------------
@@ -19,20 +21,20 @@
 //
 // For hashing to be *sound* the inputs must be data, not opaque closures. So the
 // function-valued verbs (map(fn), filter(fn), …) have declarative, chainable
-// Expr variants — field("index").add(0.05), filter(field("type").eq("collision"))
+// Expr variants — field("beat").add(0.5), filter(field("type").eq("collision"))
 // — three.js-node style. Function verbs still work but are hashed by their source
 // text + the run seed (best-effort; a closure could capture changed outer scope).
 // ----------------------------------------------------------------------------
 
 import { rasterizeRows } from './rasterize.js'
 import { withLineage, carry, unionLineage, getLineage, type Row } from './lineage.js'
-import { FPS, DEFAULT_BEAT_SECONDS } from './constants.js'
+import { FPS, FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS } from './constants.js'
 import type { ColumnType } from './editable-tables.js'
 
 // ── Expr: a small, serializable, chainable expression over a row ─────────────
 // Each Expr wraps a plain-JSON `node` (no functions), so it serializes for
 // hashing and evaluates against a row. Operands accept another Expr or a raw
-// literal. Chain like three.js nodes: field("index").add(0.05).
+// literal. Chain like three.js nodes: field("beat").add(0.5).
 
 type BinOp = 'add' | 'sub' | 'mul' | 'div' | 'mod'
 type CmpOp = 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte'
@@ -313,6 +315,13 @@ export interface SimulateOptions {
   fps?: number
   sampleEvery?: number
   collisions?: boolean
+}
+
+// retime({ offset, scale }): shift a table's rows by `offset` beats and stretch
+// their spacing about the loop start (beat 1) by `scale`.
+export interface RetimeSpec {
+  offset?: number
+  scale?: number
 }
 
 export interface DSLContext {
@@ -656,8 +665,35 @@ export class Table {
     }, false)
   }
 
-  rasterize(maxSeconds?: number): Table {
-    return this._xf('rasterize', { maxSeconds }, (ins) => rasterizeRows(ins[0], maxSeconds), false)
+  rasterize(maxBeats?: number): Table {
+    return this._xf('rasterize', { maxBeats }, (ins) => rasterizeRows(ins[0], maxBeats), false)
+  }
+
+  // Move a table along the beat axis. Declarative form retime({ offset, scale })
+  // shifts every row's `beat` by `offset` beats and stretches the spacing about
+  // the loop start (beat 1) by `scale` (durations scale too) — diffable/hashable,
+  // the common case. Function form retime(beat => newBeat) remaps each row's beat
+  // arbitrarily (a closure, so hashed by source text, like map(fn)). Rows without
+  // a `beat` are left untouched. shift(beats) is sugar for retime({ offset }).
+  retime(spec: RetimeSpec | ((beat: number) => number)): Table {
+    if (typeof spec === 'function') {
+      const fn = spec
+      return this._xf('retimeFn', { fn }, (ins) => ins[0].map((r) => {
+        if (typeof r.beat !== 'number') return recarry(r)
+        return withLineage({ ...r, beat: fn(r.beat as number) }, carry(r))
+      }), true)
+    }
+    const { offset = 0, scale = 1 } = spec
+    return this._xf('retime', { offset, scale }, (ins) => ins[0].map((r) => {
+      if (typeof r.beat !== 'number') return recarry(r)
+      const next: Row = { ...r, beat: 1 + ((r.beat as number) - 1) * scale + offset }
+      if (typeof r.dur === 'number') next.dur = (r.dur as number) * scale
+      return withLineage(next, carry(r))
+    }), false)
+  }
+
+  shift(beats: number): Table {
+    return this.retime({ offset: beats })
   }
 
   graph(...columns: (string | string[])[]): this {
@@ -709,15 +745,16 @@ class MathBuilder {
     this._ctx = ctx
   }
 
-  // Sample over `durationSeconds` at FPS. Eager (a literal-rows leaf): the values
-  // — which may come from rand — are baked in, so the leaf's hash is value-based
-  // and naturally seed-sensitive.
-  range(durationSeconds: number): Table {
-    const n = Math.max(1, Math.round(durationSeconds * FPS))
+  // Sample over `beats` beats, one row per frame on the beat grid. `t` (the value
+  // passed to the math fn) is elapsed beats — 0 at the first row. Eager (a
+  // literal-rows leaf): the values — which may come from rand — are baked in, so
+  // the leaf's hash is value-based and naturally seed-sensitive.
+  range(beats: number): Table {
+    const n = Math.max(1, Math.round(beats * FRAMES_PER_BEAT))
     const rows: Row[] = new Array(n)
     for (let i = 0; i < n; i++) {
-      const t = i / FPS
-      rows[i] = { index: t, value: this._fn(t) }
+      const t = i / FRAMES_PER_BEAT
+      rows[i] = { beat: t + 1, value: this._fn(t) }
     }
     return new Table(rows, this._ctx)
   }
@@ -823,22 +860,24 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     // ordinal + seconds since the first tap). The source of truth for tempo.
     taps: () => new Table((ctx?.tapRows?.() ?? []).map((r) => ({ ...r })), ctx),
     // Seconds per beat derived from the tap-beat table (the average interval), or
-    // `fallback` (default 0.5s = 120 BPM) until two taps are recorded.
+    // `fallback` (default 0.5s = 120 BPM) until two taps are recorded. This is the
+    // one place the tapped tempo enters: it sets how fast the loop below plays,
+    // not where content sits on the (fixed) beat grid.
     tempo: (fallback = DEFAULT_BEAT_SECONDS): number => beatSecondsFromTaps(ctx?.tapRows?.()) ?? fallback,
-    // A looping timeline `count` beats long at the tapped tempo — measure playback
-    // length in beats (e.g. beats(16) is a 16-beat loop). Each row is one playback
-    // frame; `time` (seconds) is the source time it maps to. By default time runs
-    // identity (0 → count·beat seconds) so the baked scene plays once per loop;
-    // pass { fit } in source-seconds to stretch a scene across the beat window.
+    // A looping timeline `count` beats long. Its wall-clock length follows the
+    // tapped tempo (that's what makes tapping speed the loop up or down); each row
+    // is one playback frame, mapping a playback `beat` (1-indexed) to the `source`
+    // beat of the baked content it shows. By default source runs identity (the
+    // content plays once per loop); pass { fit } in source-beats to stretch a
+    // shorter/longer stretch of content across the whole beat window.
     beats: (count: number, { fallback = DEFAULT_BEAT_SECONDS, fit }: { fallback?: number; fit?: number } = {}): Table => {
-      const beat = beatSecondsFromTaps(ctx?.tapRows?.()) ?? fallback
-      const totalSeconds = Math.max(0, count) * beat
-      const frames = Math.max(1, Math.round(totalSeconds * FPS))
-      const span = fit != null ? fit : totalSeconds
+      const beatSec = beatSecondsFromTaps(ctx?.tapRows?.()) ?? fallback
+      const frames = Math.max(1, Math.round(Math.max(0, count) * beatSec * FPS))
+      const spanBeats = fit != null ? fit : count
       const out: Row[] = new Array(frames)
       for (let i = 0; i < frames; i++) {
         const frac = frames > 1 ? i / (frames - 1) : 0
-        out[i] = { index: i / FPS, beat: frac * count, time: frac * span }
+        out[i] = { beat: frac * count + 1, source: frac * spanBeats + 1 }
       }
       return new Table(out, ctx)
     },

@@ -49,7 +49,7 @@ test('a body landing on the floor produces collision rows for both bodies', () =
   const floorHit = collisions.find((r) => r.id === 'floor' && r.other === 'ball')
   assert.ok(ballHit, 'ball records hitting the floor')
   assert.ok(floorHit, 'floor records being hit by the ball')
-  assert.equal(ballHit!.index, floorHit!.index, 'both sides share the contact frame')
+  assert.equal(ballHit!.beat, floorHit!.beat, 'both sides share the contact beat')
   assert.equal(typeof ballHit!.cx, 'number', 'contact point uses cx/cy/cz, not px/py/pz')
   assert.equal(ballHit!.px, undefined, 'collision rows carry no movement keyframe')
 })
@@ -63,16 +63,16 @@ test('collisions:false skips contact rows', () => {
   assert.equal(out.filter((r) => r.type === 'collision').length, 0)
 })
 
-test('output is sorted by index, base creates first at index 0', () => {
+test('output is sorted by beat, base creates first at beat 1', () => {
   const out = simulateScene(Jolt, [
     { id: 'ball', type: 'create', shape: 'sphere', motion: 'dynamic', px: 0, py: 5, pz: 0 },
   ], { steps: 20 })
 
   for (let i = 1; i < out.length; i++) {
-    assert.ok(((out[i].index as number) ?? 0) >= ((out[i - 1].index as number) ?? 0), 'non-decreasing index')
+    assert.ok(((out[i].beat as number) ?? 1) >= ((out[i - 1].beat as number) ?? 1), 'non-decreasing beat')
   }
   assert.equal(out[0].type, 'create')
-  assert.equal(out[0].index, 0, 'create normalized to index 0')
+  assert.equal(out[0].beat, 1, 'create normalized to beat 1')
 })
 
 test('sampleEvery thins out the update rows', () => {
@@ -112,8 +112,8 @@ function fakeEngine(rows: Row[]): { simulate: () => Row[] } {
 
 test('physics() builder bakes the source table and stays chainable', () => {
   const baked: Row[] = [
-    { id: 'x', type: 'create', index: 0 },
-    { id: 'x', type: 'update', index: 1, py: 1 },
+    { id: 'x', type: 'create', beat: 1 },
+    { id: 'x', type: 'update', beat: 2, py: 1 },
   ]
   const runtime = createRuntime({ physics: () => fakeEngine(baked) })
   const { views } = runtime.run(`

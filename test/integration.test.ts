@@ -5,18 +5,18 @@ import { getLineage } from '../src/lineage.js'
 
 test('new verbs cook end-to-end (grid/derive/groupBy/csv/join/triggerEach + lineage)', () => {
   const code = `
-define("wave", () => math(t => Math.sin(t * Math.PI * 10)).range(0.4))
+define("wave", () => math(t => Math.sin(t * Math.PI * 10)).range(0.8))
 define("base", "events", () => grid(2, 2).derive({
-  id: r => "o" + r.i, type: "create", index: 0, shape: "sphere",
+  id: r => "o" + r.i, type: "create", beat: 1, shape: "sphere",
   rx: 0, ry: 0, rz: 0, color: 0x4444ff,
 }))
 define("flash", "events", (rand, table) =>
   table("wave").triggerEach(
     (cur, i, rows) => i > 0 && cur.value * rows[i - 1].value < 0,
     table("base"),
-    (o, cur) => ({ id: o.id, type: "color", index: cur.index, color: 0xff0000, dur: 4/60 })
+    (o, cur) => ({ id: o.id, type: "color", beat: cur.beat, color: 0xff0000, dur: 4/30 })
   ))
-define("scene", () => table("events").rasterize(24/60))
+define("scene", () => table("events").rasterize(24/30))
 define("bySign", () => table("wave").derive({ sign: r => r.value >= 0 ? "pos" : "neg" }).groupBy("sign").count())
 define("cities", () => csv("id,pop\\na,8\\nb,4"))
 define("joined", () => table("cities").join(rows([{ id: "a", note: "hit" }]), "id"))

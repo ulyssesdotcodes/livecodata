@@ -3,7 +3,7 @@ import { buildHydraIndex, hydraFrameAt } from './hydra.js'
 import { buildTimeline, type Timeline } from './timeline.js'
 import { activeLineage } from './lineage.js'
 import { resolveBindings, type EvalCtx } from './dsl.js'
-import { FPS, DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS } from './constants.js'
+import { FPS, DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS, frameToBeat, framesToBeats } from './constants.js'
 import type { Row } from './lineage.js'
 import type { SceneAPI } from './three-scene.js'
 import type { HydraAPI } from './hydra-scene.js'
@@ -35,29 +35,29 @@ export function wallAlignedTick(nowMs: number, anchorMs: number, loopSeconds: nu
 }
 
 export interface PlaybackOptions {
-  // srcSeconds: the source/content position shown, in seconds (converted from
-  // the internal frame count) — the unit graphed tables' `index` columns use.
-  onTick?: (tick: number, active: Map<string, Set<number>>, srcSeconds: number) => void
+  // srcBeats: the source/content position shown, as a 1-indexed beat (converted
+  // from the internal frame count) — the unit every table's `beat` column uses.
+  onTick?: (tick: number, active: Map<string, Set<number>>, srcBeats: number) => void
   onPlay?: () => void
   // Called each time the loop wraps (the playhead passes the end and jumps back).
   onLoop?: () => void
   tapControl?: TapControl
   // Streaming context for the frame being shown: resolves midi() bindings against
   // the live MIDI table, sampled at the playhead's *source* frame — the same
-  // content-space coordinate events are recorded in (see currentSourceSeconds).
+  // content-space coordinate events are recorded in (see currentSourceBeats).
   midiCtxAt?: (srcFrame: number) => EvalCtx
 }
 
 export interface PlaybackAPI {
   load(sceneRows: Row[], timelineRows: Row[], hydraRows: Row[]): void
   setTimeline(timelineRows: Row[]): void
-  // The content/source position (seconds) currently on screen — playback time
-  // mapped through the (loop-wrapped) timeline. Live MIDI events are stamped
-  // here, so a recorded sweep's speed follows the timeline mapping: if it
-  // changes later (e.g. a slower fit), the sweep speeds up or slows down right
-  // along with everything else on screen, rather than staying fixed to
+  // The content/source position (as a 1-indexed beat) currently on screen —
+  // playback time mapped through the (loop-wrapped) timeline. Live MIDI events
+  // are stamped here, so a recorded sweep's speed follows the timeline mapping:
+  // if it changes later (e.g. a slower fit), the sweep speeds up or slows down
+  // right along with everything else on screen, rather than staying fixed to
   // wall-clock time.
-  currentSourceSeconds(): number
+  currentSourceBeats(): number
 }
 
 export function initPlayback(
@@ -71,29 +71,18 @@ export function initPlayback(
   let startTime: number | null = null
   let pausedIndex = 0
   let frameIndex: FrameIndex = buildFrameIndex([])
-  // The hydra sketch rows as cooked (raw `beat`/`index`), kept so the frame
-  // index can be rebuilt when the tempo changes (beat placement is tempo-scaled).
-  let hydraSourceRows: Row[] = []
   let hydraIndex: Row[] = buildHydraIndex([])
   let timeline: Timeline = buildTimeline([])
   let aliveObjects = new Set<unknown>()
-  let maxIndex = 0
+  let maxIndex = 0 // loop length in wall-clock seconds (the internal playback clock)
+  let maxBeats = 0 // loop length in beats (what the scrubber/readout count in)
   let isScrubbing = false
   let loop = true // when playback reaches the end, wrap back to the start
   // How many beats one loop lasts when nothing else sizes it (no timeline, no
-  // 3D scene) — a pure hydra sketch. User-settable via the loop-length control;
-  // combined with the tempo it sets the loop's seconds, so the last sketch row
-  // no longer has to sit exactly at the loop boundary (where it was invisible).
+  // 3D scene) — a pure hydra sketch. User-settable via the loop-length control,
+  // so the last sketch keyframe no longer has to sit exactly at the loop boundary
+  // (where it was invisible).
   let loopBeats = DEFAULT_LOOP_BEATS
-
-  // Seconds per beat, from the tapped tempo (average interval) or the shared
-  // default until two taps set one — the same rule the DSL's beats()/tempo()
-  // use, so a beat-synced sketch and a beats() timeline agree on the grid.
-  function beatSeconds(): number {
-    const rows = tapControl?.rows()
-    if (rows && rows.length > 1) return (rows[rows.length - 1].time as number) / (rows.length - 1)
-    return DEFAULT_BEAT_SECONDS
-  }
 
   const topRow = document.createElement('div')
   topRow.className = 'playback-row'
@@ -200,12 +189,18 @@ export function initPlayback(
       `linear-gradient(to right, #e94560 ${pct}%, #1a3a5e ${pct}%)`
   }
 
+  // Playback position, in beats (1-indexed) — linear in wall time within a loop,
+  // so derivable from the seconds clock and the loop's beat/seconds lengths.
+  function playbackBeat(t: number): number {
+    return 1 + (maxIndex > 0 ? (t / maxIndex) * maxBeats : 0)
+  }
+
   function showIndex(t: number): void {
-    const src = timeline.frameAt(Math.floor(t * FPS))
+    const srcBeat = frameToBeat(timeline.frameAt(Math.floor(t * FPS)))
     if (timeline.length) {
-      timeEl.textContent = `${t.toFixed(2)}s→${(src / FPS).toFixed(2)}s`
+      timeEl.textContent = `${playbackBeat(t).toFixed(2)}→${srcBeat.toFixed(2)} beat`
     } else {
-      timeEl.textContent = `${t.toFixed(2)}s`
+      timeEl.textContent = `beat ${srcBeat.toFixed(2)}`
     }
   }
 
@@ -240,9 +235,9 @@ export function initPlayback(
     const sketch = hydraFrameAt(hydraIndex, src)
     hydraAPI.setSketch(sketch && ctx ? { ...sketch, vars: resolveBindings(sketch.vars, ctx) } : sketch)
     hydraAPI.tick(src / FPS)
-    // Graphed/table views key their rows by `index` in seconds, so report the
-    // source position in seconds too (src is an internal frame count).
-    onTick?.(t, activeLineage(states), src / FPS)
+    // Graphed/table views key their rows by `beat`, so report the source position
+    // as a beat (src is an internal frame count).
+    onTick?.(t, activeLineage(states), frameToBeat(src))
   }
 
   // Is there anything to play? A program can define a hydra sketch with no 3D
@@ -274,35 +269,41 @@ export function initPlayback(
     return wallAlignedTick(Date.now(), anchorMs, maxIndex)
   }
 
-  // The content/source position (seconds) currently on screen — the playhead's
-  // tick wrapped by the loop exactly as rendering wraps it (tick()), then mapped
+  // The content/source position (a 1-indexed beat) currently on screen — the
+  // playhead's tick wrapped by the loop exactly as rendering wraps it (tick()),
+  // then mapped
   // through the timeline, exactly as applyAtIndex computes `src`. This is where
   // a live MIDI event gets stamped: recording this shared content coordinate
   // (rather than raw tick/wall-clock time) is what makes a recorded sweep follow
   // the timeline — if the mapping changes later (e.g. a slower fit), tick moves
   // through this same coordinate at a different rate, speeding up or slowing
   // down the recorded sweep right along with everything else on screen.
-  function currentSourceSeconds(): number {
+  function currentSourceBeats(): number {
     let t = currentTime()
     if (loop && maxIndex > 0 && t >= maxIndex) t %= maxIndex
-    return timeline.frameAt(Math.floor(t * FPS)) / FPS
+    return frameToBeat(timeline.frameAt(Math.floor(t * FPS)))
   }
 
-  // Playback length in seconds: follow the timeline when present; else the scene
-  // cache when there's a 3D scene; else — a pure hydra sketch — the loop-length
-  // control (loopBeats at the current tempo). Sizing a hydra-only loop from the
-  // beat grid rather than the sketch's last keyframe is what keeps that last
-  // keyframe visible instead of landing exactly on the loop boundary.
+  // Loop length, tracked in both seconds (maxIndex, the internal clock) and beats
+  // (maxBeats, the scrubber/readout unit). Follow the timeline when present; else
+  // the scene cache when there's a 3D scene; else — a pure hydra sketch — the
+  // loop-length control (loopBeats). Sizing a hydra-only loop from the beat grid
+  // rather than the sketch's last keyframe is what keeps that last keyframe
+  // visible instead of landing exactly on the loop boundary.
   function recomputeMax(): void {
-    let contentMax: number
-    if (frameIndex.maxFrame > 0) {
-      contentMax = frameIndex.maxFrame
+    if (timeline.length) {
+      maxIndex = (timeline.length - 1) / FPS
+      maxBeats = timeline.beats
+    } else if (frameIndex.maxFrame > 0) {
+      maxIndex = frameIndex.maxFrame / FPS
+      maxBeats = framesToBeats(frameIndex.maxFrame)
     } else if (hydraIndex.length) {
-      contentMax = Math.round(loopBeats * beatSeconds() * FPS)
+      maxBeats = loopBeats
+      maxIndex = loopBeats * DEFAULT_BEAT_SECONDS
     } else {
-      contentMax = 0
+      maxIndex = 0
+      maxBeats = 0
     }
-    maxIndex = (timeline.length ? timeline.length - 1 : contentMax) / FPS
     scrubber.max = String(maxIndex || 100)
   }
 
@@ -332,8 +333,7 @@ export function initPlayback(
   // replacing the baked data. (First load is at 0 because that's where we are.)
   function load(sceneRows: Row[], timelineRows: Row[], hydraRows: Row[]): void {
     frameIndex = buildFrameIndex(sceneRows ?? [])
-    hydraSourceRows = hydraRows ?? []
-    hydraIndex = buildHydraIndex(hydraSourceRows, beatSeconds())
+    hydraIndex = buildHydraIndex(hydraRows ?? [])
     timeline = buildTimeline(timelineRows ?? [])
     recomputeMax()
     retimeTo(currentTime())
@@ -350,9 +350,6 @@ export function initPlayback(
   // wouldn't actually resume from.
   function setTimeline(timelineRows: Row[]): void {
     timeline = buildTimeline(timelineRows ?? [])
-    // A tap also moves the beat grid, so re-place beat-based sketch rows at the
-    // new tempo (index-based rows are unaffected, but rebuilding is cheap).
-    hydraIndex = buildHydraIndex(hydraSourceRows, beatSeconds())
     recomputeMax()
     const aligned = state === 'playing' ? wallAlignedPhase() : null
     retimeTo(aligned ?? currentTime())
@@ -451,5 +448,5 @@ export function initPlayback(
     requestAnimationFrame(tick)
   }
 
-  return { load, setTimeline, currentSourceSeconds }
+  return { load, setTimeline, currentSourceBeats }
 }

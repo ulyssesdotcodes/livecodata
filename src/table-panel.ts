@@ -60,8 +60,8 @@ export interface TablePanel {
   selectTable(name: string | null): void
   setTables(newStore: Map<string, Table>): void
   setGraphs(newSpecs: GraphSpec[] | null): void
-  // idx: the playhead's source position in *seconds* — the same unit rows'
-  // `index` column uses, and what the chart's x-axis is drawn in.
+  // idx: the playhead's source position as a *beat* — the same unit rows'
+  // `beat` column uses, and what the chart's x-axis is drawn in.
   highlightIndex(idx: number): void
   highlightLineage(active: Map<string, Set<number>> | null): void
   resetAutoscroll(): void
@@ -583,7 +583,7 @@ export function initTablePanel(
       const t = store.get(name)
       if (t && t.rows.length) {
         const numericCols = t.columns.filter(
-          (c) => c !== 'index' && t.rows.some((r) => typeof r[c] === 'number'),
+          (c) => c !== 'beat' && t.rows.some((r) => typeof r[c] === 'number'),
         )
         if (numericCols.length) spec = { table: t, columns: numericCols, viewName: name }
       }
@@ -638,7 +638,7 @@ export function initTablePanel(
     }
 
     const cols = t.columns
-    indexCol = cols.includes('index') ? 'index' : null
+    indexCol = cols.includes('beat') ? 'beat' : null
 
     const headRow = document.createElement('tr')
     cols.forEach((col) => {

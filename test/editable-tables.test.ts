@@ -2,12 +2,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createEditableTableStore } from '../src/editable-tables.js'
 
-test('createTable seeds a default index column', () => {
+test('createTable seeds a default beat column', () => {
   const store = createEditableTableStore()
   store.createTable('t1')
   assert.ok(store.has('t1'))
   const t = store.get('t1')!
-  assert.deepEqual(t.columns, [{ name: 'index', type: 'number' }])
+  assert.deepEqual(t.columns, [{ name: 'beat', type: 'number' }])
   assert.deepEqual(t.rows, [])
 })
 
@@ -16,22 +16,22 @@ test('addRow / setCell / removeRow', () => {
   store.createTable('t1')
   store.addRow('t1')
   store.addRow('t1')
-  assert.deepEqual(store.get('t1')!.rows, [{ index: 0 }, { index: 0 }])
-  store.setCell('t1', 0, 'index', 42)
-  assert.equal(store.get('t1')!.rows[0].index, 42)
+  assert.deepEqual(store.get('t1')!.rows, [{ beat: 0 }, { beat: 0 }])
+  store.setCell('t1', 0, 'beat', 42)
+  assert.equal(store.get('t1')!.rows[0].beat, 42)
   store.removeRow('t1', 0)
-  assert.deepEqual(store.get('t1')!.rows, [{ index: 0 }])
+  assert.deepEqual(store.get('t1')!.rows, [{ beat: 0 }])
 })
 
 test('every edit is stored as an event; the visible table is the fold', () => {
   const store = createEditableTableStore()
   store.createTable('t1')
   store.addRow('t1')
-  store.setCell('t1', 0, 'index', 3)
-  store.setCell('t1', 0, 'index', 7)
+  store.setCell('t1', 0, 'beat', 3)
+  store.setCell('t1', 0, 'beat', 7)
 
   // The current state reflects only the latest value…
-  assert.deepEqual(store.get('t1')!.rows, [{ index: 7 }])
+  assert.deepEqual(store.get('t1')!.rows, [{ beat: 7 }])
 
   // …but the history keeps both writes, in order, with stamps.
   const events = store.get('t1')!.events
@@ -45,8 +45,8 @@ test('addColumn backfills existing rows with a default; removeColumn drops it', 
   store.createTable('t1')
   store.addRow('t1')
   store.addColumn('t1', 'label', 'string')
-  assert.deepEqual(store.get('t1')!.rows, [{ index: 0, label: '' }])
-  store.removeColumn('t1', 'index')
+  assert.deepEqual(store.get('t1')!.rows, [{ beat: 0, label: '' }])
+  store.removeColumn('t1', 'beat')
   assert.deepEqual(store.get('t1')!.rows, [{ label: '' }])
 })
 
@@ -54,8 +54,8 @@ test('renameColumn moves the value under the new key', () => {
   const store = createEditableTableStore()
   store.createTable('t1')
   store.addRow('t1')
-  store.setCell('t1', 0, 'index', 7)
-  assert.ok(store.renameColumn('t1', 'index', 'score'))
+  store.setCell('t1', 0, 'beat', 7)
+  assert.ok(store.renameColumn('t1', 'beat', 'score'))
   assert.deepEqual(store.get('t1')!.rows, [{ score: 7 }])
   assert.deepEqual(store.get('t1')!.columns, [{ name: 'score', type: 'number' }])
 })
@@ -99,14 +99,14 @@ test('ensure appends no event when the schema already matches (no event spam per
 test('serialize/load round-trips the whole store — the unit a session persists', () => {
   const a = createEditableTableStore()
   a.createTable('t1')
-  a.setCell('t1', 0, 'index', 1) // no row yet — invalid, appends nothing
+  a.setCell('t1', 0, 'beat', 1) // no row yet — invalid, appends nothing
   a.addRow('t1')
-  a.setCell('t1', 0, 'index', 9)
+  a.setCell('t1', 0, 'beat', 9)
   a.createTable('t2')
 
   const b = createEditableTableStore()
   assert.ok(b.load(a.serialize()))
-  assert.deepEqual(b.get('t1')!.rows, [{ index: 9 }])
+  assert.deepEqual(b.get('t1')!.rows, [{ beat: 9 }])
   assert.deepEqual(b.get('t1')!.events.map((e) => e.kind), ['create', 'add-row', 'set-cell'])
   assert.ok(b.has('t2'), 'every table in the store round-trips, not just one')
 })
@@ -160,9 +160,9 @@ test('setRow atomically sets several cells as one event', () => {
 
 test('code is a valid column type (defaults to empty string)', () => {
   const store = createEditableTableStore()
-  store.ensure('h', { index: 'number', code: 'code' })
+  store.ensure('h', { beat: 'number', code: 'code' })
   store.addRow('h')
-  assert.deepEqual(store.get('h')!.rows, [{ index: 0, code: '' }])
+  assert.deepEqual(store.get('h')!.rows, [{ beat: 0, code: '' }])
   store.setCell('h', 0, 'code', 'src(s0).out()')
   assert.equal(store.get('h')!.rows[0].code, 'src(s0).out()')
 })

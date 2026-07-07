@@ -4,21 +4,10 @@
 // effect passes, the visuals are post-processed by a *hydra sketch* — and that
 // sketch lives in a table, exactly like every other thing in livecodata.
 //
-// The "hydra" view is a table of sketch keyframe rows. Each row is placed on
-// the playback loop by one of two columns:
-//   - beat : the beat of the loop where the row activates, **1-indexed** — beat
-//            1 is the top of the loop, and beat b sits (b − 1) beats in. So in a
-//            16-beat loop a row at beat 9 comes in at the start of the third
-//            measure (halfway through). This is the loop-relative axis you'll
-//            usually want for a beat-synced sketch; a beat is `beatSeconds` long
-//            (the tapped tempo, or a 120-BPM default), so beat b lands at
-//            (b − 1)·beatSeconds source-seconds.
-//   - index : the row's source time in **seconds**, for a sketch synced to
-//            content time rather than the beat grid — e.g. hydra post-processing
-//            a physics scene, where an `amount` should change the instant a
-//            collision lands (see the "House of Cards" sample). A row may use
-//            either column; `beat` wins if both are present.
-// Each row may also carry:
+// The "hydra" view is a table of sketch keyframe rows, placed on the loop by a
+// 1-indexed `beat` column — beat 1 is the top of the loop, beat b sits (b − 1)
+// beats in. So in a 16-beat loop a row at beat 9 comes in at the start of the
+// third measure (halfway through). Each row may carry:
 //   - code : a hydra sketch string, e.g. "src(s0).modulate(noise(2)).out()"
 //            (s0 is the rendered Three.js scene; o0 is the output).
 //   - any other column : a *variable* in scope while the sketch runs (freq,
@@ -37,10 +26,12 @@
 // DOM dependency); the actual GPU rendering lives in hydra-scene.ts.
 // ----------------------------------------------------------------------------
 
-import { FPS, DEFAULT_BEAT_SECONDS } from './constants.js'
+import { beatToFrame } from './constants.js'
 import type { Row } from './lineage.js'
 
-// Columns that steer sampling rather than feed the sketch as variables.
+// Columns that steer sampling rather than feed the sketch as variables. `index`
+// is the frame position buildHydraIndex writes (see below) — internal, never a
+// sketch variable.
 const CONTROL_FIELDS = new Set(['beat', 'index', 'code', 'dur', 'ease'])
 
 export interface HydraFrame {
@@ -63,23 +54,14 @@ export function hydraRows(rows: Row[] | null | undefined): Row[] {
   return (rows ?? []).filter(isHydraRow)
 }
 
-// Place each row on the frame grid and sort ascending, so sampling is a frame
-// comparison (mirrors rasterize/effects). A row is positioned by its `beat`
-// (1-indexed loop beat → (beat − 1)·beatSeconds source-seconds) if present,
-// else by `index` (source seconds directly); rows with neither sit at frame 0.
-// The computed frame is stored back on `index` (the field hydraFrameAt samples).
-export function buildHydraIndex(rows: Row[] | null | undefined, beatSeconds: number = DEFAULT_BEAT_SECONDS): Row[] {
+// Place each row on the frame grid (from its 1-indexed `beat`; rows without one
+// sit at beat 1 / frame 0) and sort ascending, so sampling is a frame comparison
+// (mirrors rasterize/effects). The computed frame is stored on `index`, the
+// field hydraFrameAt samples against.
+export function buildHydraIndex(rows: Row[] | null | undefined): Row[] {
   return hydraRows(rows)
-    .map((row) => ({ ...row, index: Math.round(rowSeconds(row, beatSeconds) * FPS) }))
+    .map((row) => ({ ...row, index: beatToFrame((row.beat as number | undefined) ?? 1) }))
     .sort((a, b) => (a.index as number) - (b.index as number))
-}
-
-// A row's source position in seconds: from `beat` (loop-relative, tempo-scaled)
-// when present, otherwise from `index` (raw seconds), otherwise 0.
-function rowSeconds(row: Row, beatSeconds: number): number {
-  const beat = row.beat as number | undefined
-  if (typeof beat === 'number') return (beat - 1) * beatSeconds
-  return (row.index as number | undefined) ?? 0
 }
 
 // The active sketch at frame `f`: the latest `code` at/before f, plus the latest

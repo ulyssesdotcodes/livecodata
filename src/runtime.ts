@@ -138,7 +138,7 @@ export function createRuntime({ physics, tapRows, editableRows }: RuntimeOptions
         seedSensitive: false,
         compute: (ins) => {
           const rows: Row[] = ins.flat()
-          rows.sort((a, b) => ((a.index as number) ?? 0) - ((b.index as number) ?? 0))
+          rows.sort((a, b) => ((a.beat as number) ?? 1) - ((b.beat as number) ?? 1))
           return rows
         },
       })
