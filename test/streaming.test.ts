@@ -6,9 +6,12 @@ import {
 import { rasterizeRows } from '../src/rasterize.js'
 import { buildMidiIndex, sampleMidiAt, midiRow, decodeMidi } from '../src/midi.js'
 import { buildHydraIndex, hydraFrameAt } from '../src/hydra.js'
+import { frameToBeat } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
 
 const t = (rows: Row[]): Table => new Table(rows)
+// The 1-indexed source `beat` that maps to a given cache frame (30 frames/beat).
+const b = (frame: number): number => frameToBeat(frame)
 const nodeOf = (e: Expr): import('../src/dsl.js').ExprNode => e.node
 
 // ── Streaming detection ─────────────────────────────────────────────────────
@@ -60,21 +63,21 @@ test('midi bindings are diffable: same note hashes equal, different note differs
 
 test('rasterize carries a midi binding onto each dense frame row', () => {
   const events = t([
-    { id: 's', type: 'create', index: 0, shape: 'box', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
+    { id: 's', type: 'create', beat: 1, shape: 'box', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
   ]).setField('amount', midi('c4'))
 
-  const baked = rasterizeRows(events.rows, 0.05) // ~3 frames
+  const baked = rasterizeRows(events.rows, 0.1) // ~3 frames
   assert.ok(baked.length >= 2)
   for (const f of baked) assert.ok(isBinding(f.amount), 'binding survives the bake')
 })
 
 // ── End-to-end: the same path playback walks each frame ─────────────────────
 
-test('a note recorded at 1s drives the field every time the loop passes 1s', () => {
-  // Record c4 (on) at source 1s, off at 2s — exactly what live input would store.
+test('a note recorded at frame 60 drives the field every time the loop passes it', () => {
+  // Record c4 (on) at source frame 60, off at frame 120 — as live input stores it.
   const midiRows = [
-    midiRow(decodeMidi([0x90, 60, 127])!, 1),
-    midiRow(decodeMidi([0x80, 60, 0])!, 2),
+    midiRow(decodeMidi([0x90, 60, 127])!, b(60)),
+    midiRow(decodeMidi([0x80, 60, 0])!, b(120)),
   ]
   const idx = buildMidiIndex(midiRows)
   const ctxAt = (frame: number): { midi: (n: string, c: number | null) => number } => ({
@@ -83,22 +86,22 @@ test('a note recorded at 1s drives the field every time the loop passes 1s', () 
 
   // The baked scene with a midi-bound field, as rasterize produces it.
   const baked = rasterizeRows(
-    t([{ id: 's', type: 'create', index: 0, shape: 'box', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
+    t([{ id: 's', type: 'create', beat: 1, shape: 'box', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
       .setField('amount', midi('c4')).rows,
-    3,
+    5,
   )
   const rowAt = (frame: number): Row => resolveBindings(baked.find((r) => r.frame === frame)!, ctxAt(frame))
 
-  assert.equal(rowAt(30).amount, 0, 'before the note (0.5s): 0')
-  assert.equal(rowAt(60).amount, 1, 'loop reaches 1s: note on')
-  assert.equal(rowAt(90).amount, 1, 'still held at 1.5s')
-  assert.equal(rowAt(120).amount, 0, 'released at 2s')
+  assert.equal(rowAt(30).amount, 0, 'before the note (frame 30): 0')
+  assert.equal(rowAt(60).amount, 1, 'loop reaches frame 60: note on')
+  assert.equal(rowAt(90).amount, 1, 'still held at frame 90')
+  assert.equal(rowAt(120).amount, 0, 'released at frame 120')
 })
 
 // ── The same carry-through, but for a hydra sketch variable ─────────────────
 
 test('a midi binding in a hydra sketch variable survives to hydraFrameAt and resolves at playback', () => {
-  const row = t([{ index: 0, code: 'osc(speed).out()' }]).setField('speed', midi('c4')).rows[0]
+  const row = t([{ beat: 1, code: 'osc(speed).out()' }]).setField('speed', midi('c4')).rows[0]
   assert.ok(isBinding(row.speed), 'the sketch variable is deferred, like a scene field')
 
   const idx = buildHydraIndex([row])

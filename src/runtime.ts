@@ -62,9 +62,6 @@ export interface RuntimeOptions {
 
 export interface RunOptions {
   seed?: number
-  // Cook only these views (and their deps) instead of all — used to cheaply
-  // recompute a tempo-driven "timeline" on a beat tap without re-running the rest.
-  only?: string[]
   dataCache?: Map<string, string>
 }
 
@@ -138,7 +135,7 @@ export function createRuntime({ physics, tapRows, editableRows }: RuntimeOptions
         seedSensitive: false,
         compute: (ins) => {
           const rows: Row[] = ins.flat()
-          rows.sort((a, b) => ((a.index as number) ?? 0) - ((b.index as number) ?? 0))
+          rows.sort((a, b) => ((a.beat as number) ?? 1) - ((b.beat as number) ?? 1))
           return rows
         },
       })
@@ -190,7 +187,7 @@ export function createRuntime({ physics, tapRows, editableRows }: RuntimeOptions
   const api = createDSL(ctx)
   const matCtx: MatCtx = { physics: () => (physics ? physics() : null) }
 
-  function run(code: string, { seed = 0, only, dataCache: dc }: RunOptions = {}): RuntimeResult {
+  function run(code: string, { seed = 0, dataCache: dc }: RunOptions = {}): RuntimeResult {
     defs = new Map()
     cache = new Map()
     deps = new Map()
@@ -213,9 +210,8 @@ export function createRuntime({ physics, tapRows, editableRows }: RuntimeOptions
     }
 
     // Cook (build the op-graphs + discover deps) then materialize, reusing
-    // unchanged subgraphs from the memo. With `only`, cook just those views.
-    const toCook = only ?? [...defs.keys()]
-    for (const name of toCook) if (defs.has(name)) cook(name, null, [])
+    // unchanged subgraphs from the memo.
+    for (const name of defs.keys()) cook(name, null, [])
     for (const t of cache.values()) materialize(t, matCtx, memo)
 
     const resolvedGraphs = graphs

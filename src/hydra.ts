@@ -4,8 +4,10 @@
 // effect passes, the visuals are post-processed by a *hydra sketch* — and that
 // sketch lives in a table, exactly like every other thing in livecodata.
 //
-// The "hydra" view is a table of sketch keyframe rows, ordered by `index`
-// (seconds). Each row may carry:
+// The "hydra" view is a table of sketch keyframe rows, placed on the loop by a
+// 1-indexed `beat` column — beat 1 is the top of the loop, beat b sits (b − 1)
+// beats in. So in a 16-beat loop a row at beat 9 comes in at the start of the
+// third measure (halfway through). Each row may carry:
 //   - code : a hydra sketch string, e.g. "src(s0).modulate(noise(2)).out()"
 //            (s0 is the rendered Three.js scene; o0 is the output).
 //   - any other column : a *variable* in scope while the sketch runs (freq,
@@ -24,11 +26,13 @@
 // DOM dependency); the actual GPU rendering lives in hydra-scene.ts.
 // ----------------------------------------------------------------------------
 
-import { FPS } from './constants.js'
+import { beatToFrame } from './constants.js'
 import type { Row } from './lineage.js'
 
-// Columns that steer sampling rather than feed the sketch as variables.
-const CONTROL_FIELDS = new Set(['index', 'code', 'dur', 'ease'])
+// Columns that steer sampling rather than feed the sketch as variables. `index`
+// is the frame position buildHydraIndex writes (see below) — internal, never a
+// sketch variable.
+const CONTROL_FIELDS = new Set(['beat', 'index', 'code', 'dur', 'ease'])
 
 export interface HydraFrame {
   // The sketch source to evaluate (ends in .out()).
@@ -50,11 +54,13 @@ export function hydraRows(rows: Row[] | null | undefined): Row[] {
   return (rows ?? []).filter(isHydraRow)
 }
 
-// Convert `index` (seconds) to integer frames and sort ascending, so sampling is
-// a frame comparison (mirrors rasterize/effects). Rows without an index sit at 0.
+// Place each row on the frame grid (from its 1-indexed `beat`; rows without one
+// sit at beat 1 / frame 0) and sort ascending, so sampling is a frame comparison
+// (mirrors rasterize/effects). The computed frame is stored on `index`, the
+// field hydraFrameAt samples against.
 export function buildHydraIndex(rows: Row[] | null | undefined): Row[] {
   return hydraRows(rows)
-    .map((row) => ({ ...row, index: Math.round(((row.index as number | undefined) ?? 0) * FPS) }))
+    .map((row) => ({ ...row, index: beatToFrame((row.beat as number | undefined) ?? 1) }))
     .sort((a, b) => (a.index as number) - (b.index as number))
 }
 

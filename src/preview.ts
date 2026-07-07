@@ -101,7 +101,7 @@ function drawSparklines(
   // X-axis tick labels.
   const ticks = xTicks(xMin, xMax, 3)
   const dec = tickDecimals(ticks)
-  const suffix = hasIndex ? 's' : ''
+  const suffix = hasIndex ? ' b' : '' // beats (the x-axis unit when a `beat` column is present)
   g.fillStyle = '#607a96'
   g.font = '8px system-ui'
   g.textBaseline = 'top'
@@ -133,10 +133,10 @@ export function buildTablePreview(
   head.textContent = `${table.name ?? 'table'} · ${rowsLabel} · ${colsLabel}`
   wrap.appendChild(head)
 
-  const hasIndex = allCols.includes('index')
-  const xOf = (row: Row, i: number): number => (hasIndex ? (row.index as number) : i)
+  const hasIndex = allCols.includes('beat')
+  const xOf = (row: Row, i: number): number => (hasIndex ? (row.beat as number) : i)
   const numCols = allCols.filter(
-    (c) => c !== 'index' && table.rows.some((r) => typeof r[c] === 'number'),
+    (c) => c !== 'beat' && table.rows.some((r) => typeof r[c] === 'number'),
   )
   if (numCols.length) {
     const result = drawSparklines(table.rows, numCols, xOf, hasIndex, playIndex)

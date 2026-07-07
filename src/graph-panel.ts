@@ -45,10 +45,10 @@ function isNumericColumn(rows: Row[], col: string): boolean {
 export function resolveSpec(spec: GraphSpec): ResolvedSpec {
   const rows = spec.table.rows
   const allCols = spec.table.columns
-  let cols = spec.columns.length ? spec.columns : allCols.filter((c) => c !== 'index')
+  let cols = spec.columns.length ? spec.columns : allCols.filter((c) => c !== 'beat')
   cols = cols.filter((c) => isNumericColumn(rows, c))
-  const hasIndex = allCols.includes('index')
-  const xOf = (row: Row, i: number): number => (hasIndex ? (row.index as number) : i)
+  const hasIndex = allCols.includes('beat')
+  const xOf = (row: Row, i: number): number => (hasIndex ? (row.beat as number) : i)
   return { rows, cols, xOf, hasIndex }
 }
 
@@ -178,7 +178,7 @@ export function drawChartToCanvas(
 
   const ticks = xTicks(xMin, xMax)
   const dec = tickDecimals(ticks)
-  const suffix = hasIndex ? 's' : ''
+  const suffix = hasIndex ? ' b' : '' // beats (the x-axis unit when a `beat` column is present)
   g.fillStyle = '#607a96'
   g.font = '9px system-ui'
   g.textBaseline = 'top'

@@ -90,21 +90,19 @@ test('taps() wraps the tap-beat rows in a Table (cloned)', () => {
   assert.notEqual(tbl.rows[0], rows[0], 'rows are cloned')
 })
 
-test('beats(n) builds an n-beat identity timeline at the tapped tempo', () => {
-  const tl = dslWithTaps(tapRowsAt(0.5)).beats(16) // 16 * 0.5s = 8s → 480 frames @ 60fps
-  assert.equal(tl.length, 480)
-  assert.deepEqual(tl.rows[0], { index: 0, beat: 0, time: 0 })
-  const last = tl.rows[tl.length - 1]
-  assert.equal(last.beat, 16)
-  assert.ok(Math.abs((last.time as number) - 8) < 1e-9)
+test('beats(n) builds a two-keyframe identity remap spanning n beats', () => {
+  // Tempo is automatic in playback, so the timeline itself is just a sparse
+  // beat→source map: the count-beat loop (playback beats 1..n+1) mapped identity.
+  const tl = dslWithTaps(tapRowsAt(0.5)).beats(16)
+  assert.deepEqual(tl.rows, [{ beat: 1, source: 1 }, { beat: 17, source: 17 }])
 })
 
-test('beats(n, { fit }) stretches a source duration across the beat window', () => {
+test('beats(n, { fit }) maps a source span across the beat window', () => {
+  // fit: 4 maps 4 source-beats (beats 1..5) across the whole 16-beat loop.
   const tl = dslWithTaps(tapRowsAt(0.5)).beats(16, { fit: 4 })
-  const last = tl.rows[tl.length - 1]
-  assert.ok(Math.abs((last.time as number) - 4) < 1e-9)
+  assert.deepEqual(tl.rows, [{ beat: 1, source: 1 }, { beat: 17, source: 5 }])
 })
 
-test('beats() uses the fallback tempo when no taps are recorded', () => {
-  assert.equal(dslWithTaps([]).beats(4).length, 120) // 4 * 0.5 * 60
+test('beats() is tempo-independent — identical rows regardless of taps', () => {
+  assert.deepEqual(dslWithTaps([]).beats(4).rows, dslWithTaps(tapRowsAt(0.25)).beats(4).rows)
 })

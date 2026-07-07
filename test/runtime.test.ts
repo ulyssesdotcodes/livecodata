@@ -7,8 +7,8 @@ import type { Row } from '../src/lineage.js'
 test('cooks defined views and resolves table() dependencies', () => {
   const rt = createRuntime()
   const code = `
-    define("nums", () => math(t => t * 60).range(4/60))
-    define("doubled", (rand, table) => table("nums").map(r => ({ index: r.index, value: r.value * 2 })))
+    define("nums", () => math(t => t * 30).range(4/30))
+    define("doubled", (rand, table) => table("nums").map(r => ({ beat: r.beat, value: r.value * 2 })))
   `
   const { views } = rt.run(code, { seed: 1 })
   assert.deepEqual(views.get('nums')!.rows.map((r) => r.value), [0, 1, 2, 3])
@@ -79,7 +79,7 @@ test('save() registers a constant view, still resolvable by table()', () => {
 
 test('graph specs are resolved to their cooked tables', () => {
   const rt = createRuntime()
-  const code = `define("g", () => math(t => t).range(3/60).graph("value"))`
+  const code = `define("g", () => math(t => t).range(3/30).graph("value"))`
   const { graphs } = rt.run(code, { seed: 1 })
   assert.equal(graphs.length, 1)
   assert.deepEqual(graphs[0].columns, ['value'])
@@ -103,15 +103,15 @@ test('a dependency cycle is detected', () => {
   assert.throws(() => rt.run(code, { seed: 1 }), /cycle in cook/)
 })
 
-test('a group view merges its members, index-sorted', () => {
+test('a group view merges its members, beat-sorted', () => {
   const rt = createRuntime()
   const code = `
-    define("a", "g", () => rows([{ index: 5, tag: "a" }, { index: 1, tag: "a" }]))
-    define("b", "g", () => rows([{ index: 3, tag: "b" }, { index: 0, tag: "b" }]))
+    define("a", "g", () => rows([{ beat: 5, tag: "a" }, { beat: 1, tag: "a" }]))
+    define("b", "g", () => rows([{ beat: 3, tag: "b" }, { beat: 0, tag: "b" }]))
   `
   const { views, deps } = rt.run(code, { seed: 1 })
   const g = views.get('g')!.rows
-  assert.deepEqual(g.map((r) => r.index), [0, 1, 3, 5], 'concatenated then index-sorted')
+  assert.deepEqual(g.map((r) => r.beat), [0, 1, 3, 5], 'concatenated then beat-sorted')
   assert.deepEqual(deps.get('g')!.sort(), ['a', 'b'])
 })
 
@@ -119,22 +119,22 @@ test('reproduces the zero-crossing events program end-to-end', () => {
   const rt = createRuntime()
   const code = `
     define("wave", () => math(i => Math.sin(i * Math.PI / 4)).range(16))
-    define("base", "events", () => rows([{ id: "s", type: "create", index: 0, shape: "sphere",
+    define("base", "events", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
     define("flash", "events", (rand, table) => {
       const crossings = table("wave").filterMap((cur, i, rows) =>
-        i > 0 && cur.value * rows[i - 1].value < 0 ? { index: cur.index } : null)
+        i > 0 && cur.value * rows[i - 1].value < 0 ? { beat: cur.beat } : null)
       return table("base").filterMap(o =>
         o.type !== "create" ? null
-          : crossings.rows.map(c => ({ id: o.id, type: "color", index: c.index, color: 0xffffff })))
+          : crossings.rows.map(c => ({ id: o.id, type: "color", beat: c.beat, color: 0xffffff })))
     })
   `
   const { views } = rt.run(code, { seed: 1 })
   const events = views.get('events')!.rows
   assert.equal(events[0].type, 'create')
   assert.ok(events.some((e) => e.type === 'color'), 'a zero-crossing color event exists')
-  assert.deepEqual(events.map((e) => e.index), [...events.map((e) => e.index)].sort((a, b) => (a as number) - (b as number)),
-    'events come out index-sorted')
+  assert.deepEqual(events.map((e) => e.beat), [...events.map((e) => e.beat)].sort((a, b) => (a as number) - (b as number)),
+    'events come out beat-sorted')
 })
 
 test('incremental cooking reuses an unchanged physics subgraph across runs', () => {
@@ -143,7 +143,7 @@ test('incremental cooking reuses an unchanged physics subgraph across runs', () 
   const engine = {
     simulate: (rows: Row[]): Row[] => {
       bakes++
-      return [...rows, { id: 'x', type: 'update', index: 1, py: 1 }]
+      return [...rows, { id: 'x', type: 'update', beat: 2, py: 1 }]
     },
   }
   const rt = createRuntime({ physics: () => engine })
@@ -199,7 +199,7 @@ test('editable() edits survive across runs (unlike a computed view)', () => {
 test('editable() seeds rows on first create only', () => {
   const store = createEditableTableStore()
   const rt = createRuntime({ editableRows: (name, schema, seedRows) => store.ensure(name, schema, seedRows) })
-  const code = `define("h", () => editable("h", { index: "number", code: "code" }, [{ index: 0, code: "src(s0).out()" }]))`
+  const code = `define("h", () => editable("h", { beat: "number", code: "code" }, [{ beat: 1, code: "src(s0).out()" }]))`
 
   const first = rt.run(code, { seed: 1 })
   assert.deepEqual(first.views.get('h')!.rows.map((r) => r.code), ['src(s0).out()'])

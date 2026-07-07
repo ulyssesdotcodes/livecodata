@@ -4,11 +4,11 @@ import { createRuntime } from '../src/runtime.js'
 import { cookProgram } from '../src/replay.js'
 
 const PROG = (n: number): string => `
-  define("base", () => rows([{ id: "s", type: "create", index: 0, shape: "sphere",
+  define("base", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
     color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
-  define("noise", (rand) => math(() => rand()).range(${n}/60))
+  define("noise", (rand) => math(() => rand()).range(${n}/30))
   define("events", (rand, table) => table("base"))
-  define("scene", (rand, table) => table("events").rasterize(${n}/60))
+  define("scene", (rand, table) => table("events").rasterize(${n}/30))
 `
 
 test('cookProgram resolves the scene cache and is deterministic per seed', () => {
@@ -27,7 +27,7 @@ test('cookProgram resolves the scene cache and is deterministic per seed', () =>
 test('cookProgram falls back to rasterizing events when there is no scene view', () => {
   const rt = createRuntime()
   const code = `
-    define("events", () => rows([{ id: "s", type: "create", index: 0, shape: "box",
+    define("events", () => rows([{ id: "s", type: "create", beat: 1, shape: "box",
       color: 1, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
   `
   const cooked = cookProgram(rt, code, 1)
@@ -38,11 +38,11 @@ test('cookProgram falls back to rasterizing events when there is no scene view',
 test('cookProgram surfaces the hydra sketch rows from the "hydra" view', () => {
   const rt = createRuntime()
   const code = `
-    define("base", () => rows([{ id: "s", type: "create", index: 0, shape: "box",
+    define("base", () => rows([{ id: "s", type: "create", beat: 1, shape: "box",
       color: 1, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
-    define("scene", (rand, table) => table("base").rasterize(1/60))
+    define("scene", (rand, table) => table("base").rasterize(1/30))
     define("hydra", () => rows([
-      { index: 0, code: "src(s0).modulate(noise(amount)).out()", amount: 3 },
+      { beat: 1, code: "src(s0).modulate(noise(amount)).out()", amount: 3 },
     ]))
   `
   const cooked = cookProgram(rt, code, 1)
@@ -56,22 +56,22 @@ test('hydra variables can be data-driven from another view without cycling', () 
   const rt = createRuntime()
   const code = `
     define("sim", () => rows([
-      { id: "s", type: "create", index: 0, shape: "box", color: 1,
+      { id: "s", type: "create", beat: 1, shape: "box", color: 1,
         px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
-      { id: "s", type: "collision", index: 0.5, other: "floor" },
+      { id: "s", type: "collision", beat: 3, other: "floor" },
     ]))
-    define("scene", (rand, table) => table("sim").rasterize(1/60))
+    define("scene", (rand, table) => table("sim").rasterize(1/30))
     define("hydra", (rand, table) =>
-      rows([{ index: 0, code: "src(s0).modulate(noise(amount)).out()", amount: 0.2 }]).concat(
+      rows([{ beat: 1, code: "src(s0).modulate(noise(amount)).out()", amount: 0.2 }]).concat(
         table("sim")
           .filter(r => r.type === "collision" && r.other === "floor")
-          .map(r => ({ index: r.index, amount: 2.6 }))
+          .map(r => ({ beat: r.beat, amount: 2.6 }))
       ))
   `
   const cooked = cookProgram(rt, code, 1)
   const bump = cooked.hydraRows.find((r) => r.amount === 2.6)
   assert.ok(bump, 'a collision-driven variable change was emitted')
-  assert.equal(bump!.index, 0.5)
+  assert.equal(bump!.beat, 3)
 })
 
 test('cookProgram reproduces exactly what was authored for a given seed', () => {

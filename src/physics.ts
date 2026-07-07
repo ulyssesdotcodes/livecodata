@@ -7,6 +7,7 @@
 import initJolt from 'jolt-physics'
 import type { Row } from './lineage.js'
 import type { SimulateOptions } from './dsl.js'
+import { FPS, secondsToBeat } from './constants.js'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type JoltModule = any
@@ -156,7 +157,7 @@ export function simulateScene(Jolt: JoltModule, baseRows: Row[], opts: SimulateO
   const {
     steps = 120,
     gravity = -9.81,
-    fps = 60,
+    fps = FPS,
     sampleEvery = 1,
     collisions = true,
   } = opts
@@ -219,8 +220,9 @@ export function simulateScene(Jolt: JoltModule, baseRows: Row[], opts: SimulateO
       if (idA == null || idB == null) return
       const p = manifold.GetWorldSpaceContactPointOn1(0)
       const cx = p.GetX() as number, cy = p.GetY() as number, cz = p.GetZ() as number
-      collisionRows.push({ id: idA, type: 'collision', index: frame / fps, other: idB, cx, cy, cz })
-      collisionRows.push({ id: idB, type: 'collision', index: frame / fps, other: idA, cx, cy, cz })
+      const beat = secondsToBeat(frame / fps)
+      collisionRows.push({ id: idA, type: 'collision', beat, other: idB, cx, cy, cz })
+      collisionRows.push({ id: idB, type: 'collision', beat, other: idA, cx, cy, cz })
     }
     listener.OnContactPersisted = () => {}
     listener.OnContactRemoved = () => {}
@@ -239,7 +241,7 @@ export function simulateScene(Jolt: JoltModule, baseRows: Row[], opts: SimulateO
       const r = bodyInterface.GetRotation(bodyId)
       const e = quatToEuler(r.GetX() as number, r.GetY() as number, r.GetZ() as number, r.GetW() as number)
       updateRows.push({
-        id, type: 'update', index: frame / fps,
+        id, type: 'update', beat: secondsToBeat(frame / fps),
         px: p.GetX() as number, py: p.GetY() as number, pz: p.GetZ() as number,
         rx: e.rx, ry: e.ry, rz: e.rz,
       })
@@ -252,8 +254,8 @@ export function simulateScene(Jolt: JoltModule, baseRows: Row[], opts: SimulateO
   }
   Jolt.destroy(jolt)
 
-  const baseOut = creates.map((r) => ({ ...r, index: (r.index as number | undefined) ?? 0 }))
+  const baseOut = creates.map((r) => ({ ...r, beat: (r.beat as number | undefined) ?? 1 }))
   const out = [...baseOut, ...updateRows, ...collisionRows]
-  out.sort((a, b) => ((a.index as number) ?? 0) - ((b.index as number) ?? 0))
+  out.sort((a, b) => ((a.beat as number) ?? 1) - ((b.beat as number) ?? 1))
   return out
 }

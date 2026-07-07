@@ -13,6 +13,26 @@ test('map / filter / slice return new tables', () => {
   assert.deepEqual(base.rows, [{ v: 1 }, { v: 2 }, { v: 3 }])
 })
 
+test('retime shifts and scales the beat axis; shift is offset sugar', () => {
+  const base = t([{ beat: 1, dur: 2, v: 'a' }, { beat: 3, v: 'b' }, { note: 'no beat' }])
+
+  // offset moves every beat later; rows without a beat are untouched.
+  assert.deepEqual(base.retime({ offset: 4 }).rows,
+    [{ beat: 5, dur: 2, v: 'a' }, { beat: 7, v: 'b' }, { note: 'no beat' }])
+
+  // scale stretches spacing about the loop start (beat 1); durations scale too.
+  assert.deepEqual(base.retime({ scale: 2 }).rows,
+    [{ beat: 1, dur: 4, v: 'a' }, { beat: 5, v: 'b' }, { note: 'no beat' }])
+
+  // shift(n) is retime({ offset: n }).
+  assert.deepEqual(base.shift(-1).rows.map((r) => r.beat), [0, 2, undefined])
+})
+
+test('retime accepts a function to remap each beat arbitrarily', () => {
+  const base = t([{ beat: 1 }, { beat: 2 }, { beat: 4 }])
+  assert.deepEqual(base.retime((b) => b * b).rows.map((r) => r.beat), [1, 4, 16])
+})
+
 test('map exposes the row index', () => {
   const out = t([{ v: 5 }, { v: 6 }]).map((r, i) => ({ v: r.v, i }))
   assert.deepEqual(out.rows, [{ v: 5, i: 0 }, { v: 6, i: 1 }])

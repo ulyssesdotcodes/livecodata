@@ -9,7 +9,7 @@ import { initSessionSelector } from './session-selector.js'
 import { SAMPLES } from './samples.js'
 import { createRuntime } from './runtime.js'
 import { createSessionStore } from './sessions.js'
-import { cookProgram, cookTimeline } from './replay.js'
+import { cookProgram } from './replay.js'
 import { initPhysics } from './physics.js'
 import { randomSeed } from './event-log.js'
 import { Table } from './dsl.js'
@@ -130,14 +130,14 @@ let currentPlayIndex = 0
 
 // Live MIDI: an append-only event log on the shared primitive. Each event is
 // stamped with wall time (by the log), the current loop iteration, and the
-// playhead's content/source position (Playback.currentSourceSeconds) — the
+// playhead's content/source position (Playback.currentSourceBeats) — the
 // coordinate the baked scene is keyed to, so a recorded sweep's speed follows
 // the timeline mapping. The folded "midi" table (per note, the latest loop's
 // take) is what midi("c4") bindings resolve against each frame; the raw log
 // shows as "midi·events".
 let loopCount = 0
 const midiInput = createMidiInput({
-  getIndex: () => playback.currentSourceSeconds(),
+  getIndex: () => playback.currentSourceBeats(),
   getLoop: () => loopCount,
   onChange: () => onMidi(),
 })
@@ -147,9 +147,9 @@ const playback = initPlayback(
   sceneAPI,
   hydraAPI,
   {
-    onTick: (tick, active, srcSeconds) => {
-      currentPlayIndex = srcSeconds
-      tablePanel.highlightIndex(srcSeconds)
+    onTick: (tick, active, srcBeats) => {
+      currentPlayIndex = srcBeats
+      tablePanel.highlightIndex(srcBeats)
       tablePanel.highlightLineage(active)
     },
     onPlay: () => {
@@ -229,23 +229,13 @@ function applyCooked({ views, graphs, sceneRows, timelineRows, hydraRows }: Cook
   playback.load(sceneRows, timelineRows, hydraRows)
 }
 
-// A tap changed the tempo: refresh the "taps" table, then recompute *only* the
-// timeline (cheap — physics is reused from the memo) so a beats() timeline adopts
-// the new beat length, and retime playback in place. Keeps the last timeline on
-// failure.
+// A tap changed the tempo: refresh the "taps" table and re-anchor playback to
+// the new tempo. Nothing re-cooks — content sits on a fixed beat grid, so the
+// timeline (a tempo-independent beat remap) is unaffected; only the rate the
+// playhead sweeps the loop changes.
 function onTap(): void {
   tablePanel.setTables(tablesForDisplay(lastViews))
-  if (liveCode == null) return
-  let timelineRows: Row[]
-  cooking = true
-  try {
-    timelineRows = cookTimeline(runtime, liveCode, liveSeed)
-  } catch {
-    return
-  } finally {
-    cooking = false
-  }
-  playback.setTimeline(timelineRows)
+  playback.retempo()
 }
 
 function persistSession(): void {

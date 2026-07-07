@@ -55,7 +55,7 @@ test('the engine stamps each view, accumulating transitive provenance', () => {
   const code = `
     define("randsin", () => math(i => i).range(6))
     define("events", () => table("randsin")
-      .scan((s, cur) => ({ state: s, emit: cur.index === 3 ? { hit: cur.index } : null }), null))
+      .scan((s, cur) => ({ state: s, emit: cur.beat === 3 ? { hit: cur.beat } : null }), null))
   `
   const { views } = rt.run(code, { seed: 1 })
 
@@ -70,17 +70,17 @@ test('the engine stamps each view, accumulating transitive provenance', () => {
 test('end-to-end: the scene cache traces back to the randsin sample that set color', () => {
   const rt = createRuntime()
   const code = `
-    define("randsin", () => math(t => Math.sin(t * Math.PI * 8)).range(0.5))
-    define("base", "events", () => rows([{ id: "s", type: "create", index: 0, shape: "sphere",
+    define("randsin", () => math(t => Math.sin(t * Math.PI * 8)).range(2))
+    define("base", "events", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
     define("flash", "events", (rand, table) => {
       const objects = table("base").filterMap(o => o.type === "create" ? { id: o.id } : null)
       return table("randsin").filterMap((cur, i, rows) =>
         i > 0 && cur.value * rows[i - 1].value < 0
-          ? objects.rows.map(o => ({ id: o.id, type: "color", index: cur.index, color: 0xffffff }))
+          ? objects.rows.map(o => ({ id: o.id, type: "color", beat: cur.beat, color: 0xffffff }))
           : null)
     })
-    define("scene", () => table("events").rasterize(0.5))
+    define("scene", () => table("events").rasterize(2))
   `
   const { views } = rt.run(code, { seed: 1 })
   const scene = views.get('scene')!

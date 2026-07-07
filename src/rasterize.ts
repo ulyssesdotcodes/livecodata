@@ -5,18 +5,19 @@
 // frame. This is the interpolation that used to live in the renderer, lifted
 // out so it is plain table data the DSL produces and the user can inspect.
 //
-// Input event rows (sparse), keyed by object `id`, ordered by `index`:
-//   create  — { id, type:"create", index, shape, px,py,pz, rx,ry,rz, color? }
-//   update  — { id, type:"update", index, px,py,pz, rx,ry,rz }  (movement keyframe)
-//   color   — { id, type:"color",  index, color, dur?, ease?, to? }  (pulse/step)
-//   destroy — { id, type:"destroy", index }
+// Input event rows (sparse), keyed by object `id`, ordered by `beat`:
+//   create  — { id, type:"create", beat, shape, px,py,pz, rx,ry,rz, color? }
+//   update  — { id, type:"update", beat, px,py,pz, rx,ry,rz }  (movement keyframe)
+//   color   — { id, type:"color",  beat, color, dur?, ease?, to? }  (pulse/step)
+//   destroy — { id, type:"destroy", beat }
 //
-// All timing fields (`index`, `dur`) are in **seconds**. Rasterization bakes at
-// FPS (60) internally — one output frame per 1/60s.
+// All timing fields (`beat`, `dur`) are in **beats** (beat 1 = the first frame;
+// `dur` is a length in beats). Rasterization bakes onto the internal frame grid
+// — FRAMES_PER_BEAT frames per beat — one output row per alive object per frame.
 // ----------------------------------------------------------------------------
 
 import { withLineage, unionLineage, type Row } from './lineage.js'
-import { FPS } from './constants.js'
+import { beatToFrame, beatsToFrames } from './constants.js'
 
 interface SampledState {
   fields: Row
@@ -28,7 +29,7 @@ interface SampledState {
 // binding from setField("amount", midi("c4")) — is "extra": carried through to
 // each baked frame row untouched, to be read (and bindings resolved) at playback.
 const RESERVED = new Set([
-  'id', 'type', 'index', 'dur', 'ease', 'to', 'shape', 'color',
+  'id', 'type', 'beat', 'dur', 'ease', 'to', 'shape', 'color',
   'px', 'py', 'pz', 'rx', 'ry', 'rz', 'frame',
 ])
 
@@ -37,7 +38,7 @@ const RESERVED = new Set([
 function gatherExtra(events: Row[], i: number): Row {
   const extra: Row = {}
   for (const e of events) {
-    if ((e.index as number) > i) continue
+    if ((e.frame as number) > i) continue
     for (const k in e) {
       if (!RESERVED.has(k)) extra[k] = e[k]
     }
@@ -49,10 +50,12 @@ function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t
 }
 
+// Resolve an event's timing to the internal frame grid: `beat` (1-indexed) → its
+// cache frame, `dur` (a length in beats) → frames.
 function toFrameEvent(e: Row): Row {
   const ev = { ...e }
-  if (ev.index != null) ev.index = Math.round((ev.index as number) * FPS)
-  if (ev.dur != null) ev.dur = (ev.dur as number) * FPS
+  ev.frame = beatToFrame((e.beat as number | undefined) ?? 1)
+  if (ev.dur != null) ev.dur = beatsToFrames(ev.dur as number)
   return ev
 }
 
@@ -63,20 +66,20 @@ function buildTimelines(events: Row[]): Map<unknown, Row[]> {
     if (!map.has(e.id)) map.set(e.id, [])
     map.get(e.id)!.push({ ...e })
   }
-  for (const evs of map.values()) evs.sort((a, b) => (a.index as number) - (b.index as number))
+  for (const evs of map.values()) evs.sort((a, b) => (a.frame as number) - (b.frame as number))
   return map
 }
 
 function sampleObject(events: Row[], i: number): SampledState | null {
   const createEv = events.find((e) => e.type === 'create')
-  if (!createEv || i < (createEv.index as number)) return null
-  if (events.some((e) => e.type === 'destroy' && (e.index as number) <= i)) return null
+  if (!createEv || i < (createEv.frame as number)) return null
+  if (events.some((e) => e.type === 'destroy' && (e.frame as number) <= i)) return null
 
   const keyframes = events.filter((e) => e.type === 'create' || e.type === 'update')
   let from: Row | null = keyframes[0] ?? null
   let to: Row | null = null
   for (const kf of keyframes) {
-    if ((kf.index as number) <= i) from = kf
+    if ((kf.frame as number) <= i) from = kf
     else if (!to) to = kf
   }
 
@@ -86,7 +89,7 @@ function sampleObject(events: Row[], i: number): SampledState | null {
       if (typeof v === 'number') fields[k] = v
   }
   if (from && to) {
-    const t = (i - (from.index as number)) / ((to.index as number) - (from.index as number))
+    const t = (i - (from.frame as number)) / ((to.frame as number) - (from.frame as number))
     for (const [k, v] of Object.entries(to))
       if (typeof v === 'number' && typeof from[k] === 'number')
         fields[k] = lerp(from[k] as number, v, t)
@@ -100,19 +103,22 @@ function sampleObject(events: Row[], i: number): SampledState | null {
   return { fields, sources }
 }
 
-export function rasterizeRows(eventRows: Row[] | null | undefined, maxSeconds?: number): Row[] {
+export function rasterizeRows(eventRows: Row[] | null | undefined, maxBeats?: number): Row[] {
   const events = (eventRows ?? []).map(toFrameEvent)
   const timelines = buildTimelines(events)
-  const max = maxSeconds != null
-    ? Math.max(0, Math.round(maxSeconds * FPS))
-    : events.reduce((m, e) => Math.max(m, (e.index as number) ?? 0), 0)
+  const max = maxBeats != null
+    ? Math.max(0, beatsToFrames(maxBeats))
+    : events.reduce((m, e) => Math.max(m, (e.frame as number) ?? 0), 0)
 
   const out: Row[] = []
   for (let frame = 0; frame <= max; frame++) {
     for (const evs of timelines.values()) {
       const s = sampleObject(evs, frame)
       if (!s) continue
-      out.push(withLineage({ ...s.fields, frame, id: evs[0].id }, unionLineage(s.sources)))
+      // `frame` is the baked coordinate; drop the sparse `beat` keyframe field so
+      // the dense cache carries only its frame position.
+      const { beat: _beat, ...fields } = s.fields
+      out.push(withLineage({ ...fields, frame, id: evs[0].id }, unionLineage(s.sources)))
     }
   }
   return out
@@ -139,4 +145,40 @@ export function stateAtFrame(frameIndex: FrameIndex, i: number): Row[] {
   const f = Math.floor(i)
   if (f < 0) return []
   return frameIndex.map.get(f) ?? []
+}
+
+// Transform fields interpolated between adjacent cache frames. Everything else
+// (color, shape, id, streaming bindings, …) is discrete: it takes the earlier
+// frame's value, never a blend.
+const INTERP_FIELDS = ['px', 'py', 'pz', 'rx', 'ry', 'rz'] as const
+
+// State at a *fractional* frame: the floored frame's rows with their transform
+// fields eased toward the next frame by the fractional part. The dense cache is
+// already baked at 60fps, so this is what keeps motion smooth when the playhead
+// crosses cache frames slower than one-per-render (a slow tempo, or a >60Hz
+// display). An object present at the floor frame but not the next (about to be
+// destroyed) is left un-eased. Falls back to a plain lookup at integer frames.
+export function sampleFrame(frameIndex: FrameIndex, frameFloat: number): Row[] {
+  const f0 = Math.floor(frameFloat)
+  if (f0 < 0) return []
+  const a = frameIndex.map.get(f0) ?? []
+  const frac = frameFloat - f0
+  if (frac <= 0 || f0 >= frameIndex.maxFrame) return a
+
+  const b = frameIndex.map.get(f0 + 1)
+  if (!b) return a
+  const bById = new Map(b.map((r) => [r.id, r]))
+  return a.map((row) => {
+    const next = bById.get(row.id)
+    if (!next) return row
+    let out: Row | null = null
+    for (const k of INTERP_FIELDS) {
+      const va = row[k], vb = next[k]
+      if (typeof va === 'number' && typeof vb === 'number' && va !== vb) {
+        out ??= { ...row }
+        out[k] = va + (vb - va) * frac
+      }
+    }
+    return out ?? row
+  })
 }
