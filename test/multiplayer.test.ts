@@ -160,6 +160,52 @@ test('the room server authors peer-join/peer-leave on the session log, not a sid
   }
 })
 
+test('the room log is dropped once the last client disconnects, and a fresh join starts clean', async () => {
+  const server = await startMultiplayerServer({ port: 0 })
+  const url = `ws://127.0.0.1:${server.port}/ws`
+  const conns: { close(): void }[] = []
+  try {
+    const logA = createEventLog({ src: 'a' })
+    const logB = createEventLog({ src: 'b' })
+    logA.append({ kind: 'run', code: 'a0', seed: 0 })
+
+    const connA = connectMultiplayer({ url, room: 'evanescent', logs: { session: logA } })
+    conns.push(connA)
+    await until(() => server.roomLog('evanescent', 'session').some((e) => e.code === 'a0'), 'a to seed the room')
+
+    const connB = connectMultiplayer({ url, room: 'evanescent', logs: { session: logB } })
+    conns.push(connB)
+    await until(() => logB.all().some((e) => e.code === 'a0'), 'b to receive history')
+
+    // One of two leaves: the room still has a member, so its log survives.
+    connB.close()
+    await until(
+      () => server.roomLog('evanescent', 'session').some((e) => e.kind === 'peer-leave'),
+      'b\'s departure to register',
+    )
+    assert.ok(server.roomLog('evanescent', 'session').some((e) => e.code === 'a0'), 'log survives while a is still connected')
+
+    // The last one leaves: nobody's left to hold the log, so it's dropped —
+    // each client already has its own copy in localStorage (sessionStore),
+    // so nothing is actually lost.
+    connA.close()
+    await until(() => server.roomLog('evanescent', 'session').length === 0, 'the room log to be dropped')
+
+    // A fresh join with no history re-seeds a brand-new room from scratch —
+    // proof it's truly gone, not just quiesced (an old peer-leave/join or a0
+    // would still be sitting there otherwise).
+    const logC = createEventLog({ src: 'c' })
+    const connC = connectMultiplayer({ url, room: 'evanescent', logs: { session: logC } })
+    conns.push(connC)
+    await until(() => logC.all().some((e) => e.kind === 'peer-join'), 'c to join the reborn room')
+    assert.equal(server.roomLog('evanescent', 'session').length, 1)
+    assert.ok(!server.roomLog('evanescent', 'session').some((e) => e.code === 'a0'), 'old history did not survive')
+  } finally {
+    conns.forEach((c) => c.close())
+    await server.close()
+  }
+})
+
 test('a client that worked offline heals the room when it (re)joins', async () => {
   const server = await startMultiplayerServer({ port: 0 })
   const url = `ws://127.0.0.1:${server.port}/ws`

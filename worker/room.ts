@@ -163,9 +163,20 @@ export class Room extends DurableObject {
 
   private async recordLeave(ws: WebSocket): Promise<void> {
     const attachment = ws.deserializeAttachment() as SocketAttachment | null
-    if (!attachment?.client) return
-    const logs = await this.getLogs()
-    await this.recordServerEvent(logs, 'peer-leave', { table: ACTIVITY_TABLE, client: attachment.client })
+    if (attachment?.client) {
+      const logs = await this.getLogs()
+      await this.recordServerEvent(logs, 'peer-leave', { table: ACTIVITY_TABLE, client: attachment.client })
+    }
+    // The last socket just left: drop the room's log entirely rather than
+    // let it sit in durable storage for nobody. Each client already
+    // persisted its own copy locally (see main.ts's sessionStore under the
+    // room's session id), so whoever reconnects first re-seeds the object
+    // from their own history — same as a fresh object healing from the next
+    // joiner (see the module comment above).
+    if (this.openSockets().length === 0) {
+      this.logs = null
+      await this.ctx.storage.delete(LOGS_KEY)
+    }
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string, _wasClean: boolean): Promise<void> {

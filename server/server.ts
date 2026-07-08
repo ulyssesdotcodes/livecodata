@@ -32,6 +32,7 @@ const SESSION_LOG = 'session'
 const ACTIVITY_TABLE = 'activity'
 
 interface Room {
+  name: string
   logs: Map<string, StampedEvent[]>
   // socket → the client id it joined with (for its eventual peer-leave event).
   clients: Map<WebSocket, string>
@@ -78,7 +79,7 @@ export function startMultiplayerServer(
   function getRoom(name: string): Room {
     let room = rooms.get(name)
     if (!room) {
-      room = { logs: new Map(), clients: new Map(), serverSeq: 0 }
+      room = { name, logs: new Map(), clients: new Map(), serverSeq: 0 }
       rooms.set(name, room)
     }
     return room
@@ -158,6 +159,13 @@ export function startMultiplayerServer(
     const clientId = room.clients.get(ws)
     room.clients.delete(ws)
     if (clientId) recordServerEvent(room, SESSION_LOG, 'peer-leave', { table: ACTIVITY_TABLE, client: clientId })
+    // The last client just left: drop the room's log entirely rather than
+    // let it sit in memory for nobody. Each client already persisted its own
+    // copy locally (see main.ts's sessionStore under the room's session id),
+    // so whoever reconnects first re-seeds the room from their own history —
+    // same as a server restart healing from the next joiner (see the module
+    // comment above).
+    if (room.clients.size === 0) rooms.delete(room.name)
   }
 
   const server = http.createServer((req, res) => {
