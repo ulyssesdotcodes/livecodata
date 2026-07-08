@@ -17,6 +17,7 @@
 // ----------------------------------------------------------------------------
 
 import { withLineage, unionLineage, type Row } from './lineage.js'
+import { mixColor } from './color.js'
 import { beatToFrame, beatsToFrames } from './constants.js'
 
 interface SampledState {
@@ -70,6 +71,28 @@ function buildTimelines(events: Row[]): Map<unknown, Row[]> {
   return map
 }
 
+// `color` events are a pulse/step, not a keyframe: a bare `color` event is a
+// hard switch (newest wins), while `dur` decays from `color` back to `to`
+// (or the object's base color) eased over `dur` frames.
+function sampleColor(events: Row[], createEv: Row, i: number): { color: number | null; source: Row | null } {
+  let colorEv: Row | null = null
+  for (const e of events) {
+    if (e.type === 'color' && (e.frame as number) <= i) colorEv = e
+  }
+  if (!colorEv) return { color: (createEv.color as number | null | undefined) ?? null, source: null }
+
+  const dur = colorEv.dur as number | undefined
+  if (dur == null || dur <= 0) return { color: colorEv.color as number | null, source: colorEv }
+
+  const base = colorEv.to != null
+    ? (colorEv.to as number | null)
+    : ((createEv.color as number | null | undefined) ?? (colorEv.color as number | null))
+  const p = Math.min(1, Math.max(0, (i - (colorEv.frame as number)) / dur))
+  const easeFn = colorEv.ease as ((t: number) => number) | undefined
+  const eased = typeof easeFn === 'function' ? easeFn(p) : p
+  return { color: mixColor(colorEv.color as number | null, base, eased), source: colorEv }
+}
+
 function sampleObject(events: Row[], i: number): SampledState | null {
   const createEv = events.find((e) => e.type === 'create')
   if (!createEv || i < (createEv.frame as number)) return null
@@ -99,7 +122,10 @@ function sampleObject(events: Row[], i: number): SampledState | null {
   // event's value through untouched (resolved per frame at playback).
   Object.assign(fields, gatherExtra(events, i))
 
-  const sources = [createEv, from, to].filter((x): x is Row => x !== null)
+  const { color, source: colorSource } = sampleColor(events, createEv, i)
+  fields.color = color
+
+  const sources = [createEv, from, to, colorSource].filter((x): x is Row => x !== null)
   return { fields, sources }
 }
 
