@@ -9,6 +9,7 @@ import { initSessionSelector } from './session-selector.js'
 import { SAMPLES } from './samples.js'
 import { createRuntime } from './runtime.js'
 import { createSessionStore } from './sessions.js'
+import { getVimMode, setVimMode } from './settings.js'
 import { cookProgram } from './replay.js'
 import { initPhysics } from './physics.js'
 import { randomSeed } from './event-log.js'
@@ -384,6 +385,8 @@ const editor = initEditor(document.getElementById('editor-pane') as HTMLElement,
   getViews: () => lastViews,
   onCaretView: (name) => tablePanel.selectTable(name),
   getPlayIndex: () => currentPlayIndex,
+  vimMode: getVimMode(),
+  onVimModeChange: setVimMode,
 })
 
 // A table-change event landed (cell edit, add row, …). Edits are *pending*:
