@@ -2,7 +2,7 @@ import { EditorView, basicSetup } from 'codemirror'
 import { javascript, javascriptLanguage } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { keymap, hoverTooltip } from '@codemirror/view'
-import { Prec } from '@codemirror/state'
+import { Prec, Compartment } from '@codemirror/state'
 import { vim } from '@replit/codemirror-vim'
 import { buildTablePreview } from './preview.js'
 import { isExprDot } from './completion.js'
@@ -186,6 +186,9 @@ export interface EditorOptions {
   getViews?: () => Map<string, Table>
   onCaretView?: (name: string) => void
   getPlayIndex?: () => number
+  // Initial vim-keybindings state (persisted by the caller — see settings.ts).
+  vimMode?: boolean
+  onVimModeChange?: (enabled: boolean) => void
 }
 
 export interface EditorAPI {
@@ -200,7 +203,7 @@ export interface EditorAPI {
   editCell(label: string, code: string, onCommit: (text: string) => void): void
 }
 
-export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, getPlayIndex }: EditorOptions = {}): EditorAPI {
+export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange }: EditorOptions = {}): EditorAPI {
   parent.innerHTML = ''
 
   const header = document.createElement('div')
@@ -226,6 +229,52 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
   runBtn.className = 'run-btn'
   runBtn.textContent = 'Run ▶'
   header.appendChild(runBtn)
+
+  // Settings: currently just the vim-mode toggle. A small popover rather than
+  // a plain toggle button so more prefs can land here later without another
+  // header slot. Positioned fixed (not absolute) so it isn't clipped by
+  // #editor-pane's overflow:hidden when the panel is collapsed to header height.
+  const settingsWrap = document.createElement('div')
+  settingsWrap.className = 'settings-wrap'
+
+  const settingsBtn = document.createElement('button')
+  settingsBtn.className = 'settings-btn'
+  settingsBtn.textContent = '⚙'
+  settingsBtn.title = 'Settings'
+  settingsBtn.setAttribute('aria-label', 'Settings')
+  settingsWrap.appendChild(settingsBtn)
+
+  const settingsMenu = document.createElement('div')
+  settingsMenu.className = 'settings-menu'
+  settingsWrap.appendChild(settingsMenu)
+
+  const vimRow = document.createElement('label')
+  vimRow.className = 'settings-row'
+  const vimCheckbox = document.createElement('input')
+  vimCheckbox.type = 'checkbox'
+  vimCheckbox.checked = vimMode
+  vimRow.appendChild(vimCheckbox)
+  vimRow.appendChild(document.createTextNode('Vim mode'))
+  settingsMenu.appendChild(vimRow)
+
+  header.appendChild(settingsWrap)
+
+  function positionSettingsMenu(): void {
+    const r = settingsBtn.getBoundingClientRect()
+    settingsMenu.style.top = `${r.bottom + 4}px`
+    settingsMenu.style.right = `${window.innerWidth - r.right}px`
+  }
+
+  settingsBtn.onclick = (e) => {
+    e.stopPropagation()
+    const opening = !settingsMenu.classList.contains('open')
+    if (opening) positionSettingsMenu()
+    settingsMenu.classList.toggle('open', opening)
+  }
+
+  document.addEventListener('click', (e) => {
+    if (!settingsWrap.contains(e.target as Node)) settingsMenu.classList.remove('open')
+  })
 
   parent.appendChild(header)
 
@@ -295,10 +344,12 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
 
   let lastCaretView: string | null = null
 
+  const vimCompartment = new Compartment()
+
   const view = new EditorView({
     doc: defaultProgram,
     extensions: [
-      vim(),
+      vimCompartment.of(vimMode ? [vim()] : []),
       basicSetup,
       javascript(),
       javascriptLanguage.data.of({ autocomplete: dslCompletions(getViews) }),
@@ -324,6 +375,12 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
   })
 
   runBtn.onclick = run
+
+  vimCheckbox.onchange = () => {
+    const enabled = vimCheckbox.checked
+    view.dispatch({ effects: vimCompartment.reconfigure(enabled ? [vim()] : []) })
+    onVimModeChange?.(enabled)
+  }
 
   // External loads (session scrub, examples) always mean "show the program" —
   // leave any cell target without restoring its stash (the new code wins).

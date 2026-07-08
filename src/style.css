@@ -119,6 +119,56 @@ html, body {
   color: #fff;
 }
 
+/* Settings popover: gear button in the editor header, top-right of the app on
+   desktop. The menu is position:fixed (not absolute) so it isn't clipped by
+   #editor-pane's overflow:hidden when the pane is collapsed to header height. */
+.settings-wrap {
+  position: relative;
+  margin-left: 8px;
+}
+
+.settings-btn {
+  background: transparent;
+  border: 1px solid #1a5090;
+  color: #8ca0b8;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.settings-btn:hover {
+  background: #1a5090;
+  color: #fff;
+}
+
+.settings-menu {
+  display: none;
+  position: fixed;
+  z-index: 20;
+  background: #13294b;
+  border: 1px solid #1a5090;
+  border-radius: 4px;
+  padding: 8px 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.settings-menu.open {
+  display: block;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #c8d6e5;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
 /* Collapsed: only the header stays visible; the panel shrinks to fit it. */
 #editor-pane.editor-collapsed {
   flex: 0 0 auto;
