@@ -11,7 +11,7 @@ import { createRuntime } from './runtime.js'
 import { createSessionStore } from './sessions.js'
 import { cookProgram } from './replay.js'
 import { initPhysics } from './physics.js'
-import { randomSeed } from './event-log.js'
+import { createEventLog, randomSeed } from './event-log.js'
 import { Table } from './dsl.js'
 import { createEditableTableStore, type ColumnType } from './editable-tables.js'
 import { createMidiInput } from './midi.js'
@@ -99,6 +99,15 @@ const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLE
 const tapLog = createTapLog()
 const tapRows = (): Row[] => tapLog.rows()
 const tapAnchor = (): number | null => tapLog.anchor()
+
+// Apply pulse: a run (see evaluate()'s recordRun) is a *local* bookmark, not
+// an event on the shared store log — so a table-only Apply (the code text
+// unchanged, table data edited) leaves no trace for other replicas to react
+// to; the "code" row they'd otherwise watch for a change never gets written
+// (setCodeRow skips an identical write). This log exists purely to announce
+// "I just applied" over multiplayer regardless of what changed — see
+// evaluate()'s `broadcast` option and the room wiring below.
+const applyLog = createEventLog()
 
 function recordTap(): void {
   tapLog.tap()
@@ -280,6 +289,10 @@ interface EvaluateOptions {
   // runs; the run itself is always recorded either way.
   persist?: boolean
   seed?: number
+  // Announce this apply to the room over applyLog. Off for the multiplayer
+  // reactive call (see below) — it's already reacting to someone else's
+  // pulse, so echoing our own would round-trip forever between replicas.
+  broadcast?: boolean
 }
 
 // True while a cook — or a store operation we're about to react to ourselves
@@ -303,7 +316,7 @@ function quietly<T>(fn: () => T): T {
 // Apply a program: cook it against the current (head) table state, record a run,
 // render, and (unless told otherwise) persist. This is the *only* thing that
 // applies pending table edits — inline edits just accumulate until an apply.
-async function evaluate(code: string, { setError, persist = true, seed = randomSeed() }: EvaluateOptions = {}): Promise<void> {
+async function evaluate(code: string, { setError, persist = true, seed = randomSeed(), broadcast = true }: EvaluateOptions = {}): Promise<void> {
   const pending = extractDataUrls(code).filter((u) => !dataCache.has(u))
   if (pending.length) {
     await Promise.all(pending.map(async (url) => {
@@ -344,6 +357,7 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
     // Apply bookmark — the unit the session bar scrubs.
     setCodeRow(code, seed)
     editableStore.recordRun()
+    if (broadcast) applyLog.append({ kind: 'apply' })
     sessionBar.setLog({ length: sessionLength() })
     applyCooked(cooked)
     if (persist) persistSession()
@@ -518,23 +532,23 @@ mpChip.onclick = () => {
 }
 
 if (roomName) {
-  // A collaborator's run changed "code" (or the room's history synced in):
-  // treat it like they pressed Apply for us too — evaluate() cooks against the
-  // now-merged tables, records our own local run bookmark for it (session
-  // scrubbing is per-replica; each of us can still scrub back through it), and
-  // persists. setCodeRow's identical-write skip means this never adds a
-  // duplicate "code" event to the shared log. A remote edit to any *other*
-  // table needs nothing here: the generic onChange reaction above already
-  // refreshes the table panel and persists, matching how a local pending edit
-  // behaves (visible, but not applied until an explicit Apply).
-  editableStore.log.onMerge(() => {
+  // A collaborator applied (recordRun — a *local* bookmark, so this pulse is
+  // the only shared-log trace of it; see applyLog above) or the room's
+  // history synced in: treat it like they pressed Apply for us too —
+  // re-sync the editor to the (possibly unchanged) "code" row, then
+  // evaluate() against the now-merged tables, whatever changed — the code
+  // text, some other table, or both. broadcast:false so reacting to their
+  // pulse doesn't emit one of our own back at them (that would round-trip
+  // forever). setCodeRow's identical-write skip means this never adds a
+  // duplicate "code" event to the shared log when only a table changed.
+  applyLog.onMerge(() => {
     const latest = editableStore.get('code')?.rows[0] as { code: string; seed: number } | undefined
-    if (!latest || (latest.code === liveCode && latest.seed === liveSeed)) return
+    if (!latest) return
     // evaluate() assumes the editor is already showing the code it's given
     // (true for a local Run) — a remote program needs pushing into the editor
     // ourselves, the same way scrubSession() does for a historical run.
-    editor.setCode(latest.code)
-    void evaluate(latest.code, { setError: editor.setError, seed: latest.seed })
+    if (latest.code !== liveCode) editor.setCode(latest.code)
+    void evaluate(latest.code, { setError: editor.setError, seed: latest.seed, broadcast: false })
   })
   // A collaborator's tap arrived: refresh the "taps" table and retime the
   // tempo, same as a local tap (see onTap).
@@ -543,7 +557,7 @@ if (roomName) {
   multiplayer = connectMultiplayer({
     url: multiplayerUrl(),
     room: roomName,
-    logs: { session: editableStore.log, taps: tapLog.log },
+    logs: { session: editableStore.log, taps: tapLog.log, apply: applyLog },
     onStatus: chipStatus,
   })
 } else {
