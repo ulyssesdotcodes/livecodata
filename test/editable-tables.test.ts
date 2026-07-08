@@ -275,3 +275,34 @@ test('load and clear reset the run list', () => {
   store.clear()
   assert.equal(store.runs().length, 0, 'clear resets runs')
 })
+
+test('record() auto-creates a columnless table and appends the event to its history', () => {
+  const store = createEditableTableStore()
+  store.record('activity', 'apply')
+  assert.ok(store.has('activity'))
+  const t = store.get('activity')!
+  assert.deepEqual(t.columns, [])
+  assert.deepEqual(t.rows, [], 'not a row-editable table — just an event stream')
+  // events[0] is the auto-create itself (same as any other table's history).
+  assert.equal(t.events.length, 2)
+  assert.equal(t.events[0].kind, 'create')
+  assert.equal(t.events[1].kind, 'apply')
+
+  // A payload rides alongside kind/table, same as any other event.
+  store.record('activity', 'peer-join', { client: 'abc' })
+  assert.equal(store.get('activity')!.events.length, 3)
+  assert.equal(store.get('activity')!.events[2].client, 'abc')
+
+  // Doesn't re-create (and so doesn't reset) an existing table.
+  store.record('activity', 'apply')
+  assert.equal(store.get('activity')!.events.length, 4)
+})
+
+test('record() rides the same log multiplayer syncs — merges in on another replica', () => {
+  const a = createEditableTableStore({ src: 'a' })
+  const b = createEditableTableStore({ src: 'b' })
+  a.record('activity', 'apply')
+  b.log.merge(a.log.all())
+  assert.equal(b.get('activity')?.events.length, 2)
+  assert.equal(b.get('activity')?.events[1].kind, 'apply')
+})

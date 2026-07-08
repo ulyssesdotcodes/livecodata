@@ -210,6 +210,16 @@ export interface EditableTableStore {
   // program Run sets `code` and `seed` together, so the pair is always one
   // history entry rather than two, and is never observed half-updated.
   setRow(name: string, index: number, values: Record<string, unknown>): void
+  // Record an arbitrary event on `table` (auto-creating it, with no columns,
+  // on first sight) — for append-only event streams that aren't user-editable
+  // rows at all: an Apply bookmark, a peer joining/leaving, … (see main.ts).
+  // Rides the exact same store log as every real editable table, so it's
+  // covered by the same serialize/load/merge/multiplayer-sync path for free,
+  // and shows up as "table·events" like any other history — multiplayer
+  // syncing genuinely is just "sync the log, replay on connection," this is
+  // what lets peer-connection and run/apply events ride that too instead of
+  // needing a channel of their own.
+  record(table: string, kind: string, payload?: Record<string, unknown>): void
   // Fired after any change event lands (a fold consumer should re-read).
   onChange(cb: () => void): void
   // --- runs (session history) ---------------------------------------------
@@ -372,6 +382,11 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
     setRow(name: string, index: number, values: Record<string, unknown>): void {
       if (!tables.get(name)?.rows[index]) return
       append({ kind: 'set-row', table: name, row: index, values })
+    },
+
+    record(table: string, kind: string, payload: Record<string, unknown> = {}): void {
+      if (!tables.has(table)) append({ kind: 'create', table, columns: [] })
+      append({ kind, table, ...payload })
     },
 
     onChange(cb: () => void): void {

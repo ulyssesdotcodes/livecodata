@@ -11,7 +11,7 @@ import { createRuntime } from './runtime.js'
 import { createSessionStore } from './sessions.js'
 import { cookProgram } from './replay.js'
 import { initPhysics } from './physics.js'
-import { createEventLog, randomSeed } from './event-log.js'
+import { randomSeed } from './event-log.js'
 import { Table } from './dsl.js'
 import { createEditableTableStore, type ColumnType } from './editable-tables.js'
 import { createMidiInput } from './midi.js'
@@ -44,6 +44,27 @@ function setCodeRow(code: string, seed: number): void {
   const cur = editableStore.get('code')?.rows[0]
   if (cur && cur.code === code && cur.seed === seed) return
   editableStore.setRow('code', 0, { code, seed })
+}
+
+// Multiplayer's own pseudo-table (see EditableTableStore.record): an Apply
+// pulse per successful evaluate() and a peer-join/peer-leave per connection
+// change (the latter authored by the room server — see server/server.ts and
+// worker/room.ts), so both ride the exact same store log — and therefore the
+// exact same multiplayer sync/replay-on-connect path — as any editable table.
+const ACTIVITY_TABLE = 'activity'
+
+// Who's currently in the room, per the "activity" table's peer-join/leave
+// history (net per client id — last event wins). Includes this replica once
+// its own peer-join round-trips back from the server.
+function onlinePeers(): Set<string> {
+  const online = new Set<string>()
+  for (const e of editableStore.get(ACTIVITY_TABLE)?.events ?? []) {
+    const client = e.client as string | undefined
+    if (!client) continue
+    if (e.kind === 'peer-join') online.add(client)
+    else if (e.kind === 'peer-leave') online.delete(client)
+  }
+  return online
 }
 
 // How many runs the session has recorded — the session bar's scrub range. A
@@ -99,15 +120,6 @@ const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLE
 const tapLog = createTapLog()
 const tapRows = (): Row[] => tapLog.rows()
 const tapAnchor = (): number | null => tapLog.anchor()
-
-// Apply pulse: a run (see evaluate()'s recordRun) is a *local* bookmark, not
-// an event on the shared store log — so a table-only Apply (the code text
-// unchanged, table data edited) leaves no trace for other replicas to react
-// to; the "code" row they'd otherwise watch for a change never gets written
-// (setCodeRow skips an identical write). This log exists purely to announce
-// "I just applied" over multiplayer regardless of what changed — see
-// evaluate()'s `broadcast` option and the room wiring below.
-const applyLog = createEventLog()
 
 function recordTap(): void {
   tapLog.tap()
@@ -289,9 +301,10 @@ interface EvaluateOptions {
   // runs; the run itself is always recorded either way.
   persist?: boolean
   seed?: number
-  // Announce this apply to the room over applyLog. Off for the multiplayer
-  // reactive call (see below) — it's already reacting to someone else's
-  // pulse, so echoing our own would round-trip forever between replicas.
+  // Announce this apply on the "activity" table (see ACTIVITY_TABLE below).
+  // Off for the multiplayer reactive call — it's already reacting to someone
+  // else's pulse, so echoing our own would round-trip forever between
+  // replicas.
   broadcast?: boolean
 }
 
@@ -357,7 +370,7 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
     // Apply bookmark — the unit the session bar scrubs.
     setCodeRow(code, seed)
     editableStore.recordRun()
-    if (broadcast) applyLog.append({ kind: 'apply' })
+    if (broadcast) editableStore.record(ACTIVITY_TABLE, 'apply')
     sessionBar.setLog({ length: sessionLength() })
     applyCooked(cooked)
     if (persist) persistSession()
@@ -500,8 +513,15 @@ function chipSolo(): void {
   mpChip.title = 'start or join a shared room'
 }
 
-function chipStatus(status: MultiplayerStatus, peers: number): void {
+// Redraws the chip for `status` at the *current* peer count (re-folded from
+// the "activity" table each time, not pushed) — called on a connection status
+// change and again whenever a peer-join/leave lands. Takes status as a plain
+// argument rather than reading `multiplayer` because connectMultiplayer's
+// onStatus can fire synchronously during its own call, before the `multiplayer
+// = connectMultiplayer(...)` assignment below has completed.
+function chipStatus(status: MultiplayerStatus): void {
   if (status === 'closed') return
+  const peers = onlinePeers().size
   mpChip.classList.toggle('connected', status === 'connected')
   mpChip.classList.toggle('connecting', status === 'connecting')
   mpChip.textContent = status === 'connected' ? `⇄ ${roomName} · ${peers}` : `⇄ ${roomName} …`
@@ -532,32 +552,57 @@ mpChip.onclick = () => {
 }
 
 if (roomName) {
-  // A collaborator applied (recordRun — a *local* bookmark, so this pulse is
-  // the only shared-log trace of it; see applyLog above) or the room's
-  // history synced in: treat it like they pressed Apply for us too —
-  // re-sync the editor to the (possibly unchanged) "code" row, then
-  // evaluate() against the now-merged tables, whatever changed — the code
-  // text, some other table, or both. broadcast:false so reacting to their
-  // pulse doesn't emit one of our own back at them (that would round-trip
-  // forever). setCodeRow's identical-write skip means this never adds a
-  // duplicate "code" event to the shared log when only a table changed.
-  applyLog.onMerge(() => {
-    const latest = editableStore.get('code')?.rows[0] as { code: string; seed: number } | undefined
-    if (!latest) return
-    // evaluate() assumes the editor is already showing the code it's given
-    // (true for a local Run) — a remote program needs pushing into the editor
-    // ourselves, the same way scrubSession() does for a historical run.
-    if (latest.code !== liveCode) editor.setCode(latest.code)
-    void evaluate(latest.code, { setError: editor.setError, seed: latest.seed, broadcast: false })
+  // Guarantee "activity" exists locally before we ever join: the room server
+  // authors peer-join/leave events referencing it (see server/server.ts and
+  // worker/room.ts), and if this replica were the very first to create the
+  // table — which would otherwise only happen on the first Apply's pulse,
+  // well after physics has loaded — the server's peer-join for *this very*
+  // connection could arrive canonically before any replica's "create" for
+  // the table and get silently dropped by the fold (see editable-tables.ts's
+  // applyEvent: a non-create event for an unknown table is a no-op).
+  editableStore.record(ACTIVITY_TABLE, 'session-start')
+
+  editableStore.log.onMerge((added) => {
+    // Newly-merged events on "activity": an Apply pulse (see evaluate()'s
+    // `broadcast` — recordRun is a *local* bookmark, so this pulse is the
+    // only shared-log trace of an Apply happening) means treat it like they
+    // pressed Apply for us too — re-sync the editor to the (possibly
+    // unchanged) "code" row, then evaluate() against the now-merged tables,
+    // whatever changed — the code text, some other table, or both.
+    // broadcast:false so reacting to their pulse doesn't emit one of our own
+    // back at them (that would round-trip forever). A peer-join/leave just
+    // needs the chip's count refreshed. A remote edit to any *real* table
+    // (including "code", short of an Apply pulse) needs nothing here: the
+    // generic onChange reaction above already refreshes the table panel and
+    // persists, matching how a local pending edit behaves.
+    let applied = false
+    let presenceChanged = false
+    for (const e of added) {
+      if (e.table !== ACTIVITY_TABLE) continue
+      if (e.kind === 'apply') applied = true
+      else if (e.kind === 'peer-join' || e.kind === 'peer-leave') presenceChanged = true
+    }
+    if (applied) {
+      const latest = editableStore.get('code')?.rows[0] as { code: string; seed: number } | undefined
+      if (latest) {
+        // evaluate() assumes the editor is already showing the code it's
+        // given (true for a local Run) — a remote program needs pushing into
+        // the editor ourselves, the same way scrubSession() does for a
+        // historical run.
+        if (latest.code !== liveCode) editor.setCode(latest.code)
+        void evaluate(latest.code, { setError: editor.setError, seed: latest.seed, broadcast: false })
+      }
+    }
+    if (presenceChanged) chipStatus(multiplayer?.status ?? 'connecting')
   })
   // A collaborator's tap arrived: refresh the "taps" table and retime the
   // tempo, same as a local tap (see onTap).
   tapLog.log.onMerge(() => onTap())
-  chipStatus('connecting', 0)
+  chipStatus('connecting')
   multiplayer = connectMultiplayer({
     url: multiplayerUrl(),
     room: roomName,
-    logs: { session: editableStore.log, taps: tapLog.log, apply: applyLog },
+    logs: { session: editableStore.log, taps: tapLog.log },
     onStatus: chipStatus,
   })
 } else {

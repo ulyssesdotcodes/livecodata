@@ -3,14 +3,20 @@
 // Because every piece of authored state (code runs, table edits) is already an
 // append-only event log, multiplayer is just moving stamped events between
 // replicas: a room on the server holds the union of everyone's logs, and each
-// client merges what it hasn't seen. Nothing here knows what the events mean.
+// client merges what it hasn't seen. Nothing here knows what the events mean —
+// including peer connections and Apply pulses, which ride the exact same
+// named logs as regular table edits (see editable-tables.ts's record() and
+// main.ts's "activity" table) rather than needing a protocol message of their
+// own. Syncing is genuinely just "sync the log(s), replay on connection."
 //
 // Protocol (JSON text frames):
 //   client → server  { type: 'join', room, client, logs: { name: events[] } }
 //   client → server  { type: 'events', log, events }   one local append
 //   server → client  { type: 'sync', logs: { name: events[] } }  room union
 //   server → client  { type: 'events', log, events }   relayed from a peer
-//   server → client  { type: 'peers', count }
+//                                                       (or server-authored,
+//                                                       e.g. a peer-join/leave
+//                                                       — see server.ts)
 //
 // The join carries the client's full logs, so joining seeds an empty room,
 // brings solo work into a jam, and heals any events missed while offline —
@@ -34,12 +40,11 @@ export interface MultiplayerOptions {
   room: string
   // Named logs to sync, e.g. { session: log.events, tables: store.log }.
   logs: Record<string, EventLog>
-  onStatus?: (status: MultiplayerStatus, peers: number) => void
+  onStatus?: (status: MultiplayerStatus) => void
 }
 
 export interface MultiplayerConnection {
   readonly status: MultiplayerStatus
-  readonly peers: number
   close(): void
 }
 
@@ -48,7 +53,6 @@ interface ServerMessage {
   log?: string
   events?: StampedEvent[]
   logs?: Record<string, StampedEvent[]>
-  count?: number
 }
 
 const RETRY_BASE_MS = 1000
@@ -57,15 +61,13 @@ const RETRY_MAX_MS = 15000
 export function connectMultiplayer({ url, room, logs, onStatus }: MultiplayerOptions): MultiplayerConnection {
   let ws: WebSocket | null = null
   let status: MultiplayerStatus = 'connecting'
-  let peers = 0
   let closed = false
   let retries = 0
   let retryTimer: ReturnType<typeof setTimeout> | null = null
 
-  function setStatus(next: MultiplayerStatus, count = peers): void {
+  function setStatus(next: MultiplayerStatus): void {
     status = next
-    peers = count
-    onStatus?.(status, peers)
+    onStatus?.(status)
   }
 
   function send(msg: Record<string, unknown>): void {
@@ -91,8 +93,6 @@ export function connectMultiplayer({ url, room, logs, onStatus }: MultiplayerOpt
       }
     } else if (msg.type === 'events' && msg.log && Array.isArray(msg.events)) {
       logs[msg.log]?.merge(msg.events)
-    } else if (msg.type === 'peers' && typeof msg.count === 'number') {
-      setStatus(status, msg.count)
     }
   }
 
@@ -113,7 +113,7 @@ export function connectMultiplayer({ url, room, logs, onStatus }: MultiplayerOpt
     ws.onclose = () => {
       ws = null
       if (closed) return
-      setStatus('connecting', 0)
+      setStatus('connecting')
       const delay = Math.min(RETRY_BASE_MS * 2 ** retries++, RETRY_MAX_MS)
       retryTimer = setTimeout(connect, delay)
     }
@@ -124,14 +124,13 @@ export function connectMultiplayer({ url, room, logs, onStatus }: MultiplayerOpt
 
   return {
     get status() { return status },
-    get peers() { return peers },
     close(): void {
       if (closed) return
       closed = true
       if (retryTimer != null) clearTimeout(retryTimer)
       ws?.close()
       ws = null
-      setStatus('closed', 0)
+      setStatus('closed')
     },
   }
 }
