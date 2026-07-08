@@ -2,3 +2,5 @@ node_modules/
 dist/
 public/
 docs/
+.wrangler/
+worker-configuration.d.ts

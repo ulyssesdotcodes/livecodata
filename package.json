@@ -8,17 +8,24 @@
     "build": "node build.js",
     "test": "node --import tsx/esm --test test/*.ts",
     "typecheck": "tsc --noEmit",
-    "watch": "node watch.js",
-    "fetch-data": "node scripts/fetch-data.js"
+    "watch": "node --import tsx/esm watch.js",
+    "serve": "node --import tsx/esm server/server.ts",
+    "fetch-data": "node scripts/fetch-data.js",
+    "cf:typecheck": "tsc --noEmit -p worker/tsconfig.json",
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "wrangler deploy"
   },
   "author": "",
   "license": "BSD-3-Clause",
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260702.1",
     "@types/node": "^26.0.1",
     "@types/three": "^0.185.0",
+    "@types/ws": "^8.18.1",
     "esbuild": "^0.28.1",
     "tsx": "^4.22.4",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "wrangler": "^4.107.0"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",
@@ -28,6 +35,7 @@
     "hydra-ts": "^1.1.1",
     "jolt-physics": "^1.0.0",
     "regl": "^2.1.1",
-    "three": "^0.184.0"
+    "three": "^0.184.0",
+    "ws": "^8.21.0"
   }
 }

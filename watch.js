@@ -1,5 +1,6 @@
 import * as esbuild from 'esbuild'
 import { mkdirSync, cpSync, readFileSync, writeFileSync } from 'fs'
+import { startMultiplayerServer } from './server/server.js'
 
 mkdirSync('public/assets', { recursive: true })
 mkdirSync('public/data', { recursive: true })
@@ -20,5 +21,12 @@ const ctx = await esbuild.context({
 
 await ctx.watch()
 
-const { host, port } = await ctx.serve({ servedir: 'public' })
-console.log(`Serving at http://${host}:${port}`)
+// Serve the built app *and* the multiplayer room socket from the same
+// process (see server/server.ts) — a jam works out of the box in dev, same
+// as `npm run serve`, with no separate ?server= override needed. esbuild
+// rebuilds public/assets/index.js on change in the background; this just
+// reads whatever's currently on disk, same tradeoff as any esbuild+ctx.watch()
+// setup (a refresh mid-rebuild can lag by a build cycle).
+const port = Number(process.env.PORT) || 8787
+const server = await startMultiplayerServer({ port, root: 'public' })
+console.log(`Serving at http://localhost:${server.port} (ws at /ws) — rebuilding on change`)

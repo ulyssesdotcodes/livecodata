@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // The Node server (server/server.ts) and this Worker are two backends for
+  // the same protocol (src/multiplayer.ts) — see worker/index.ts. Deploy with
+  // `npm run build && npx wrangler deploy` (build first: [assets].directory
+  // must be populated before wrangler uploads it), or via the GitHub Actions
+  // workflow at .github/workflows/deploy-cloudflare.yml.
+  "name": "livecodata",
+  "main": "worker/index.ts",
+  "compatibility_date": "2025-01-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOMS", "class_name": "Room" }
+    ]
+  },
+  // SQLite-backed Durable Object storage — available on the Workers Free
+  // plan (the older KV-backed DO storage class requires a paid plan).
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Room"] }
+  ]
+}
