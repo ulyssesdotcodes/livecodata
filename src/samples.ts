@@ -205,16 +205,16 @@ define("ball_height", (rand, table) =>
 //    collision-driven \`amount\` bump at the beat its landing baked to (physics
 //    and hydra share the one beat grid, so the bumps line up with the crash).
 //    This is the two-TABLE case: the base sketch lives in the EDITABLE
-//    "sketch" table (seeded below, its own tab — click its code cell to open
-//    the sketch in this editor, tweak, Ctrl-Enter to apply, and the edit
-//    lands in the table's event log at "sketch·events") while "hydra" is a
-//    code-GENERATED view layering the collision-driven \`amount\` events on
-//    top — data-driven from "sim" (filter the sibling, not "events", or we'd
-//    cycle). Reach for two tables like this only when you need computed
+//    "hydra sketch" table (seeded below, its own tab — click its code cell to
+//    open the sketch in this editor, tweak, Ctrl-Enter to apply, and the edit
+//    lands in the table's event log at "hydra sketch·events") while "hydra"
+//    is a code-GENERATED view layering the collision-driven \`amount\` events
+//    on top — data-driven from "sim" (filter the sibling, not "events", or
+//    we'd cycle). Reach for two tables like this only when you need computed
 //    events layered on the user-authored ones; otherwise a single editable
 //    table named "hydra" (see "Hydra Sketch") is all you need.
 define("hydra", (rand, table) =>
-  editable("sketch", { beat: "number", event: "string", code: "code", name: "string", value: "number" }, [
+  editable("hydra sketch", { beat: "number", event: "string", code: "code", name: "string", value: "number" }, [
     { beat: 1, event: "setCode",
       code: "src(s0).modulate(osc(2.5, 0.1), (props) => props.amount).out(o0)" },
     { beat: 1, event: "setVariable", name: "amount", value: 0.12 },

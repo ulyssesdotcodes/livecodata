@@ -25,11 +25,23 @@
 // store's events *plus* its list of runs (persisted together — see sessions.ts).
 //
 // A program reads a table via the DSL's editable(name, schema) — see dsl.ts —
-// which appends a create (or schema-reconcile) event on first sight and
-// returns the folded rows. That's the "specify types in the code editor"
-// path; the table panel's own +table / +column UI is the other way to
-// create/shape one. Column type "code" marks cells edited in the main code
-// editor (click the cell) rather than inline.
+// which appends a create (or declare-schema) event on first sight and returns
+// the folded rows. That's the "specify types in the code editor" path; the
+// table panel's own +table / +column UI is the other way to create/shape one.
+// Column type "code" marks cells edited in the main code editor (click the
+// cell) rather than inline.
+//
+// A table's *effective* columns are computed, not stored as one blob: each
+// table tracks `userColumns` (a fold over genuine table-panel actions —
+// add/remove/rename/retype a column, or the seed of a table-panel-created
+// table) separately from `declared` (the most recent schema a program passed
+// to editable(name, schema)). effectiveColumns() merges the two on every read
+// — declared supplies columns and their order, userColumns overrides a
+// declared column's type once the user has explicitly touched it (and
+// contributes any extra columns declared doesn't mention) — so a column the
+// user genuinely added/edited survives regardless of what the program
+// declares on a later Apply, while a column that only ever existed because
+// the program declared it comes and goes freely as the declaration changes.
 // ----------------------------------------------------------------------------
 
 import { createEventLog, type EventLog, type StampedEvent } from './event-log.js'
@@ -73,11 +85,49 @@ function defaultFor(type: ColumnType): unknown {
 }
 
 // One table's folded state. `events` accumulates the display form of every
-// event that touched this table (riding along through renames).
+// event that touched this table (riding along through renames). `columns`
+// isn't stored directly — see effectiveColumns() below — so that a column's
+// provenance (declared by the program vs. added/edited by the user) survives
+// the fold instead of collapsing into one opaque list.
 interface TableState {
-  columns: EditableColumn[]
+  // Columns from genuine table-panel actions: add-column, a rename/retype
+  // (even of a column that started out declared — touching it via the table
+  // panel "claims" it), or the seed columns of a table-panel-created table.
+  // Never mutated by a program's editable(name, schema) call.
+  userColumns: EditableColumn[]
+  // Column names explicitly removed via the table panel — excluded from the
+  // effective columns even if `declared` still asks for them, so a removal
+  // sticks instead of reappearing on the program's next Apply.
+  removedColumns: Set<string>
+  // The most recently declared schema (editable(name, schema)), or null for
+  // a table the program never declared (purely table-panel driven, e.g. "+
+  // table"). Replaced wholesale by each declare-schema event.
+  declared: EditableColumn[] | null
   rows: Row[]
   events: Row[]
+}
+
+// Merge a declared schema with the user's own columns: declared supplies the
+// columns and their order, but a userColumns entry for the same name (the
+// user explicitly retyped it via the table panel) overrides declared's type
+// — an explicit user edit always wins over what the program currently says.
+// Columns only in userColumns (the program never declared them) are appended
+// after, in their own order.
+function mergeColumns(userColumns: EditableColumn[], declared: EditableColumn[]): EditableColumn[] {
+  const userByName = new Map(userColumns.map((c) => [c.name, c]))
+  const declaredNames = new Set(declared.map((c) => c.name))
+  const merged = declared.map((c) => userByName.get(c.name) ?? c)
+  for (const c of userColumns) if (!declaredNames.has(c.name)) merged.push(c)
+  return merged
+}
+
+// The columns a table actually shows: declared merged with userColumns (see
+// mergeColumns), minus anything explicitly removed via the table panel. This
+// is the one place "what are this table's columns right now" is computed —
+// everywhere else works off it rather than reading a stored `columns` field.
+function effectiveColumns(t: TableState): EditableColumn[] {
+  const cols = t.declared ? mergeColumns(t.userColumns, t.declared) : t.userColumns
+  return t.removedColumns.size ? cols.filter((c) => !t.removedColumns.has(c.name)) : cols
 }
 
 // The display form of an event: everything but the table name (implicit in
@@ -101,50 +151,65 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
   if (e.kind === 'create') {
     if (tables.has(name)) return
     const columns = (e.columns as EditableColumn[] ?? []).map((c) => ({ ...c }))
-    const rows = ((e.rows as Row[] | undefined) ?? []).map((r) => conformRow(r, columns))
-    tables.set(name, { columns, rows, events: [eventRow(e)] })
+    // A DSL-originated create (ensure()'s first sight of the table) seeds
+    // `declared`; a table-panel create ("+ table", or record()'s columnless
+    // stream) seeds `userColumns` directly — it has no program declaring it.
+    const declared = e.declared === true ? columns : null
+    const t: TableState = { userColumns: declared ? [] : columns, removedColumns: new Set(), declared, rows: [], events: [eventRow(e)] }
+    t.rows = ((e.rows as Row[] | undefined) ?? []).map((r) => conformRow(r, effectiveColumns(t)))
+    tables.set(name, t)
     return
   }
   const t = tables.get(name)
   if (!t) return
   t.events.push(eventRow(e))
   switch (e.kind) {
-    case 'schema': {
-      const columns = (e.columns as EditableColumn[] ?? []).map((c) => ({ ...c }))
-      t.rows = t.rows.map((r) => conformRow(r, columns))
-      t.columns = columns
+    case 'declare-schema': {
+      t.declared = (e.columns as EditableColumn[] ?? []).map((c) => ({ ...c }))
+      t.rows = t.rows.map((r) => conformRow(r, effectiveColumns(t)))
       break
     }
     case 'add-column': {
       const col = e.col as string
-      if (!col || t.columns.some((c) => c.name === col)) break
-      t.columns.push({ name: col, type: e.type as ColumnType })
-      const d = defaultFor(e.type as ColumnType)
-      t.rows.forEach((r) => { r[col] = d })
+      if (!col || effectiveColumns(t).some((c) => c.name === col)) break
+      t.userColumns.push({ name: col, type: e.type as ColumnType })
+      t.removedColumns.delete(col)
+      t.rows = t.rows.map((r) => conformRow(r, effectiveColumns(t)))
       break
     }
     case 'remove-column': {
       const col = e.col as string
-      t.columns = t.columns.filter((c) => c.name !== col)
-      t.rows.forEach((r) => { delete r[col] })
+      t.userColumns = t.userColumns.filter((c) => c.name !== col)
+      t.removedColumns.add(col)
+      t.rows = t.rows.map((r) => conformRow(r, effectiveColumns(t)))
       break
     }
     case 'rename-column': {
       const col = e.col as string, to = e.to as string
-      const c = t.columns.find((c) => c.name === col)
-      if (!c || !to || t.columns.some((c) => c.name === to)) break
-      c.name = to
+      const before = effectiveColumns(t)
+      const existing = before.find((c) => c.name === col)
+      if (!existing || !to || before.some((c) => c.name === to)) break
+      const owned = t.userColumns.find((c) => c.name === col)
+      if (owned) owned.name = to
+      // A rename of a declared-only column "claims" it under the new name —
+      // the old declared name may still reappear (see effectiveColumns), now
+      // as a fresh column, if the program keeps declaring it.
+      else t.userColumns.push({ name: to, type: existing.type })
       t.rows.forEach((r) => { r[to] = r[col]; delete r[col] })
+      t.rows = t.rows.map((r) => conformRow(r, effectiveColumns(t)))
       break
     }
     case 'set-column-type': {
-      const c = t.columns.find((c) => c.name === e.col)
-      if (c) c.type = e.type as ColumnType
+      const col = e.col as string, type = e.type as ColumnType
+      const owned = t.userColumns.find((c) => c.name === col)
+      if (owned) owned.type = type
+      // Retyping a declared-only column "claims" it, same as a rename above.
+      else if (effectiveColumns(t).some((c) => c.name === col)) t.userColumns.push({ name: col, type })
       break
     }
     case 'add-row': {
       const row: Row = {}
-      for (const c of t.columns) row[c.name] = defaultFor(c.type)
+      for (const c of effectiveColumns(t)) row[c.name] = defaultFor(c.type)
       t.rows.push(row)
       break
     }
@@ -195,15 +260,16 @@ export interface EditableTableStore {
   createTable(name: string): void
   removeTable(name: string): void
   renameTable(name: string, newName: string): boolean
-  // Called by the DSL's editable(name, schema): appends a create event on first
-  // use (optionally seeding rows), and returns the folded (current) rows. On
-  // later calls the declared schema is a *floor*, not a replacement: any
-  // declared column missing from the live table is added, and a declared
-  // column whose type disagrees is retyped — but a column the table has that
-  // isn't declared (e.g. one added via the table panel's "+ column") is left
-  // alone, so it survives the next Apply instead of being silently dropped.
-  // Removing a column is only ever explicit (the table panel's own
-  // removeColumn), never a side effect of re-running the program.
+  // Called by the DSL's editable(name, schema): appends a create event on
+  // first sight (optionally seeding rows), a declare-schema event when the
+  // declared schema changed, and returns the folded (current) rows. The
+  // effective columns are always a function of the *current* declared schema
+  // plus a fold over the table's own genuine edit events (see
+  // effectiveColumns/mergeColumns) — never a snapshot of "whatever the
+  // columns happened to be last time". So a column that's only ever been
+  // declared, never touched by the user, tracks the program's schema exactly
+  // (added when declared, gone when not); a column the user added or
+  // edited via the table panel survives regardless of what's declared.
   ensure(name: string, schema: Record<string, ColumnType>, seedRows?: Row[]): Row[]
   addColumn(name: string, colName: string, type: ColumnType): void
   removeColumn(name: string, colName: string): void
@@ -294,18 +360,6 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
   const schemaColumns = (schema: Record<string, ColumnType>): EditableColumn[] =>
     Object.entries(schema).map(([n, t]) => ({ name: n, type: t }))
 
-  // The floor a re-declared schema applies to an existing table: every
-  // existing column survives (so a column added via the table panel isn't
-  // clobbered by the next Apply); declared columns missing from `existing` are
-  // appended, and a declared column already present is retyped to match.
-  const mergeColumns = (existing: EditableColumn[], declared: EditableColumn[]): EditableColumn[] => {
-    const declaredByName = new Map(declared.map((c) => [c.name, c]))
-    const merged = existing.map((c) => declaredByName.get(c.name) ?? c)
-    const haveNames = new Set(existing.map((c) => c.name))
-    for (const c of declared) if (!haveNames.has(c.name)) merged.push(c)
-    return merged
-  }
-
   return {
     log,
     listNames: () => [...view().keys()],
@@ -313,7 +367,7 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
 
     get(name: string): EditableTableData | undefined {
       const t = view().get(name)
-      return t ? { columns: t.columns, rows: t.rows, events: t.events } : undefined
+      return t ? { columns: effectiveColumns(t), rows: t.rows, events: t.events } : undefined
     },
 
     createTable(name: string): void {
@@ -338,8 +392,9 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
     ensure(name: string, schema: Record<string, ColumnType>, seedRows?: Row[]): Row[] {
       const wantCols = schemaColumns(schema)
       // Replay is a read-only preview: a cook running against a past run must
-      // not append create/schema events. Serve the historical rows (or the
-      // seed, if the program references a table that didn't exist at that run).
+      // not append create/declare-schema events. Serve the historical rows
+      // (or the seed, if the program references a table that didn't exist at
+      // that run).
       if (replay) {
         const t = replay.get(name)
         if (t) return t.rows
@@ -347,12 +402,9 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       }
       const existing = tables.get(name)
       if (!existing) {
-        append({ kind: 'create', table: name, columns: wantCols, rows: seedRows })
-      } else {
-        const merged = mergeColumns(existing.columns, wantCols)
-        if (JSON.stringify(existing.columns) !== JSON.stringify(merged)) {
-          append({ kind: 'schema', table: name, columns: merged })
-        }
+        append({ kind: 'create', table: name, columns: wantCols, rows: seedRows, declared: true })
+      } else if (JSON.stringify(existing.declared) !== JSON.stringify(wantCols)) {
+        append({ kind: 'declare-schema', table: name, columns: wantCols })
       }
       return tables.get(name)!.rows
     },
@@ -360,17 +412,19 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
     addColumn(name: string, colName: string, type: ColumnType): void {
       colName = colName.trim()
       const t = tables.get(name)
-      if (!t || !colName || t.columns.some((c) => c.name === colName)) return
+      if (!t || !colName || effectiveColumns(t).some((c) => c.name === colName)) return
       append({ kind: 'add-column', table: name, col: colName, type })
     },
 
     removeColumn(name: string, colName: string): void {
-      if (!tables.get(name)?.columns.some((c) => c.name === colName)) return
+      const t = tables.get(name)
+      if (!t || !effectiveColumns(t).some((c) => c.name === colName)) return
       append({ kind: 'remove-column', table: name, col: colName })
     },
 
     setColumnType(name: string, colName: string, type: ColumnType): void {
-      const col = tables.get(name)?.columns.find((c) => c.name === colName)
+      const t = tables.get(name)
+      const col = t && effectiveColumns(t).find((c) => c.name === colName)
       if (!col || col.type === type) return
       append({ kind: 'set-column-type', table: name, col: colName, type })
     },
@@ -379,7 +433,8 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       newName = newName.trim()
       const t = tables.get(name)
       if (!t || !newName || newName === colName) return false
-      if (!t.columns.some((c) => c.name === colName) || t.columns.some((c) => c.name === newName)) return false
+      const cols = effectiveColumns(t)
+      if (!cols.some((c) => c.name === colName) || cols.some((c) => c.name === newName)) return false
       append({ kind: 'rename-column', table: name, col: colName, to: newName })
       return true
     },
