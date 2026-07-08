@@ -73,7 +73,7 @@ test('renameTable moves state (and its event history) and rejects collisions', (
   assert.ok(!store.renameTable('scores', 't2'), 'refuses to clobber an existing table')
 })
 
-test('ensure creates on first use (with seed rows) and reconciles columns on later calls', () => {
+test('ensure creates on first use (with seed rows) and adds newly declared columns on later calls', () => {
   const store = createEditableTableStore()
   const rows = store.ensure('scores', { name: 'string', score: 'number' }, [{ name: 'ada', score: 100 }])
   assert.deepEqual(rows, [{ name: 'ada', score: 100 }])
@@ -82,9 +82,32 @@ test('ensure creates on first use (with seed rows) and reconciles columns on lat
   const rows2 = store.ensure('scores', { name: 'string', score: 'number', bonus: 'boolean' })
   assert.deepEqual(rows2, [{ name: 'ada', score: 100, bonus: false }])
 
-  // Dropping a column from the schema drops it from the rows too.
+  // Dropping a column from the *declared* schema does NOT drop it from the live
+  // table — the declared schema is a floor, not a replacement, so a column
+  // isn't lost just because a later Run's code stopped mentioning it.
   const rows3 = store.ensure('scores', { name: 'string' })
-  assert.deepEqual(rows3, [{ name: 'ada' }])
+  assert.deepEqual(rows3, [{ name: 'ada', score: 100, bonus: false }])
+})
+
+test('ensure never clobbers a column added via the table panel (addColumn) on a later re-declare', () => {
+  const store = createEditableTableStore()
+  store.ensure('scores', { name: 'string' }, [{ name: 'ada' }])
+  // Simulates "+ column" in the table panel — not declared in the program's code.
+  store.addColumn('scores', 'extra', 'number')
+  assert.deepEqual(store.get('scores')!.rows, [{ name: 'ada', extra: 0 }])
+
+  // Apply/Run again with the same code-declared schema (extra isn't mentioned):
+  // the table-panel column must survive.
+  const rows = store.ensure('scores', { name: 'string' })
+  assert.deepEqual(rows, [{ name: 'ada', extra: 0 }])
+})
+
+test('ensure retypes a declared column in place without disturbing other columns', () => {
+  const store = createEditableTableStore()
+  store.ensure('t', { a: 'string' })
+  store.addColumn('t', 'b', 'number')
+  store.ensure('t', { a: 'number' })
+  assert.deepEqual(store.get('t')!.columns, [{ name: 'a', type: 'number' }, { name: 'b', type: 'number' }])
 })
 
 test('ensure appends no event when the schema already matches (no event spam per run)', () => {

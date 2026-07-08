@@ -196,8 +196,14 @@ export interface EditableTableStore {
   removeTable(name: string): void
   renameTable(name: string, newName: string): boolean
   // Called by the DSL's editable(name, schema): appends a create event on first
-  // use (optionally seeding rows), a schema-reconcile event when the declared
-  // columns differ, and returns the folded (current) rows.
+  // use (optionally seeding rows), and returns the folded (current) rows. On
+  // later calls the declared schema is a *floor*, not a replacement: any
+  // declared column missing from the live table is added, and a declared
+  // column whose type disagrees is retyped — but a column the table has that
+  // isn't declared (e.g. one added via the table panel's "+ column") is left
+  // alone, so it survives the next Apply instead of being silently dropped.
+  // Removing a column is only ever explicit (the table panel's own
+  // removeColumn), never a side effect of re-running the program.
   ensure(name: string, schema: Record<string, ColumnType>, seedRows?: Row[]): Row[]
   addColumn(name: string, colName: string, type: ColumnType): void
   removeColumn(name: string, colName: string): void
@@ -288,6 +294,18 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
   const schemaColumns = (schema: Record<string, ColumnType>): EditableColumn[] =>
     Object.entries(schema).map(([n, t]) => ({ name: n, type: t }))
 
+  // The floor a re-declared schema applies to an existing table: every
+  // existing column survives (so a column added via the table panel isn't
+  // clobbered by the next Apply); declared columns missing from `existing` are
+  // appended, and a declared column already present is retyped to match.
+  const mergeColumns = (existing: EditableColumn[], declared: EditableColumn[]): EditableColumn[] => {
+    const declaredByName = new Map(declared.map((c) => [c.name, c]))
+    const merged = existing.map((c) => declaredByName.get(c.name) ?? c)
+    const haveNames = new Set(existing.map((c) => c.name))
+    for (const c of declared) if (!haveNames.has(c.name)) merged.push(c)
+    return merged
+  }
+
   return {
     log,
     listNames: () => [...view().keys()],
@@ -330,8 +348,11 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       const existing = tables.get(name)
       if (!existing) {
         append({ kind: 'create', table: name, columns: wantCols, rows: seedRows })
-      } else if (JSON.stringify(existing.columns) !== JSON.stringify(wantCols)) {
-        append({ kind: 'schema', table: name, columns: wantCols })
+      } else {
+        const merged = mergeColumns(existing.columns, wantCols)
+        if (JSON.stringify(existing.columns) !== JSON.stringify(merged)) {
+          append({ kind: 'schema', table: name, columns: merged })
+        }
       }
       return tables.get(name)!.rows
     },
