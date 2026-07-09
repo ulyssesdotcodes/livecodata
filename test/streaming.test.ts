@@ -100,11 +100,12 @@ test('a note recorded at frame 60 drives the field every time the loop passes it
 
 // ── The same carry-through, but for a hydra sketch variable ─────────────────
 
-test('a midi binding in a hydra sketch variable survives to hydraFrameAt and resolves at playback', () => {
-  const row = t([{ beat: 1, code: 'osc(speed).out()' }]).setField('speed', midi('c4')).rows[0]
-  assert.ok(isBinding(row.speed), 'the sketch variable is deferred, like a scene field')
+test('a midi binding in a hydra setVariable event survives to hydraFrameAt and resolves at playback', () => {
+  const codeRow = { beat: 1, event: 'setCode', code: 'osc(speed).out()' }
+  const varRow = t([{ beat: 1, event: 'setVariable', name: 'speed' }]).setField('value', midi('c4')).rows[0]
+  assert.ok(isBinding(varRow.value), 'the variable value is deferred, like a scene field')
 
-  const idx = buildHydraIndex([row])
+  const idx = buildHydraIndex([codeRow, varRow])
   const frame = hydraFrameAt(idx, 0)
   assert.ok(frame)
   assert.ok(isBinding(frame!.vars.speed), 'the binding survives hydraFrameAt untouched')

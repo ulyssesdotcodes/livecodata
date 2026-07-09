@@ -46,10 +46,12 @@ define("scene", (rand, table) => table("events").rasterize(8))
 // hydra post-processing a rendered scene via src(s0)). Press "Run ▶" (or
 // Cmd/Ctrl-Enter), then hit Play.
 
-// define("hydra", ...) supplies the sketch. A row's \`code\` column is a hydra
-// sketch string ending in .out(o0). Any OTHER column (here \`freq\`) is a
-// variable in scope while the sketch runs — the most-recent value at each
-// beat wins, same as \`code\`.
+// A hydra table is a stream of EVENTS, each placed on the loop by its \`beat\`
+// (1-indexed: beat 1 is the top of the loop). Two kinds:
+//   - setCode:     \`code\` becomes the sketch — a string ending in .out(o0).
+//   - setVariable: \`name\`/\`value\` sets one variable in scope while the sketch
+//                  runs (e.g. freq below) — the most-recent value at each
+//                  beat wins, same as setCode's code.
 // Reference a variable as a FUNCTION — (props) => props.freq — rather than
 // the bare name: hydra calls it fresh every frame, so the value tracks the
 // table live, during playback, with no recompile/rerun. A bare \`freq\` would
@@ -59,26 +61,28 @@ define("scene", (rand, table) => table("events").rasterize(8))
 // of the same name, so e.g. naming this variable \`speed\` would silently be
 // overridden by hydra's own playback-speed multiplier instead of your data.
 //
-// The \`beat\` column places a row on the loop: beat 1 is the top of the loop,
-// and the loop is as many beats long as the "beats" control under the scene
-// (16 by default). So the freq change at beat 9 comes in halfway through the
-// loop (the start of the 3rd measure) and stays until the loop wraps — the
-// last row is fully visible now, because the loop length is set by the beats
-// control, not by wherever the last row happens to sit. Tap 🥁 to change the
-// tempo (how long a beat lasts); change "beats" to make the loop longer/shorter.
+// The loop is as many beats long as the "beats" control under the scene (16
+// by default). So the freq change at beat 9 comes in halfway through the loop
+// (the start of the 3rd measure) and stays until the loop wraps. Tap 🥁 to
+// change the tempo (how long a beat lasts); change "beats" to make the loop
+// longer/shorter.
 //
 // editable(name, schema, seedRows?) makes this table live-editable in the
-// table panel (its own "sketch" tab): click the code cell to open the sketch
-// in this editor; edit \`freq\`, or add a row that just changes \`freq\` at a
-// later \`beat\` (like the row below at beat 9) right in the table — no code
-// change needed. (Every edit is an event too — see the "sketch·events" tab.)
-define("hydra", () =>
-  editable("sketch", { beat: "number", code: "code", freq: "number" }, [
-    { beat: 1, freq: 3,
-      code: "osc((props) => props.freq, 0.1, 1.5).kaleid(5).out(o0)" },
-    { beat: 9, freq: 12 },
-  ])
-)
+// table panel — it's the ONLY table this sketch needs (named "hydra" so
+// playback reads it directly, with no code-generated view in between): click
+// the code cell to open the sketch in this editor; edit a value cell, or "+
+// row" a new setVariable event at a later beat (like the row below, at beat
+// 9) right in the table — no code change needed, and any column you add via
+// "+ column" survives the next Run too. (Every edit is an event too — see the
+// "hydra·events" tab.) A second, code-generated table only becomes useful
+// once you need to LAYER computed events on top of these — see "House of
+// Cards" for that.
+editable("hydra", { beat: "number", event: "string", code: "code", name: "string", value: "number" }, [
+  { beat: 1, event: "setCode",
+    code: "osc((props) => props.freq, 0.1, 1.5).kaleid(5).out(o0)" },
+  { beat: 1, event: "setVariable", name: "freq", value: 3 },
+  { beat: 9, event: "setVariable", name: "freq", value: 12 },
+])
 `,
   },
   {
@@ -188,27 +192,32 @@ define("ball_height", (rand, table) =>
     .graph("height")
 )
 
-// 5. Post-processing is a hydra sketch (hydra-ts). The "hydra" view is a
-//    table whose \`code\` column holds a hydra sketch string and whose other
-//    columns are variables in scope while the sketch runs. s0 is the rendered 3D
-//    scene; o0 is the output, so src(s0)...out() post-processes the scene. The
-//    most-recent code row wins, and each variable holds its most-recent value
-//    until a later row changes it — referenced as (props) => props.amount
-//    rather than the bare name, so every collision's new value takes effect
-//    immediately, without recompiling the sketch (a recompile would restart its
-//    oscillator phase, visible as a stutter on every landing).
+// 5. Post-processing is a hydra sketch (hydra-ts). A hydra table is a stream
+//    of setCode/setVariable EVENTS (see "Hydra Sketch" for the plain case):
+//    s0 is the rendered 3D scene; o0 is the output, so src(s0)...out()
+//    post-processes the scene. The most-recent setCode wins, and each
+//    variable holds its most-recent setVariable value until a later one
+//    changes it — referenced as (props) => props.amount rather than the bare
+//    name, so every collision's new value takes effect immediately, without
+//    recompiling the sketch (a recompile would restart its oscillator phase,
+//    visible as a stutter on every landing).
 //    Every row sits on a \`beat\` — the base sketch at beat 1, and each
 //    collision-driven \`amount\` bump at the beat its landing baked to (physics
 //    and hydra share the one beat grid, so the bumps line up with the crash).
-//    The base sketch lives in the EDITABLE "sketch" table (seeded below): click
-//    its code cell to open the sketch in this editor, tweak, Ctrl-Enter to
-//    apply — the edit is appended to the table's event log (see sketch·events)
-//    and the viewer re-cooks. The collision-driven \`amount\` rows then layer on
-//    top — data-driven from "sim" (filter the sibling, not "events", or we'd cycle).
+//    This is the two-TABLE case: the base sketch lives in the EDITABLE
+//    "hydra sketch" table (seeded below, its own tab — click its code cell to
+//    open the sketch in this editor, tweak, Ctrl-Enter to apply, and the edit
+//    lands in the table's event log at "hydra sketch·events") while "hydra"
+//    is a code-GENERATED view layering the collision-driven \`amount\` events
+//    on top — data-driven from "sim" (filter the sibling, not "events", or
+//    we'd cycle). Reach for two tables like this only when you need computed
+//    events layered on the user-authored ones; otherwise a single editable
+//    table named "hydra" (see "Hydra Sketch") is all you need.
 define("hydra", (rand, table) =>
-  editable("sketch", { beat: "number", code: "code", amount: "number" }, [
-    { beat: 1, amount: 0.12,
+  editable("hydra sketch", { beat: "number", event: "string", code: "code", name: "string", value: "number" }, [
+    { beat: 1, event: "setCode",
       code: "src(s0).modulate(osc(2.5, 0.1), (props) => props.amount).out(o0)" },
+    { beat: 1, event: "setVariable", name: "amount", value: 0.12 },
   ]).concat(
     // Declarative, diffable form: filter(Expr) + emit(template). Values are Expr
     // nodes (field("beat").add(0.5)) so the engine can hash this view and reuse
@@ -217,8 +226,8 @@ define("hydra", (rand, table) =>
     table("sim")
       .filter(field("type").eq("collision").and(field("other").eq("floor")))
       .emit([
-        { beat: field("beat"), amount: 0.6 },
-        { beat: field("beat").add(0.5), amount: 0.12 },
+        { beat: field("beat"), event: "setVariable", name: "amount", value: 0.6 },
+        { beat: field("beat").add(0.5), event: "setVariable", name: "amount", value: 0.12 },
       ])
   )
 )

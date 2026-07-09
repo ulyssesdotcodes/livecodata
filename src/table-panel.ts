@@ -511,7 +511,7 @@ export function initTablePanel(
 
     const headRow = document.createElement('tr')
     const cornerTh = document.createElement('th')
-    cornerTh.className = 'row-del-head'
+    cornerTh.className = 'row-actions-head'
     headRow.appendChild(cornerTh)
     data.columns.forEach((col) => headRow.appendChild(buildColHeader(name, col)))
     headRow.appendChild(buildAddColHeader(name))
@@ -519,14 +519,48 @@ export function initTablePanel(
 
     data.rows.forEach((_row, i) => {
       const tr = document.createElement('tr')
-      const delTd = document.createElement('td')
+
+      const actionsTd = document.createElement('td')
+      actionsTd.className = 'row-actions'
+
+      // Drag-to-reorder: the handle alone is draggable (not the whole row,
+      // so text in cells stays selectable); the row it's dropped on is the
+      // new position, moveRow() does the splice.
+      const handle = document.createElement('span')
+      handle.className = 'row-drag-handle'
+      handle.textContent = '⠿'
+      handle.title = 'Drag to reorder'
+      handle.draggable = true
+      handle.addEventListener('dragstart', (e) => {
+        if (!e.dataTransfer) return
+        e.dataTransfer.effectAllowed = 'move'
+        e.dataTransfer.setData('text/plain', String(i))
+        e.dataTransfer.setDragImage(tr, 0, 0)
+      })
+
+      const dupBtn = document.createElement('button')
+      dupBtn.className = 'row-dup-btn'
+      dupBtn.textContent = '⧉'
+      dupBtn.title = 'Duplicate row'
+      dupBtn.onclick = () => { editableStore.duplicateRow(name, i); render(name) }
+
       const delBtn = document.createElement('button')
       delBtn.className = 'row-del-btn'
       delBtn.textContent = '×'
       delBtn.title = 'Delete row'
       delBtn.onclick = () => { editableStore.removeRow(name, i); render(name) }
-      delTd.appendChild(delBtn)
-      tr.appendChild(delTd)
+
+      actionsTd.append(handle, dupBtn, delBtn)
+      tr.appendChild(actionsTd)
+
+      tr.addEventListener('dragover', (e) => { e.preventDefault(); tr.classList.add('row-drag-over') })
+      tr.addEventListener('dragleave', () => tr.classList.remove('row-drag-over'))
+      tr.addEventListener('drop', (e) => {
+        e.preventDefault()
+        tr.classList.remove('row-drag-over')
+        const from = Number(e.dataTransfer?.getData('text/plain'))
+        if (!Number.isNaN(from) && from !== i) { editableStore.moveRow(name, from, i); render(name) }
+      })
 
       data.columns.forEach((col) => {
         const td = document.createElement('td')

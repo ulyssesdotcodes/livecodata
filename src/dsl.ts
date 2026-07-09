@@ -808,7 +808,11 @@ export type DSLSurface = Easings & {
   // computed), keyed by `name` so edits persist across runs — stored as change
   // *events*, of which the visible table is the fold. `schema` declares the
   // column names + types (number → numeric input; code → opens in the main
-  // editor). `seedRows` populate the table the first time it's created.
+  // editor); a column here tracks the schema exactly (added when declared,
+  // gone when it isn't) unless the table panel has genuinely touched it (e.g.
+  // "+ column", or a rename/retype), which claims it and makes it survive
+  // regardless of what's declared on a later Run. `seedRows` populate the
+  // table the first time it's created.
   editable(name: string, schema: Record<string, ColumnType>, seedRows?: Row[]): Table
   field(name: string): Expr
   lit(v: number | string | boolean | null): Expr

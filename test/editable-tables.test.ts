@@ -23,6 +23,47 @@ test('addRow / setCell / removeRow', () => {
   assert.deepEqual(store.get('t1')!.rows, [{ beat: 0 }])
 })
 
+test('duplicateRow inserts a copy of the row right after it, with its own identity going forward', () => {
+  const store = createEditableTableStore()
+  store.createTable('t1')
+  store.addRow('t1')
+  store.setCell('t1', 0, 'beat', 3)
+  store.addRow('t1')
+  store.setCell('t1', 1, 'beat', 9)
+
+  store.duplicateRow('t1', 0)
+  assert.deepEqual(store.get('t1')!.rows, [{ beat: 3 }, { beat: 3 }, { beat: 9 }])
+
+  // The duplicate is independent — editing it doesn't touch the original.
+  store.setCell('t1', 1, 'beat', 5)
+  assert.deepEqual(store.get('t1')!.rows, [{ beat: 3 }, { beat: 5 }, { beat: 9 }])
+
+  assert.equal(store.get('t1')!.rows.length, 3, 'duplicating an out-of-range row is a no-op')
+  store.duplicateRow('t1', 99)
+  assert.equal(store.get('t1')!.rows.length, 3)
+})
+
+test('moveRow reorders a row to a given index; out-of-range and no-op moves are ignored', () => {
+  const store = createEditableTableStore()
+  store.createTable('t1')
+  for (const beat of [1, 2, 3, 4]) {
+    store.addRow('t1')
+    store.setCell('t1', store.get('t1')!.rows.length - 1, 'beat', beat)
+  }
+  assert.deepEqual(store.get('t1')!.rows.map((r) => r.beat), [1, 2, 3, 4])
+
+  store.moveRow('t1', 0, 2) // row "1" moves to index 2
+  assert.deepEqual(store.get('t1')!.rows.map((r) => r.beat), [2, 3, 1, 4])
+
+  store.moveRow('t1', 3, 0) // row "4" moves to the front
+  assert.deepEqual(store.get('t1')!.rows.map((r) => r.beat), [4, 2, 3, 1])
+
+  store.moveRow('t1', 1, 1) // no-op (same position)
+  store.moveRow('t1', -1, 0) // out of range
+  store.moveRow('t1', 0, 99) // out of range
+  assert.deepEqual(store.get('t1')!.rows.map((r) => r.beat), [4, 2, 3, 1])
+})
+
 test('every edit is stored as an event; the visible table is the fold', () => {
   const store = createEditableTableStore()
   store.createTable('t1')
@@ -73,7 +114,7 @@ test('renameTable moves state (and its event history) and rejects collisions', (
   assert.ok(!store.renameTable('scores', 't2'), 'refuses to clobber an existing table')
 })
 
-test('ensure creates on first use (with seed rows) and reconciles columns on later calls', () => {
+test('ensure creates on first use (with seed rows), and later re-declares grow/shrink freely — a purely-declared column tracks the schema exactly', () => {
   const store = createEditableTableStore()
   const rows = store.ensure('scores', { name: 'string', score: 'number' }, [{ name: 'ada', score: 100 }])
   assert.deepEqual(rows, [{ name: 'ada', score: 100 }])
@@ -82,9 +123,46 @@ test('ensure creates on first use (with seed rows) and reconciles columns on lat
   const rows2 = store.ensure('scores', { name: 'string', score: 'number', bonus: 'boolean' })
   assert.deepEqual(rows2, [{ name: 'ada', score: 100, bonus: false }])
 
-  // Dropping a column from the schema drops it from the rows too.
+  // Dropping columns from the declared schema drops them too — nothing the
+  // user did explicitly claimed them, so they're purely the program's to decide.
   const rows3 = store.ensure('scores', { name: 'string' })
   assert.deepEqual(rows3, [{ name: 'ada' }])
+})
+
+test('a column added via the table panel survives even after the program stops declaring the table at all', () => {
+  const store = createEditableTableStore()
+  store.ensure('scores', { name: 'string' }, [{ name: 'ada' }])
+  // Simulates "+ column" in the table panel — not declared in the program's code.
+  store.addColumn('scores', 'extra', 'number')
+  assert.deepEqual(store.get('scores')!.rows, [{ name: 'ada', extra: 0 }])
+
+  // Apply/Run again with the same code-declared schema (extra isn't mentioned):
+  // the table-panel column must survive.
+  const rows = store.ensure('scores', { name: 'string' })
+  assert.deepEqual(rows, [{ name: 'ada', extra: 0 }])
+})
+
+test('re-declaring retypes a purely-declared column in place; a column the user retyped keeps its type', () => {
+  const store = createEditableTableStore()
+  store.ensure('t', { a: 'string' })
+  store.addColumn('t', 'b', 'number')
+  store.ensure('t', { a: 'number' }) // "a" was never touched via the table panel — follows the declare
+  assert.deepEqual(store.get('t')!.columns, [{ name: 'a', type: 'number' }, { name: 'b', type: 'number' }])
+
+  store.setColumnType('t', 'b', 'string') // table panel retype "claims" b
+  store.ensure('t', { a: 'number', b: 'number' }) // code still thinks b is a number
+  assert.deepEqual(store.get('t')!.columns, [{ name: 'a', type: 'number' }, { name: 'b', type: 'string' }], 'the table-panel retype wins')
+})
+
+test('removing a column via the table panel keeps it gone even if the program keeps declaring it', () => {
+  const store = createEditableTableStore()
+  store.ensure('t', { a: 'string', b: 'number' })
+  store.removeColumn('t', 'b')
+  assert.deepEqual(store.get('t')!.columns.map((c) => c.name), ['a'])
+
+  // Re-declaring the SAME schema (still mentioning "b") does not resurrect it.
+  store.ensure('t', { a: 'string', b: 'number' })
+  assert.deepEqual(store.get('t')!.columns.map((c) => c.name), ['a'])
 })
 
 test('ensure appends no event when the schema already matches (no event spam per run)', () => {

@@ -35,20 +35,21 @@ test('cookProgram falls back to rasterizing events when there is no scene view',
   assert.equal(cooked.sceneRows[0].shape, 'box')
 })
 
-test('cookProgram surfaces the hydra sketch rows from the "hydra" view', () => {
+test('cookProgram surfaces the hydra setCode/setVariable rows from the "hydra" view', () => {
   const rt = createRuntime()
   const code = `
     define("base", () => rows([{ id: "s", type: "create", beat: 1, shape: "box",
       color: 1, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
     define("scene", (rand, table) => table("base").rasterize(1/30))
     define("hydra", () => rows([
-      { beat: 1, code: "src(s0).modulate(noise(amount)).out()", amount: 3 },
+      { beat: 1, event: "setCode", code: "src(s0).modulate(noise(amount)).out()" },
+      { beat: 1, event: "setVariable", name: "amount", value: 3 },
     ]))
   `
   const cooked = cookProgram(rt, code, 1)
-  assert.equal(cooked.hydraRows.length, 1)
+  assert.equal(cooked.hydraRows.length, 2)
   assert.equal(cooked.hydraRows[0].code, 'src(s0).modulate(noise(amount)).out()')
-  assert.equal(cooked.hydraRows[0].amount, 3)
+  assert.equal(cooked.hydraRows[1].value, 3)
   assert.ok(cooked.sceneRows.every((r) => r.id === 's'))
 })
 
@@ -62,14 +63,17 @@ test('hydra variables can be data-driven from another view without cycling', () 
     ]))
     define("scene", (rand, table) => table("sim").rasterize(1/30))
     define("hydra", (rand, table) =>
-      rows([{ beat: 1, code: "src(s0).modulate(noise(amount)).out()", amount: 0.2 }]).concat(
+      rows([
+        { beat: 1, event: "setCode", code: "src(s0).modulate(noise(amount)).out()" },
+        { beat: 1, event: "setVariable", name: "amount", value: 0.2 },
+      ]).concat(
         table("sim")
           .filter(r => r.type === "collision" && r.other === "floor")
-          .map(r => ({ beat: r.beat, amount: 2.6 }))
+          .map(r => ({ beat: r.beat, event: "setVariable", name: "amount", value: 2.6 }))
       ))
   `
   const cooked = cookProgram(rt, code, 1)
-  const bump = cooked.hydraRows.find((r) => r.amount === 2.6)
+  const bump = cooked.hydraRows.find((r) => r.value === 2.6)
   assert.ok(bump, 'a collision-driven variable change was emitted')
   assert.equal(bump!.beat, 3)
 })
