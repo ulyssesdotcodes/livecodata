@@ -30,8 +30,8 @@ const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
   lit:        { sig: 'lit(value)',                   detail: 'expr: literal',     info: 'A constant expression. Usually you can pass a raw value directly to an Expr method.' },
   idx:        { sig: 'idx()',                         detail: 'expr: row index',   info: 'An expression yielding the row index (0-based).' },
   midi:       { sig: 'midi(note, channel?)',         detail: 'expr: live MIDI',   info: 'A live value from the streaming MIDI table — the most recent event for `note` (e.g. "c4", "c#4", or "cc1" for control change) at-or-before the playhead. Normalized 0–1 (note velocity / CC value). Chainable like any Expr: midi("c4").mul(2). Use in setField/map/derive; it resolves each frame, so notes you play while looping replay at the loop position they were heard. Optional 1-based `channel` filters to one channel.' },
-  beats:      { sig: 'beats(count, { fit }?)',       detail: 'beat timeline',     info: 'A timeline that loops every `count` beats. Tempo is automatic — the playhead always runs at the tapped tempo (🥁 Tap) — so this is a RETIME: define("timeline", () => beats(16)) just loops every 16 beats; { fit: beats } stretches a span of source beats across the window (e.g. beats(16, { fit: 8 }) plays 8 beats of content at half speed).' },
-  tempo:      { sig: 'tempo(fallback?)',             detail: 'beat length (s)',   info: 'Seconds per beat derived from the tap-beat table (🥁 Tap), or `fallback` (default 0.5s = 120 BPM) until two taps are recorded.' },
+  beats:      { sig: 'beats(count, { fit }?)',       detail: 'beat timeline',     info: 'A timeline that loops every `count` beats. Tempo is automatic — the playhead always runs at the tapped tempo (Tap) — so this is a RETIME: define("timeline", () => beats(16)) just loops every 16 beats; { fit: beats } stretches a span of source beats across the window (e.g. beats(16, { fit: 8 }) plays 8 beats of content at half speed).' },
+  tempo:      { sig: 'tempo(fallback?)',             detail: 'beat length (s)',   info: 'Seconds per beat derived from the tap-beat table (Tap), or `fallback` (default 0.5s = 120 BPM) until two taps are recorded.' },
   taps:       { sig: 'taps()',                       detail: 'tap-beat table',    info: 'The tap-beat table: one row per wall-time button press ({ beat, time }, time as an absolute UTC epoch ms).' },
   linear:     { sig: 'linear',                       detail: 'easing curve',     info: 'Linear easing (t → t). Pass as the ease field of a color-pulse row.' },
   easeIn:     { sig: 'easeIn',                       detail: 'easing curve',     info: 'Quadratic ease-in (t → t²). Starts slow, ends fast.' },
@@ -198,7 +198,7 @@ export interface EditorAPI {
   setError(msg: string | null): void
   // Point the editor at a single table cell (e.g. hydra[0].code): the program
   // text is stashed, the cell's text loads, and Run/Ctrl-Enter calls onCommit
-  // with the current text instead of running the program. The "◂ code" button
+  // with the current text instead of running the program. The "Back" button
   // (or an external setCode) returns to the program.
   editCell(label: string, code: string, onCommit: (text: string) => void): void
 }
@@ -220,14 +220,14 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
 
   const backBtn = document.createElement('button')
   backBtn.className = 'editor-back-btn'
-  backBtn.textContent = '◂ code'
+  backBtn.textContent = 'Back'
   backBtn.title = 'Back to the program'
   backBtn.style.display = 'none'
   header.appendChild(backBtn)
 
   const runBtn = document.createElement('button')
   runBtn.className = 'run-btn'
-  runBtn.textContent = 'Run ▶'
+  runBtn.textContent = 'Run'
   header.appendChild(runBtn)
 
   // Settings: currently just the vim-mode toggle. A small popover rather than
@@ -325,7 +325,7 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
     if (!cellTarget) return
     cellTarget = null
     titleEl.textContent = 'DSL'
-    runBtn.textContent = 'Run ▶'
+    runBtn.textContent = 'Run'
     backBtn.style.display = 'none'
     if (restoreProgram) setDoc(stashedProgram)
   }
@@ -334,7 +334,7 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
     if (!cellTarget) stashedProgram = view.state.doc.toString()
     cellTarget = { label, onCommit }
     titleEl.textContent = label
-    runBtn.textContent = 'Apply ▶'
+    runBtn.textContent = 'Apply'
     backBtn.style.display = ''
     setDoc(code)
     view.focus()

@@ -60,6 +60,7 @@ export interface TablePanelOptions {
   // Clicking a code-typed cell routes here (the main editor takes over) instead
   // of opening an inline input.
   onEditCell?: (table: string, rowIndex: number, col: string, value: string) => void
+  onCtrlEnter?: () => void
 }
 
 export interface TablePanel {
@@ -76,7 +77,7 @@ export interface TablePanel {
 export function initTablePanel(
   container: HTMLElement,
   editableStore: EditableTableStore,
-  { onEditCell }: TablePanelOptions = {},
+  { onEditCell, onCtrlEnter }: TablePanelOptions = {},
 ): TablePanel {
   container.innerHTML = ''
 
@@ -175,7 +176,7 @@ export function initTablePanel(
 
   function setGraphCollapsed(collapsed: boolean): void {
     graphSection.classList.toggle('graph-collapsed', collapsed)
-    graphCollapseBtn.textContent = collapsed ? '▸' : '▾'
+    graphCollapseBtn.textContent = collapsed ? 'Expand' : 'Collapse'
     graphCollapseBtn.setAttribute('aria-label', collapsed ? 'Expand graph' : 'Collapse graph')
   }
   graphCollapseBtn.onclick = () => setGraphCollapsed(!graphSection.classList.contains('graph-collapsed'))
@@ -305,7 +306,7 @@ export function initTablePanel(
           if (v && v !== name && editableStore.renameTable(name, v) && current === name) current = v
           rebuildTabs()
         }
-        input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur() })
+        input.addEventListener('keydown', (ev) => {   if (ev.key === 'Enter') input.blur() })
         input.addEventListener('blur', commit)
         input.addEventListener('click', (ev) => ev.stopPropagation())
         tab.appendChild(input)
@@ -349,7 +350,7 @@ export function initTablePanel(
       names.forEach((n) => {
         const opt = document.createElement('option')
         opt.value = n
-        opt.textContent = editableStore.has(n) && !editableStore.isLog(n) ? `✎ ${n}` : n
+        opt.textContent = n
         tabSelect.appendChild(opt)
       })
     }
@@ -381,7 +382,7 @@ export function initTablePanel(
       })
       const confirmBtn = document.createElement('button')
       confirmBtn.className = 'col-confirm-btn'
-      confirmBtn.textContent = '✓'
+      confirmBtn.textContent = 'Add'
       const commit = (): void => {
         const colName = nameInput.value.trim()
         if (colName) editableStore.addColumn(name, colName, typeSel.value as ColumnType)
@@ -429,7 +430,7 @@ export function initTablePanel(
     }
     row.appendChild(nameLabel)
 
-    // Column settings (type, remove) tucked behind a "⋯" popover instead of
+    // Column settings (type, remove) tucked behind a "..." popover instead of
     // an inline <select> that competed with the title for header width.
     const settingsWrap = document.createElement('div')
     settingsWrap.className = 'settings-wrap col-settings-wrap'
@@ -466,7 +467,7 @@ export function initTablePanel(
 
     const delBtn = document.createElement('button')
     delBtn.className = 'settings-row col-del-btn'
-    delBtn.textContent = '× Remove column'
+    delBtn.textContent = 'Remove column'
     delBtn.onclick = () => { editableStore.removeColumn(name, col.name); render(name) }
     menu.appendChild(delBtn)
 
@@ -552,7 +553,10 @@ export function initTablePanel(
           const v = Number(num.value)
           commit(Number.isFinite(v) && num.value.trim() !== '' ? v : cur)
         }
-        num.addEventListener('keydown', (e) => { if (e.key === 'Enter') commitNum() })
+        num.addEventListener('keydown', (e) => { 
+          if (e.key === 'Enter') commitNum() 
+          if(e.key === 'Enter' && e.ctrlKey && onCtrlEnter) onCtrlEnter()
+        })
         num.addEventListener('blur', commitNum)
         td.appendChild(num)
         num.focus()
@@ -562,7 +566,10 @@ export function initTablePanel(
         inp.type = 'text'
         inp.className = 'cell-text'
         inp.value = raw == null ? '' : String(raw)
-        inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur() })
+        inp.addEventListener('keydown', (e) => { 
+          if (e.key === 'Enter') inp.blur() 
+          if(e.key === 'Enter' && e.ctrlKey && onCtrlEnter) onCtrlEnter()
+        })
         inp.addEventListener('blur', () => commit(inp.value))
         td.appendChild(inp)
         inp.focus()
@@ -615,12 +622,14 @@ export function initTablePanel(
       dupBtn.className = 'row-dup-btn'
       dupBtn.textContent = '⧉'
       dupBtn.title = 'Duplicate row'
+      dupBtn.setAttribute('aria-label', 'Duplicate row')
       dupBtn.onclick = () => { editableStore.duplicateRow(name, i); render(name) }
 
       const delBtn = document.createElement('button')
       delBtn.className = 'row-del-btn'
       delBtn.textContent = '×'
       delBtn.title = 'Delete row'
+      delBtn.setAttribute('aria-label', 'Delete row')
       delBtn.onclick = () => { editableStore.removeRow(name, i); render(name) }
 
       actionsTd.append(dupBtn, delBtn)

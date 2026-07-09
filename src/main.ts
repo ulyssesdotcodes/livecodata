@@ -99,7 +99,7 @@ const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLE
       return
     }
     // Any other code-typed cell (e.g. a hydra-style sketch column) edits in
-    // the main editor via cell-target mode. Its "Apply ▶" (Ctrl-Enter) is an
+    // the main editor via cell-target mode. Its "Apply" (Ctrl-Enter) is an
     // explicit apply: commit the cell, then re-cook the program against the
     // edited tables and record a run — keeping the current seed so tweaking a
     // sketch doesn't re-randomize the scene. (Plain inline edits stay pending
@@ -109,6 +109,7 @@ const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLE
       if (liveCode != null) void evaluate(liveCode, { setError: editor.setError, seed: liveSeed })
     })
   },
+  onCtrlEnter: () => editor.run()
 })
 
 // Tap-beat: event-sourced like any other table (see tap-log.ts), so it's
@@ -507,7 +508,7 @@ const sessionSelector = initSessionSelector({
 editorPane.insertBefore(sessionBar.el, editorPane.children[1])
 editorPane.insertBefore(sessionSelector.el, sessionBar.el)
 
-// The room chip: solo it starts a jam (pick a room, seed it with the current
+// The room chip: solo it starts a room (pick a room, seed it with the current
 // session, reload into it); in a room it shows status/peers and leaves on click.
 const mpChip = document.createElement('button')
 mpChip.className = 'multiplayer-chip'
@@ -515,7 +516,7 @@ sessionSelector.el.appendChild(mpChip)
 
 function chipSolo(): void {
   mpChip.classList.remove('connected', 'connecting')
-  mpChip.textContent = '⇄ jam'
+  mpChip.textContent = 'room'
   mpChip.title = 'start or join a shared room'
 }
 
@@ -530,7 +531,7 @@ function chipStatus(status: MultiplayerStatus): void {
   const peers = onlinePeers().size
   mpChip.classList.toggle('connected', status === 'connected')
   mpChip.classList.toggle('connecting', status === 'connecting')
-  mpChip.textContent = status === 'connected' ? `⇄ ${roomName} · ${peers}` : `⇄ ${roomName} …`
+  mpChip.textContent = status === 'connected' ? `${roomName} · ${peers}` : `${roomName} …`
   mpChip.title = status === 'connected'
     ? `in room "${roomName}" (${peers} connected) — click to leave`
     : `connecting to room "${roomName}" — click to leave`

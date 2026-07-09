@@ -112,12 +112,15 @@ export function initPlayback(
 
   const btn = document.createElement('button')
   btn.id = 'play-pause-btn'
-  btn.textContent = '▶  Play'
+  btn.textContent = '▶'
+  btn.title = 'Play'
+  btn.setAttribute('aria-label', 'Play')
 
   const loopBtn = document.createElement('button')
   loopBtn.id = 'loop-btn'
-  loopBtn.textContent = '🔁 Loop'
+  loopBtn.textContent = '↻'
   loopBtn.title = 'Loop playback'
+  loopBtn.setAttribute('aria-label', 'Loop playback')
   loopBtn.classList.toggle('active', loop)
   loopBtn.onclick = () => {
     loop = !loop
@@ -167,7 +170,7 @@ export function initPlayback(
 
     const tapBtn = document.createElement('button')
     tapBtn.id = 'tap-beat-btn'
-    tapBtn.textContent = '🥁 Tap'
+    tapBtn.textContent = 'Tap'
     tapBtn.title = 'Tap a beat to set the tempo — the whole loop plays at it'
 
     const bpmEl = document.createElement('span')
@@ -175,14 +178,14 @@ export function initPlayback(
 
     const clearBtn = document.createElement('button')
     clearBtn.id = 'tap-clear-btn'
-    clearBtn.textContent = '✕'
+    clearBtn.textContent = 'Clear'
     clearBtn.title = 'Clear taps'
 
     const showTempo = (): void => {
       const rows = tapControl.rows()
       const n = rows.length
       const beat = n > 1 ? ((rows[n - 1].time as number) - (rows[0].time as number)) / (n - 1) / 1000 : null
-      bpmEl.textContent = beat ? `${(60 / beat).toFixed(1)} BPM` : 'tap…'
+      bpmEl.textContent = `${ beat ? (60 / beat).toFixed(1) : 120} BPM`;
     }
 
     tapBtn.onclick = () => { tapControl.tap(); showTempo() }
@@ -403,11 +406,13 @@ export function initPlayback(
     if (state === 'playing') {
       state = 'paused'
       pausedBeat = position()
-      btn.textContent = '▶  Play'
+      btn.textContent = '▶'
+      btn.title = 'Play'
     } else if (state === 'paused') {
       state = 'playing'
       anchor(pausedBeat)
-      btn.textContent = '⏸  Pause'
+      btn.textContent = '⏸'
+      btn.title = 'Pause'
       onPlay?.()
       tick()
     } else {
@@ -426,7 +431,8 @@ export function initPlayback(
     pausedBeat = aligned
     anchor(aligned)
     state = 'playing'
-    btn.textContent = '⏸  Pause'
+    btn.textContent = '⏸'
+    btn.title = 'Pause'
     onPlay?.()
     tick()
   }
@@ -467,7 +473,8 @@ export function initPlayback(
       showIndex(maxBeats)
       state = 'idle'
       pausedBeat = maxBeats // so a re-cook keeps the playhead at the end
-      btn.textContent = '▶  Play'
+      btn.textContent = '▶'
+      btn.title = 'Play'
       return
     }
 

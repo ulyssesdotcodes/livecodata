@@ -35,7 +35,7 @@ export function initSessionBar({ onScrub }: SessionBarOptions = {}): SessionBarA
 
   const live = document.createElement('button')
   live.className = 'session-live'
-  live.textContent = '⤓ latest'
+  live.textContent = 'latest'
   live.style.visibility = 'hidden'
 
   root.append(label, range, live)
