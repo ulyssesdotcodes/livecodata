@@ -80,6 +80,19 @@ test('scan can emit arrays', () => {
   assert.deepEqual(out.rows, [{ x: 1 }, { x: 2 }, { x: 2 }, { x: 4 }])
 })
 
+test('mapAccum threads extra state per row and discards it at the end', () => {
+  const out = t([{ v: 1 }, { v: 2 }, { v: 3 }]).mapAccum((sum, cur) => {
+    const nextSum = sum + (cur.v as number)
+    return [{ v: cur.v, runningSum: nextSum }, nextSum]
+  }, 0)
+  assert.deepEqual(out.rows, [{ v: 1, runningSum: 1 }, { v: 2, runningSum: 3 }, { v: 3, runningSum: 6 }])
+})
+
+test('mapAccum can emit multiple rows per input row', () => {
+  const out = t([{ v: 1 }, { v: 2 }]).mapAccum((s, cur) => [[{ x: cur.v }, { x: (cur.v as number) * 2 }], s], null)
+  assert.deepEqual(out.rows, [{ x: 1 }, { x: 2 }, { x: 2 }, { x: 4 }])
+})
+
 test('columns is the first-seen union of keys across rows', () => {
   const out = t([{ a: 1 }, { b: 2, a: 3 }, { c: 4 }])
   assert.deepEqual(out.columns, ['a', 'b', 'c'])

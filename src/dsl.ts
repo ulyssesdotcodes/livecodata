@@ -506,6 +506,26 @@ export class Table {
     }, true)
   }
 
+  // mapAccum(fn, initialState) — like map(), but fn also threads extra state
+  // between rows; the final state is discarded and only the emitted rows are
+  // kept. Simpler sibling of scan(): fn always emits (no skipping) and
+  // returns [emit, nextState] instead of an {state, emit} object.
+  mapAccum<S>(
+    fn: (state: S, cur: Row, i: number, rows: Row[]) => [Row | Row[], S],
+    initialState: S,
+  ): Table {
+    return this._xf('mapAccum', { fn, initialState }, (ins) => {
+      const out: Row[] = []
+      let state = initialState
+      ins[0].forEach((cur, i) => {
+        const [emit, nextState] = fn(state, cur, i, ins[0])
+        state = nextState
+        out.push(...spread(emit, carry(cur)))
+      })
+      return out
+    }, true)
+  }
+
   join(other: Table | Row[], on: JoinOn): Table {
     const leftOf: (r: Row) => unknown = typeof on === 'function' ? on : (r) => r[typeof on === 'object' ? on.left : on]
     const rightOf: (r: Row) => unknown = typeof on === 'function' ? on : (r) => r[typeof on === 'object' ? on.right : on]
