@@ -98,6 +98,15 @@ export function initTablePanel(
     closeActiveEdit()
   })
 
+  // Same one-at-a-time pattern for a column header's settings popover.
+  let closeColSettings: (() => void) | null = null
+  document.addEventListener('mousedown', (e) => {
+    if (!closeColSettings) return
+    const target = e.target as HTMLElement | null
+    if (target?.closest?.('.col-settings-wrap')) return
+    closeColSettings()
+  })
+
   const header = document.createElement('div')
   header.className = 'table-pane-header'
 
@@ -385,16 +394,54 @@ export function initTablePanel(
     const th = document.createElement('th')
     th.className = 'editable-col-head'
 
-    const nameInput = document.createElement('input')
-    nameInput.className = 'col-name-input'
-    nameInput.value = col.name
-    nameInput.addEventListener('change', () => {
-      const v = nameInput.value.trim()
-      if (v && v !== col.name) editableStore.renameColumn(name, col.name, v)
-      render(name)
-    })
-    th.appendChild(nameInput)
+    const row = document.createElement('div')
+    row.className = 'col-head-row'
+    th.appendChild(row)
 
+    // Title wraps and reads as plain text; click it to rename in place
+    // (matching the tab-rename pattern) instead of an always-on <input>
+    // that forced the header to stay single-line and un-wrapped.
+    const nameLabel = document.createElement('span')
+    nameLabel.className = 'col-name-label'
+    nameLabel.textContent = col.name
+    nameLabel.title = 'Click to rename'
+    nameLabel.onclick = () => {
+      const nameInput = document.createElement('input')
+      nameInput.className = 'col-name-input'
+      nameInput.value = col.name
+      const commit = (): void => {
+        const v = nameInput.value.trim()
+        if (v && v !== col.name) editableStore.renameColumn(name, col.name, v)
+        render(name)
+      }
+      nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') nameInput.blur() })
+      nameInput.addEventListener('blur', commit)
+      nameInput.addEventListener('click', (e) => e.stopPropagation())
+      nameLabel.replaceWith(nameInput)
+      nameInput.focus()
+      nameInput.select()
+    }
+    row.appendChild(nameLabel)
+
+    // Column settings (type, remove) tucked behind a "⋯" popover instead of
+    // an inline <select> that competed with the title for header width.
+    const settingsWrap = document.createElement('div')
+    settingsWrap.className = 'settings-wrap col-settings-wrap'
+
+    const settingsBtn = document.createElement('button')
+    settingsBtn.className = 'settings-btn col-settings-btn'
+    settingsBtn.textContent = '⋯'
+    settingsBtn.title = 'Column settings'
+    settingsBtn.setAttribute('aria-label', 'Column settings')
+    settingsWrap.appendChild(settingsBtn)
+
+    const menu = document.createElement('div')
+    menu.className = 'settings-menu'
+    settingsWrap.appendChild(menu)
+
+    const typeRow = document.createElement('label')
+    typeRow.className = 'settings-row'
+    typeRow.appendChild(document.createTextNode('Type'))
     const typeSel = document.createElement('select')
     typeSel.className = 'col-type-select'
     COLUMN_TYPES.forEach((t) => {
@@ -408,14 +455,38 @@ export function initTablePanel(
       editableStore.setColumnType(name, col.name, typeSel.value as ColumnType)
       render(name)
     })
-    th.appendChild(typeSel)
+    typeRow.appendChild(typeSel)
+    menu.appendChild(typeRow)
 
     const delBtn = document.createElement('button')
-    delBtn.className = 'col-del-btn'
-    delBtn.textContent = '×'
-    delBtn.title = 'Remove column'
+    delBtn.className = 'settings-row col-del-btn'
+    delBtn.textContent = '× Remove column'
     delBtn.onclick = () => { editableStore.removeColumn(name, col.name); render(name) }
-    th.appendChild(delBtn)
+    menu.appendChild(delBtn)
+
+    const closeMenu = (): void => {
+      if (closeColSettings === closeMenu) closeColSettings = null
+      menu.classList.remove('open')
+    }
+    // Measured after opening (not guessed) so a menu near the right edge of
+    // the viewport clamps against its real width instead of overflowing it.
+    function positionMenu(): void {
+      const r = settingsBtn.getBoundingClientRect()
+      menu.style.top = `${r.bottom + 4}px`
+      const left = Math.max(4, Math.min(r.left, window.innerWidth - menu.offsetWidth - 4))
+      menu.style.left = `${left}px`
+    }
+    settingsBtn.onclick = (e) => {
+      e.stopPropagation()
+      const opening = !menu.classList.contains('open')
+      closeColSettings?.()
+      if (opening) {
+        menu.classList.add('open')
+        positionMenu()
+        closeColSettings = closeMenu
+      }
+    }
+    row.appendChild(settingsWrap)
 
     return th
   }

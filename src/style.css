@@ -684,8 +684,7 @@ html, body {
 }
 
 .row-dup-btn,
-.row-del-btn,
-.col-del-btn {
+.row-del-btn {
   background: transparent;
   color: #607a96;
   border: none;
@@ -699,14 +698,54 @@ html, body {
   color: #6fbf73;
 }
 
-.row-del-btn:hover,
+.row-del-btn:hover {
+  color: #e94560;
+}
+
+/* Lives inside a column's settings popover, not the header itself — a full-
+   width menu row rather than the small icon button row/other actions use. */
+.col-del-btn {
+  background: transparent;
+  border: none;
+  font: inherit;
+  padding: 4px 2px 0;
+  margin-top: 4px;
+  border-top: 1px solid #1a5090;
+  width: 100%;
+  text-align: left;
+}
+
 .col-del-btn:hover {
   color: #e94560;
 }
 
 .editable-col-head {
   display: table-cell;
-  white-space: nowrap;
+  vertical-align: top;
+  max-width: 160px;
+}
+
+.col-head-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.col-name-label {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: break-word;
+  cursor: text;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 2px;
+}
+
+.col-name-label:hover {
+  color: #fff;
 }
 
 .editable-col-head .col-name-input {
@@ -726,6 +765,17 @@ html, body {
 .editable-col-head .col-name-input:focus {
   outline: none;
   border-bottom-color: #2a70c0;
+}
+
+.col-settings-wrap {
+  flex-shrink: 0;
+  margin-left: 0;
+}
+
+.col-settings-btn {
+  font-size: 10px;
+  line-height: 1;
+  padding: 1px 4px;
 }
 
 .col-type-select {
@@ -758,6 +808,7 @@ html, body {
 .editable-cell {
   cursor: pointer;
   min-width: 60px;
+  max-width: 220px;
 }
 
 .editable-cell:hover {
@@ -772,6 +823,8 @@ html, body {
 .cell-value {
   display: block;
   min-height: 1em;
+  white-space: normal;
+  overflow-wrap: break-word;
 }
 
 .cell-text {
