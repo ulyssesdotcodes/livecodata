@@ -6,7 +6,7 @@ export const SAMPLES = [
     code: `// livecodata — a sphere moved by an editable table
 // Unlike every other example here, the path below isn't computed by code —
 // it's data you edit directly, live, in the table panel on the right.
-// Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
+// Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 
 // 1. editable(name, schema, seedRows?) declares a user-editable table: rows
 //    are entered/edited in the table panel (its own "path" tab), not
@@ -43,7 +43,7 @@ define("scene", (rand, table) => table("events").rasterize(8))
     name: "Hydra Sketch",
     code: `// livecodata — a video-synth sketch with hydra (hydra-ts, a port of ojack's hydra)
 // A generative hydra sketch — no 3D scene involved (see "House of Cards" for
-// hydra post-processing a rendered scene via src(s0)). Press "Run ▶" (or
+// hydra post-processing a rendered scene via src(s0)). Press "Run" (or
 // Cmd/Ctrl-Enter), then hit Play.
 
 // A hydra table is a stream of EVENTS, each placed on the loop by its \`beat\`
@@ -63,7 +63,7 @@ define("scene", (rand, table) => table("events").rasterize(8))
 //
 // The loop is as many beats long as the "beats" control under the scene (16
 // by default). So the freq change at beat 9 comes in halfway through the loop
-// (the start of the 3rd measure) and stays until the loop wraps. Tap 🥁 to
+// (the start of the 3rd measure) and stays until the loop wraps. Tap to
 // change the tempo (how long a beat lasts); change "beats" to make the loop
 // longer/shorter.
 //
@@ -89,7 +89,7 @@ editable("hydra", { beat: "number", event: "string", code: "code", name: "string
     name: "House of Cards",
     code: `// livecodata — House of Cards
 // A triangular pyramid of playing cards collapses when a ball drops on it.
-// Press "Run ▶" (or Cmd/Ctrl-Enter), then hit Play under the scene.
+// Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 // Tips: Ctrl-Space completes views, Table verbs, and Expr methods (the methods
 // after field()/lit()/idx() — e.g. field("v").add(1).gt(2)); hover a "view" name
 // to preview its table; your caret selects that view's tab on the right.
@@ -232,7 +232,7 @@ define("hydra", (rand, table) =>
   )
 )
 
-// 6. Beat-synced looping (optional). Tap the 🥁 Tap button under the scene a few
+// 6. Beat-synced looping (optional). Tap the Tap button under the scene a few
 //    times to set the tempo; the timeline's wall-clock length then follows it —
 //    tap faster and the whole loop plays faster. "Loop" (next to Play) is on by
 //    default. beats(16) loops every 16 beats; { fit: 12 } stretches this 12-beat
