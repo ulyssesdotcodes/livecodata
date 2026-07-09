@@ -70,8 +70,11 @@ test('a changed input changes the hash (Merkle propagation)', () => {
 
 // ── Tap-beat / tempo builders (derived from the taps table) ─────────────────
 
+// time is an absolute UTC epoch ms (see tap-log.ts), not time-since-first-tap —
+// pick an arbitrary base instant and space rows beatSeconds apart from it.
+const TAP_BASE_MS = 1_700_000_000_000
 const tapRowsAt = (beatSeconds: number, n = 3): Row[] =>
-  Array.from({ length: n }, (_, i) => ({ beat: i, time: i * beatSeconds }))
+  Array.from({ length: n }, (_, i) => ({ beat: i, time: TAP_BASE_MS + i * beatSeconds * 1000 }))
 const dslWithTaps = (rows: Row[] = []) => createDSL({
   defineLazy() {}, defineConst() {}, addGraph() {}, resolve() { return new Table() },
   tapRows: () => rows,

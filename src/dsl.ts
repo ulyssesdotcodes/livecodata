@@ -770,11 +770,13 @@ export const EASINGS = {
 export type Easings = typeof EASINGS
 
 // Average seconds between consecutive tap-beat presses (each row's `time` is
-// seconds since the first tap), or null with fewer than two taps. The one place
-// tempo()/beats() turn the taps table into a beat length.
+// an absolute UTC epoch ms, not time-since-first-tap), or null with fewer than
+// two taps. The one place tempo()/beats() turn the taps table into a beat length.
 function beatSecondsFromTaps(rows: Row[] | null | undefined): number | null {
   if (!rows || rows.length < 2) return null
-  return (rows[rows.length - 1].time as number) / (rows.length - 1)
+  const first = rows[0].time as number
+  const last = rows[rows.length - 1].time as number
+  return (last - first) / (rows.length - 1) / 1000
 }
 
 function parseCSV(text: string): Row[] {
@@ -861,7 +863,7 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     idx,
     midi,
     // The tap-beat table: one row per wall-time button press ({ beat, time } —
-    // ordinal + seconds since the first tap). The source of truth for tempo.
+    // ordinal + absolute UTC epoch ms). The source of truth for tempo.
     taps: () => new Table((ctx?.tapRows?.() ?? []).map((r) => ({ ...r })), ctx),
     // Seconds per beat derived from the tap-beat table (the average interval), or
     // `fallback` (default 0.5s = 120 BPM) until two taps are recorded. The

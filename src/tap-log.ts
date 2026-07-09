@@ -25,7 +25,9 @@ export interface TapLog {
   tap(): void
   clear(): void
   // One row per press still in the current window — { beat, time } (ordinal +
-  // seconds since the window's first tap).
+  // the press's absolute UTC epoch ms, not time-since-first-tap). Absolute so
+  // a client joining a room can derive the same tempo *and* the same wall-clock
+  // reference from the synced table without any extra sync message.
   rows(): Row[]
   // The epoch (ms) "beat 0" is anchored to — the *first* tap of the current
   // sequence (a person tapping a tempo starts on beat 1, so that's the tap
@@ -60,9 +62,7 @@ export function createTapLog({ src }: { src?: string } = {}): TapLog {
     tap(): void { log.append({ kind: 'tap', at: Date.now() }) },
     clear(): void { log.append({ kind: 'clear', at: Date.now() }) },
     rows(): Row[] {
-      const times = window()
-      const t0 = times[0] ?? 0
-      return times.map((t, i) => ({ beat: i, time: (t - t0) / 1000 }))
+      return window().map((t, i) => ({ beat: i, time: t }))
     },
     anchor(): number | null {
       const times = window()
