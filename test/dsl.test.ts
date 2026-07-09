@@ -93,6 +93,34 @@ test('mapAccum can emit multiple rows per input row', () => {
   assert.deepEqual(out.rows, [{ x: 1 }, { x: 2 }, { x: 2 }, { x: 4 }])
 })
 
+test('transition pairs sequential filtered rows, wrapping last to first', () => {
+  const base = t([
+    { event: 'note', v: 1 },
+    { event: 'skip', v: 99 },
+    { event: 'note', v: 2 },
+    { event: 'note', v: 3 },
+  ])
+  const out = base.transition(
+    (event) => event === 'note',
+    (prev, cur) => [{ from: prev.v, to: cur.v }],
+  )
+  assert.deepEqual(out.rows, [
+    { from: 3, to: 1 }, // wraps: last note (v:3) -> first note (v:1)
+    { from: 1, to: 2 },
+    { from: 2, to: 3 },
+  ])
+})
+
+test('transition can emit zero or multiple rows per pair', () => {
+  const base = t([{ event: 'e', v: 1 }, { event: 'e', v: 1 }, { event: 'e', v: 2 }])
+  const out = base.transition(
+    (event) => event === 'e',
+    (prev, cur) => (cur.v === prev.v ? [] : [{ x: cur.v }, { x: (cur.v as number) * 10 }]),
+  )
+  // pairs (wrapping): (v2,v1) differ -> 2 rows; (v1,v1) same -> none; (v1,v2) differ -> 2 rows
+  assert.deepEqual(out.rows, [{ x: 1 }, { x: 10 }, { x: 2 }, { x: 20 }])
+})
+
 test('columns is the first-seen union of keys across rows', () => {
   const out = t([{ a: 1 }, { b: 2, a: 3 }, { c: 4 }])
   assert.deepEqual(out.columns, ['a', 'b', 'c'])

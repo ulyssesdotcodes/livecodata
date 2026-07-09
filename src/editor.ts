@@ -49,6 +49,7 @@ const TABLE_METHOD_DOCS: Record<string, DocEntry> = {
   fold:        { sig: '.fold(init, (acc, row) => acc)',       detail: 'reduce to value',  info: 'Reduce all rows to a single accumulated value, like Array.reduce.' },
   scan:        { sig: '.scan(init, (acc, row) => row)',       detail: 'running accumul.', info: 'Running accumulator — emit one output row per input row, carrying state forward.' },
   mapAccum:    { sig: '.mapAccum((state, row) => [row, state], init)', detail: 'map + hidden state', info: 'Like .map(), but threads extra state between rows; the final state is discarded and only the emitted rows are kept. Return [row(s), nextState] each step.' },
+  transition:  { sig: '.transition(event => bool, (prev, cur) => rows)', detail: 'pairwise events', info: 'Filter rows by their `event` column, then call fn(prev, cur) for each sequential pair — wrapping so the first row pairs with the last — replacing cur with the returned rows.' },
   join:        { sig: '.join(other, on)',                     detail: 'key join',         info: 'Key-based join: merge rows where the `on` field (or key fn) matches. Like SQL LEFT JOIN.' },
   zip:         { sig: '.zip(other)',                          detail: 'positional join',  info: 'Merge rows positionally — row 0 with row 0, row 1 with row 1, etc.' },
   orderBy:     { sig: '.orderBy(field | fn, dir?)',           detail: 'sort rows',        info: 'Sort rows by a field name or comparator function. Optional dir: "asc" (default) or "desc".' },

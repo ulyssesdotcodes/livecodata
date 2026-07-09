@@ -526,6 +526,29 @@ export class Table {
     }, true)
   }
 
+  // transition(eventFilter, fn) — mapAccum scoped to rows whose `event`
+  // column passes eventFilter, threading each matching row's predecessor as
+  // hidden state (like mapAccum's state, but always the previous row). Pairs
+  // wrap around — the first row is paired with the last — so every matching
+  // row is visited exactly once as the "cur" of a pair. fn's returned rows
+  // replace cur in the output.
+  transition(
+    eventFilter: (event: unknown, r: Row) => unknown,
+    fn: (prev: Row, cur: Row) => Row[],
+  ): Table {
+    return this._xf('transition', { eventFilter, fn }, (ins) => {
+      const filtered = ins[0].filter((r) => eventFilter(r.event, r))
+      if (filtered.length === 0) return []
+      const out: Row[] = []
+      let prev = filtered[filtered.length - 1]
+      for (const cur of filtered) {
+        out.push(...fn(prev, cur).map((r) => withLineage(r, unionLineage([prev, cur]))))
+        prev = cur
+      }
+      return out
+    }, true)
+  }
+
   join(other: Table | Row[], on: JoinOn): Table {
     const leftOf: (r: Row) => unknown = typeof on === 'function' ? on : (r) => r[typeof on === 'object' ? on.left : on]
     const rightOf: (r: Row) => unknown = typeof on === 'function' ? on : (r) => r[typeof on === 'object' ? on.right : on]
