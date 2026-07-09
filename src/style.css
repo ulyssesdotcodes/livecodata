@@ -673,13 +673,13 @@ html, body {
 
 .row-actions-head {
   background: #0f3460;
-  width: 64px;
+  width: 36px;
 }
 
 .row-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   white-space: nowrap;
 }
 
@@ -688,7 +688,7 @@ html, body {
   background: transparent;
   color: #607a96;
   border: none;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1;
   cursor: pointer;
   padding: 0 4px;

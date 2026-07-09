@@ -613,14 +613,16 @@ export function initTablePanel(
 
       const dupBtn = document.createElement('button')
       dupBtn.className = 'row-dup-btn'
-      dupBtn.textContent = 'Dup'
+      dupBtn.textContent = '⧉'
       dupBtn.title = 'Duplicate row'
+      dupBtn.setAttribute('aria-label', 'Duplicate row')
       dupBtn.onclick = () => { editableStore.duplicateRow(name, i); render(name) }
 
       const delBtn = document.createElement('button')
       delBtn.className = 'row-del-btn'
-      delBtn.textContent = 'Del'
+      delBtn.textContent = '×'
       delBtn.title = 'Delete row'
+      delBtn.setAttribute('aria-label', 'Delete row')
       delBtn.onclick = () => { editableStore.removeRow(name, i); render(name) }
 
       actionsTd.append(dupBtn, delBtn)
