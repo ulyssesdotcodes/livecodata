@@ -99,7 +99,7 @@ const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLE
       return
     }
     // Any other code-typed cell (e.g. a hydra-style sketch column) edits in
-    // the main editor via cell-target mode. Its "Apply ▶" (Ctrl-Enter) is an
+    // the main editor via cell-target mode. Its "Apply" (Ctrl-Enter) is an
     // explicit apply: commit the cell, then re-cook the program against the
     // edited tables and record a run — keeping the current seed so tweaking a
     // sketch doesn't re-randomize the scene. (Plain inline edits stay pending
@@ -515,7 +515,7 @@ sessionSelector.el.appendChild(mpChip)
 
 function chipSolo(): void {
   mpChip.classList.remove('connected', 'connecting')
-  mpChip.textContent = '⇄ jam'
+  mpChip.textContent = 'jam'
   mpChip.title = 'start or join a shared room'
 }
 
@@ -530,7 +530,7 @@ function chipStatus(status: MultiplayerStatus): void {
   const peers = onlinePeers().size
   mpChip.classList.toggle('connected', status === 'connected')
   mpChip.classList.toggle('connecting', status === 'connecting')
-  mpChip.textContent = status === 'connected' ? `⇄ ${roomName} · ${peers}` : `⇄ ${roomName} …`
+  mpChip.textContent = status === 'connected' ? `${roomName} · ${peers}` : `${roomName} …`
   mpChip.title = status === 'connected'
     ? `in room "${roomName}" (${peers} connected) — click to leave`
     : `connecting to room "${roomName}" — click to leave`

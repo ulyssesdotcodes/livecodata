@@ -175,7 +175,7 @@ export function initTablePanel(
 
   function setGraphCollapsed(collapsed: boolean): void {
     graphSection.classList.toggle('graph-collapsed', collapsed)
-    graphCollapseBtn.textContent = collapsed ? '▸' : '▾'
+    graphCollapseBtn.textContent = collapsed ? 'Expand' : 'Collapse'
     graphCollapseBtn.setAttribute('aria-label', collapsed ? 'Expand graph' : 'Collapse graph')
   }
   graphCollapseBtn.onclick = () => setGraphCollapsed(!graphSection.classList.contains('graph-collapsed'))
@@ -315,7 +315,7 @@ export function initTablePanel(
 
       const del = document.createElement('span')
       del.className = 'tab-del'
-      del.textContent = '×'
+      del.textContent = 'Delete'
       del.title = 'Delete table'
       del.onclick = (e) => {
         e.stopPropagation()
@@ -349,7 +349,7 @@ export function initTablePanel(
       names.forEach((n) => {
         const opt = document.createElement('option')
         opt.value = n
-        opt.textContent = editableStore.has(n) && !editableStore.isLog(n) ? `✎ ${n}` : n
+        opt.textContent = n
         tabSelect.appendChild(opt)
       })
     }
@@ -381,7 +381,7 @@ export function initTablePanel(
       })
       const confirmBtn = document.createElement('button')
       confirmBtn.className = 'col-confirm-btn'
-      confirmBtn.textContent = '✓'
+      confirmBtn.textContent = 'Add'
       const commit = (): void => {
         const colName = nameInput.value.trim()
         if (colName) editableStore.addColumn(name, colName, typeSel.value as ColumnType)
@@ -429,14 +429,14 @@ export function initTablePanel(
     }
     row.appendChild(nameLabel)
 
-    // Column settings (type, remove) tucked behind a "⋯" popover instead of
+    // Column settings (type, remove) tucked behind a "More" popover instead of
     // an inline <select> that competed with the title for header width.
     const settingsWrap = document.createElement('div')
     settingsWrap.className = 'settings-wrap col-settings-wrap'
 
     const settingsBtn = document.createElement('button')
     settingsBtn.className = 'settings-btn col-settings-btn'
-    settingsBtn.textContent = '⋯'
+    settingsBtn.textContent = 'More'
     settingsBtn.title = 'Column settings'
     settingsBtn.setAttribute('aria-label', 'Column settings')
     settingsWrap.appendChild(settingsBtn)
@@ -466,7 +466,7 @@ export function initTablePanel(
 
     const delBtn = document.createElement('button')
     delBtn.className = 'settings-row col-del-btn'
-    delBtn.textContent = '× Remove column'
+    delBtn.textContent = 'Remove column'
     delBtn.onclick = () => { editableStore.removeColumn(name, col.name); render(name) }
     menu.appendChild(delBtn)
 
@@ -613,13 +613,13 @@ export function initTablePanel(
 
       const dupBtn = document.createElement('button')
       dupBtn.className = 'row-dup-btn'
-      dupBtn.textContent = '⧉'
+      dupBtn.textContent = 'Dup'
       dupBtn.title = 'Duplicate row'
       dupBtn.onclick = () => { editableStore.duplicateRow(name, i); render(name) }
 
       const delBtn = document.createElement('button')
       delBtn.className = 'row-del-btn'
-      delBtn.textContent = '×'
+      delBtn.textContent = 'Del'
       delBtn.title = 'Delete row'
       delBtn.onclick = () => { editableStore.removeRow(name, i); render(name) }
 
