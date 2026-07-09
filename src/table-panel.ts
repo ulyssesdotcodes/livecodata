@@ -13,6 +13,12 @@
 // read-only `name·events` tab (injected by main as a plain view) shows the
 // history. Cells of type "code" don't edit inline — clicking one hands the
 // text to the main code editor via onEditCell.
+//
+// A third kind, log tables (EditableTableStore.isLog — e.g. "activity"'s
+// Apply/peer-join/peer-leave stream), are in the store but never row-editable:
+// they have no fold state worth showing, so main injects their own events
+// directly under their bare name (no separate "·events" tab) and they render
+// through the plain read-only path below, same as a code-generated view.
 
 import { SERIES_COLORS, resolveSpec, drawChartToCanvas, fmtNum, type GraphSpec, type ChartData } from './graph-panel.js'
 import type { Table } from './dsl.js'
@@ -277,7 +283,7 @@ export function initTablePanel(
 
   function makeTab(name: string): HTMLButtonElement {
     const tab = document.createElement('button')
-    const editable = editableStore.has(name)
+    const editable = editableStore.has(name) && !editableStore.isLog(name)
     tab.className = 'table-tab' + (editable ? ' table-tab-editable' : '')
     tab.onclick = () => render(name)
 
@@ -343,7 +349,7 @@ export function initTablePanel(
       names.forEach((n) => {
         const opt = document.createElement('option')
         opt.value = n
-        opt.textContent = editableStore.has(n) ? `✎ ${n}` : n
+        opt.textContent = editableStore.has(n) && !editableStore.isLog(n) ? `✎ ${n}` : n
         tabSelect.appendChild(opt)
       })
     }
@@ -661,7 +667,7 @@ export function initTablePanel(
     currentChart = null
     graphSection.remove()
 
-    if (name && editableStore.has(name)) {
+    if (name && editableStore.has(name) && !editableStore.isLog(name)) {
       renderEditableTable(name)
       return
     }
@@ -669,9 +675,10 @@ export function initTablePanel(
     editToolbar.style.display = 'none'
 
     let spec = name ? graphByName.get(name) : undefined
-    // Auto-chart data views only — event-history tables (`foo·events`, `code`)
-    // have numeric seq/t columns that aren't worth plotting.
-    if (!spec && name && !name.endsWith(EVENTS_SUFFIX) && name !== 'code') {
+    // Auto-chart data views only — event-history tables (`foo·events`, `code`,
+    // and log tables like "activity") have numeric seq/t columns that aren't
+    // worth plotting.
+    if (!spec && name && !name.endsWith(EVENTS_SUFFIX) && name !== 'code' && !editableStore.isLog(name)) {
       const t = store.get(name)
       if (t && t.rows.length) {
         const numericCols = t.columns.filter(

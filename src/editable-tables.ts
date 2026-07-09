@@ -105,6 +105,12 @@ interface TableState {
   declared: EditableColumn[] | null
   rows: Row[]
   events: Row[]
+  // True for a pure event stream created via record() — an Apply pulse,
+  // peer-join/leave, … (see EditableTableStore.record). Never has columns or
+  // rows of its own, so it isn't a "row-editable table" at all; the table
+  // panel shows it read-only, as its own event history, rather than offering
+  // add/rename/retype-column or add/remove-row controls that would do nothing.
+  log: boolean
 }
 
 // Merge a declared schema with the user's own columns: declared supplies the
@@ -155,7 +161,7 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
     // `declared`; a table-panel create ("+ table", or record()'s columnless
     // stream) seeds `userColumns` directly — it has no program declaring it.
     const declared = e.declared === true ? columns : null
-    const t: TableState = { userColumns: declared ? [] : columns, removedColumns: new Set(), declared, rows: [], events: [eventRow(e)] }
+    const t: TableState = { userColumns: declared ? [] : columns, removedColumns: new Set(), declared, rows: [], events: [eventRow(e)], log: e.log === true }
     t.rows = ((e.rows as Row[] | undefined) ?? []).map((r) => conformRow(r, effectiveColumns(t)))
     tables.set(name, t)
     return
@@ -262,6 +268,10 @@ export interface EditableTableStore {
   readonly log: EventLog
   listNames(): string[]
   has(name: string): boolean
+  // True for a table created via record() (see below) — a pure event stream,
+  // never a row-editable table, regardless of what has()/get() report. The
+  // table panel uses this to skip offering row/column editing controls for it.
+  isLog(name: string): boolean
   get(name: string): EditableTableData | undefined
   createTable(name: string): void
   removeTable(name: string): void
@@ -372,6 +382,7 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
     log,
     listNames: () => [...view().keys()],
     has: (name) => view().has(name),
+    isLog: (name) => view().get(name)?.log ?? false,
 
     get(name: string): EditableTableData | undefined {
       const t = view().get(name)
@@ -475,7 +486,7 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
     },
 
     record(table: string, kind: string, payload: Record<string, unknown> = {}): void {
-      if (!tables.has(table)) append({ kind: 'create', table, columns: [] })
+      if (!tables.has(table)) append({ kind: 'create', table, columns: [], log: true })
       append({ kind, table, ...payload })
     },
 

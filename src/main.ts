@@ -248,6 +248,9 @@ interface CookedData {
 //  - a live "midi"/"midi·events" pair (streaming input, not an editable table)
 //  - every editable table's "name·events" history (this generically covers
 //    "code·events" too, now that the program is just another editable table)
+//  - a log table's (e.g. "activity") own events, shown directly under its bare
+//    name instead of a "name·events" companion — it has no fold state worth a
+//    separate interactive tab (see EditableTableStore.isLog).
 // (each only when the program doesn't define a view of that name itself).
 function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   const display = new Map(views)
@@ -255,7 +258,7 @@ function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   if (!display.has('midi')) display.set('midi', new Table(midiInput.rows()))
   if (!display.has('midi' + EVENTS_SUFFIX)) display.set('midi' + EVENTS_SUFFIX, new Table(midiInput.eventRows()))
   for (const name of editableStore.listNames()) {
-    const key = name + EVENTS_SUFFIX
+    const key = editableStore.isLog(name) ? name : name + EVENTS_SUFFIX
     if (display.has(key)) continue
     display.set(key, new Table((editableStore.get(name)?.events ?? []).map((r) => ({ ...r }))))
   }
