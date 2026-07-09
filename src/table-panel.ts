@@ -517,26 +517,22 @@ export function initTablePanel(
     headRow.appendChild(buildAddColHeader(name))
     thead.appendChild(headRow)
 
-    data.rows.forEach((_row, i) => {
+    // Display order only: rows are shown sorted by `beat` (ascending, stable —
+    // rows sharing a beat keep their relative order) when the table has one,
+    // same convention as every other beat-keyed table here. `i` below is
+    // always the row's real storage index — the one editableStore's row
+    // methods and rowEls/currentRows are keyed by — never the display
+    // position, so editing/duplicating/deleting a row is unaffected by sorting.
+    const hasBeat = data.columns.some((c) => c.name === 'beat')
+    const order = data.rows.map((_row, i) => i)
+    if (hasBeat) order.sort((a, b) => (Number(data.rows[a].beat) || 0) - (Number(data.rows[b].beat) || 0))
+
+    rowEls = new Array(data.rows.length)
+    order.forEach((i) => {
       const tr = document.createElement('tr')
 
       const actionsTd = document.createElement('td')
       actionsTd.className = 'row-actions'
-
-      // Drag-to-reorder: the handle alone is draggable (not the whole row,
-      // so text in cells stays selectable); the row it's dropped on is the
-      // new position, moveRow() does the splice.
-      const handle = document.createElement('span')
-      handle.className = 'row-drag-handle'
-      handle.textContent = '⠿'
-      handle.title = 'Drag to reorder'
-      handle.draggable = true
-      handle.addEventListener('dragstart', (e) => {
-        if (!e.dataTransfer) return
-        e.dataTransfer.effectAllowed = 'move'
-        e.dataTransfer.setData('text/plain', String(i))
-        e.dataTransfer.setDragImage(tr, 0, 0)
-      })
 
       const dupBtn = document.createElement('button')
       dupBtn.className = 'row-dup-btn'
@@ -550,17 +546,8 @@ export function initTablePanel(
       delBtn.title = 'Delete row'
       delBtn.onclick = () => { editableStore.removeRow(name, i); render(name) }
 
-      actionsTd.append(handle, dupBtn, delBtn)
+      actionsTd.append(dupBtn, delBtn)
       tr.appendChild(actionsTd)
-
-      tr.addEventListener('dragover', (e) => { e.preventDefault(); tr.classList.add('row-drag-over') })
-      tr.addEventListener('dragleave', () => tr.classList.remove('row-drag-over'))
-      tr.addEventListener('drop', (e) => {
-        e.preventDefault()
-        tr.classList.remove('row-drag-over')
-        const from = Number(e.dataTransfer?.getData('text/plain'))
-        if (!Number.isNaN(from) && from !== i) { editableStore.moveRow(name, from, i); render(name) }
-      })
 
       data.columns.forEach((col) => {
         const td = document.createElement('td')
@@ -571,7 +558,7 @@ export function initTablePanel(
       tr.appendChild(document.createElement('td'))
 
       tbody.appendChild(tr)
-      rowEls.push(tr)
+      rowEls[i] = tr
     })
 
     currentRows = data.rows
