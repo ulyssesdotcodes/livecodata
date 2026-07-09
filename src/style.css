@@ -673,7 +673,7 @@ html, body {
 
 .row-actions-head {
   background: #0f3460;
-  width: 50px;
+  width: 36px;
 }
 
 .row-actions {
@@ -681,23 +681,6 @@ html, body {
   align-items: center;
   gap: 2px;
   white-space: nowrap;
-}
-
-.row-drag-handle {
-  color: #45607e;
-  font-size: 12px;
-  line-height: 1;
-  cursor: grab;
-  padding: 0 2px;
-  user-select: none;
-}
-
-.row-drag-handle:hover {
-  color: #8fa9c4;
-}
-
-tr.row-drag-over {
-  box-shadow: inset 0 2px 0 #2a70c0;
 }
 
 .row-dup-btn,

@@ -43,27 +43,6 @@ test('duplicateRow inserts a copy of the row right after it, with its own identi
   assert.equal(store.get('t1')!.rows.length, 3)
 })
 
-test('moveRow reorders a row to a given index; out-of-range and no-op moves are ignored', () => {
-  const store = createEditableTableStore()
-  store.createTable('t1')
-  for (const beat of [1, 2, 3, 4]) {
-    store.addRow('t1')
-    store.setCell('t1', store.get('t1')!.rows.length - 1, 'beat', beat)
-  }
-  assert.deepEqual(store.get('t1')!.rows.map((r) => r.beat), [1, 2, 3, 4])
-
-  store.moveRow('t1', 0, 2) // row "1" moves to index 2
-  assert.deepEqual(store.get('t1')!.rows.map((r) => r.beat), [2, 3, 1, 4])
-
-  store.moveRow('t1', 3, 0) // row "4" moves to the front
-  assert.deepEqual(store.get('t1')!.rows.map((r) => r.beat), [4, 2, 3, 1])
-
-  store.moveRow('t1', 1, 1) // no-op (same position)
-  store.moveRow('t1', -1, 0) // out of range
-  store.moveRow('t1', 0, 99) // out of range
-  assert.deepEqual(store.get('t1')!.rows.map((r) => r.beat), [4, 2, 3, 1])
-})
-
 test('every edit is stored as an event; the visible table is the fold', () => {
   const store = createEditableTableStore()
   store.createTable('t1')

@@ -224,13 +224,6 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
       if (row) t.rows.splice(i + 1, 0, { ...row })
       break
     }
-    case 'move-row': {
-      const from = e.from as number, to = e.to as number
-      if (from < 0 || from >= t.rows.length) break
-      const [row] = t.rows.splice(from, 1)
-      t.rows.splice(Math.max(0, Math.min(to, t.rows.length)), 0, row)
-      break
-    }
     case 'set-cell': {
       const row = t.rows[e.row as number]
       if (row) row[e.col as string] = e.value
@@ -292,10 +285,6 @@ export interface EditableTableStore {
   removeRow(name: string, index: number): void
   // Insert a copy of the row at `index` immediately after it.
   duplicateRow(name: string, index: number): void
-  // Reorder the row at `from` so it ends up at index `to` (post-move, like
-  // Array#splice's insertion index — a plain integer, not "before/after `to`
-  // in the pre-move array").
-  moveRow(name: string, from: number, to: number): void
   setCell(name: string, index: number, colName: string, value: unknown): void
   // Atomically set several cells of one row in a single event — e.g. a
   // program Run sets `code` and `seed` together, so the pair is always one
@@ -473,12 +462,6 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       const t = tables.get(name)
       if (!t || index < 0 || index >= t.rows.length) return
       append({ kind: 'duplicate-row', table: name, row: index })
-    },
-
-    moveRow(name: string, from: number, to: number): void {
-      const t = tables.get(name)
-      if (!t || from < 0 || from >= t.rows.length || to < 0 || to >= t.rows.length || from === to) return
-      append({ kind: 'move-row', table: name, from, to })
     },
 
     setCell(name: string, index: number, colName: string, value: unknown): void {
