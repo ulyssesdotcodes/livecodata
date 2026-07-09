@@ -316,7 +316,7 @@ export function initTablePanel(
 
       const del = document.createElement('span')
       del.className = 'tab-del'
-      del.textContent = 'Delete'
+      del.textContent = '×'
       del.title = 'Delete table'
       del.onclick = (e) => {
         e.stopPropagation()
@@ -430,14 +430,14 @@ export function initTablePanel(
     }
     row.appendChild(nameLabel)
 
-    // Column settings (type, remove) tucked behind a "More" popover instead of
+    // Column settings (type, remove) tucked behind a "..." popover instead of
     // an inline <select> that competed with the title for header width.
     const settingsWrap = document.createElement('div')
     settingsWrap.className = 'settings-wrap col-settings-wrap'
 
     const settingsBtn = document.createElement('button')
     settingsBtn.className = 'settings-btn col-settings-btn'
-    settingsBtn.textContent = 'More'
+    settingsBtn.textContent = '⋯'
     settingsBtn.title = 'Column settings'
     settingsBtn.setAttribute('aria-label', 'Column settings')
     settingsWrap.appendChild(settingsBtn)
