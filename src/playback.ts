@@ -180,7 +180,7 @@ export function initPlayback(
       const rows = tapControl.rows()
       const n = rows.length
       const beat = n > 1 ? (rows[n - 1].time as number) / (n - 1) : null
-      bpmEl.textContent = beat ? `${(60 / beat).toFixed(1)} BPM` : 'tap…'
+      bpmEl.textContent = `${ beat ? (60 / beat).toFixed(1) : 120} BPM`;
     }
 
     tapBtn.onclick = () => { tapControl.tap(); showTempo() }

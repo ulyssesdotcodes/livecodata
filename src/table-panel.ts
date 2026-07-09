@@ -60,6 +60,7 @@ export interface TablePanelOptions {
   // Clicking a code-typed cell routes here (the main editor takes over) instead
   // of opening an inline input.
   onEditCell?: (table: string, rowIndex: number, col: string, value: string) => void
+  onCtrlEnter?: () => void
 }
 
 export interface TablePanel {
@@ -76,7 +77,7 @@ export interface TablePanel {
 export function initTablePanel(
   container: HTMLElement,
   editableStore: EditableTableStore,
-  { onEditCell }: TablePanelOptions = {},
+  { onEditCell, onCtrlEnter }: TablePanelOptions = {},
 ): TablePanel {
   container.innerHTML = ''
 
@@ -305,7 +306,7 @@ export function initTablePanel(
           if (v && v !== name && editableStore.renameTable(name, v) && current === name) current = v
           rebuildTabs()
         }
-        input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') input.blur() })
+        input.addEventListener('keydown', (ev) => {   if (ev.key === 'Enter') input.blur() })
         input.addEventListener('blur', commit)
         input.addEventListener('click', (ev) => ev.stopPropagation())
         tab.appendChild(input)
@@ -552,7 +553,10 @@ export function initTablePanel(
           const v = Number(num.value)
           commit(Number.isFinite(v) && num.value.trim() !== '' ? v : cur)
         }
-        num.addEventListener('keydown', (e) => { if (e.key === 'Enter') commitNum() })
+        num.addEventListener('keydown', (e) => { 
+          if (e.key === 'Enter') commitNum() 
+          if(e.key === 'Enter' && e.ctrlKey && onCtrlEnter) onCtrlEnter()
+        })
         num.addEventListener('blur', commitNum)
         td.appendChild(num)
         num.focus()
@@ -562,7 +566,10 @@ export function initTablePanel(
         inp.type = 'text'
         inp.className = 'cell-text'
         inp.value = raw == null ? '' : String(raw)
-        inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') inp.blur() })
+        inp.addEventListener('keydown', (e) => { 
+          if (e.key === 'Enter') inp.blur() 
+          if(e.key === 'Enter' && e.ctrlKey && onCtrlEnter) onCtrlEnter()
+        })
         inp.addEventListener('blur', () => commit(inp.value))
         td.appendChild(inp)
         inp.focus()

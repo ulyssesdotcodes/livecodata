@@ -109,6 +109,7 @@ const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLE
       if (liveCode != null) void evaluate(liveCode, { setError: editor.setError, seed: liveSeed })
     })
   },
+  onCtrlEnter: () => editor.run()
 })
 
 // Tap-beat: event-sourced like any other table (see tap-log.ts), so it's
@@ -507,7 +508,7 @@ const sessionSelector = initSessionSelector({
 editorPane.insertBefore(sessionBar.el, editorPane.children[1])
 editorPane.insertBefore(sessionSelector.el, sessionBar.el)
 
-// The room chip: solo it starts a jam (pick a room, seed it with the current
+// The room chip: solo it starts a room (pick a room, seed it with the current
 // session, reload into it); in a room it shows status/peers and leaves on click.
 const mpChip = document.createElement('button')
 mpChip.className = 'multiplayer-chip'
@@ -515,7 +516,7 @@ sessionSelector.el.appendChild(mpChip)
 
 function chipSolo(): void {
   mpChip.classList.remove('connected', 'connecting')
-  mpChip.textContent = 'jam'
+  mpChip.textContent = 'room'
   mpChip.title = 'start or join a shared room'
 }
 

@@ -239,7 +239,7 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
 
   const settingsBtn = document.createElement('button')
   settingsBtn.className = 'settings-btn'
-  settingsBtn.textContent = 'Settings'
+  settingsBtn.textContent = '⚙'
   settingsBtn.title = 'Settings'
   settingsBtn.setAttribute('aria-label', 'Settings')
   settingsWrap.appendChild(settingsBtn)
@@ -280,7 +280,7 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
 
   function setCollapsed(collapsed: boolean): void {
     parent.classList.toggle('editor-collapsed', collapsed)
-    collapseBtn.textContent = collapsed ? 'Expand' : 'Collapse'
+    collapseBtn.textContent = collapsed ? '▸' : '▾'
     collapseBtn.setAttribute('aria-label', collapsed ? 'Expand code panel' : 'Collapse code panel')
   }
 
