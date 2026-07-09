@@ -9,13 +9,13 @@ import { initSessionSelector } from './session-selector.js'
 import { SAMPLES } from './samples.js'
 import { createRuntime } from './runtime.js'
 import { createSessionStore } from './sessions.js'
-import { getVimMode, setVimMode } from './settings.js'
+import { getVimMode, setVimMode, getMidiEnabled, setMidiEnabled } from './settings.js'
 import { cookProgram } from './replay.js'
 import { initPhysics } from './physics.js'
 import { randomSeed } from './event-log.js'
 import { Table } from './dsl.js'
 import { createEditableTableStore, type ColumnType } from './editable-tables.js'
-import { createMidiInput } from './midi.js'
+import { createMidiInput, type MidiInput } from './midi.js'
 import { createTapLog } from './tap-log.js'
 import { connectMultiplayer } from './multiplayer.js'
 import type { MultiplayerConnection, MultiplayerStatus } from './multiplayer.js'
@@ -143,12 +143,27 @@ let currentPlayIndex = 0
 // the timeline mapping. The folded "midi" table (per note, the latest loop's
 // take) is what midi("c4") bindings resolve against each frame; the raw log
 // shows as "midi·events".
+//
+// MIDI is opt-in (see settings.ts): requesting Web MIDI access pops a browser
+// permission prompt, so createMidiInput (which requests it) only runs once
+// the user enables the toggle in the editor's settings popover, and the
+// "midi"/"midi·events" tables only appear once it's enabled.
 let loopCount = 0
-const midiInput = createMidiInput({
-  getIndex: () => playback.currentSourceBeats(),
-  getLoop: () => loopCount,
-  onChange: () => onMidi(),
-})
+let midiEnabled = getMidiEnabled()
+let midiInput: MidiInput | null = null
+
+function ensureMidiInput(): MidiInput {
+  if (!midiInput) {
+    midiInput = createMidiInput({
+      getIndex: () => playback.currentSourceBeats(),
+      getLoop: () => loopCount,
+      onChange: () => onMidi(),
+    })
+  }
+  return midiInput
+}
+
+if (midiEnabled) ensureMidiInput()
 
 const playback = initPlayback(
   document.getElementById('playback-controls') as HTMLElement,
@@ -165,7 +180,7 @@ const playback = initPlayback(
     },
     onLoop: () => { loopCount++ },
     tapControl: { tap: recordTap, clear: clearTaps, rows: tapRows, anchor: tapAnchor },
-    midiCtxAt: (srcFrame) => midiInput.ctxAt(srcFrame),
+    midiCtxAt: (srcFrame) => (midiEnabled && midiInput ? midiInput.ctxAt(srcFrame) : null),
   },
 )
 
@@ -256,8 +271,10 @@ interface CookedData {
 function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   const display = new Map(views)
   if (!display.has('taps')) display.set('taps', new Table(tapRows()))
-  if (!display.has('midi')) display.set('midi', new Table(midiInput.rows()))
-  if (!display.has('midi' + EVENTS_SUFFIX)) display.set('midi' + EVENTS_SUFFIX, new Table(midiInput.eventRows()))
+  if (midiEnabled && midiInput) {
+    if (!display.has('midi')) display.set('midi', new Table(midiInput.rows()))
+    if (!display.has('midi' + EVENTS_SUFFIX)) display.set('midi' + EVENTS_SUFFIX, new Table(midiInput.eventRows()))
+  }
   for (const name of editableStore.listNames()) {
     const key = editableStore.isLog(name) ? name : name + EVENTS_SUFFIX
     if (display.has(key)) continue
@@ -391,6 +408,13 @@ const editor = initEditor(document.getElementById('editor-pane') as HTMLElement,
   getPlayIndex: () => currentPlayIndex,
   vimMode: getVimMode(),
   onVimModeChange: setVimMode,
+  midiEnabled,
+  onMidiEnabledChange: (enabled) => {
+    midiEnabled = enabled
+    setMidiEnabled(enabled)
+    if (enabled) ensureMidiInput()
+    tablePanel.setTables(tablesForDisplay(lastViews))
+  },
 })
 
 // A table-change event landed (cell edit, add row, …). Edits are *pending*:

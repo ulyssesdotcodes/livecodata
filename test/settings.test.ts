@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { getVimMode, setVimMode } from '../src/settings.js'
+import { getVimMode, setVimMode, getMidiEnabled, setMidiEnabled } from '../src/settings.js'
 
 interface FakeStorage {
   getItem(key: string): string | null
@@ -36,4 +36,25 @@ test('getVimMode tolerates a storage that throws, falling back to the default (o
   }
   assert.equal(getVimMode(storage), true)
   assert.doesNotThrow(() => setVimMode(true, storage))
+})
+
+test('getMidiEnabled defaults to false with no stored value (MIDI is opt-in)', () => {
+  assert.equal(getMidiEnabled(fakeStorage()), false)
+})
+
+test('setMidiEnabled then getMidiEnabled round-trips true and false', () => {
+  const storage = fakeStorage()
+  setMidiEnabled(true, storage)
+  assert.equal(getMidiEnabled(storage), true)
+  setMidiEnabled(false, storage)
+  assert.equal(getMidiEnabled(storage), false)
+})
+
+test('getMidiEnabled tolerates a storage that throws, falling back to the default (off)', () => {
+  const storage = {
+    getItem: () => { throw new Error('boom') },
+    setItem: () => { throw new Error('boom') },
+  }
+  assert.equal(getMidiEnabled(storage), false)
+  assert.doesNotThrow(() => setMidiEnabled(true, storage))
 })

@@ -46,7 +46,7 @@ export interface PlaybackOptions {
   // Streaming context for the frame being shown: resolves midi() bindings against
   // the live MIDI table, sampled at the playhead's *source* frame — the same
   // content-space coordinate events are recorded in (see currentSourceBeats).
-  midiCtxAt?: (srcFrame: number) => EvalCtx
+  midiCtxAt?: (srcFrame: number) => EvalCtx | null
 }
 
 export interface PlaybackAPI {
