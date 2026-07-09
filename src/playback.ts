@@ -16,17 +16,18 @@ export interface TapControl {
   // least two taps have established a tempo — the instant "beat 0" is
   // anchored to (a person tapping a tempo starts on beat 1, so that first tap
   // is the one that actually landed on the grid). Null before that (no tempo
-  // yet), in which case phase follows whenever Play was pressed, same as
-  // before tap-tempo existed.
+  // yet), in which case phase anchors to the Unix epoch instead (see
+  // wallAlignedPhase) — still a shared absolute reference, just an arbitrary one.
   anchor?(): number | null
 }
 
 // The tick value "now" should show, if a tap-established tempo is locked to
-// the real-world clock: elapsed time since the sequence's first tap, wrapped
-// into one loop. Anchoring phase to that instant (rather than to whenever
+// the real-world clock: elapsed time since the anchor instant, wrapped into
+// one loop. Anchoring phase to an absolute instant (rather than to whenever
 // Play was pressed) means "beat 0" always falls at the same absolute moment —
 // which is what keeps independently-started clients (or repeated Play
-// presses) in phase with each other.
+// presses, or a client joining a room mid-loop) in phase with each other,
+// purely from each machine's own system clock.
 export function wallAlignedTick(nowMs: number, anchorMs: number, loopSeconds: number): number {
   if (loopSeconds <= 0) return 0
   let phase = ((nowMs - anchorMs) / 1000) % loopSeconds
@@ -98,7 +99,11 @@ export function initPlayback(
   // content sits on the (fixed) beat grid.
   function beatSeconds(): number {
     const rows = tapControl?.rows()
-    if (rows && rows.length > 1) return (rows[rows.length - 1].time as number) / (rows.length - 1)
+    if (rows && rows.length > 1) {
+      const first = rows[0].time as number
+      const last = rows[rows.length - 1].time as number
+      return (last - first) / (rows.length - 1) / 1000
+    }
     return DEFAULT_BEAT_SECONDS
   }
 
@@ -176,7 +181,7 @@ export function initPlayback(
     const showTempo = (): void => {
       const rows = tapControl.rows()
       const n = rows.length
-      const beat = n > 1 ? (rows[n - 1].time as number) / (n - 1) : null
+      const beat = n > 1 ? ((rows[n - 1].time as number) - (rows[0].time as number)) / (n - 1) / 1000 : null
       bpmEl.textContent = beat ? `${(60 / beat).toFixed(1)} BPM` : 'tap…'
     }
 
@@ -282,13 +287,16 @@ export function initPlayback(
     return state === 'playing' ? position() : pausedBeat
   }
 
-  // The wall-clock-aligned beat phase for right now, or null when there's no tap
-  // tempo (or nothing to loop over) to lock to — this is what keeps
-  // independently-started clients in phase (see wallAlignedTick).
+  // The wall-clock-aligned beat phase for right now, or null when there's
+  // nothing to loop over. Always anchored to an absolute instant — the first
+  // tap of the established tempo if there is one, else the Unix epoch — so
+  // any two clients (or a client joining a room mid-loop, with or without a
+  // tap tempo set yet) land on the same phase purely from their own system
+  // clock, with no extra sync message needed (see wallAlignedTick).
   function wallAlignedPhase(): number | null {
-    const anchorMs = tapControl?.anchor?.() ?? null
+    const anchorMs = tapControl?.anchor?.() ?? 0
     const bs = beatSeconds()
-    if (anchorMs == null || maxBeats <= 0) return null
+    if (maxBeats <= 0) return null
     return wallAlignedTick(Date.now(), anchorMs, maxBeats * bs) / bs
   }
 
@@ -408,9 +416,11 @@ export function initPlayback(
   }
 
   function startFresh(): void {
-    // Start already in phase with the tap-established tempo (if any), instead
-    // of always at beat 0 — so pressing Play doesn't reset "beat 0" to this
-    // moment, it joins the beat grid wherever it currently is.
+    // Start already in phase with the wall-clock-anchored grid (tap-established
+    // tempo if any, else the epoch-anchored default tempo), instead of always
+    // at beat 0 — so pressing Play doesn't reset "beat 0" to this moment, it
+    // joins the beat grid wherever it currently is. `?? 0` only matters when
+    // there's nothing to loop over yet (maxBeats <= 0).
     const aligned = wallAlignedPhase() ?? 0
     reset(aligned)
     pausedBeat = aligned

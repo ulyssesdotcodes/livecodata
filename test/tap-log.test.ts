@@ -6,15 +6,15 @@ import { createTapLog } from '../src/tap-log.js'
 // chronological order once merged), so these tests drive the fold directly by
 // appending events with an explicit `at` rather than racing the clock.
 
-test('tap() appends a row per press, ordinal beat + seconds since the first', () => {
+test('tap() appends a row per press, ordinal beat + absolute UTC epoch ms', () => {
   const t = createTapLog({ src: 'a' })
   t.log.append({ kind: 'tap', at: 1000 })
   t.log.append({ kind: 'tap', at: 1500 })
   t.log.append({ kind: 'tap', at: 2000 })
   assert.deepEqual(t.rows(), [
-    { beat: 0, time: 0 },
-    { beat: 1, time: 0.5 },
-    { beat: 2, time: 1 },
+    { beat: 0, time: 1000 },
+    { beat: 1, time: 1500 },
+    { beat: 2, time: 2000 },
   ])
 })
 
@@ -23,7 +23,7 @@ test('a long gap starts a fresh window', () => {
   t.log.append({ kind: 'tap', at: 0 })
   t.log.append({ kind: 'tap', at: 500 })
   t.log.append({ kind: 'tap', at: 3000 }) // > 2000ms gap — resets
-  assert.deepEqual(t.rows(), [{ beat: 0, time: 0 }])
+  assert.deepEqual(t.rows(), [{ beat: 0, time: 3000 }])
 })
 
 test('window is capped at 16, oldest dropped first', () => {
@@ -31,7 +31,7 @@ test('window is capped at 16, oldest dropped first', () => {
   for (let i = 0; i < 20; i++) t.log.append({ kind: 'tap', at: i * 100 })
   const rows = t.rows()
   assert.equal(rows.length, 16)
-  assert.equal(rows[0].time, 0) // re-based to the new window's first tap
+  assert.equal(rows[0].time, 400) // taps 0-3 dropped, oldest surviving tap is at 400ms
   assert.equal(rows.at(-1)!.beat, 15)
 })
 
@@ -57,7 +57,7 @@ test('two replicas converge on the same tap rows after merging', () => {
   assert.deepEqual(a.rows(), b.rows())
   assert.deepEqual(a.rows(), [
     { beat: 0, time: 0 },
-    { beat: 1, time: 0.1 },
-    { beat: 2, time: 0.2 },
+    { beat: 1, time: 100 },
+    { beat: 2, time: 200 },
   ])
 })
