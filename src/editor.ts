@@ -189,6 +189,11 @@ export interface EditorOptions {
   // Initial vim-keybindings state (persisted by the caller — see settings.ts).
   vimMode?: boolean
   onVimModeChange?: (enabled: boolean) => void
+  // Initial MIDI-enabled state (persisted by the caller — see settings.ts).
+  // Defaults to off: enabling it is what triggers the browser's MIDI
+  // permission prompt (see main.ts).
+  midiEnabled?: boolean
+  onMidiEnabledChange?: (enabled: boolean) => void
 }
 
 export interface EditorAPI {
@@ -203,7 +208,7 @@ export interface EditorAPI {
   editCell(label: string, code: string, onCommit: (text: string) => void): void
 }
 
-export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange }: EditorOptions = {}): EditorAPI {
+export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange }: EditorOptions = {}): EditorAPI {
   parent.innerHTML = ''
 
   const header = document.createElement('div')
@@ -256,6 +261,15 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
   vimRow.appendChild(vimCheckbox)
   vimRow.appendChild(document.createTextNode('Vim mode'))
   settingsMenu.appendChild(vimRow)
+
+  const midiRow = document.createElement('label')
+  midiRow.className = 'settings-row'
+  const midiCheckbox = document.createElement('input')
+  midiCheckbox.type = 'checkbox'
+  midiCheckbox.checked = midiEnabled
+  midiRow.appendChild(midiCheckbox)
+  midiRow.appendChild(document.createTextNode('MIDI'))
+  settingsMenu.appendChild(midiRow)
 
   header.appendChild(settingsWrap)
 
@@ -380,6 +394,10 @@ export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, 
     const enabled = vimCheckbox.checked
     view.dispatch({ effects: vimCompartment.reconfigure(enabled ? [vim()] : []) })
     onVimModeChange?.(enabled)
+  }
+
+  midiCheckbox.onchange = () => {
+    onMidiEnabledChange?.(midiCheckbox.checked)
   }
 
   // External loads (session scrub, examples) always mean "show the program" —

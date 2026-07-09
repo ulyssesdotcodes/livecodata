@@ -26,3 +26,24 @@ export function setVimMode(enabled: boolean, storage: MinimalStorage = globalThi
     // storage unavailable (e.g. private browsing quota) — setting just won't persist
   }
 }
+
+const MIDI_STORAGE_KEY = 'livecodata.midiEnabled'
+
+// MIDI is opt-in: requesting Web MIDI access pops a browser permission prompt,
+// so default to off until the user explicitly enables it via the settings toggle.
+export function getMidiEnabled(storage: MinimalStorage = globalThis.localStorage as MinimalStorage): boolean {
+  try {
+    const stored = storage?.getItem(MIDI_STORAGE_KEY)
+    return stored === '1'
+  } catch {
+    return false
+  }
+}
+
+export function setMidiEnabled(enabled: boolean, storage: MinimalStorage = globalThis.localStorage as MinimalStorage): void {
+  try {
+    storage?.setItem(MIDI_STORAGE_KEY, enabled ? '1' : '0')
+  } catch {
+    // storage unavailable (e.g. private browsing quota) — setting just won't persist
+  }
+}
