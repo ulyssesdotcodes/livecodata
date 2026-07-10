@@ -1,4 +1,5 @@
 import * as esbuild from 'esbuild'
+import { solidPlugin } from 'esbuild-plugin-solid'
 import { mkdirSync, cpSync, readFileSync, writeFileSync } from 'fs'
 import { startMultiplayerServer } from './server/server.js'
 
@@ -17,6 +18,7 @@ const ctx = await esbuild.context({
   outfile: 'public/assets/index.js',
   format: 'esm',
   external: ['module'], // see build.js
+  plugins: [solidPlugin()],
 })
 
 await ctx.watch()

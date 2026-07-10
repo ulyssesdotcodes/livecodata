@@ -1,4 +1,5 @@
 import * as esbuild from 'esbuild'
+import { solidPlugin } from 'esbuild-plugin-solid'
 import { rmSync, mkdirSync, cpSync, readFileSync, writeFileSync } from 'fs'
 
 rmSync('public', { recursive: true, force: true })
@@ -15,6 +16,7 @@ await esbuild.build({
   // `await import("module")`; keep it external so it isn't resolved at build
   // time (the browser never reaches that node-detection path).
   external: ['module'],
+  plugins: [solidPlugin()],
 })
 
 const html = readFileSync('index.html', 'utf8')
