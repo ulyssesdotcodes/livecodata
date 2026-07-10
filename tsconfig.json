@@ -9,6 +9,8 @@
     "skipLibCheck": true,
     "esModuleInterop": true,
     "verbatimModuleSyntax": true,
+    "jsx": "preserve",
+    "jsxImportSource": "solid-js",
     "types": ["node"]
   },
   "include": ["src/**/*", "test/**/*", "server/**/*"]

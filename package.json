@@ -23,6 +23,7 @@
     "@types/three": "^0.185.0",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.28.1",
+    "esbuild-plugin-solid": "^0.6.0",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "wrangler": "^4.107.0"
@@ -35,6 +36,7 @@
     "hydra-ts": "^1.1.1",
     "jolt-physics": "^1.0.0",
     "regl": "^2.1.1",
+    "solid-js": "^1.9.14",
     "three": "^0.184.0",
     "ws": "^8.21.0"
   }

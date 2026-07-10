@@ -1,3 +1,8 @@
+// Playback engine — all timing/loop/scrub state and scene application, with
+// zero DOM. The transport controls are a humble SolidJS view
+// (ui/playback-controls.tsx) that renders the PlaybackViewState this engine
+// emits and calls straight back into the methods below.
+
 import { buildFrameIndex, sampleFrame, type FrameIndex } from './rasterize.js'
 import { buildHydraIndex, hydraFrameAt } from './hydra.js'
 import { buildTimeline, type Timeline } from './timeline.js'
@@ -35,6 +40,28 @@ export function wallAlignedTick(nowMs: number, anchorMs: number, loopSeconds: nu
   return phase
 }
 
+export type PlayState = 'idle' | 'playing' | 'paused'
+
+// Everything the transport view needs to draw itself — pushed on every state
+// change and every animation frame. The view renders this verbatim (humble
+// object): no playback decisions live on the DOM side.
+export interface PlaybackViewState {
+  state: PlayState
+  // The playhead position the time display shows, in elapsed beats.
+  pos: number
+  // What the scrubber thumb should sit at — frozen at the drag position while
+  // the user is scrubbing so the ticking engine doesn't fight the drag.
+  scrubPos: number
+  maxBeats: number
+  // Source beat at `pos` (timeline-mapped; equals pos+1 with no timeline).
+  srcBeat: number
+  timelineActive: boolean
+  loop: boolean
+  loopBeats: number
+  // Tapped tempo in BPM, or null until two taps establish one.
+  bpm: number | null
+}
+
 export interface PlaybackOptions {
   // srcBeats: the source/content position shown, as a 1-indexed beat (converted
   // from the internal frame count) — the unit every table's `beat` column uses.
@@ -47,6 +74,10 @@ export interface PlaybackOptions {
   // the live MIDI table, sampled at the playhead's *source* frame — the same
   // content-space coordinate events are recorded in (see currentSourceBeats).
   midiCtxAt?: (srcFrame: number) => EvalCtx | null
+}
+
+export interface PlaybackEngineOptions extends PlaybackOptions {
+  onViewChange?: (vs: PlaybackViewState) => void
 }
 
 export interface PlaybackAPI {
@@ -64,13 +95,22 @@ export interface PlaybackAPI {
   currentSourceBeats(): number
 }
 
-export function initPlayback(
-  controlsEl: HTMLElement,
+export interface PlaybackEngine extends PlaybackAPI {
+  toggle(): void
+  setLoop(on: boolean): void
+  setLoopBeats(n: number): void
+  // Scrubber drag in progress: preview the dragged position without committing
+  // the playhead. endScrub (pointerup, wherever it lands) commits it.
+  scrub(pos: number): void
+  endScrub(): void
+  viewState(): PlaybackViewState
+}
+
+export function createPlaybackEngine(
   sceneAPI: SceneAPI,
   hydraAPI: HydraAPI,
-  { onTick, onPlay, onLoop, tapControl, midiCtxAt }: PlaybackOptions = {},
-): PlaybackAPI {
-  type PlayState = 'idle' | 'playing' | 'paused'
+  { onTick, onPlay, onLoop, tapControl, midiCtxAt, onViewChange }: PlaybackEngineOptions = {},
+): PlaybackEngine {
   let state: PlayState = 'idle'
   // The playhead is measured in BEATS. `startTime` is the wall epoch (ms) the
   // beat clock is anchored to, and `anchorBeatSec` the tempo it was anchored at,
@@ -86,12 +126,15 @@ export function initPlayback(
   let aliveObjects = new Set<unknown>()
   let maxBeats = 0 // loop length in beats — the one unit the playhead counts in
   let isScrubbing = false
+  let scrubPos = 0
   let loop = true // when playback reaches the end, wrap back to the start
   // How many beats one loop lasts when nothing else sizes it (no timeline, no
   // 3D scene) — a pure hydra sketch. User-settable via the loop-length control,
   // so the last sketch keyframe no longer has to sit exactly at the loop boundary
   // (where it was invisible).
   let loopBeats = DEFAULT_LOOP_BEATS
+  // The position most recently shown to the view (what emit() reports as pos).
+  let shownPos = 0
 
   // Seconds per beat, live from the tapped tempo (average interval between taps)
   // or the shared default until two taps set one. This is the whole of how tempo
@@ -107,112 +150,30 @@ export function initPlayback(
     return DEFAULT_BEAT_SECONDS
   }
 
-  const topRow = document.createElement('div')
-  topRow.className = 'playback-row'
-
-  const btn = document.createElement('button')
-  btn.id = 'play-pause-btn'
-  btn.textContent = '▶'
-  btn.title = 'Play'
-  btn.setAttribute('aria-label', 'Play')
-
-  const loopBtn = document.createElement('button')
-  loopBtn.id = 'loop-btn'
-  loopBtn.textContent = '↻'
-  loopBtn.title = 'Loop playback'
-  loopBtn.setAttribute('aria-label', 'Loop playback')
-  loopBtn.classList.toggle('active', loop)
-  loopBtn.onclick = () => {
-    loop = !loop
-    loopBtn.classList.toggle('active', loop)
+  function tappedBpm(): number | null {
+    const rows = tapControl?.rows()
+    if (!rows || rows.length < 2) return null
+    const beat = ((rows[rows.length - 1].time as number) - (rows[0].time as number)) / (rows.length - 1) / 1000
+    return 60 / beat
   }
 
-  // Loop length in beats — how long one loop lasts (at the current tempo) for a
-  // program with no timeline/scene to size it. Changing it re-lengths the loop
-  // live so the last sketch keyframe is no longer stuck on the loop boundary.
-  const loopLenWrap = document.createElement('label')
-  loopLenWrap.className = 'loop-len'
-  loopLenWrap.title = 'Loop length in beats'
-  const loopLenInput = document.createElement('input')
-  loopLenInput.id = 'loop-beats'
-  loopLenInput.type = 'number'
-  loopLenInput.min = '1'
-  loopLenInput.step = '1'
-  loopLenInput.value = String(loopBeats)
-  const loopLenLabel = document.createElement('span')
-  loopLenLabel.textContent = 'beats'
-  loopLenWrap.appendChild(loopLenInput)
-  loopLenWrap.appendChild(loopLenLabel)
-  loopLenInput.onchange = () => {
-    const n = Math.max(1, Math.round(parseFloat(loopLenInput.value) || DEFAULT_LOOP_BEATS))
-    loopLenInput.value = String(n)
-    if (n === loopBeats) return
-    loopBeats = n
-    recomputeMax()
-    retimeTo(currentTime())
-  }
-
-  const timeEl = document.createElement('span')
-  timeEl.id = 'playback-time'
-  timeEl.textContent = 'beat 1.00'
-
-  topRow.appendChild(btn)
-  topRow.appendChild(loopBtn)
-  topRow.appendChild(loopLenWrap)
-  topRow.appendChild(timeEl)
-
-  // Tap-beat row: record wall-time presses and show the tempo derived from them
-  // (the same table the DSL's beats()/tempo() read). Only when a controller is given.
-  let tapRow: HTMLDivElement | null = null
-  if (tapControl) {
-    tapRow = document.createElement('div')
-    tapRow.className = 'playback-row tap-row'
-
-    const tapBtn = document.createElement('button')
-    tapBtn.id = 'tap-beat-btn'
-    tapBtn.textContent = 'Tap'
-    tapBtn.title = 'Tap a beat to set the tempo — the whole loop plays at it'
-
-    const bpmEl = document.createElement('span')
-    bpmEl.id = 'tap-bpm'
-
-    const clearBtn = document.createElement('button')
-    clearBtn.id = 'tap-clear-btn'
-    clearBtn.textContent = 'Clear'
-    clearBtn.title = 'Clear taps'
-
-    const showTempo = (): void => {
-      const rows = tapControl.rows()
-      const n = rows.length
-      const beat = n > 1 ? ((rows[n - 1].time as number) - (rows[0].time as number)) / (n - 1) / 1000 : null
-      bpmEl.textContent = `${ beat ? (60 / beat).toFixed(1) : 120} BPM`;
+  function viewState(): PlaybackViewState {
+    return {
+      state,
+      pos: shownPos,
+      scrubPos: isScrubbing ? scrubPos : Math.min(shownPos, maxBeats),
+      maxBeats,
+      srcBeat: sourceBeatAt(shownPos),
+      timelineActive: timeline.active,
+      loop,
+      loopBeats,
+      bpm: tappedBpm(),
     }
-
-    tapBtn.onclick = () => { tapControl.tap(); showTempo() }
-    clearBtn.onclick = () => { tapControl.clear(); showTempo() }
-    showTempo()
-
-    tapRow.appendChild(tapBtn)
-    tapRow.appendChild(bpmEl)
-    tapRow.appendChild(clearBtn)
   }
 
-  const scrubber = document.createElement('input')
-  scrubber.type = 'range'
-  scrubber.id = 'scrub-bar'
-  scrubber.min = '0'
-  scrubber.max = '100'
-  scrubber.step = String(1 / FRAMES_PER_BEAT) // ~one cache frame, in beats
-  scrubber.value = '0'
-
-  controlsEl.appendChild(topRow)
-  if (tapRow) controlsEl.appendChild(tapRow)
-  controlsEl.appendChild(scrubber)
-
-  function setFill(pos: number): void {
-    const pct = maxBeats > 0 ? Math.min(100, (pos / maxBeats) * 100) : 0
-    scrubber.style.background =
-      `linear-gradient(to right, #e94560 ${pct}%, #1a3a5e ${pct}%)`
+  function emit(pos: number = shownPos): void {
+    shownPos = pos
+    onViewChange?.(viewState())
   }
 
   // The content/source beat shown at playhead beat `pos` (0-based elapsed beats):
@@ -220,15 +181,6 @@ export function initPlayback(
   // (identity when there is no timeline).
   function sourceBeatAt(pos: number): number {
     return timeline.sourceBeatAt(pos + 1)
-  }
-
-  function showIndex(pos: number): void {
-    const srcBeat = sourceBeatAt(pos)
-    if (timeline.active) {
-      timeEl.textContent = `${(pos + 1).toFixed(2)}→${srcBeat.toFixed(2)} beat`
-    } else {
-      timeEl.textContent = `beat ${srcBeat.toFixed(2)}`
-    }
   }
 
   function applyAt(pos: number): void {
@@ -279,9 +231,7 @@ export function initPlayback(
   function reset(pos: number = 0): void {
     sceneAPI.reset()
     aliveObjects = new Set()
-    scrubber.value = String(pos)
-    setFill(pos)
-    showIndex(pos)
+    emit(pos)
     if (hasContent()) applyAt(pos)
   }
 
@@ -330,7 +280,6 @@ export function initPlayback(
     } else {
       maxBeats = 0
     }
-    scrubber.max = String(maxBeats || 100)
   }
 
   // Anchor the beat clock so the live position reads `pos` beats right now, at
@@ -340,7 +289,7 @@ export function initPlayback(
     startTime = performance.now() - pos * anchorBeatSec * 1000
   }
 
-  // Re-anchor the clock + scrubber to beat `pos` (clamped) and reconcile the
+  // Re-anchor the clock + view to beat `pos` (clamped) and reconcile the
   // scene there, keeping the current play state. Shared by load()/retempo() so a
   // re-cook or a tempo change resumes from where we were rather than rewinding.
   // applyAt diffs the scene, so swapping caches updates objects in place.
@@ -349,9 +298,7 @@ export function initPlayback(
     pos = Math.min(Math.max(0, pos), top)
     pausedBeat = Math.min(pausedBeat, top)
     if (state === 'playing') anchor(pos)
-    scrubber.value = String(pos)
-    setFill(pos)
-    showIndex(pos)
+    emit(pos)
     if (hasContent()) {
       applyAt(pos)
     } else {
@@ -383,36 +330,47 @@ export function initPlayback(
     retimeTo(aligned ?? currentTime())
   }
 
-  scrubber.addEventListener('input', () => {
+  function scrub(pos: number): void {
     isScrubbing = true
-    const pos = parseFloat(scrubber.value)
-    showIndex(pos)
-    setFill(pos)
+    scrubPos = pos
     if (hasContent()) applyAt(pos)
-  })
+    emit(pos)
+  }
 
-  window.addEventListener('pointerup', () => {
+  function endScrub(): void {
     if (!isScrubbing) return
     isScrubbing = false
-    const pos = parseFloat(scrubber.value)
-    pausedBeat = pos
-    if (state === 'playing') anchor(pos)
-  })
+    pausedBeat = scrubPos
+    if (state === 'playing') anchor(scrubPos)
+    emit()
+  }
 
-  btn.onclick = toggle
+  function setLoop(on: boolean): void {
+    loop = on
+    emit()
+  }
+
+  function setLoopBeats(n: number): void {
+    n = Math.max(1, Math.round(n || DEFAULT_LOOP_BEATS))
+    if (n === loopBeats) {
+      emit() // still refresh the view so a rejected/clamped input snaps back
+      return
+    }
+    loopBeats = n
+    recomputeMax()
+    retimeTo(currentTime())
+  }
 
   function toggle(): void {
     if (!hasContent()) return
     if (state === 'playing') {
       state = 'paused'
       pausedBeat = position()
-      btn.textContent = '▶'
-      btn.title = 'Play'
+      emit()
     } else if (state === 'paused') {
       state = 'playing'
       anchor(pausedBeat)
-      btn.textContent = '⏸'
-      btn.title = 'Pause'
+      emit()
       onPlay?.()
       tick()
     } else {
@@ -431,8 +389,7 @@ export function initPlayback(
     pausedBeat = aligned
     anchor(aligned)
     state = 'playing'
-    btn.textContent = '⏸'
-    btn.title = 'Pause'
+    emit()
     onPlay?.()
     tick()
   }
@@ -458,28 +415,28 @@ export function initPlayback(
       onLoop?.()
     }
 
-    showIndex(pos)
-
-    if (!isScrubbing) {
-      scrubber.value = String(Math.min(pos, maxBeats))
-      setFill(Math.min(pos, maxBeats))
-    }
-
+    emit(pos)
     applyAt(pos)
 
     if (!loop && pos >= maxBeats) {
-      scrubber.value = String(maxBeats)
-      setFill(maxBeats)
-      showIndex(maxBeats)
       state = 'idle'
       pausedBeat = maxBeats // so a re-cook keeps the playhead at the end
-      btn.textContent = '▶'
-      btn.title = 'Play'
+      emit(maxBeats)
       return
     }
 
     requestAnimationFrame(tick)
   }
 
-  return { load, retempo, currentSourceBeats }
+  return {
+    load,
+    retempo,
+    currentSourceBeats,
+    toggle,
+    setLoop,
+    setLoopBeats,
+    scrub,
+    endScrub,
+    viewState,
+  }
 }

@@ -1,21 +1,21 @@
-import { EditorView, basicSetup } from 'codemirror'
-import { javascript, javascriptLanguage } from '@codemirror/lang-javascript'
-import { oneDark } from '@codemirror/theme-one-dark'
-import { keymap, hoverTooltip } from '@codemirror/view'
-import { Prec, Compartment } from '@codemirror/state'
-import { vim } from '@replit/codemirror-vim'
-import { buildTablePreview } from './preview.js'
+// Editor support — the non-view half of the code editor: DSL documentation
+// tables, completion sources, and the hover-preview tooltip logic. Anything
+// that builds actual DOM (completion info cards, the preview card) is
+// injected by the view (ui/editor.tsx) as a factory, keeping this module
+// free of rendering concerns.
+
+import { hoverTooltip } from '@codemirror/view'
 import { isExprDot } from './completion.js'
 import { SAMPLES } from './samples.js'
 import type { Table } from './dsl.js'
 
-interface DocEntry {
+export interface DocEntry {
   sig: string
   detail: string
   info: string
 }
 
-const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
+export const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
   define:     { sig: 'define(name, fn)',             detail: 'register view',    info: 'Register a named view. fn receives (rand, table) and must return a Table. Views are cooked lazily; deps tracked via table().' },
   table:      { sig: 'table(name)',                  detail: 'resolve view',     info: 'Resolve a named view at top-level (no dependency tracking). Returns the cooked Table for that view.' },
   math:       { sig: 'math(beat => value)',          detail: 'sample function',  info: 'Sample a numeric function of elapsed beats. Chain .range(beats) to emit rows of { beat, value }.' },
@@ -39,7 +39,7 @@ const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
   easeInOut:  { sig: 'easeInOut',                    detail: 'easing curve',     info: 'Quadratic ease-in-out. Slow at both ends, fast in the middle.' },
 }
 
-const TABLE_METHOD_DOCS: Record<string, DocEntry> = {
+export const TABLE_METHOD_DOCS: Record<string, DocEntry> = {
   map:         { sig: '.map(row => row | template)',          detail: 'transform rows',   info: 'Transform every row. Pass a function, or a declarative template of Expr/literals (e.g. { y: field("v").mul(2) }) — the template form is diffable.' },
   filter:      { sig: '.filter(row => bool | Expr)',          detail: 'keep rows',        info: 'Keep rows where the predicate holds. Pass a function, or an Expr predicate (e.g. field("type").eq("collision")) — the Expr form is diffable.' },
   filterMap:   { sig: '.filterMap(row => row | null)',        detail: 'filter + map',     info: 'Map and filter in one pass — return a new row to keep it, null/undefined to drop it. (For a diffable form, use .filter(Expr).emit(template).)' },
@@ -75,7 +75,7 @@ const TABLE_METHOD_DOCS: Record<string, DocEntry> = {
 
 // Methods offered after a dot on an Expr (field("x").add(1).gt(2)…). Every Expr
 // method returns an Expr, so a chain rooted at field()/lit()/idx() stays Expr.
-const EXPR_METHOD_DOCS: Record<string, DocEntry> = {
+export const EXPR_METHOD_DOCS: Record<string, DocEntry> = {
   add:  { sig: '.add(x)',           detail: 'expr  +',   info: 'Add. x is another Expr or a number.' },
   sub:  { sig: '.sub(x)',           detail: 'expr  −',   info: 'Subtract x (Expr or number).' },
   mul:  { sig: '.mul(x)',           detail: 'expr  ×',   info: 'Multiply by x (Expr or number).' },
@@ -93,21 +93,11 @@ const EXPR_METHOD_DOCS: Record<string, DocEntry> = {
   cond: { sig: '.cond(then, else)', detail: 'ternary',   info: 'If this Expr is truthy yield `then`, else `else` (each an Expr or literal).' },
 }
 
-function makeInfoNode(sig: string, info: string): HTMLElement {
-  const el = document.createElement('div')
-  el.className = 'cm-completion-info'
-  const sigEl = document.createElement('code')
-  sigEl.textContent = sig
-  const desc = document.createElement('p')
-  desc.textContent = info
-  el.appendChild(sigEl)
-  el.appendChild(desc)
-  return el
-}
+export const DSL_BUILTINS = Object.keys(DSL_BUILTIN_DOCS)
 
-const DSL_BUILTINS = Object.keys(DSL_BUILTIN_DOCS)
+export const defaultProgram = SAMPLES[0].code
 
-function viewAtPos(text: string, pos: number): string | null {
+export function viewAtPos(text: string, pos: number): string | null {
   const re = /\bdefine\(\s*"([^"]+)"/g
   let m: RegExpExecArray | null
   let name: string | null = null
@@ -118,7 +108,11 @@ function viewAtPos(text: string, pos: number): string | null {
   return name
 }
 
-function dslCompletions(getViews?: () => Map<string, Table> | undefined) {
+// The view supplies how a completion's info card is *built* (it owns DOM);
+// this module decides *when* and with which docs it appears.
+export type InfoNodeFactory = (sig: string, info: string) => () => { dom: HTMLElement; destroy?: () => void }
+
+export function dslCompletions(getViews: (() => Map<string, Table> | undefined) | undefined, makeInfoNode: InfoNodeFactory) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (context: any) => {
     if (context.matchBefore(/\b(?:table|define)\(\s*"[^"]*/)) {
@@ -141,7 +135,7 @@ function dslCompletions(getViews?: () => Map<string, Table> | undefined) {
         from: dot.from + 1,
         options: Object.keys(docs).map((label) => {
           const d = docs[label]
-          return { label, type: 'method', detail: d.detail, info: () => makeInfoNode(d.sig, d.info) }
+          return { label, type: 'method', detail: d.detail, info: makeInfoNode(d.sig, d.info) }
         }),
         validFor: /^\w*$/,
       }
@@ -152,16 +146,20 @@ function dslCompletions(getViews?: () => Map<string, Table> | undefined) {
       from: word ? word.from : context.pos,
       options: DSL_BUILTINS.map((label) => {
         const d = DSL_BUILTIN_DOCS[label]
-        return { label, type: 'function', detail: d.detail, info: () => makeInfoNode(d.sig, d.info) }
+        return { label, type: 'function', detail: d.detail, info: makeInfoNode(d.sig, d.info) }
       }),
       validFor: /^\w*$/,
     }
   }
 }
 
-export const defaultProgram = SAMPLES[0].code
-
-function dslHover(getViews?: () => Map<string, Table> | undefined, getPlayIndex?: () => number) {
+// Hovering a quoted view name pops a data preview of that view. The card
+// itself comes from the injected builder (see ui/table-preview.tsx).
+export function dslHover(
+  getViews: (() => Map<string, Table> | undefined) | undefined,
+  getPlayIndex: (() => number) | undefined,
+  buildPreview: (table: Table, opts: { playIndex?: number | null }) => { dom: HTMLElement; destroy?: () => void },
+) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return hoverTooltip((view: any, pos: number) => {
     const line = view.state.doc.lineAt(pos) as { text: string; from: number }
@@ -175,238 +173,9 @@ function dslHover(getViews?: () => Map<string, Table> | undefined, getPlayIndex?
       if (!table) return null
       return {
         pos: start, end, above: true,
-        create: () => ({ dom: buildTablePreview(table, { playIndex: getPlayIndex?.() }) }),
+        create: () => buildPreview(table, { playIndex: getPlayIndex?.() }),
       }
     }
     return null
   })
-}
-
-export interface EditorOptions {
-  onRun?: (code: string, opts: { setError: (msg: string | null) => void }) => void
-  getViews?: () => Map<string, Table>
-  onCaretView?: (name: string) => void
-  getPlayIndex?: () => number
-  // Initial vim-keybindings state (persisted by the caller — see settings.ts).
-  vimMode?: boolean
-  onVimModeChange?: (enabled: boolean) => void
-  // Initial MIDI-enabled state (persisted by the caller — see settings.ts).
-  // Defaults to off: enabling it is what triggers the browser's MIDI
-  // permission prompt (see main.ts).
-  midiEnabled?: boolean
-  onMidiEnabledChange?: (enabled: boolean) => void
-}
-
-export interface EditorAPI {
-  run(): void
-  getCode(): string
-  setCode(code: string): void
-  setError(msg: string | null): void
-  // Point the editor at a single table cell (e.g. hydra[0].code): the program
-  // text is stashed, the cell's text loads, and Run/Ctrl-Enter calls onCommit
-  // with the current text instead of running the program. The "Back" button
-  // (or an external setCode) returns to the program.
-  editCell(label: string, code: string, onCommit: (text: string) => void): void
-}
-
-export function initEditor(parent: HTMLElement, { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange }: EditorOptions = {}): EditorAPI {
-  parent.innerHTML = ''
-
-  const header = document.createElement('div')
-  header.className = 'editor-header'
-
-  const collapseBtn = document.createElement('button')
-  collapseBtn.className = 'collapse-btn'
-  header.appendChild(collapseBtn)
-
-  const titleEl = document.createElement('span')
-  titleEl.className = 'editor-title'
-  titleEl.textContent = 'DSL'
-  header.appendChild(titleEl)
-
-  const backBtn = document.createElement('button')
-  backBtn.className = 'editor-back-btn'
-  backBtn.textContent = 'Back'
-  backBtn.title = 'Back to the program'
-  backBtn.style.display = 'none'
-  header.appendChild(backBtn)
-
-  const runBtn = document.createElement('button')
-  runBtn.className = 'run-btn'
-  runBtn.textContent = 'Run'
-  header.appendChild(runBtn)
-
-  // Settings: currently just the vim-mode toggle. A small popover rather than
-  // a plain toggle button so more prefs can land here later without another
-  // header slot. Positioned fixed (not absolute) so it isn't clipped by
-  // #editor-pane's overflow:hidden when the panel is collapsed to header height.
-  const settingsWrap = document.createElement('div')
-  settingsWrap.className = 'settings-wrap'
-
-  const settingsBtn = document.createElement('button')
-  settingsBtn.className = 'settings-btn'
-  settingsBtn.textContent = '⚙'
-  settingsBtn.title = 'Settings'
-  settingsBtn.setAttribute('aria-label', 'Settings')
-  settingsWrap.appendChild(settingsBtn)
-
-  const settingsMenu = document.createElement('div')
-  settingsMenu.className = 'settings-menu'
-  settingsWrap.appendChild(settingsMenu)
-
-  const vimRow = document.createElement('label')
-  vimRow.className = 'settings-row'
-  const vimCheckbox = document.createElement('input')
-  vimCheckbox.type = 'checkbox'
-  vimCheckbox.checked = vimMode
-  vimRow.appendChild(vimCheckbox)
-  vimRow.appendChild(document.createTextNode('Vim mode'))
-  settingsMenu.appendChild(vimRow)
-
-  const midiRow = document.createElement('label')
-  midiRow.className = 'settings-row'
-  const midiCheckbox = document.createElement('input')
-  midiCheckbox.type = 'checkbox'
-  midiCheckbox.checked = midiEnabled
-  midiRow.appendChild(midiCheckbox)
-  midiRow.appendChild(document.createTextNode('MIDI'))
-  settingsMenu.appendChild(midiRow)
-
-  header.appendChild(settingsWrap)
-
-  function positionSettingsMenu(): void {
-    const r = settingsBtn.getBoundingClientRect()
-    settingsMenu.style.top = `${r.bottom + 4}px`
-    settingsMenu.style.right = `${window.innerWidth - r.right}px`
-  }
-
-  settingsBtn.onclick = (e) => {
-    e.stopPropagation()
-    const opening = !settingsMenu.classList.contains('open')
-    if (opening) positionSettingsMenu()
-    settingsMenu.classList.toggle('open', opening)
-  }
-
-  document.addEventListener('click', (e) => {
-    if (!settingsWrap.contains(e.target as Node)) settingsMenu.classList.remove('open')
-  })
-
-  parent.appendChild(header)
-
-  function setCollapsed(collapsed: boolean): void {
-    parent.classList.toggle('editor-collapsed', collapsed)
-    collapseBtn.textContent = collapsed ? '▸' : '▾'
-    collapseBtn.setAttribute('aria-label', collapsed ? 'Expand code panel' : 'Collapse code panel')
-  }
-
-  collapseBtn.onclick = () => setCollapsed(!parent.classList.contains('editor-collapsed'))
-  setCollapsed(window.matchMedia('(max-width: 767px)').matches)
-
-  const host = document.createElement('div')
-  host.className = 'editor-host'
-  parent.appendChild(host)
-
-  const errEl = document.createElement('div')
-  errEl.className = 'editor-error'
-  errEl.style.display = 'none'
-  parent.appendChild(errEl)
-
-  function setError(msg: string | null): void {
-    if (msg) {
-      errEl.textContent = msg
-      errEl.style.display = 'block'
-    } else {
-      errEl.textContent = ''
-      errEl.style.display = 'none'
-    }
-  }
-
-  // When set, the editor is a window onto one table cell rather than the
-  // program: Run commits the text back to the cell (an event append upstream).
-  let cellTarget: { label: string; onCommit: (text: string) => void } | null = null
-  let stashedProgram = ''
-
-  function run(): void {
-    const text = view.state.doc.toString()
-    if (cellTarget) cellTarget.onCommit(text)
-    else onRun?.(text, { setError })
-  }
-
-  function setDoc(code: string): void {
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } })
-  }
-
-  function exitCell(restoreProgram: boolean): void {
-    if (!cellTarget) return
-    cellTarget = null
-    titleEl.textContent = 'DSL'
-    runBtn.textContent = 'Run'
-    backBtn.style.display = 'none'
-    if (restoreProgram) setDoc(stashedProgram)
-  }
-
-  function editCell(label: string, code: string, onCommit: (text: string) => void): void {
-    if (!cellTarget) stashedProgram = view.state.doc.toString()
-    cellTarget = { label, onCommit }
-    titleEl.textContent = label
-    runBtn.textContent = 'Apply'
-    backBtn.style.display = ''
-    setDoc(code)
-    view.focus()
-  }
-
-  backBtn.onclick = () => exitCell(true)
-
-  let lastCaretView: string | null = null
-
-  const vimCompartment = new Compartment()
-
-  const view = new EditorView({
-    doc: defaultProgram,
-    extensions: [
-      vimCompartment.of(vimMode ? [vim()] : []),
-      basicSetup,
-      javascript(),
-      javascriptLanguage.data.of({ autocomplete: dslCompletions(getViews) }),
-      EditorView.updateListener.of((u) => {
-        if (!onCaretView || !(u.selectionSet || u.docChanged)) return
-        const name = viewAtPos(u.state.doc.toString(), u.state.selection.main.head)
-        if (name && name !== lastCaretView) {
-          lastCaretView = name
-          onCaretView(name)
-        }
-      }),
-      dslHover(getViews, getPlayIndex),
-      oneDark,
-      Prec.highest(keymap.of([
-        { key: 'Mod-Enter', run: () => { run(); return true } },
-      ])),
-      EditorView.theme({
-        '&': { height: '100%' },
-        '.cm-scroller': { overflow: 'auto' },
-      }),
-    ],
-    parent: host,
-  })
-
-  runBtn.onclick = run
-
-  vimCheckbox.onchange = () => {
-    const enabled = vimCheckbox.checked
-    view.dispatch({ effects: vimCompartment.reconfigure(enabled ? [vim()] : []) })
-    onVimModeChange?.(enabled)
-  }
-
-  midiCheckbox.onchange = () => {
-    onMidiEnabledChange?.(midiCheckbox.checked)
-  }
-
-  // External loads (session scrub, examples) always mean "show the program" —
-  // leave any cell target without restoring its stash (the new code wins).
-  function setCode(code: string): void {
-    exitCell(false)
-    setDoc(code)
-  }
-
-  return { run, getCode: () => view.state.doc.toString(), setCode, setError, editCell }
 }

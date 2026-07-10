@@ -1,11 +1,13 @@
 import './style.css'
 import { initThree } from './three-scene.js'
 import { initHydra } from './hydra-scene.js'
-import { initEditor, defaultProgram } from './editor.js'
-import { initTablePanel, EVENTS_SUFFIX } from './table-panel.js'
-import { initPlayback } from './playback.js'
-import { initSessionBar } from './session-bar.js'
-import { initSessionSelector } from './session-selector.js'
+import { initEditor, defaultProgram } from './ui/editor.js'
+import { initTablePanel } from './ui/table-panel.js'
+import { EVENTS_SUFFIX } from './table-panel.js'
+import { initPlayback } from './ui/playback-controls.js'
+import { initSessionBar } from './ui/session-bar.js'
+import { initSessionSelector } from './ui/session-selector.js'
+import { initRoomChip } from './ui/room-chip.js'
 import { SAMPLES } from './samples.js'
 import { createRuntime } from './runtime.js'
 import { createSessionStore } from './sessions.js'
@@ -534,14 +536,32 @@ editorPane.insertBefore(sessionSelector.el, sessionBar.el)
 
 // The room chip: solo it starts a room (pick a room, seed it with the current
 // session, reload into it); in a room it shows status/peers and leaves on click.
-const mpChip = document.createElement('button')
-mpChip.className = 'multiplayer-chip'
-sessionSelector.el.appendChild(mpChip)
+const roomChip = initRoomChip({
+  onClick: () => {
+    const u = new URL(location.href)
+    if (multiplayer) {
+      u.searchParams.delete('room')
+    } else {
+      const name = prompt('Room name to share this session:')?.trim()
+      if (!name) return
+      // Seed the room with what's on screen: park the store under the room's
+      // session id so the reload (and then the server) picks it up.
+      if (editableStore.has('code')) {
+        sessionStore.save(roomSessionId(name), {
+          events: editableStore.serialize(),
+          runs: editableStore.runs(),
+          tables: [...lastViews.keys()],
+        })
+      }
+      u.searchParams.set('room', name)
+    }
+    location.href = u.toString()
+  },
+})
+sessionSelector.el.appendChild(roomChip.el)
 
 function chipSolo(): void {
-  mpChip.classList.remove('connected', 'connecting')
-  mpChip.textContent = 'room'
-  mpChip.title = 'start or join a shared room'
+  roomChip.set({ kind: 'solo' })
 }
 
 // Redraws the chip for `status` at the *current* peer count (re-folded from
@@ -551,35 +571,8 @@ function chipSolo(): void {
 // onStatus can fire synchronously during its own call, before the `multiplayer
 // = connectMultiplayer(...)` assignment below has completed.
 function chipStatus(status: MultiplayerStatus): void {
-  if (status === 'closed') return
-  const peers = onlinePeers().size
-  mpChip.classList.toggle('connected', status === 'connected')
-  mpChip.classList.toggle('connecting', status === 'connecting')
-  mpChip.textContent = status === 'connected' ? `${roomName} · ${peers}` : `${roomName} …`
-  mpChip.title = status === 'connected'
-    ? `in room "${roomName}" (${peers} connected) — click to leave`
-    : `connecting to room "${roomName}" — click to leave`
-}
-
-mpChip.onclick = () => {
-  const u = new URL(location.href)
-  if (multiplayer) {
-    u.searchParams.delete('room')
-  } else {
-    const name = prompt('Room name to share this session:')?.trim()
-    if (!name) return
-    // Seed the room with what's on screen: park the store under the room's
-    // session id so the reload (and then the server) picks it up.
-    if (editableStore.has('code')) {
-      sessionStore.save(roomSessionId(name), {
-        events: editableStore.serialize(),
-        runs: editableStore.runs(),
-        tables: [...lastViews.keys()],
-      })
-    }
-    u.searchParams.set('room', name)
-  }
-  location.href = u.toString()
+  if (status === 'closed' || !roomName) return
+  roomChip.set({ kind: 'room', status, room: roomName, peers: onlinePeers().size })
 }
 
 if (roomName) {
