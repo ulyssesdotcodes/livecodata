@@ -269,6 +269,93 @@ html, body {
   background: #16324f;
 }
 
+/* Room-join popover: two fields — room + username — that land in the URL as
+   ?room=&user=. A native <div popover>: the browser handles show/hide,
+   light-dismiss (outside click, Escape), and top-layer stacking; `inset:
+   auto` cancels the UA stylesheet's default centering so the top/left set in
+   room-chip.tsx (measured against the chip's position) are what place it. */
+.room-popover {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  z-index: 20;
+  background: #13294b;
+  border: 1px solid #1a5090;
+  border-radius: 4px;
+  padding: 8px 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.room-popover:popover-open {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+}
+
+.room-popover .settings-row {
+  justify-content: space-between;
+}
+
+.room-popover-input {
+  background: #0f3460;
+  border: 1px solid #1a5090;
+  color: #c8d6e5;
+  font-size: 11px;
+  font-family: inherit;
+  padding: 2px 6px;
+  border-radius: 4px;
+  width: 120px;
+  outline: none;
+}
+
+.room-popover-input:focus {
+  border-color: #2a70c0;
+}
+
+.room-join-btn {
+  background: #1a5090;
+  border: 1px solid #1a5090;
+  color: #c8d6e5;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.room-join-btn:hover {
+  background: #3fbf7f;
+  border-color: #3fbf7f;
+  color: #0b1a33;
+}
+
+/* A collaborator's caret in the code editor (multiplayer presence): a colored
+   bar (border color set inline per user) with a small name flag above it. */
+.cm-remote-cursor {
+  position: relative;
+  display: inline-block;
+  width: 0;
+  border-left: 2px solid;
+  margin-left: -1px;
+  height: 1.1em;
+  vertical-align: text-bottom;
+}
+
+.cm-remote-cursor-label {
+  position: absolute;
+  top: -1.05em;
+  left: -2px;
+  font-size: 9px;
+  line-height: 1.2;
+  padding: 0 4px;
+  border-radius: 3px 3px 3px 0;
+  color: #0b1a33;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 5;
+}
+
 .session-bar {
   display: flex;
   align-items: center;
@@ -644,6 +731,18 @@ html, body {
   pointer-events: none;
 }
 
+/* Multiplayer presence: who has this tab open, comma-separated and named in
+   each peer's own color (see PresenceNames in ui/table-panel.tsx) — the
+   visible counterpart to the tab's color ring (box-shadow, set inline). */
+.tab-presence {
+  pointer-events: none;
+  margin-left: 5px;
+  font-size: 9px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .tab-del {
   color: #607a96;
   cursor: pointer;
@@ -828,9 +927,29 @@ html, body {
 }
 
 .editable-cell {
+  position: relative;
   cursor: pointer;
   min-width: 60px;
   max-width: 220px;
+}
+
+/* Multiplayer presence: who last edited this cell, comma-separated and named
+   in each peer's own color (see PresenceNames) — the visible counterpart to
+   the cell's outline (set inline, in the first editor's color). */
+.cell-presence {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 0 3px;
+  font-size: 9px;
+  line-height: 1.4;
+  background: rgba(11, 26, 51, 0.85);
+  border-radius: 0 0 0 4px;
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
 }
 
 .editable-cell:hover {

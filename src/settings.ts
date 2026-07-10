@@ -27,6 +27,27 @@ export function setVimMode(enabled: boolean, storage: MinimalStorage = globalThi
   }
 }
 
+const USERNAME_STORAGE_KEY = 'livecodata.username'
+
+// The display name announced over multiplayer presence. The URL's ?user= param
+// is the source of truth for a live room (see main.ts); this is just the
+// remembered default that prefills the room-join popover.
+export function getUsername(storage: MinimalStorage = globalThis.localStorage as MinimalStorage): string {
+  try {
+    return storage?.getItem(USERNAME_STORAGE_KEY) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+export function setUsername(name: string, storage: MinimalStorage = globalThis.localStorage as MinimalStorage): void {
+  try {
+    storage?.setItem(USERNAME_STORAGE_KEY, name)
+  } catch {
+    // storage unavailable (e.g. private browsing quota) — setting just won't persist
+  }
+}
+
 const MIDI_STORAGE_KEY = 'livecodata.midiEnabled'
 
 // MIDI is opt-in: requesting Web MIDI access pops a browser permission prompt,

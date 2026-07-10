@@ -24,7 +24,12 @@ description: Build, launch, and drive livecodata in a real browser to verify cha
 - Useful selectors: `.run-btn`, `.multiplayer-chip` (room status/peers),
   `.table-tab` / `.table-tab-add` (table panel tabs, "+ table"),
   `.session-range` (session scrubber), `.session-select` (past sessions),
-  `#tap-beat-btn` / `#tap-clear-btn` / `#tap-bpm` (tap-beat controls).
+  `#tap-beat-btn` / `#tap-clear-btn` / `#tap-bpm` (tap-beat controls),
+  `.room-popover` + `.room-popover-input` ×2 + `.room-join-btn` (the join
+  popover the chip opens when solo), `.cm-remote-cursor` /
+  `.cm-remote-cursor-label` (a peer's caret + name flag in the editor).
+- An editable tab's name is its `.tab-label` child — the tab's own
+  `textContent` includes the `×` delete button.
 
 ## Multiplayer flows worth driving
 
@@ -33,6 +38,11 @@ description: Build, launch, and drive livecodata in a real browser to verify cha
 - Tap-beat is synced the same way: tap in A (select the "taps" tab) → rows
   appear live in B without B ever tapping; clear in either clears both.
 - Late joiner receives full history on join (code + tables + taps).
+- Presence (join as `/?room=<name>&user=<name>`, or via the chip's popover):
+  each peer's tab gets a colored ring on the table they have open, their
+  caret (with name flag) shows in the editor when both are on the same code
+  cell, and the last cell they edited is outlined when its table is the one
+  shown. All of it clears when the peer disconnects.
 - Kill the server: chip degrades to `⇄ <room> …`, edits keep working
   locally; restart the server (rooms are memory-only) and both clients
   rejoin, re-upload logs, and converge — offline edits reach peers.

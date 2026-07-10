@@ -18,14 +18,32 @@ import { SERIES_COLORS, drawChartToCanvas, fmtNum, type GraphSpec, type ColRange
 import {
   MAX_ROWS, COLUMN_TYPES, EVENTS_SUFFIX, formatCell, formatEditableCell,
   allNames, nextTableName, fallbackTab, chartFor, displayOrder, activeRowIndex,
-  type TablePanel, type TablePanelOptions,
+  tabRingStyle, viewersOf, lastEditors,
+  type TablePanel, type TablePanelOptions, type PeerPresence,
 } from '../table-panel.js'
 import { listenGlobal, focusInput } from './dom.js'
 import type { Table } from '../dsl.js'
 import type { EditableTableStore, ColumnType, EditableColumn } from '../editable-tables.js'
 
 export { EVENTS_SUFFIX }
-export type { TablePanel, TablePanelOptions }
+export type { TablePanel, TablePanelOptions, PeerPresence }
+
+// A comma-separated, per-user-colored name list — the visible half of a
+// presence indicator (the tab ring / cell outline is the color-only half).
+// Shared between the tab strip (who has this table open) and a cell's
+// last-editor marker (who last touched it).
+function PresenceNames(nameProps: { peers: PeerPresence[] }) {
+  return (
+    <For each={nameProps.peers}>
+      {(p, i) => (
+        <>
+          <Show when={i() > 0}>{', '}</Show>
+          <span style={{ color: p.color }}>{p.user}</span>
+        </>
+      )}
+    </For>
+  )
+}
 
 interface PanelProps extends TablePanelOptions {
   store: EditableTableStore
@@ -37,10 +55,16 @@ interface PanelProps extends TablePanelOptions {
   playActive: Accessor<Map<string, Set<number>> | null>
   userScrolled: Accessor<boolean>
   setUserScrolled: Setter<boolean>
+  presence: Accessor<PeerPresence[]>
 }
 
 function TablePanelView(props: PanelProps) {
-  const { store, views, graphs, current, setCurrent } = props
+  const { store, views, graphs, current, setCurrent, presence } = props
+
+  // Multiplayer presence: announce every tab switch, including the initial
+  // one (not deferred) — main.ts uses this to publish which table this
+  // replica has open.
+  createEffect(() => props.onSelectTable?.(current()))
 
   // Bumped after every store write so memos re-read the (external,
   // non-reactive) EditableTableStore fold.
@@ -345,10 +369,16 @@ function TablePanelView(props: PanelProps) {
       if (e.key === 'Enter' && e.ctrlKey && props.onCtrlEnter) props.onCtrlEnter()
     }
 
+    // Collaborators whose last edit landed on this cell: outlined in their
+    // color(s), with their name(s) visible in a corner badge (not just a
+    // hover title) — usually one peer, occasionally two sharing a cell.
+    const editors = () => lastEditors(presence(), table, rowIndex, col.name)
+
     return (
       <td
         class="editable-cell"
         classList={{ editing: editing() }}
+        style={editors().length ? { outline: `2px solid ${editors()[0].color}`, 'outline-offset': '-2px' } : undefined}
         onClick={() => {
           if (editing()) return
           if (col.type === 'code') {
@@ -359,6 +389,9 @@ function TablePanelView(props: PanelProps) {
           }
         }}
       >
+        <Show when={editors().length}>
+          <span class="cell-presence"><PresenceNames peers={editors()} /></span>
+        </Show>
         <Show
           when={editing()}
           fallback={
@@ -425,10 +458,16 @@ function TablePanelView(props: PanelProps) {
       setRenaming(false)
       bump()
     }
+    // Multiplayer presence: ring this tab, and name-tag it, for any peer(s)
+    // currently viewing it.
+    const viewers = () => viewersOf(presence(), name)
+    const ringStyle = () => tabRingStyle(presence(), name)
+
     return (
       <button
         class="table-tab"
         classList={{ 'table-tab-editable': editable(), 'tab-active': current() === name }}
+        style={ringStyle() ? { 'box-shadow': ringStyle() } : undefined}
         title={editable() ? 'Double-click to rename' : undefined}
         onClick={() => setCurrent(name)}
         onDblClick={(e) => {
@@ -442,6 +481,9 @@ function TablePanelView(props: PanelProps) {
           fallback={
             <>
               <span class="tab-label">{name}</span>
+              <Show when={viewers().length}>
+                <span class="tab-presence"><PresenceNames peers={viewers()} /></span>
+              </Show>
               <Show when={editable()}>
                 <span
                   class="tab-del"
@@ -643,7 +685,7 @@ export interface TablePanelController extends TablePanel, PanelProps {}
 
 export function createTablePanel(
   editableStore: EditableTableStore,
-  { onEditCell, onCtrlEnter }: TablePanelOptions = {},
+  { onEditCell, onCtrlEnter, onSelectTable }: TablePanelOptions = {},
 ): TablePanelController {
   const [views, setViews] = createSignal<Map<string, Table>>(new Map())
   const [graphs, setGraphs] = createSignal<Map<string, GraphSpec>>(new Map())
@@ -651,6 +693,7 @@ export function createTablePanel(
   const [playIndex, setPlayIndex] = createSignal(0)
   const [playActive, setPlayActive] = createSignal<Map<string, Set<number>> | null>(null)
   const [userScrolled, setUserScrolled] = createSignal(false)
+  const [presence, setPresence] = createSignal<PeerPresence[]>([])
 
   return {
     store: editableStore,
@@ -662,8 +705,10 @@ export function createTablePanel(
     playActive,
     userScrolled,
     setUserScrolled,
+    presence,
     onEditCell,
     onCtrlEnter,
+    onSelectTable,
 
     selectTable(name: string | null): void {
       if (name != null && (views().has(name) || editableStore.has(name)) && name !== current()) {
@@ -689,6 +734,9 @@ export function createTablePanel(
     },
     resetAutoscroll(): void {
       setUserScrolled(false)
+    },
+    setPresence(peers: PeerPresence[]): void {
+      setPresence(peers)
     },
   }
 }

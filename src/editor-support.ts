@@ -4,7 +4,8 @@
 // injected by the view (ui/editor.tsx) as a factory, keeping this module
 // free of rendering concerns.
 
-import { hoverTooltip } from '@codemirror/view'
+import { EditorView, hoverTooltip, Decoration, WidgetType, type DecorationSet } from '@codemirror/view'
+import { StateField, StateEffect } from '@codemirror/state'
 import { isExprDot } from './completion.js'
 import { SAMPLES } from './samples.js'
 import type { Table } from './dsl.js'
@@ -152,6 +153,66 @@ export function dslCompletions(getViews: (() => Map<string, Table> | undefined) 
     }
   }
 }
+
+// ── Remote cursors (multiplayer presence) ────────────────────────────────────
+// Collaborators editing the same code cell as this editor show up as colored
+// carets with a name flag. Positions are plain doc offsets from the remote
+// replica; the two docs can drift between Applies (program text only syncs on
+// a Run), so offsets are clamped rather than trusted to line up exactly.
+
+export interface RemoteCursor {
+  client: string
+  user: string
+  color: string
+  head: number
+}
+
+// The cell label of the main program itself — the "code" table's single row
+// (see main.ts's CODE_SCHEMA), in the same table[row].col form editCell uses.
+export const PROGRAM_CELL = 'code[0].code'
+
+class RemoteCursorWidget extends WidgetType {
+  constructor(private readonly user: string, private readonly color: string) { super() }
+
+  override eq(other: RemoteCursorWidget): boolean {
+    return other.user === this.user && other.color === this.color
+  }
+
+  override toDOM(): HTMLElement {
+    const wrap = document.createElement('span')
+    wrap.className = 'cm-remote-cursor'
+    wrap.style.borderLeftColor = this.color
+    const label = document.createElement('span')
+    label.className = 'cm-remote-cursor-label'
+    label.style.background = this.color
+    label.textContent = this.user
+    wrap.appendChild(label)
+    return wrap
+  }
+
+  override ignoreEvent(): boolean { return true }
+}
+
+export const setRemoteCursorsEffect = StateEffect.define<RemoteCursor[]>()
+
+export const remoteCursorField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(deco, tr) {
+    deco = deco.map(tr.changes)
+    for (const e of tr.effects) {
+      if (!e.is(setRemoteCursorsEffect)) continue
+      deco = Decoration.set(
+        e.value.map((c) => Decoration.widget({
+          widget: new RemoteCursorWidget(c.user, c.color),
+          side: -1,
+        }).range(Math.max(0, Math.min(c.head, tr.newDoc.length)))),
+        true,
+      )
+    }
+    return deco
+  },
+  provide: (f) => EditorView.decorations.from(f),
+})
 
 // Hovering a quoted view name pops a data preview of that view. The card
 // itself comes from the injected builder (see ui/table-preview.tsx).

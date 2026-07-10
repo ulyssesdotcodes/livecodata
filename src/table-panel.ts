@@ -38,6 +38,21 @@ export interface TablePanelOptions {
   // of opening an inline input.
   onEditCell?: (table: string, rowIndex: number, col: string, value: string) => void
   onCtrlEnter?: () => void
+  // Multiplayer presence: fired when the shown tab changes (including the
+  // initial render), so this replica can announce which table it has open.
+  onSelectTable?: (name: string | null) => void
+}
+
+// A collaborator's presence, as this panel draws it: their color rings the
+// tab they have open, and outlines the last cell they edited when that cell
+// is on the currently shown table. Row is the storage index the store's
+// set-cell events use.
+export interface PeerPresence {
+  client: string
+  user: string
+  color: string
+  table: string | null
+  lastEdit: { table: string; row: number; col: string } | null
 }
 
 export interface TablePanel {
@@ -49,6 +64,29 @@ export interface TablePanel {
   highlightIndex(idx: number): void
   highlightLineage(active: Map<string, Set<number>> | null): void
   resetAutoscroll(): void
+  // Multiplayer presence indicators: a color ring on the tab(s) each peer has
+  // open, and an outline on the last cell a peer edited (when its table is
+  // the one currently shown).
+  setPresence(peers: PeerPresence[]): void
+}
+
+// The peers currently viewing `table` (its tab open in their table panel).
+export function viewersOf(peers: PeerPresence[], table: string): PeerPresence[] {
+  return peers.filter((p) => p.table === table)
+}
+
+// The color ring style for a table tab, given the peers currently viewing it
+// (stacked outward, one ring per peer, in case several share a tab).
+export function tabRingStyle(peers: PeerPresence[], table: string): string {
+  return viewersOf(peers, table).map((p, i) => `0 0 0 ${(i + 1) * 2}px ${p.color}`).join(', ')
+}
+
+// Every peer whose last edit landed on `row`/`col` of `table` — for outlining
+// that cell (and naming who) when `table` is the one currently shown. Usually
+// zero or one, but two peers can share a last-edited cell (e.g. both last
+// touched the same row before either moved on), so this returns all of them.
+export function lastEditors(peers: PeerPresence[], table: string, row: number, col: string): PeerPresence[] {
+  return peers.filter((p) => p.lastEdit && p.lastEdit.table === table && p.lastEdit.row === row && p.lastEdit.col === col)
 }
 
 export function formatCell(col: string, value: unknown): string {
