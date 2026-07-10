@@ -6,19 +6,9 @@
     <title>Livecodata</title>
   </head>
   <body>
-    <div id="app">
-      <div id="canvas-pane">
-        <!-- three-canvas renders the 3D scene; hydra-canvas post-processes it
-             (it reads three-canvas as a texture) and is the visible output. -->
-        <canvas id="three-canvas"></canvas>
-        <canvas id="hydra-canvas"></canvas>
-        <div id="playback-controls"></div>
-      </div>
-      <div id="side-panels">
-        <div id="editor-pane"></div>
-        <div id="table-pane"></div>
-      </div>
-    </div>
+    <!-- The whole layout is rendered by one Solid tree (src/ui/app.tsx);
+         main.ts builds the pure-logic controllers and mounts it here. -->
+    <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -10,7 +10,6 @@
 // after each store write so reads re-fold — the reactive equivalent of the
 // old imperative re-render after every edit.
 
-import { render } from 'solid-js/web'
 import {
   createSignal, createMemo, createEffect, on, onCleanup, untrack,
   For, Index, Show, type Accessor, type Setter,
@@ -21,19 +20,12 @@ import {
   allNames, nextTableName, fallbackTab, chartFor, displayOrder, activeRowIndex,
   type TablePanel, type TablePanelOptions,
 } from '../table-panel.js'
+import { listenGlobal, focusInput } from './dom.js'
 import type { Table } from '../dsl.js'
 import type { EditableTableStore, ColumnType, EditableColumn } from '../editable-tables.js'
 
 export { EVENTS_SUFFIX }
 export type { TablePanel, TablePanelOptions }
-
-// Focus a just-opened inline editor once it's attached to the document.
-function focusInput(el: HTMLInputElement, select = true): void {
-  queueMicrotask(() => {
-    el.focus()
-    if (select) el.select()
-  })
-}
 
 interface PanelProps extends TablePanelOptions {
   store: EditableTableStore
@@ -65,13 +57,12 @@ function TablePanelView(props: PanelProps) {
   const [graphCollapsed, setGraphCollapsed] = createSignal(window.matchMedia('(max-width: 767px)').matches)
   const [colRanges, setColRanges] = createSignal<ColRange[] | null>(null)
 
-  const onDocMousedown = (e: MouseEvent) => {
+  // Outside mousedowns cancel the open cell editor / column-settings popover.
+  listenGlobal(document, 'mousedown', (e) => {
     const target = e.target as HTMLElement | null
     if (editingCell() != null && !target?.closest?.('.editable-cell.editing')) setEditingCell(null)
     if (openColMenu() != null && !target?.closest?.('.col-settings-wrap')) setOpenColMenu(null)
-  }
-  document.addEventListener('mousedown', onDocMousedown)
-  onCleanup(() => document.removeEventListener('mousedown', onDocMousedown))
+  })
 
   const names = createMemo(() => {
     tick()
@@ -481,15 +472,6 @@ function TablePanelView(props: PanelProps) {
     )
   }
 
-  let tabSelectEl: HTMLSelectElement | undefined
-  // Set after the <option>s have rendered — assigning <select>.value before
-  // its options exist silently no-ops.
-  createEffect(() => {
-    const v = current()
-    names()
-    if (tabSelectEl && v != null) tabSelectEl.value = v
-  })
-
   return (
     <>
       <div class="table-pane-header">
@@ -498,12 +480,10 @@ function TablePanelView(props: PanelProps) {
         </div>
         {/* Mobile substitute for the tab strip — a native <select> is far
             easier to use with a thumb than a wrapping row of small buttons. */}
-        <select
-          class="table-tab-select"
-          ref={tabSelectEl}
-          onChange={(e) => setCurrent(e.currentTarget.value)}
-        >
-          <For each={names()}>{(n) => <option value={n}>{n}</option>}</For>
+        <select class="table-tab-select" onChange={(e) => setCurrent(e.currentTarget.value)}>
+          <For each={names()}>
+            {(n) => <option value={n} selected={n === current()}>{n}</option>}
+          </For>
         </select>
         <button
           class="table-tab-add"
@@ -656,11 +636,15 @@ function TablePanelView(props: PanelProps) {
   )
 }
 
-export function initTablePanel(
-  container: HTMLElement,
+// The pure-logic side handed to app.tsx: the TablePanel API main.ts drives,
+// plus the signal accessors <TablePane> renders from. No DOM here — the view
+// above is the only thing that touches elements.
+export interface TablePanelController extends TablePanel, PanelProps {}
+
+export function createTablePanel(
   editableStore: EditableTableStore,
   { onEditCell, onCtrlEnter }: TablePanelOptions = {},
-): TablePanel {
+): TablePanelController {
   const [views, setViews] = createSignal<Map<string, Table>>(new Map())
   const [graphs, setGraphs] = createSignal<Map<string, GraphSpec>>(new Map())
   const [current, setCurrent] = createSignal<string | null>(null)
@@ -668,27 +652,19 @@ export function initTablePanel(
   const [playActive, setPlayActive] = createSignal<Map<string, Set<number>> | null>(null)
   const [userScrolled, setUserScrolled] = createSignal(false)
 
-  container.innerHTML = ''
-  render(
-    () => (
-      <TablePanelView
-        store={editableStore}
-        views={views}
-        graphs={graphs}
-        current={current}
-        setCurrent={setCurrent}
-        playIndex={playIndex}
-        playActive={playActive}
-        userScrolled={userScrolled}
-        setUserScrolled={setUserScrolled}
-        onEditCell={onEditCell}
-        onCtrlEnter={onCtrlEnter}
-      />
-    ),
-    container,
-  )
-
   return {
+    store: editableStore,
+    views,
+    graphs,
+    current,
+    setCurrent,
+    playIndex,
+    playActive,
+    userScrolled,
+    setUserScrolled,
+    onEditCell,
+    onCtrlEnter,
+
     selectTable(name: string | null): void {
       if (name != null && (views().has(name) || editableStore.has(name)) && name !== current()) {
         setCurrent(name)
@@ -715,4 +691,12 @@ export function initTablePanel(
       setUserScrolled(false)
     },
   }
+}
+
+export function TablePane(props: { ctl: TablePanelController }) {
+  return (
+    <div id="table-pane">
+      <TablePanelView {...props.ctl} />
+    </div>
+  )
 }

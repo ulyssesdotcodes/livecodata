@@ -4,8 +4,8 @@
 // (reusing the table panel's cell formatter for consistent display). The
 // sparkline itself is painted by ../preview.ts; this file is only the card.
 
-import { render } from 'solid-js/web'
 import { For, Show } from 'solid-js'
+import { mountComponent } from './dom.js'
 import { formatCell } from '../table-panel.js'
 import { SERIES_COLORS, fmtNum } from '../graph-panel.js'
 import { canDrawSparklines, drawSparklines, sparklineRanges, type SparkRange } from '../preview.js'
@@ -86,17 +86,14 @@ function TablePreviewCard(props: { table: Table; opts: Required<PreviewOptions> 
   )
 }
 
-// Render the card into a detached element, for hosts (CodeMirror tooltips)
-// that want a plain DOM node. `destroy` disposes the Solid root.
+// Render the card detached, for hosts (CodeMirror tooltips) that want a
+// plain DOM node. `destroy` disposes the Solid root.
 export function buildTablePreview(
   table: Table,
   { maxRows = 6, maxCols = 6, playIndex = null }: PreviewOptions = {},
 ): { dom: HTMLElement; destroy: () => void } {
-  const host = document.createElement('div')
-  host.style.display = 'contents'
-  const dispose = render(
+  const { el, dispose } = mountComponent(
     () => <TablePreviewCard table={table} opts={{ maxRows, maxCols, playIndex }} />,
-    host,
   )
-  return { dom: host, destroy: dispose }
+  return { dom: el, destroy: dispose }
 }

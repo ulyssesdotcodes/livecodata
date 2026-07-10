@@ -3,11 +3,11 @@
 // session: the program live at that run is re-cooked and shown. The "latest"
 // button jumps back to the newest run; "reset" arms a rewind that steps back
 // one run every couple of beats (see main.ts's onTick wiring) until run 1.
-// Humble SolidJS view — position/count arrive via the SessionBarAPI, every
-// move is reported through onScrub/onReset.
+// Split humble-object style: the controller (createSessionBar) is pure
+// signal state main.ts drives, and <SessionBar> renders it — app.tsx
+// composes the two.
 
-import { render } from 'solid-js/web'
-import { createSignal, createEffect } from 'solid-js'
+import { createSignal, type Accessor } from 'solid-js'
 
 interface SessionBarOptions {
   onScrub?: (pos: number) => void
@@ -21,8 +21,13 @@ interface LogLike {
   length: number
 }
 
-export interface SessionBarAPI {
-  el: HTMLElement
+export interface SessionBarController {
+  count: Accessor<number>
+  pos: Accessor<number>
+  rewinding: Accessor<boolean>
+  // A user move: update the thumb and report it upstream.
+  scrubTo(pos: number): void
+  reset(): void
   setLog(log: LogLike): void
   setPosition(pos: number): void
   // The run index the bar currently shows — lets a caller (main.ts's rewind
@@ -33,63 +38,28 @@ export interface SessionBarAPI {
   setRewinding(active: boolean): void
 }
 
-export function initSessionBar({ onScrub, onReset }: SessionBarOptions = {}): SessionBarAPI {
+export function createSessionBar({ onScrub, onReset }: SessionBarOptions = {}): SessionBarController {
   const [count, setCount] = createSignal(0)
   const [pos, setPos] = createSignal(0)
   const [rewinding, setRewinding] = createSignal(false)
 
-  const el = document.createElement('div')
-  el.className = 'session-bar'
-
-  const scrubTo = (p: number): void => {
-    setPos(p)
-    onScrub?.(p)
-  }
-
-  render(() => {
-    const atLatest = () => pos() >= count() - 1
-    // The bar tints itself while replaying a historical run.
-    createEffect(() => el.classList.toggle('replaying', !atLatest() && count() > 0))
-    return (
-      <>
-        <span class="session-label">{count() ? `run ${pos() + 1}/${count()}` : 'session'}</span>
-        <button
-          class="session-reset"
-          classList={{ active: rewinding() }}
-          style={{ visibility: count() > 1 ? 'visible' : 'hidden' }}
-          title="Step back one run every 2 beats until back at the start"
-          onClick={() => onReset?.()}
-        >
-          reset
-        </button>
-        <input
-          type="range"
-          class="session-range"
-          min="0"
-          max={String(Math.max(0, count() - 1))}
-          step="1"
-          value={String(pos())}
-          onInput={(e) => scrubTo(parseInt(e.currentTarget.value, 10))}
-        />
-        <button
-          class="session-live"
-          style={{ visibility: atLatest() || count() === 0 ? 'hidden' : 'visible' }}
-          onClick={() => scrubTo(Math.max(0, count() - 1))}
-        >
-          latest
-        </button>
-      </>
-    )
-  }, el)
-
   return {
-    el,
+    count,
+    pos,
+    rewinding,
+    scrubTo(p: number): void {
+      setPos(p)
+      onScrub?.(p)
+    },
+    reset(): void {
+      onReset?.()
+    },
     setLog(log: LogLike): void {
       setCount(log.length)
       setPos(Math.max(0, log.length - 1))
     },
-    setPosition(pos: number): void {
-      setPos(pos)
+    setPosition(p: number): void {
+      setPos(p)
     },
     position(): number {
       return pos()
@@ -98,4 +68,40 @@ export function initSessionBar({ onScrub, onReset }: SessionBarOptions = {}): Se
       setRewinding(active)
     },
   }
+}
+
+export function SessionBar(props: { ctl: SessionBarController }) {
+  const { ctl } = props
+  const atLatest = () => ctl.pos() >= ctl.count() - 1
+  return (
+    // The bar tints itself while replaying a historical run.
+    <div class="session-bar" classList={{ replaying: !atLatest() && ctl.count() > 0 }}>
+      <span class="session-label">{ctl.count() ? `run ${ctl.pos() + 1}/${ctl.count()}` : 'session'}</span>
+      <button
+        class="session-reset"
+        classList={{ active: ctl.rewinding() }}
+        style={{ visibility: ctl.count() > 1 ? 'visible' : 'hidden' }}
+        title="Step back one run every 2 beats until back at the start"
+        onClick={() => ctl.reset()}
+      >
+        reset
+      </button>
+      <input
+        type="range"
+        class="session-range"
+        min="0"
+        max={String(Math.max(0, ctl.count() - 1))}
+        step="1"
+        value={String(ctl.pos())}
+        onInput={(e) => ctl.scrubTo(parseInt(e.currentTarget.value, 10))}
+      />
+      <button
+        class="session-live"
+        style={{ visibility: atLatest() || ctl.count() === 0 ? 'hidden' : 'visible' }}
+        onClick={() => ctl.scrubTo(Math.max(0, ctl.count() - 1))}
+      >
+        latest
+      </button>
+    </div>
+  )
 }
