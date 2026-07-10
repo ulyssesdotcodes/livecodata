@@ -93,6 +93,10 @@ export interface PlaybackAPI {
   // mapping: if it changes later (e.g. a slower fit), the sweep speeds up or
   // slows down right along with everything else on screen.
   currentSourceBeats(): number
+  // Start playing if not already (same as pressing the play button once) — for
+  // a caller that needs the loop actually running, e.g. the reset button's
+  // measure-by-measure rewind. No-op if already playing.
+  play(): void
 }
 
 export interface PlaybackEngine extends PlaybackAPI {
@@ -428,10 +432,15 @@ export function createPlaybackEngine(
     requestAnimationFrame(tick)
   }
 
+  function play(): void {
+    if (state !== 'playing') toggle()
+  }
+
   return {
     load,
     retempo,
     currentSourceBeats,
+    play,
     toggle,
     setLoop,
     setLoopBeats,
