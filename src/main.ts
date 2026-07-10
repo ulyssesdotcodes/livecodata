@@ -13,10 +13,11 @@ import { createRoomChip } from './ui/room-chip.js'
 import { SAMPLES } from './samples.js'
 import { createRuntime } from './runtime.js'
 import { createSessionStore } from './sessions.js'
-import { getVimMode, setVimMode, getMidiEnabled, setMidiEnabled } from './settings.js'
+import { getVimMode, setVimMode, getMidiEnabled, setMidiEnabled, getUsername, setUsername } from './settings.js'
 import { cookProgram } from './replay.js'
 import { initPhysics } from './physics.js'
-import { randomSeed } from './event-log.js'
+import { randomSeed, localSource } from './event-log.js'
+import { createPresenceChannel, userColor, lastCellEdits } from './presence.js'
 import { Table } from './dsl.js'
 import { createEditableTableStore, type ColumnType } from './editable-tables.js'
 import { createMidiInput, type MidiInput } from './midi.js'
@@ -26,6 +27,7 @@ import type { MultiplayerConnection, MultiplayerStatus } from './multiplayer.js'
 import type { PhysicsEngineInstance } from './physics.js'
 import type { PlaybackAPI, PlaybackOptions } from './playback.js'
 import type { Row } from './lineage.js'
+import type { PeerPresence } from './ui/table-panel.js'
 
 const dataCache = new Map<string, string>()
 const editableStore = createEditableTableStore()
@@ -73,6 +75,26 @@ function onlinePeers(): Set<string> {
   return online
 }
 
+// --- multiplayer identity & presence ----------------------------------------
+// The room and this player's display name both ride the URL (?room=x&user=me),
+// so a reload rejoins the same room as the same person; the name is also
+// remembered (settings.ts) to prefill the join popover next time. Presence —
+// which table tab each player has open, which code cell their editor is on
+// and where their cursor sits — rides its own synced log (see presence.ts),
+// deliberately separate from the store log so cursor chatter never lands in
+// the persisted session or its scrubbable history.
+const urlParams = new URLSearchParams(location.search)
+const roomName = urlParams.get('room')
+const userName = (urlParams.get('user') ?? '').trim() || getUsername()
+if (roomName && (urlParams.get('user') ?? '').trim()) setUsername(userName)
+
+const presence = roomName ? createPresenceChannel({ user: userName }) : null
+
+// A peer's display name (their announced username, or a short replica id for
+// the anonymous) and stable color, keyed by name so it survives reloads.
+const peerLabel = (client: string, user: string): string => user || client.slice(0, 6)
+const peerColor = (client: string, user: string): string => userColor(user || client)
+
 // How many runs the session has recorded — the session bar's scrub range. A
 // run is an Apply (Ctrl-Enter) bookmark spanning *every* editable table (see
 // editableStore.recordRun), not just "code"'s history.
@@ -113,7 +135,11 @@ const tablePanel = createTablePanel(editableStore, {
       if (liveCode != null) void evaluate(liveCode, { setError: editor.setError, seed: liveSeed })
     })
   },
-  onCtrlEnter: () => editor.run()
+  onCtrlEnter: () => editor.run(),
+  onSelectTable: (name) => {
+    presence?.set({ table: name })
+    schedulePresenceRefresh()
+  },
 })
 
 // Tap-beat: event-sourced like any other table (see tap-log.ts), so it's
@@ -240,8 +266,6 @@ let currentSessionId = sessionStore.newId()
 // state follows from the fold. A room's log is also persisted locally under a
 // stable session id, so rejoining resumes the jam even before the server
 // answers.
-const urlParams = new URLSearchParams(location.search)
-const roomName = urlParams.get('room')
 let multiplayer: MultiplayerConnection | null = null
 
 const roomSessionId = (room: string): string => 'room:' + room
@@ -426,6 +450,11 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
   }
 }
 
+// The code cell this editor is a window onto right now (ui/editor.tsx's
+// onCursor labels; "code[0].code" is the main program) — peers' cursors are
+// drawn only when they're on this same cell.
+let localCell = 'code[0].code'
+
 const editor = createEditor({
   onRun: evaluate,
   getViews: () => lastViews,
@@ -440,7 +469,60 @@ const editor = createEditor({
     if (enabled) ensureMidiInput()
     tablePanel.setTables(tablesForDisplay(lastViews))
   },
+  onCursor: (cell, head) => {
+    const cellChanged = cell !== localCell
+    localCell = cell
+    presence?.set({ cell, head })
+    // Switching cells changes which remote cursors are visible *here*; plain
+    // cursor moves only change what peers see of us.
+    if (cellChanged) schedulePresenceRefresh()
+  },
 })
+
+// --- presence indicators -----------------------------------------------------
+// Fold the presence log + the store log into per-peer indicators and hand them
+// to the table panel (a color ring on the tab each peer has open, an outline
+// on the last cell they edited when it's on the shown table) and the editor
+// (remote cursors, for peers on the same code cell). Only peers currently
+// online (per the "activity" table's join/leave history) are shown. Coalesced
+// per animation frame — cursor announcements and merges arrive much faster
+// than a redraw is worth.
+let presenceRefreshScheduled = false
+function schedulePresenceRefresh(): void {
+  if (!presence || presenceRefreshScheduled) return
+  presenceRefreshScheduled = true
+  requestAnimationFrame(() => {
+    presenceRefreshScheduled = false
+    refreshPresenceUI()
+  })
+}
+
+function refreshPresenceUI(): void {
+  if (!presence) return
+  const online = onlinePeers()
+  const me = localSource()
+  const edits = lastCellEdits(editableStore.log.all())
+  const peers: PeerPresence[] = [...presence.peers().values()]
+    .filter((p) => p.client !== me && online.has(p.client))
+    .map((p) => {
+      const edit = edits.get(p.client)
+      return {
+        client: p.client,
+        user: peerLabel(p.client, p.user),
+        color: peerColor(p.client, p.user),
+        table: p.table,
+        lastEdit: edit ? { table: edit.table, row: edit.row, col: edit.col } : null,
+      }
+    })
+  tablePanel.setPresence(peers)
+  editor.setRemoteCursors(
+    [...presence.peers().values()]
+      .filter((p) => p.client !== me && online.has(p.client) && p.cell != null && p.cell === localCell)
+      .map((p) => ({ client: p.client, user: peerLabel(p.client, p.user), color: peerColor(p.client, p.user), head: p.head })),
+  )
+}
+
+presence?.onChange(schedulePresenceRefresh)
 
 // A table-change event landed (cell edit, add row, …). Edits are *pending*:
 // they are NOT applied to the running program here — the cooked views and the
@@ -459,6 +541,8 @@ editableStore.onChange(() => {
     storeRefreshScheduled = false
     tablePanel.setTables(tablesForDisplay(lastViews))
     persistSession()
+    // A store event may be a peer's set-cell — their "last edited" marker.
+    schedulePresenceRefresh()
   })
 })
 
@@ -540,6 +624,7 @@ function exitRoomMode(): void {
   multiplayer = null
   const u = new URL(location.href)
   u.searchParams.delete('room')
+  u.searchParams.delete('user')
   history.replaceState(null, '', u)
   chipSolo()
 }
@@ -593,27 +678,32 @@ const sessionSelector = createSessionSelector({
   examples: SAMPLES.map((s) => ({ label: s.name })),
 })
 
-// The room chip: solo it starts a room (pick a room, seed it with the current
-// session, reload into it); in a room it shows status/peers and leaves on click.
+// The room chip: solo it opens a join popover (room name + username, seeding
+// the room with the current session and reloading into it); in a room it
+// shows status/peers and leaves on click.
 const roomChip = createRoomChip({
-  onClick: () => {
-    const u = new URL(location.href)
-    if (multiplayer) {
-      u.searchParams.delete('room')
-    } else {
-      const name = prompt('Room name to share this session:')?.trim()
-      if (!name) return
-      // Seed the room with what's on screen: park the store under the room's
-      // session id so the reload (and then the server) picks it up.
-      if (editableStore.has('code')) {
-        sessionStore.save(roomSessionId(name), {
-          events: editableStore.serialize(),
-          runs: editableStore.runs(),
-          tables: [...lastViews.keys()],
-        })
-      }
-      u.searchParams.set('room', name)
+  initialUser: getUsername(),
+  onJoin: (name, user) => {
+    setUsername(user)
+    // Seed the room with what's on screen: park the store under the room's
+    // session id so the reload (and then the server) picks it up.
+    if (editableStore.has('code')) {
+      sessionStore.save(roomSessionId(name), {
+        events: editableStore.serialize(),
+        runs: editableStore.runs(),
+        tables: [...lastViews.keys()],
+      })
     }
+    const u = new URL(location.href)
+    u.searchParams.set('room', name)
+    if (user) u.searchParams.set('user', user)
+    else u.searchParams.delete('user')
+    location.href = u.toString()
+  },
+  onLeave: () => {
+    const u = new URL(location.href)
+    u.searchParams.delete('room')
+    u.searchParams.delete('user')
     location.href = u.toString()
   },
 })
@@ -643,15 +733,23 @@ function chipSolo(): void {
   roomChip.set({ kind: 'solo' })
 }
 
-// Redraws the chip for `status` at the *current* peer count (re-folded from
-// the "activity" table each time, not pushed) — called on a connection status
-// change and again whenever a peer-join/leave lands. Takes status as a plain
-// argument rather than reading `multiplayer` because connectMultiplayer's
-// onStatus can fire synchronously during its own call, before the `multiplayer
-// = connectMultiplayer(...)` assignment below has completed.
+// Redraws the chip for `status` at the *current* peer fold (re-folded from
+// the "activity" table and the presence log each time, not pushed) — called
+// on a connection status change and again whenever a peer-join/leave lands.
+// Takes status as a plain argument rather than reading `multiplayer` because
+// connectMultiplayer's onStatus can fire synchronously during its own call,
+// before the `multiplayer = connectMultiplayer(...)` assignment below has
+// completed.
 function chipStatus(status: MultiplayerStatus): void {
   if (status === 'closed' || !roomName) return
-  roomChip.set({ kind: 'room', status, room: roomName, peers: onlinePeers().size })
+  const online = onlinePeers()
+  const me = localSource()
+  const peerNames = presence
+    ? [...presence.peers().values()]
+        .filter((p) => p.client !== me && online.has(p.client))
+        .map((p) => peerLabel(p.client, p.user))
+    : []
+  roomChip.set({ kind: 'room', status, room: roomName, user: userName, peerNames })
 }
 
 if (roomName) {
@@ -696,16 +794,24 @@ if (roomName) {
         void evaluate(latest.code, { setError: editor.setError, seed: latest.seed, broadcast: false })
       }
     }
-    if (presenceChanged) chipStatus(multiplayer?.status ?? 'connecting')
+    if (presenceChanged) {
+      chipStatus(multiplayer?.status ?? 'connecting')
+      // A departed peer's indicators come down; a joiner's may already be
+      // waiting in the synced presence log.
+      schedulePresenceRefresh()
+    }
   })
   // A collaborator's tap arrived: refresh the "taps" table and retime the
   // tempo, same as a local tap (see onTap).
   tapLog.log.onMerge(() => onTap())
+  // Announce ourselves before joining (the join snapshot carries it): which
+  // cell the editor starts on, plus our username riding along.
+  presence?.set({ cell: localCell })
   chipStatus('connecting')
   multiplayer = connectMultiplayer({
     url: multiplayerUrl(),
     room: roomName,
-    logs: { session: editableStore.log, taps: tapLog.log },
+    logs: { session: editableStore.log, taps: tapLog.log, presence: presence!.log },
     onStatus: chipStatus,
   })
 } else {

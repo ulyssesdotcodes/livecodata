@@ -14,11 +14,15 @@ import { oneDark } from '@codemirror/theme-one-dark'
 import { keymap } from '@codemirror/view'
 import { Prec, Compartment } from '@codemirror/state'
 import { vim } from '@replit/codemirror-vim'
-import { dslCompletions, dslHover, viewAtPos, defaultProgram } from '../editor-support.js'
+import {
+  dslCompletions, dslHover, viewAtPos, defaultProgram,
+  remoteCursorField, setRemoteCursorsEffect, PROGRAM_CELL, type RemoteCursor,
+} from '../editor-support.js'
 import { buildTablePreview } from './table-preview.js'
 import type { Table } from '../dsl.js'
 
 export { defaultProgram }
+export type { RemoteCursor }
 
 // Completion info card, rendered by Solid into a detached node for CodeMirror
 // to adopt (and dispose of) as tooltip content.
@@ -47,6 +51,10 @@ export interface EditorOptions {
   // permission prompt (see main.ts).
   midiEnabled?: boolean
   onMidiEnabledChange?: (enabled: boolean) => void
+  // Multiplayer presence: fired (per selection/doc update, and on cell-target
+  // changes) with the cell this editor is a window onto — "code[0].code" for
+  // the main program — and the cursor offset.
+  onCursor?: (cell: string, head: number) => void
 }
 
 export interface EditorAPI {
@@ -59,6 +67,9 @@ export interface EditorAPI {
   // with the current text instead of running the program. The "Back" button
   // (or an external setCode) returns to the program.
   editCell(label: string, code: string, onCommit: (text: string) => void): void
+  // Multiplayer presence: draw collaborators' carets (only cursors for the
+  // cell currently open here — the caller filters; see main.ts).
+  setRemoteCursors(cursors: RemoteCursor[]): void
 }
 
 export interface EditorController extends EditorAPI {
@@ -77,7 +88,7 @@ export interface EditorController extends EditorAPI {
 }
 
 export function createEditor(
-  { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange }: EditorOptions = {},
+  { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange, onCursor }: EditorOptions = {},
 ): EditorController {
   const [title, setTitle] = createSignal('DSL')
   const [runLabel, setRunLabel] = createSignal('Run')
@@ -90,6 +101,8 @@ export function createEditor(
   // program: Run commits the text back to the cell (an event append upstream).
   let cellTarget: { label: string; onCommit: (text: string) => void } | null = null
   let stashedProgram = ''
+
+  const cellLabel = (): string => cellTarget ? cellTarget.label : PROGRAM_CELL
 
   function run(): void {
     const text = view.state.doc.toString()
@@ -134,13 +147,16 @@ export function createEditor(
       javascript(),
       javascriptLanguage.data.of({ autocomplete: dslCompletions(getViews, makeInfoNode) }),
       EditorView.updateListener.of((u) => {
-        if (!onCaretView || !(u.selectionSet || u.docChanged)) return
+        if (!(u.selectionSet || u.docChanged)) return
+        onCursor?.(cellLabel(), u.state.selection.main.head)
+        if (!onCaretView) return
         const name = viewAtPos(u.state.doc.toString(), u.state.selection.main.head)
         if (name && name !== lastCaretView) {
           lastCaretView = name
           onCaretView(name)
         }
       }),
+      remoteCursorField,
       dslHover(getViews, getPlayIndex, buildTablePreview),
       oneDark,
       Prec.highest(keymap.of([
@@ -181,6 +197,9 @@ export function createEditor(
     },
     back: () => exitCell(true),
     cmDom: view.dom,
+    setRemoteCursors(cursors: RemoteCursor[]): void {
+      view.dispatch({ effects: setRemoteCursorsEffect.of(cursors) })
+    },
   }
 }
 
