@@ -3,8 +3,8 @@
 // Humble SolidJS view — main.ts decides what state to show (it owns the
 // multiplayer connection and the peer fold); this only renders it.
 
-import { render } from 'solid-js/web'
 import { createSignal } from 'solid-js'
+import { mountComponent } from './dom.js'
 import type { MultiplayerStatus } from '../multiplayer.js'
 
 export type RoomChipState =
@@ -19,10 +19,11 @@ export interface RoomChipAPI {
 export function initRoomChip({ onClick }: { onClick: () => void }): RoomChipAPI {
   const [state, setState] = createSignal<RoomChipState>({ kind: 'solo' })
 
-  const holder = document.createElement('span')
-  holder.style.display = 'contents'
-
-  render(() => {
+  const { el } = mountComponent(() => {
+    const status = () => {
+      const s = state()
+      return s.kind === 'room' ? s.status : null
+    }
     const text = () => {
       const s = state()
       if (s.kind === 'solo') return 'room'
@@ -38,20 +39,17 @@ export function initRoomChip({ onClick }: { onClick: () => void }): RoomChipAPI 
     return (
       <button
         class="multiplayer-chip"
-        classList={{
-          connected: state().kind === 'room' && (state() as { status?: string }).status === 'connected',
-          connecting: state().kind === 'room' && (state() as { status?: string }).status === 'connecting',
-        }}
+        classList={{ connected: status() === 'connected', connecting: status() === 'connecting' }}
         title={title()}
         onClick={onClick}
       >
         {text()}
       </button>
     )
-  }, holder)
+  })
 
   return {
-    el: holder,
+    el,
     set(next: RoomChipState): void {
       setState(next)
     },

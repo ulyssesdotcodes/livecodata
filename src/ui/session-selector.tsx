@@ -7,8 +7,8 @@
 // A static "Examples" optgroup at the bottom lists built-in sample programs;
 // selecting one calls onExample(index) instead of onOpen.
 
-import { render } from 'solid-js/web'
-import { createSignal, createEffect, For, Show } from 'solid-js'
+import { createSignal, For, Show } from 'solid-js'
+import { mountComponent } from './dom.js'
 import type { SessionSummary } from '../sessions.js'
 
 export interface ExampleEntry {
@@ -47,45 +47,31 @@ export function initSessionSelector({ onOpen, onNew, onExample, examples = [] }:
   const [sessions, setSessions] = createSignal<SessionSummary[]>([])
   const [activeId, setActiveId] = createSignal<string | null>(null)
 
-  const el = document.createElement('div')
-  el.className = 'session-selector'
-
-  render(() => {
-    let selectEl: HTMLSelectElement | undefined
-
-    const handleChange = (): void => {
-      if (!selectEl) return
-      const id = selectEl.value
+  const { el } = mountComponent(() => {
+    const handleChange = (e: Event & { currentTarget: HTMLSelectElement }): void => {
+      const id = e.currentTarget.value
       if (!id) return
       if (id.startsWith(EXAMPLE_PREFIX)) {
         const idx = parseInt(id.slice(EXAMPLE_PREFIX.length), 10)
-        // Reset selection back to the active session so the dropdown doesn't
-        // stay on the example.
-        if (activeId() != null) selectEl.value = activeId()!
+        // Snap the dropdown back to the active session: picking an example
+        // isn't a selection change, and nothing reactive moves (activeId is
+        // untouched), so the <select>'s transient state needs resetting here.
+        if (activeId() != null) e.currentTarget.value = activeId()!
         onExample?.(idx)
         return
       }
       if (id !== activeId()) onOpen?.(id)
     }
 
-    // Reflect the active session in the dropdown — set after the <option>s
-    // have rendered (assigning <select>.value before its options exist
-    // silently no-ops).
-    createEffect(() => {
-      const id = activeId()
-      sessions()
-      if (selectEl && id != null) selectEl.value = id
-    })
-
     return (
-      <>
+      <div class="session-selector">
         <span class="session-label">sessions</span>
-        <select class="session-select" ref={selectEl} onChange={handleChange}>
+        <select class="session-select" onChange={handleChange}>
           <Show when={!sessions().some((s) => s.id === activeId())}>
-            <option value={activeId() ?? ''}>current session (new)</option>
+            <option value={activeId() ?? ''} selected>current session (new)</option>
           </Show>
           <For each={sessions()}>
-            {(s) => <option value={s.id}>{labelFor(s)}</option>}
+            {(s) => <option value={s.id} selected={s.id === activeId()}>{labelFor(s)}</option>}
           </For>
           <Show when={examples.length}>
             <optgroup label="Examples">
@@ -96,9 +82,9 @@ export function initSessionSelector({ onOpen, onNew, onExample, examples = [] }:
           </Show>
         </select>
         <button class="session-new" onClick={() => onNew?.()}>+ New</button>
-      </>
+      </div>
     )
-  }, el)
+  })
 
   return {
     el,

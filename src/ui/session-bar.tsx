@@ -4,8 +4,8 @@
 // button jumps back to the newest run. Humble SolidJS view — position/count
 // arrive via the SessionBarAPI, every move is reported through onScrub.
 
-import { render } from 'solid-js/web'
-import { createSignal, createEffect } from 'solid-js'
+import { createSignal } from 'solid-js'
+import { mountComponent } from './dom.js'
 
 interface SessionBarOptions {
   onScrub?: (pos: number) => void
@@ -25,20 +25,16 @@ export function initSessionBar({ onScrub }: SessionBarOptions = {}): SessionBarA
   const [count, setCount] = createSignal(0)
   const [pos, setPos] = createSignal(0)
 
-  const el = document.createElement('div')
-  el.className = 'session-bar'
-
   const scrubTo = (p: number): void => {
     setPos(p)
     onScrub?.(p)
   }
 
-  render(() => {
+  const { el } = mountComponent(() => {
     const atLatest = () => pos() >= count() - 1
-    // The bar tints itself while replaying a historical run.
-    createEffect(() => el.classList.toggle('replaying', !atLatest() && count() > 0))
     return (
-      <>
+      // The bar tints itself while replaying a historical run.
+      <div class="session-bar" classList={{ replaying: !atLatest() && count() > 0 }}>
         <span class="session-label">{count() ? `run ${pos() + 1}/${count()}` : 'session'}</span>
         <input
           type="range"
@@ -56,9 +52,9 @@ export function initSessionBar({ onScrub }: SessionBarOptions = {}): SessionBarA
         >
           latest
         </button>
-      </>
+      </div>
     )
-  }, el)
+  })
 
   return {
     el,

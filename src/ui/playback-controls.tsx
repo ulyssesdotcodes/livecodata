@@ -4,7 +4,8 @@
 // logic lives here.
 
 import { render } from 'solid-js/web'
-import { createSignal, onCleanup, Show, type Accessor } from 'solid-js'
+import { createSignal, Show, type Accessor } from 'solid-js'
+import { listenGlobal } from './dom.js'
 import { createPlaybackEngine } from '../playback.js'
 import type { PlaybackAPI, PlaybackEngine, PlaybackOptions, PlaybackViewState, TapControl } from '../playback.js'
 import { FRAMES_PER_BEAT, DEFAULT_LOOP_BEATS } from '../constants.js'
@@ -24,9 +25,8 @@ function PlaybackControls(props: {
     return timelineActive ? `${(pos + 1).toFixed(2)}→${srcBeat.toFixed(2)} beat` : `beat ${srcBeat.toFixed(2)}`
   }
 
-  const onPointerUp = () => props.engine.endScrub()
-  window.addEventListener('pointerup', onPointerUp)
-  onCleanup(() => window.removeEventListener('pointerup', onPointerUp))
+  // A scrub drag can end anywhere on the page, so the commit listens globally.
+  listenGlobal(window, 'pointerup', () => props.engine.endScrub())
 
   return (
     <>
@@ -58,6 +58,9 @@ function PlaybackControls(props: {
             onChange={(e) => {
               const el = e.currentTarget
               const n = Math.max(1, Math.round(parseFloat(el.value) || DEFAULT_LOOP_BEATS))
+              // Snap the field to the clamped value: when n equals the current
+              // loopBeats the signal doesn't change, so nothing reactive would
+              // overwrite a rejected entry like "0" or "abc".
               el.value = String(n)
               props.engine.setLoopBeats(n)
             }}

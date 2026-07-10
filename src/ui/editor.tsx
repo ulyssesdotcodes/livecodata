@@ -6,7 +6,8 @@
 // forwards clicks.
 
 import { render } from 'solid-js/web'
-import { createSignal, createEffect, onCleanup, Show, type Accessor } from 'solid-js'
+import { createSignal, createEffect, Show, type Accessor } from 'solid-js'
+import { listenGlobal, mountComponent } from './dom.js'
 import { EditorView, basicSetup } from 'codemirror'
 import { javascript, javascriptLanguage } from '@codemirror/lang-javascript'
 import { oneDark } from '@codemirror/theme-one-dark'
@@ -23,18 +24,13 @@ export { defaultProgram }
 // to adopt (and dispose of) as tooltip content.
 function makeInfoNode(sig: string, info: string): () => { dom: HTMLElement; destroy: () => void } {
   return () => {
-    const dom = document.createElement('div')
-    dom.className = 'cm-completion-info'
-    const destroy = render(
-      () => (
-        <>
-          <code>{sig}</code>
-          <p>{info}</p>
-        </>
-      ),
-      dom,
-    )
-    return { dom, destroy }
+    const { el, dispose } = mountComponent(() => (
+      <div class="cm-completion-info">
+        <code>{sig}</code>
+        <p>{info}</p>
+      </div>
+    ))
+    return { dom: el, destroy: dispose }
   }
 }
 
@@ -95,11 +91,10 @@ function EditorChrome(props: ChromeProps) {
   // CodeMirror host), not on this component's own nodes.
   createEffect(() => props.parent.classList.toggle('editor-collapsed', collapsed()))
 
-  const onDocClick = (e: MouseEvent) => {
+  // A click anywhere outside the settings wrap closes the popover.
+  listenGlobal(document, 'click', (e) => {
     if (settingsWrap && !settingsWrap.contains(e.target as Node)) setSettingsOpen(false)
-  }
-  document.addEventListener('click', onDocClick)
-  onCleanup(() => document.removeEventListener('click', onDocClick))
+  })
 
   return (
     <>
@@ -175,8 +170,6 @@ export function initEditor(
   parent: HTMLElement,
   { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange }: EditorOptions = {},
 ): EditorAPI {
-  parent.innerHTML = ''
-
   const [title, setTitle] = createSignal('DSL')
   const [runLabel, setRunLabel] = createSignal('Run')
   const [backVisible, setBackVisible] = createSignal(false)
