@@ -22,6 +22,9 @@ interface SessionSelectorOptions {
   onNew?: () => void
   onExample?: (index: number) => void
   examples?: ExampleEntry[]
+  // Extra element rendered after the "+ New" button — main.ts slots the room
+  // chip here (it belongs to the multiplayer subsystem, not the selector).
+  trailing?: HTMLElement
 }
 
 export interface SessionSelectorAPI {
@@ -43,7 +46,7 @@ function labelFor(s: SessionSummary): string {
   return when ? `${tables} · ${when}` : tables
 }
 
-export function initSessionSelector({ onOpen, onNew, onExample, examples = [] }: SessionSelectorOptions = {}): SessionSelectorAPI {
+export function initSessionSelector({ onOpen, onNew, onExample, examples = [], trailing }: SessionSelectorOptions = {}): SessionSelectorAPI {
   const [sessions, setSessions] = createSignal<SessionSummary[]>([])
   const [activeId, setActiveId] = createSignal<string | null>(null)
 
@@ -82,6 +85,7 @@ export function initSessionSelector({ onOpen, onNew, onExample, examples = [] }:
           </Show>
         </select>
         <button class="session-new" onClick={() => onNew?.()}>+ New</button>
+        {trailing}
       </div>
     )
   })

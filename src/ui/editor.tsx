@@ -47,6 +47,10 @@ export interface EditorOptions {
   // permission prompt (see main.ts).
   midiEnabled?: boolean
   onMidiEnabledChange?: (enabled: boolean) => void
+  // Extra bars slotted between the header and the code host — main.ts places
+  // the session selector and session bar here (they belong to the session
+  // subsystem, not the editor, so they arrive as ready-made elements).
+  subHeader?: HTMLElement[]
 }
 
 export interface EditorAPI {
@@ -74,6 +78,7 @@ interface ChromeProps {
   onVimChange: (enabled: boolean) => void
   onMidiChange: (enabled: boolean) => void
   hostRef: (el: HTMLDivElement) => void
+  subHeader?: HTMLElement[]
 }
 
 function EditorChrome(props: ChromeProps) {
@@ -158,6 +163,7 @@ function EditorChrome(props: ChromeProps) {
           </div>
         </div>
       </div>
+      {props.subHeader}
       <div class="editor-host" ref={props.hostRef} />
       <Show when={props.error()}>
         <div class="editor-error" style={{ display: 'block' }}>{props.error()}</div>
@@ -168,7 +174,7 @@ function EditorChrome(props: ChromeProps) {
 
 export function initEditor(
   parent: HTMLElement,
-  { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange }: EditorOptions = {},
+  { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange, subHeader }: EditorOptions = {},
 ): EditorAPI {
   const [title, setTitle] = createSignal('DSL')
   const [runLabel, setRunLabel] = createSignal('Run')
@@ -232,6 +238,7 @@ export function initEditor(
         }}
         onMidiChange={(enabled) => onMidiEnabledChange?.(enabled)}
         hostRef={(el) => { host = el }}
+        subHeader={subHeader}
       />
     ),
     parent,

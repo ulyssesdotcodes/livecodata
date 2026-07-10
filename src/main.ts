@@ -8,6 +8,7 @@ import { initPlayback } from './ui/playback-controls.js'
 import { initSessionBar } from './ui/session-bar.js'
 import { initSessionSelector } from './ui/session-selector.js'
 import { initRoomChip } from './ui/room-chip.js'
+import { renderApp } from './ui/app.js'
 import { SAMPLES } from './samples.js'
 import { createRuntime } from './runtime.js'
 import { createSessionStore } from './sessions.js'
@@ -83,14 +84,15 @@ function extractDataUrls(code: string): string[] {
   return urls
 }
 
-const canvasPane = document.getElementById('canvas-pane') as HTMLElement
-const threeCanvas = document.getElementById('three-canvas') as HTMLCanvasElement
-const hydraCanvas = document.getElementById('hydra-canvas') as HTMLCanvasElement
+// The pane skeleton (canvases, playback strip, editor/table panes) is a
+// top-level Solid component; this module is the composition root that wires
+// each subsystem into the pane it gets back.
+const panes = renderApp(document.getElementById('app') as HTMLElement)
 // Three.js renders the 3D scene into three-canvas; hydra takes that as a source
 // texture and post-processes it onto the visible hydra-canvas.
-const sceneAPI = initThree(threeCanvas, canvasPane)
-const hydraAPI = initHydra(hydraCanvas, threeCanvas)
-const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLElement, editableStore, {
+const sceneAPI = initThree(panes.threeCanvas, panes.canvasPane)
+const hydraAPI = initHydra(panes.hydraCanvas, panes.threeCanvas)
+const tablePanel = initTablePanel(panes.tablePane, editableStore, {
   onEditCell: (table, rowIndex, col, value) => {
     // The "code" cell is the program itself, not a side table: clicking it
     // just syncs the main editor back to the stored value (handy if you've
@@ -168,7 +170,7 @@ function ensureMidiInput(): MidiInput {
 if (midiEnabled) ensureMidiInput()
 
 const playback = initPlayback(
-  document.getElementById('playback-controls') as HTMLElement,
+  panes.playbackControls,
   sceneAPI,
   hydraAPI,
   {
@@ -403,7 +405,46 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
   }
 }
 
-const editor = initEditor(document.getElementById('editor-pane') as HTMLElement, {
+// Session chrome, created before the editor so its pieces compose into the
+// panes declaratively: the room chip trails the session selector, and both
+// selector and bar slot between the editor's header and its code host (see
+// EditorOptions.subHeader). Their callbacks reference functions and values
+// defined elsewhere in this module — all of them fire on user interaction,
+// well after initialization completes.
+const roomChip = initRoomChip({
+  onClick: () => {
+    const u = new URL(location.href)
+    if (multiplayer) {
+      u.searchParams.delete('room')
+    } else {
+      const name = prompt('Room name to share this session:')?.trim()
+      if (!name) return
+      // Seed the room with what's on screen: park the store under the room's
+      // session id so the reload (and then the server) picks it up.
+      if (editableStore.has('code')) {
+        sessionStore.save(roomSessionId(name), {
+          events: editableStore.serialize(),
+          runs: editableStore.runs(),
+          tables: [...lastViews.keys()],
+        })
+      }
+      u.searchParams.set('room', name)
+    }
+    location.href = u.toString()
+  },
+})
+
+const sessionBar = initSessionBar({ onScrub: scrubSession })
+const sessionSelector = initSessionSelector({
+  onOpen: openSession,
+  onNew: newSession,
+  onExample: openExample,
+  examples: SAMPLES.map((s) => ({ label: s.name })),
+  trailing: roomChip.el,
+})
+
+const editor = initEditor(panes.editorPane, {
+  subHeader: [sessionSelector.el, sessionBar.el],
   onRun: evaluate,
   getViews: () => lastViews,
   onCaretView: (name) => tablePanel.selectTable(name),
@@ -511,8 +552,6 @@ function newSession(): void {
   refreshSelector()
 }
 
-const editorPane = document.getElementById('editor-pane') as HTMLElement
-const sessionBar = initSessionBar({ onScrub: scrubSession })
 function openExample(index: number): void {
   const sample = SAMPLES[index]
   if (!sample) return
@@ -524,41 +563,6 @@ function openExample(index: number): void {
   sessionBar.setLog({ length: sessionLength() })
   refreshSelector()
 }
-
-const sessionSelector = initSessionSelector({
-  onOpen: openSession,
-  onNew: newSession,
-  onExample: openExample,
-  examples: SAMPLES.map((s) => ({ label: s.name })),
-})
-editorPane.insertBefore(sessionBar.el, editorPane.children[1])
-editorPane.insertBefore(sessionSelector.el, sessionBar.el)
-
-// The room chip: solo it starts a room (pick a room, seed it with the current
-// session, reload into it); in a room it shows status/peers and leaves on click.
-const roomChip = initRoomChip({
-  onClick: () => {
-    const u = new URL(location.href)
-    if (multiplayer) {
-      u.searchParams.delete('room')
-    } else {
-      const name = prompt('Room name to share this session:')?.trim()
-      if (!name) return
-      // Seed the room with what's on screen: park the store under the room's
-      // session id so the reload (and then the server) picks it up.
-      if (editableStore.has('code')) {
-        sessionStore.save(roomSessionId(name), {
-          events: editableStore.serialize(),
-          runs: editableStore.runs(),
-          tables: [...lastViews.keys()],
-        })
-      }
-      u.searchParams.set('room', name)
-    }
-    location.href = u.toString()
-  },
-})
-sessionSelector.el.appendChild(roomChip.el)
 
 function chipSolo(): void {
   roomChip.set({ kind: 'solo' })
