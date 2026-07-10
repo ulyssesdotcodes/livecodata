@@ -2,18 +2,18 @@
 // the frame scrubber under the scene (playback time). Dragging it replays the
 // session: the program live at that run is re-cooked and shown. The "latest"
 // button jumps back to the newest run; "reset" arms a rewind that steps back
-// one run per measure (see main.ts's onLoop wiring) until run 1. Humble
-// SolidJS view — position/count arrive via the SessionBarAPI, every move is
-// reported through onScrub/onReset.
+// one run every couple of beats (see main.ts's onTick wiring) until run 1.
+// Humble SolidJS view — position/count arrive via the SessionBarAPI, every
+// move is reported through onScrub/onReset.
 
 import { render } from 'solid-js/web'
 import { createSignal, createEffect } from 'solid-js'
 
 interface SessionBarOptions {
   onScrub?: (pos: number) => void
-  // The reset button was clicked — asked to arm/disarm the measure-by-measure
-  // rewind (see main.ts's toggleRewind). Purely a click notification: the bar
-  // itself has no notion of playback or measures, so it doesn't step anything.
+  // The reset button was clicked — asked to arm/disarm the beat-paced rewind
+  // (see main.ts's toggleRewind). Purely a click notification: the bar itself
+  // has no notion of playback or beats, so it doesn't step anything.
   onReset?: () => void
 }
 
@@ -57,7 +57,7 @@ export function initSessionBar({ onScrub, onReset }: SessionBarOptions = {}): Se
           class="session-reset"
           classList={{ active: rewinding() }}
           style={{ visibility: count() > 1 ? 'visible' : 'hidden' }}
-          title="Step back one run every measure until back at the start"
+          title="Step back one run every 2 beats until back at the start"
           onClick={() => onReset?.()}
         >
           reset

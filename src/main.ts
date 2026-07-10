@@ -152,10 +152,18 @@ let currentPlayIndex = 0
 // "midi"/"midi·events" tables only appear once it's enabled.
 let loopCount = 0
 // Whether the reset button's rewind is armed — see toggleRewind/stopRewind
-// below. Stepping itself happens in the playback onLoop callback: one run
-// back per measure (one loop of playback), since that's the app's only
-// notion of a recurring musical unit to pace an animated rewind against.
+// below. Stepping itself happens in onTick, every REWIND_STEP_BEATS of
+// playhead beats (see lastTick/rewindBaseline).
 let rewinding = false
+const REWIND_STEP_BEATS = 2
+// The playhead beat (onTick's `tick`, pre-timeline) last reported — kept live
+// regardless of rewinding so arming always steps from "now", not from 0.
+let lastTick = 0
+// The playhead beat rewindBaseline was last reset to; stepRewind fires once
+// tick has advanced REWIND_STEP_BEATS past it. A loop wrap (tick dropping
+// below the baseline) just re-bases here rather than tracking cross-wrap
+// distance — worst case that delays one step by less than a loop.
+let rewindBaseline = 0
 let midiEnabled = getMidiEnabled()
 let midiInput: MidiInput | null = null
 
@@ -181,14 +189,19 @@ const playback = initPlayback(
       currentPlayIndex = srcBeats
       tablePanel.highlightIndex(srcBeats)
       tablePanel.highlightLineage(active)
+      lastTick = tick
+      if (rewinding) {
+        if (tick < rewindBaseline) rewindBaseline = tick
+        else if (tick - rewindBaseline >= REWIND_STEP_BEATS) {
+          rewindBaseline += REWIND_STEP_BEATS
+          stepRewind()
+        }
+      }
     },
     onPlay: () => {
       tablePanel.resetAutoscroll()
     },
-    onLoop: () => {
-      loopCount++
-      if (rewinding) stepRewind()
-    },
+    onLoop: () => { loopCount++ },
     tapControl: { tap: recordTap, clear: clearTaps, rows: tapRows, anchor: tapAnchor },
     midiCtxAt: (srcFrame) => (midiEnabled && midiInput ? midiInput.ctxAt(srcFrame) : null),
   },
@@ -456,9 +469,9 @@ function stopRewind(): void {
   sessionBar.setRewinding(false)
 }
 
-// One rewind step: called each time the loop wraps (one measure of playback)
-// while armed. Steps back one run and stops once run 1 (the beginning) is
-// reached.
+// One rewind step: called every REWIND_STEP_BEATS beats of playback while
+// armed (see onTick). Steps back one run and stops once run 1 (the
+// beginning) is reached.
 function stepRewind(): void {
   const pos = sessionBar.position()
   const next = Math.max(0, pos - 1)
@@ -468,7 +481,7 @@ function stepRewind(): void {
 }
 
 // The reset button was clicked: arm the rewind (starting playback if it isn't
-// already running, so measures actually pass) or disarm it if already armed.
+// already running, so beats actually pass) or disarm it if already armed.
 // Does nothing if there's nowhere to go back to.
 function toggleRewind(): void {
   if (rewinding) {
@@ -479,6 +492,9 @@ function toggleRewind(): void {
   rewinding = true
   sessionBar.setRewinding(true)
   playback.play()
+  // Baseline from wherever the playhead now sits (play() may have just reset
+  // it) so the first step is REWIND_STEP_BEATS beats from arming, not from 0.
+  rewindBaseline = lastTick
 }
 
 // Scrub to run `pos` — a non-destructive preview that restores *every* editable
