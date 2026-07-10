@@ -1,12 +1,12 @@
-// Code editor pane. The chrome (header, Run/Back buttons, settings popover,
-// error strip) is a humble SolidJS component; CodeMirror manages its own DOM
-// inside the host div it is handed. All editor *logic* — completion/hover
-// sources, docs, cell-target bookkeeping — lives in ../editor-support.ts and
-// this file's controller closure; the component only renders state and
-// forwards clicks.
+// Code editor pane. Split humble-object style: createEditor is the
+// controller — it owns the CodeMirror view (an imperative DOM island, created
+// detached and adopted by the component's host div), the cell-target
+// bookkeeping, and the chrome state signals; <EditorPane> renders the pane —
+// header, Run/Back buttons, settings popover, error strip — from that
+// controller and forwards clicks back into it. All editor *logic* —
+// completion/hover sources, docs — lives in ../editor-support.ts.
 
-import { render } from 'solid-js/web'
-import { createSignal, createEffect, Show, type Accessor } from 'solid-js'
+import { createSignal, Show, type Accessor, type JSX } from 'solid-js'
 import { listenGlobal, mountComponent } from './dom.js'
 import { EditorView, basicSetup } from 'codemirror'
 import { javascript, javascriptLanguage } from '@codemirror/lang-javascript'
@@ -61,115 +61,24 @@ export interface EditorAPI {
   editCell(label: string, code: string, onCommit: (text: string) => void): void
 }
 
-interface ChromeProps {
-  parent: HTMLElement
+export interface EditorController extends EditorAPI {
   title: Accessor<string>
   runLabel: Accessor<string>
   backVisible: Accessor<boolean>
   error: Accessor<string | null>
-  vimMode: boolean
-  midiEnabled: boolean
-  onRun: () => void
-  onBack: () => void
-  onVimChange: (enabled: boolean) => void
-  onMidiChange: (enabled: boolean) => void
-  hostRef: (el: HTMLDivElement) => void
+  // Initial toggle states + change handlers for the settings popover.
+  initialVimMode: boolean
+  initialMidiEnabled: boolean
+  setVimMode(enabled: boolean): void
+  setMidiEnabled(enabled: boolean): void
+  back(): void
+  // The CodeMirror DOM, for the view's editor-host div to adopt.
+  cmDom: HTMLElement
 }
 
-function EditorChrome(props: ChromeProps) {
-  const [collapsed, setCollapsed] = createSignal(window.matchMedia('(max-width: 767px)').matches)
-  // Settings: vim-mode and MIDI toggles. A small popover rather than plain
-  // toggle buttons so more prefs can land here later without another header
-  // slot. Positioned fixed (not absolute) so it isn't clipped by
-  // #editor-pane's overflow:hidden when the panel is collapsed to header height.
-  const [settingsOpen, setSettingsOpen] = createSignal(false)
-  const [menuPos, setMenuPos] = createSignal<{ top: number; right: number }>({ top: 0, right: 0 })
-  let settingsWrap: HTMLDivElement | undefined
-  let settingsBtn: HTMLButtonElement | undefined
-
-  // The collapsed class lives on the pane container (which also holds the
-  // CodeMirror host), not on this component's own nodes.
-  createEffect(() => props.parent.classList.toggle('editor-collapsed', collapsed()))
-
-  // A click anywhere outside the settings wrap closes the popover.
-  listenGlobal(document, 'click', (e) => {
-    if (settingsWrap && !settingsWrap.contains(e.target as Node)) setSettingsOpen(false)
-  })
-
-  return (
-    <>
-      <div class="editor-header">
-        <button
-          class="collapse-btn"
-          aria-label={collapsed() ? 'Expand code panel' : 'Collapse code panel'}
-          onClick={() => setCollapsed(!collapsed())}
-        >
-          {collapsed() ? '▸' : '▾'}
-        </button>
-        <span class="editor-title">{props.title()}</span>
-        <button
-          class="editor-back-btn"
-          title="Back to the program"
-          style={{ display: props.backVisible() ? '' : 'none' }}
-          onClick={props.onBack}
-        >
-          Back
-        </button>
-        <button class="run-btn" onClick={props.onRun}>{props.runLabel()}</button>
-        <div class="settings-wrap" ref={settingsWrap}>
-          <button
-            class="settings-btn"
-            title="Settings"
-            aria-label="Settings"
-            ref={settingsBtn}
-            onClick={(e) => {
-              e.stopPropagation()
-              const opening = !settingsOpen()
-              if (opening && settingsBtn) {
-                const r = settingsBtn.getBoundingClientRect()
-                setMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
-              }
-              setSettingsOpen(opening)
-            }}
-          >
-            ⚙
-          </button>
-          <div
-            class="settings-menu"
-            classList={{ open: settingsOpen() }}
-            style={{ top: `${menuPos().top}px`, right: `${menuPos().right}px` }}
-          >
-            <label class="settings-row">
-              <input
-                type="checkbox"
-                checked={props.vimMode}
-                onChange={(e) => props.onVimChange(e.currentTarget.checked)}
-              />
-              Vim mode
-            </label>
-            <label class="settings-row">
-              <input
-                type="checkbox"
-                checked={props.midiEnabled}
-                onChange={(e) => props.onMidiChange(e.currentTarget.checked)}
-              />
-              MIDI
-            </label>
-          </div>
-        </div>
-      </div>
-      <div class="editor-host" ref={props.hostRef} />
-      <Show when={props.error()}>
-        <div class="editor-error" style={{ display: 'block' }}>{props.error()}</div>
-      </Show>
-    </>
-  )
-}
-
-export function initEditor(
-  parent: HTMLElement,
+export function createEditor(
   { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange }: EditorOptions = {},
-): EditorAPI {
+): EditorController {
   const [title, setTitle] = createSignal('DSL')
   const [runLabel, setRunLabel] = createSignal('Run')
   const [backVisible, setBackVisible] = createSignal(false)
@@ -213,32 +122,10 @@ export function initEditor(
 
   const vimCompartment = new Compartment()
 
-  let host: HTMLDivElement | undefined
-  render(
-    () => (
-      <EditorChrome
-        parent={parent}
-        title={title}
-        runLabel={runLabel}
-        backVisible={backVisible}
-        error={error}
-        vimMode={vimMode}
-        midiEnabled={midiEnabled}
-        onRun={run}
-        onBack={() => exitCell(true)}
-        onVimChange={(enabled) => {
-          view.dispatch({ effects: vimCompartment.reconfigure(enabled ? [vim()] : []) })
-          onVimModeChange?.(enabled)
-        }}
-        onMidiChange={(enabled) => onMidiEnabledChange?.(enabled)}
-        hostRef={(el) => { host = el }}
-      />
-    ),
-    parent,
-  )
-
   let lastCaretView: string | null = null
 
+  // Created detached; <EditorPane>'s host div appends view.dom (CodeMirror
+  // re-measures itself on attachment).
   const view = new EditorView({
     doc: defaultProgram,
     extensions: [
@@ -264,7 +151,6 @@ export function initEditor(
         '.cm-scroller': { overflow: 'auto' },
       }),
     ],
-    parent: host!,
   })
 
   // External loads (session scrub, examples) always mean "show the program" —
@@ -274,5 +160,116 @@ export function initEditor(
     setDoc(code)
   }
 
-  return { run, getCode: () => view.state.doc.toString(), setCode, setError, editCell }
+  return {
+    run,
+    getCode: () => view.state.doc.toString(),
+    setCode,
+    setError,
+    editCell,
+    title,
+    runLabel,
+    backVisible,
+    error,
+    initialVimMode: vimMode,
+    initialMidiEnabled: midiEnabled,
+    setVimMode(enabled: boolean): void {
+      view.dispatch({ effects: vimCompartment.reconfigure(enabled ? [vim()] : []) })
+      onVimModeChange?.(enabled)
+    },
+    setMidiEnabled(enabled: boolean): void {
+      onMidiEnabledChange?.(enabled)
+    },
+    back: () => exitCell(true),
+    cmDom: view.dom,
+  }
+}
+
+// The editor pane. `children` slots the session selector/bar between the
+// header and the CodeMirror host (app.tsx composes them there).
+export function EditorPane(props: { ctl: EditorController; children?: JSX.Element }) {
+  const { ctl } = props
+  const [collapsed, setCollapsed] = createSignal(window.matchMedia('(max-width: 767px)').matches)
+  // Settings: vim-mode and MIDI toggles. A small popover rather than plain
+  // toggle buttons so more prefs can land here later without another header
+  // slot. Positioned fixed (not absolute) so it isn't clipped by
+  // #editor-pane's overflow:hidden when the panel is collapsed to header height.
+  const [settingsOpen, setSettingsOpen] = createSignal(false)
+  const [menuPos, setMenuPos] = createSignal<{ top: number; right: number }>({ top: 0, right: 0 })
+  let settingsWrap: HTMLDivElement | undefined
+  let settingsBtn: HTMLButtonElement | undefined
+
+  // A click anywhere outside the settings wrap closes the popover.
+  listenGlobal(document, 'click', (e) => {
+    if (settingsWrap && !settingsWrap.contains(e.target as Node)) setSettingsOpen(false)
+  })
+
+  return (
+    <div id="editor-pane" classList={{ 'editor-collapsed': collapsed() }}>
+      <div class="editor-header">
+        <button
+          class="collapse-btn"
+          aria-label={collapsed() ? 'Expand code panel' : 'Collapse code panel'}
+          onClick={() => setCollapsed(!collapsed())}
+        >
+          {collapsed() ? '▸' : '▾'}
+        </button>
+        <span class="editor-title">{ctl.title()}</span>
+        <button
+          class="editor-back-btn"
+          title="Back to the program"
+          style={{ display: ctl.backVisible() ? '' : 'none' }}
+          onClick={() => ctl.back()}
+        >
+          Back
+        </button>
+        <button class="run-btn" onClick={() => ctl.run()}>{ctl.runLabel()}</button>
+        <div class="settings-wrap" ref={settingsWrap}>
+          <button
+            class="settings-btn"
+            title="Settings"
+            aria-label="Settings"
+            ref={settingsBtn}
+            onClick={(e) => {
+              e.stopPropagation()
+              const opening = !settingsOpen()
+              if (opening && settingsBtn) {
+                const r = settingsBtn.getBoundingClientRect()
+                setMenuPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
+              }
+              setSettingsOpen(opening)
+            }}
+          >
+            ⚙
+          </button>
+          <div
+            class="settings-menu"
+            classList={{ open: settingsOpen() }}
+            style={{ top: `${menuPos().top}px`, right: `${menuPos().right}px` }}
+          >
+            <label class="settings-row">
+              <input
+                type="checkbox"
+                checked={ctl.initialVimMode}
+                onChange={(e) => ctl.setVimMode(e.currentTarget.checked)}
+              />
+              Vim mode
+            </label>
+            <label class="settings-row">
+              <input
+                type="checkbox"
+                checked={ctl.initialMidiEnabled}
+                onChange={(e) => ctl.setMidiEnabled(e.currentTarget.checked)}
+              />
+              MIDI
+            </label>
+          </div>
+        </div>
+      </div>
+      {props.children}
+      <div class="editor-host" ref={(el) => el.appendChild(ctl.cmDom)} />
+      <Show when={ctl.error()}>
+        <div class="editor-error" style={{ display: 'block' }}>{ctl.error()}</div>
+      </Show>
+    </div>
+  )
 }

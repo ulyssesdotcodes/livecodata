@@ -10,7 +10,6 @@
 // after each store write so reads re-fold — the reactive equivalent of the
 // old imperative re-render after every edit.
 
-import { render } from 'solid-js/web'
 import {
   createSignal, createMemo, createEffect, on, onCleanup, untrack,
   For, Index, Show, type Accessor, type Setter,
@@ -637,11 +636,15 @@ function TablePanelView(props: PanelProps) {
   )
 }
 
-export function initTablePanel(
-  container: HTMLElement,
+// The pure-logic side handed to app.tsx: the TablePanel API main.ts drives,
+// plus the signal accessors <TablePane> renders from. No DOM here — the view
+// above is the only thing that touches elements.
+export interface TablePanelController extends TablePanel, PanelProps {}
+
+export function createTablePanel(
   editableStore: EditableTableStore,
   { onEditCell, onCtrlEnter }: TablePanelOptions = {},
-): TablePanel {
+): TablePanelController {
   const [views, setViews] = createSignal<Map<string, Table>>(new Map())
   const [graphs, setGraphs] = createSignal<Map<string, GraphSpec>>(new Map())
   const [current, setCurrent] = createSignal<string | null>(null)
@@ -649,26 +652,19 @@ export function initTablePanel(
   const [playActive, setPlayActive] = createSignal<Map<string, Set<number>> | null>(null)
   const [userScrolled, setUserScrolled] = createSignal(false)
 
-  render(
-    () => (
-      <TablePanelView
-        store={editableStore}
-        views={views}
-        graphs={graphs}
-        current={current}
-        setCurrent={setCurrent}
-        playIndex={playIndex}
-        playActive={playActive}
-        userScrolled={userScrolled}
-        setUserScrolled={setUserScrolled}
-        onEditCell={onEditCell}
-        onCtrlEnter={onCtrlEnter}
-      />
-    ),
-    container,
-  )
-
   return {
+    store: editableStore,
+    views,
+    graphs,
+    current,
+    setCurrent,
+    playIndex,
+    playActive,
+    userScrolled,
+    setUserScrolled,
+    onEditCell,
+    onCtrlEnter,
+
     selectTable(name: string | null): void {
       if (name != null && (views().has(name) || editableStore.has(name)) && name !== current()) {
         setCurrent(name)
@@ -695,4 +691,12 @@ export function initTablePanel(
       setUserScrolled(false)
     },
   }
+}
+
+export function TablePane(props: { ctl: TablePanelController }) {
+  return (
+    <div id="table-pane">
+      <TablePanelView {...props.ctl} />
+    </div>
+  )
 }

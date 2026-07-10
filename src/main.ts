@@ -1,13 +1,15 @@
 import './style.css'
+import { createSignal } from 'solid-js'
 import { initThree } from './three-scene.js'
 import { initHydra } from './hydra-scene.js'
-import { initEditor, defaultProgram } from './ui/editor.js'
-import { initTablePanel } from './ui/table-panel.js'
+import { mountApp } from './ui/app.js'
+import { createEditor, defaultProgram } from './ui/editor.js'
+import { createTablePanel } from './ui/table-panel.js'
 import { EVENTS_SUFFIX } from './table-panel.js'
-import { initPlayback } from './ui/playback-controls.js'
-import { initSessionBar } from './ui/session-bar.js'
-import { initSessionSelector } from './ui/session-selector.js'
-import { initRoomChip } from './ui/room-chip.js'
+import { createPlaybackController, type PlaybackController } from './ui/playback-controls.js'
+import { createSessionBar } from './ui/session-bar.js'
+import { createSessionSelector } from './ui/session-selector.js'
+import { createRoomChip } from './ui/room-chip.js'
 import { SAMPLES } from './samples.js'
 import { createRuntime } from './runtime.js'
 import { createSessionStore } from './sessions.js'
@@ -22,6 +24,7 @@ import { createTapLog } from './tap-log.js'
 import { connectMultiplayer } from './multiplayer.js'
 import type { MultiplayerConnection, MultiplayerStatus } from './multiplayer.js'
 import type { PhysicsEngineInstance } from './physics.js'
+import type { PlaybackAPI, PlaybackOptions } from './playback.js'
 import type { Row } from './lineage.js'
 
 const dataCache = new Map<string, string>()
@@ -83,14 +86,13 @@ function extractDataUrls(code: string): string[] {
   return urls
 }
 
-const canvasPane = document.getElementById('canvas-pane') as HTMLElement
-const threeCanvas = document.getElementById('three-canvas') as HTMLCanvasElement
-const hydraCanvas = document.getElementById('hydra-canvas') as HTMLCanvasElement
-// Three.js renders the 3D scene into three-canvas; hydra takes that as a source
-// texture and post-processes it onto the visible hydra-canvas.
-const sceneAPI = initThree(threeCanvas, canvasPane)
-const hydraAPI = initHydra(hydraCanvas, threeCanvas)
-const tablePanel = initTablePanel(document.getElementById('table-pane') as HTMLElement, editableStore, {
+// The playback engine, assigned once the app has mounted (it needs the
+// scene/hydra APIs, which need the canvases the app render creates — see the
+// mountApp call below). Everything that touches it does so from callbacks
+// that can only fire after this module has finished evaluating.
+let playback: PlaybackAPI
+
+const tablePanel = createTablePanel(editableStore, {
   onEditCell: (table, rowIndex, col, value) => {
     // The "code" cell is the program itself, not a side table: clicking it
     // just syncs the main editor back to the stored value (handy if you've
@@ -167,24 +169,23 @@ function ensureMidiInput(): MidiInput {
 
 if (midiEnabled) ensureMidiInput()
 
-const playback = initPlayback(
-  document.getElementById('playback-controls') as HTMLElement,
-  sceneAPI,
-  hydraAPI,
-  {
-    onTick: (tick, active, srcBeats) => {
-      currentPlayIndex = srcBeats
-      tablePanel.highlightIndex(srcBeats)
-      tablePanel.highlightLineage(active)
-    },
-    onPlay: () => {
-      tablePanel.resetAutoscroll()
-    },
-    onLoop: () => { loopCount++ },
-    tapControl: { tap: recordTap, clear: clearTaps, rows: tapRows, anchor: tapAnchor },
-    midiCtxAt: (srcFrame) => (midiEnabled && midiInput ? midiInput.ctxAt(srcFrame) : null),
+// Options for the playback engine created after mount (see mountApp below);
+// the controller lands in this signal, which the app render watches to show
+// the transport controls.
+const [playbackCtl, setPlaybackCtl] = createSignal<PlaybackController | null>(null)
+const playbackOptions: PlaybackOptions = {
+  onTick: (tick, active, srcBeats) => {
+    currentPlayIndex = srcBeats
+    tablePanel.highlightIndex(srcBeats)
+    tablePanel.highlightLineage(active)
   },
-)
+  onPlay: () => {
+    tablePanel.resetAutoscroll()
+  },
+  onLoop: () => { loopCount++ },
+  tapControl: { tap: recordTap, clear: clearTaps, rows: tapRows, anchor: tapAnchor },
+  midiCtxAt: (srcFrame) => (midiEnabled && midiInput ? midiInput.ctxAt(srcFrame) : null),
+}
 
 // A new MIDI event refreshes the "midi"/"midi·events" display tables. The scene
 // itself updates live every rAF tick via the per-frame bindings regardless —
@@ -403,7 +404,7 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
   }
 }
 
-const editor = initEditor(document.getElementById('editor-pane') as HTMLElement, {
+const editor = createEditor({
   onRun: evaluate,
   getViews: () => lastViews,
   onCaretView: (name) => tablePanel.selectTable(name),
@@ -511,8 +512,7 @@ function newSession(): void {
   refreshSelector()
 }
 
-const editorPane = document.getElementById('editor-pane') as HTMLElement
-const sessionBar = initSessionBar({ onScrub: scrubSession })
+const sessionBar = createSessionBar({ onScrub: scrubSession })
 function openExample(index: number): void {
   const sample = SAMPLES[index]
   if (!sample) return
@@ -525,18 +525,16 @@ function openExample(index: number): void {
   refreshSelector()
 }
 
-const sessionSelector = initSessionSelector({
+const sessionSelector = createSessionSelector({
   onOpen: openSession,
   onNew: newSession,
   onExample: openExample,
   examples: SAMPLES.map((s) => ({ label: s.name })),
 })
-editorPane.insertBefore(sessionBar.el, editorPane.children[1])
-editorPane.insertBefore(sessionSelector.el, sessionBar.el)
 
 // The room chip: solo it starts a room (pick a room, seed it with the current
 // session, reload into it); in a room it shows status/peers and leaves on click.
-const roomChip = initRoomChip({
+const roomChip = createRoomChip({
   onClick: () => {
     const u = new URL(location.href)
     if (multiplayer) {
@@ -558,7 +556,27 @@ const roomChip = initRoomChip({
     location.href = u.toString()
   },
 })
-sessionSelector.el.appendChild(roomChip.el)
+
+// Mount the whole layout in one Solid render — every pane except the canvas
+// *contents* is created there from the controllers above (see ui/app.tsx).
+// The render hands back the canvas elements; three.js renders the 3D scene
+// into three-canvas, and hydra takes that as a source texture and
+// post-processes it onto the visible hydra-canvas. The playback engine rides
+// on those APIs, so it's built last and pushed into the signal the app
+// render is watching.
+const mounts = mountApp(document.getElementById('app') as HTMLElement, {
+  editor,
+  tablePanel,
+  sessionBar,
+  sessionSelector,
+  roomChip,
+  playback: playbackCtl,
+})
+const sceneAPI = initThree(mounts.threeCanvas, mounts.canvasPane)
+const hydraAPI = initHydra(mounts.hydraCanvas, mounts.threeCanvas)
+const playbackController = createPlaybackController(sceneAPI, hydraAPI, playbackOptions)
+setPlaybackCtl(playbackController)
+playback = playbackController.engine
 
 function chipSolo(): void {
   roomChip.set({ kind: 'solo' })

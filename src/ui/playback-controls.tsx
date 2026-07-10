@@ -1,18 +1,20 @@
 // Transport controls — the humble view over the playback engine
 // (../playback.ts). It renders PlaybackViewState verbatim and forwards every
 // interaction straight to an engine method (or the TapControl); no playback
-// logic lives here.
+// logic lives here. createPlaybackController bundles the engine with the
+// view-state signal it emits into; app.tsx renders <PlaybackControls> from
+// that bundle (once main.ts has built it — the engine needs the scene/hydra
+// APIs, which need the canvases the app render creates first).
 
-import { render } from 'solid-js/web'
 import { createSignal, Show, type Accessor } from 'solid-js'
 import { listenGlobal } from './dom.js'
 import { createPlaybackEngine } from '../playback.js'
-import type { PlaybackAPI, PlaybackEngine, PlaybackOptions, PlaybackViewState, TapControl } from '../playback.js'
+import type { PlaybackEngine, PlaybackOptions, PlaybackViewState, TapControl } from '../playback.js'
 import { FRAMES_PER_BEAT, DEFAULT_LOOP_BEATS } from '../constants.js'
 import type { SceneAPI } from '../three-scene.js'
 import type { HydraAPI } from '../hydra-scene.js'
 
-function PlaybackControls(props: {
+export function PlaybackControls(props: {
   vs: Accessor<PlaybackViewState>
   engine: PlaybackEngine
   tapControl?: TapControl
@@ -100,18 +102,19 @@ function PlaybackControls(props: {
   )
 }
 
-export function initPlayback(
-  controlsEl: HTMLElement,
+export interface PlaybackController {
+  engine: PlaybackEngine
+  vs: Accessor<PlaybackViewState>
+  tapControl?: TapControl
+}
+
+export function createPlaybackController(
   sceneAPI: SceneAPI,
   hydraAPI: HydraAPI,
   options: PlaybackOptions = {},
-): PlaybackAPI {
+): PlaybackController {
   const [vs, setVs] = createSignal<PlaybackViewState | null>(null)
   const engine = createPlaybackEngine(sceneAPI, hydraAPI, { ...options, onViewChange: setVs })
   if (vs() == null) setVs(engine.viewState())
-  render(
-    () => <PlaybackControls vs={() => vs()!} engine={engine} tapControl={options.tapControl} />,
-    controlsEl,
-  )
-  return engine
+  return { engine, vs: () => vs()!, tapControl: options.tapControl }
 }
