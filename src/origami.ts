@@ -691,6 +691,199 @@ export function createFoldSolver(pattern: CompiledPattern, opts: SolverOptions =
   return { positions, pattern, step, reset }
 }
 
+// ── Rigid (kinematic) solver ──────────────────────────────────────────────────
+// The clean way to animate a fold sequence: trust the folds as written. Every
+// hinge sits at exactly its target angle (crease target × group fraction;
+// facet diagonals at 0), and each face is positioned by composing those exact
+// rotations along a spanning tree of the face-adjacency graph. Panels stay
+// perfectly rigid, undriven creases stay perfectly flat, and there is no
+// physics state to tangle. The price: where the crease pattern's loops
+// disagree mid-fold, the sheet simply BREAKS — a face lies where its chain of
+// folds puts it, even if a neighbouring face (reached by another chain)
+// doesn't share the edge exactly. That's the intended contract.
+//
+// Because a rotation about a crease commutes through the parent's transform,
+// every local rotation is about the crease's ORIGINAL 2D line:
+//   T_child = T_parent · RotLine2D(edge, θ)
+
+export interface RigidSolver {
+  // xyz per face corner (faces × 9): faces don't share vertices — a broken
+  // sheet needs per-face positions.
+  readonly positions: Float32Array
+  // xyz pairs per pattern line (lines × 6), each drawn with one adjacent
+  // face's transform.
+  readonly linePositions: Float32Array
+  readonly pattern: CompiledPattern
+  step(fracs: Record<string, number>): void
+}
+
+type Affine = Float64Array // row-major 3x4
+
+const IDENTITY: Affine = new Float64Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0])
+
+function mulAffine(a: Affine, b: Affine, out: Affine): void {
+  for (let r = 0; r < 3; r++) {
+    const r4 = r * 4
+    for (let c = 0; c < 4; c++) {
+      out[r4 + c] = a[r4] * b[c] + a[r4 + 1] * b[4 + c] + a[r4 + 2] * b[8 + c]
+        + (c === 3 ? a[r4 + 3] : 0)
+    }
+  }
+}
+
+// Rotation by θ about the z=0 line through p → q (Rodrigues, then conjugate by
+// the translation taking the origin to p).
+function rotAboutLine2D(px: number, py: number, qx: number, qy: number, theta: number, out: Affine): void {
+  let ux = qx - px
+  let uy = qy - py
+  const L = Math.hypot(ux, uy)
+  ux /= L
+  uy /= L
+  const c = Math.cos(theta)
+  const s = Math.sin(theta)
+  const t = 1 - c
+  // R = c·I + s·[u]× + t·uuᵀ with u = (ux, uy, 0)
+  const r00 = c + t * ux * ux
+  const r01 = t * ux * uy
+  const r02 = s * uy
+  const r10 = t * ux * uy
+  const r11 = c + t * uy * uy
+  const r12 = -s * ux
+  const r20 = -s * uy
+  const r21 = s * ux
+  const r22 = c
+  out[0] = r00; out[1] = r01; out[2] = r02
+  out[4] = r10; out[5] = r11; out[6] = r12
+  out[8] = r20; out[9] = r21; out[10] = r22
+  // translation: p − R·p
+  out[3] = px - (r00 * px + r01 * py)
+  out[7] = py - (r10 * px + r11 * py)
+  out[11] = -(r20 * px + r21 * py)
+}
+
+interface TreeEdge {
+  child: number
+  parent: number
+  hinge: number
+  // The hinge edge endpoints ordered so that, from the PARENT's side, a
+  // positive fold angle folds the child toward +z (a valley from the front) —
+  // matching the spring solver's convention and the sample's degrees.
+  ax: number
+  ay: number
+  bx: number
+  by: number
+}
+
+export function createRigidSolver(pattern: CompiledPattern): RigidSolver {
+  const nf = pattern.faces.length
+
+  // Face lookup by its three vertices, to resolve each hinge's two faces.
+  const faceByKey = new Map<string, number>()
+  pattern.faces.forEach((f, i) => {
+    faceByKey.set([...f].sort((a, b) => a - b).join(','), i)
+  })
+  const faceOf = (i: number, j: number, w: number): number =>
+    faceByKey.get([i, j, w].sort((a, b) => a - b).join(','))!
+
+  interface Adj { other: number; hinge: number; otherIsB: boolean }
+  const adj: Adj[][] = Array.from({ length: nf }, () => [])
+  pattern.hinges.forEach((h, hi) => {
+    const fa = faceOf(h.e[0], h.e[1], h.w[0])
+    const fb = faceOf(h.e[0], h.e[1], h.w[1])
+    adj[fa].push({ other: fb, hinge: hi, otherIsB: true })
+    adj[fb].push({ other: fa, hinge: hi, otherIsB: false })
+  })
+
+  // Root: the face whose centroid is nearest the sheet's centre, so tears
+  // spread outward symmetrically.
+  let root = 0
+  let best = Infinity
+  pattern.faces.forEach(([a, b, c], i) => {
+    const x = (pattern.vertices[a][0] + pattern.vertices[b][0] + pattern.vertices[c][0]) / 3
+    const y = (pattern.vertices[a][1] + pattern.vertices[b][1] + pattern.vertices[c][1]) / 3
+    const dd = x * x + y * y
+    if (dd < best) {
+      best = dd
+      root = i
+    }
+  })
+
+  // BFS spanning tree.
+  const tree: TreeEdge[] = []
+  const seen = new Array<boolean>(nf).fill(false)
+  seen[root] = true
+  const queue = [root]
+  while (queue.length) {
+    const p = queue.shift()!
+    for (const { other, hinge, otherIsB } of adj[p]) {
+      if (seen[other]) continue
+      seen[other] = true
+      const h = pattern.hinges[hinge]
+      // h.e is directed as it appears (CCW) in face A, so A lies LEFT of
+      // e0→e1 and B lies right. A positive fold angle must move the child
+      // toward +z (valley from the front, matching hingeAngle and the
+      // sample's degrees): rotating about e1→e0 lifts the right side, about
+      // e0→e1 the left.
+      const [i, j] = otherIsB ? [h.e[1], h.e[0]] : [h.e[0], h.e[1]]
+      tree.push({
+        child: other, parent: p, hinge,
+        ax: pattern.vertices[i][0], ay: pattern.vertices[i][1],
+        bx: pattern.vertices[j][0], by: pattern.vertices[j][1],
+      })
+      queue.push(other)
+    }
+  }
+
+  // One adjacent face per drawn line (for its transform).
+  const lineFace = pattern.lines.map(([i, j]) => {
+    for (let f = 0; f < nf; f++) {
+      const tri = pattern.faces[f]
+      if (tri.includes(i) && tri.includes(j)) return f
+    }
+    return 0
+  })
+
+  const positions = new Float32Array(nf * 9)
+  const linePositions = new Float32Array(pattern.lines.length * 6)
+  const transforms: Affine[] = Array.from({ length: nf }, () => new Float64Array(IDENTITY))
+  const local: Affine = new Float64Array(12)
+
+  const apply = (t: Affine, x: number, y: number, out: Float32Array, o: number): void => {
+    out[o] = t[0] * x + t[1] * y + t[3]
+    out[o + 1] = t[4] * x + t[5] * y + t[7]
+    out[o + 2] = t[8] * x + t[9] * y + t[11]
+  }
+
+  function step(fracs: Record<string, number>): void {
+    transforms[root].set(IDENTITY)
+    for (const te of tree) {
+      const h = pattern.hinges[te.hinge]
+      const theta = h.group === null ? 0 : h.target * (fracs[h.group] ?? 0)
+      if (theta === 0) {
+        transforms[te.child].set(transforms[te.parent])
+      } else {
+        rotAboutLine2D(te.ax, te.ay, te.bx, te.by, theta, local)
+        mulAffine(transforms[te.parent], local, transforms[te.child])
+      }
+    }
+    for (let f = 0; f < nf; f++) {
+      const [a, b, c] = pattern.faces[f]
+      const t = transforms[f]
+      apply(t, pattern.vertices[a][0], pattern.vertices[a][1], positions, f * 9)
+      apply(t, pattern.vertices[b][0], pattern.vertices[b][1], positions, f * 9 + 3)
+      apply(t, pattern.vertices[c][0], pattern.vertices[c][1], positions, f * 9 + 6)
+    }
+    pattern.lines.forEach(([i, j], li) => {
+      const t = transforms[lineFace[li]]
+      apply(t, pattern.vertices[i][0], pattern.vertices[i][1], linePositions, li * 6)
+      apply(t, pattern.vertices[j][0], pattern.vertices[j][1], linePositions, li * 6 + 3)
+    })
+  }
+
+  step({})
+  return { positions, linePositions, pattern, step }
+}
+
 // ── Presets ───────────────────────────────────────────────────────────────────
 // The traditional crane isn't a built-in preset here — it's the "Origami
 // Crane" sample program (src/samples.ts), which builds its crease pattern as

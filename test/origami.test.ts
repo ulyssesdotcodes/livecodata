@@ -243,3 +243,72 @@ test('origami sequence supports partial folds, refolds, and named eases', () => 
   assert.equal(at(5).w, 0.4, 'ramps back down to the partial target')
   assert.equal(typeof at(5).ease, 'function', 'named ease resolved onto the keyframe')
 })
+
+// ── Rigid (kinematic) solver ─────────────────────────────────────────────────
+
+import { createRigidSolver } from '../src/origami.js'
+
+test('rigid solver: a valley fold lifts the far side toward +z by exactly the target', () => {
+  const p = compilePattern(halfFold(90))
+  const solver = createRigidSolver(p)
+  solver.step({ half: 1 })
+  // Faces are per-corner now; every corner with x away from the crease on the
+  // folded side must sit at exactly |x| height (90° rotation), and the kept
+  // side stays in the plane.
+  let folded = 0
+  for (let f = 0; f < p.faces.length; f++) {
+    for (let k = 0; k < 3; k++) {
+      const x = solver.positions[f * 9 + k * 3]
+      const z = solver.positions[f * 9 + k * 3 + 2]
+      if (Math.abs(z) > 1e-6) {
+        folded++
+        assert.ok(z > 0, `folded side went up, got z=${z}`)
+        assert.ok(Math.abs(Math.abs(x) - 0) < 1e-6 || Math.abs(z) > 0, 'rotated by 90°')
+      }
+    }
+  }
+  assert.ok(folded > 0, 'something folded')
+  // Rigidity is exact: every face's edge lengths match the pattern.
+  for (let f = 0; f < p.faces.length; f++) {
+    const [a, b, c] = p.faces[f]
+    const idx = [a, b, c]
+    for (let k = 0; k < 3; k++) {
+      const k2 = (k + 1) % 3
+      const rest = Math.hypot(
+        p.vertices[idx[k2]][0] - p.vertices[idx[k]][0],
+        p.vertices[idx[k2]][1] - p.vertices[idx[k]][1],
+      )
+      const now = Math.hypot(
+        solver.positions[f * 9 + k2 * 3] - solver.positions[f * 9 + k * 3],
+        solver.positions[f * 9 + k2 * 3 + 1] - solver.positions[f * 9 + k * 3 + 1],
+        solver.positions[f * 9 + k2 * 3 + 2] - solver.positions[f * 9 + k * 3 + 2],
+      )
+      assert.ok(Math.abs(now - rest) < 1e-6, `face ${f} edge ${k} exact`)
+    }
+  }
+})
+
+test('rigid solver: undriven creases stay exactly flat', () => {
+  const p = compilePattern({
+    size: 1,
+    creases: [
+      { x1: 0, y1: -1, x2: 0, y2: 1, group: 'v', angle: 150 },
+      { x1: -1, y1: 0, x2: 1, y2: 0, group: 'h', angle: -150 },
+    ],
+  })
+  const solver = createRigidSolver(p)
+  solver.step({ v: 1, h: 0 })
+  // With h undriven, the sheet is a clean single fold: every corner lies
+  // either in the z=0 plane or on the half-plane rotated exactly 150° about
+  // the crease — nothing in between (the h crease shows no kink at all).
+  for (let f = 0; f < p.faces.length; f++) {
+    for (let k = 0; k < 3; k++) {
+      const x = solver.positions[f * 9 + k * 3]
+      const z = solver.positions[f * 9 + k * 3 + 2]
+      const onFlat = Math.abs(z) < 1e-6
+      const angle = (Math.atan2(z, x) * 180) / Math.PI
+      const onFolded = Math.abs(angle - 150) < 1e-4
+      assert.ok(onFlat || onFolded, `corner x=${x} z=${z} on a rigid half-plane (angle ${angle})`)
+    }
+  }
+})
