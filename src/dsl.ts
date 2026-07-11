@@ -781,21 +781,25 @@ export class OrigamiBuilder {
   private _spec: PatternSpec
   private _ctx: DSLContext | null
   private _id: unknown = 'paper'
+  // Default sequence() steps, captured by folds().
+  private _steps: Row[] = []
 
   constructor(spec: PatternSpec, ctx: DSLContext | null) {
     this._spec = spec
     this._ctx = ctx
   }
 
+  private _with(creases: CreaseSpec[], steps?: Row[]): OrigamiBuilder {
+    const next = new OrigamiBuilder({ ...this._spec, creases }, this._ctx)
+    next._id = this._id
+    next._steps = steps ?? this._steps
+    return next
+  }
+
   // Add one crease line (clipped to the sheet; crossings with other creases
   // are split automatically). Returns a new builder, so chains don't mutate.
   crease(x1: number, y1: number, x2: number, y2: number, group = 'fold', angle = 180): OrigamiBuilder {
-    const next = new OrigamiBuilder(
-      { ...this._spec, creases: [...this._spec.creases, { x1, y1, x2, y2, group, angle }] },
-      this._ctx,
-    )
-    next._id = this._id
-    return next
+    return this._with([...this._spec.creases, { x1, y1, x2, y2, group, angle }])
   }
 
   // Add many creases at once from a plain array of { x1, y1, x2, y2, group,
@@ -803,12 +807,36 @@ export class OrigamiBuilder {
   // and over, for a whole crease pattern authored as data (e.g. a traditional
   // base built up in the program itself, not hidden behind a preset).
   creases(list: CreaseSpec[]): OrigamiBuilder {
-    const next = new OrigamiBuilder(
-      { ...this._spec, creases: [...this._spec.creases, ...list] },
-      this._ctx,
-    )
-    next._id = this._id
-    return next
+    return this._with([...this._spec.creases, ...list])
+  }
+
+  // One table = the whole folding, written like physical origami steps. Each
+  // row is a fold: a crease LINE in original-sheet coordinates plus a degree
+  // (`deg`; + folds toward the viewer, − away) and its timing (`at`, `dur`,
+  // `to` — the sequence() columns). Rows sharing a `fold` name move together
+  // as one motion (a collapse, a mirrored pair); a row with timing but NO
+  // line re-targets an earlier fold by name (flapping, unfolding). The lines
+  // join the crease pattern, and the timings become the default steps for
+  // sequence() — so as the timeline advances, the paper folds step by step.
+  folds(steps: Table | Row[]): OrigamiBuilder {
+    const rows = steps instanceof Table ? steps.rows : steps ?? []
+    const creases = [...this._spec.creases]
+    const sched: Row[] = []
+    rows.forEach((r, i) => {
+      if (!r) return
+      const group = r.fold != null && r.fold !== '' ? String(r.fold) : `fold${i}`
+      const line = [r.x1, r.y1, r.x2, r.y2]
+      if (line.every((v) => typeof v === 'number' && Number.isFinite(v))) {
+        const angle = typeof r.deg === 'number' ? r.deg
+          : typeof r.angle === 'number' ? r.angle : 180
+        creases.push({
+          x1: r.x1 as number, y1: r.y1 as number,
+          x2: r.x2 as number, y2: r.y2 as number, group, angle,
+        })
+      }
+      if ((r.at ?? r.beat) != null) sched.push({ ...r, fold: group })
+    })
+    return this._with(creases, sched)
   }
 
   groups(): string[] {
@@ -833,9 +861,10 @@ export class OrigamiBuilder {
   // (aliases: group/beat; dur defaults to 1 beat, to defaults to 1 = fully
   // folded; ease is an easing fn or its name, e.g. "easeInOut"). Steps may
   // overlap freely — each keyframe carries every scheduled group's value.
-  sequence(steps: Table | Row[], opts: { id?: unknown } = {}): Table {
+  // With no argument, uses the steps captured by folds().
+  sequence(steps?: Table | Row[] | null, opts: { id?: unknown } = {}): Table {
     const id = opts.id ?? this._id
-    const rows = steps instanceof Table ? steps.rows : steps ?? []
+    const rows = steps instanceof Table ? steps.rows : steps ?? this._steps
     const norm: FoldStep[] = rows
       .filter((r) => r && (r.fold ?? r.group) != null && (r.at ?? r.beat) != null)
       .map((r) => {

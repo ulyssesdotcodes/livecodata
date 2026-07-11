@@ -187,6 +187,27 @@ test('origami().creases adds many creases at once from a plain array of objects'
   assert.deepEqual(mixedPattern.groups.sort(), ['c', 'd'])
 })
 
+test('origami().folds turns fold-step rows into creases plus a default sequence', () => {
+  const paper = dsl.origami().folds([
+    // A physical step: a line in sheet coordinates + a degree + timing.
+    { fold: 'half', x1: 0, y1: -1, x2: 0, y2: 1, deg: 150, at: 1, dur: 2, to: 1 },
+    // Timing-only row: re-folds the earlier step by name (here: unfolds it).
+    { fold: 'half', at: 5, dur: 1, to: 0 },
+    // No fold name → auto-named group, still a step of its own.
+    { x1: -1, y1: 0, x2: 1, y2: 0, deg: -90, at: 2, dur: 1, to: 1 },
+  ])
+  const pattern = paper.spawn({ id: 'p' }).rows[0].pattern as { groups: string[] }
+  assert.ok(pattern.groups.includes('half'))
+  assert.equal(pattern.groups.length, 2)
+  const auto = pattern.groups.find((g) => g !== 'half')!
+
+  const seq = paper.sequence().rows
+  const at = (beat: number): Row => seq.find((r) => r.beat === beat)!
+  assert.equal(at(3).half, 1, 'folded after its ramp')
+  assert.equal(at(3)[auto], 1, 'auto-named fold ramps on its own timing')
+  assert.equal(at(6).half, 0, 'the timing-only row unfolds it again')
+})
+
 test('origami sequence bakes fold steps into all-group keyframes', () => {
   const paper = dsl.origami()
     .crease(0, -1, 0, 1, 'a', 90)
