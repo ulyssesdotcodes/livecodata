@@ -41,95 +41,82 @@ define("scene", (rand, table) => table("events").rasterize(8))
   },
   {
     name: "Origami Square Base",
-    code: `// livecodata — Origami Square Base
+    code: `// livecodata — Origami Square Base, part 1: the squash to the standing T
 // A square of paper folds itself the way origami is actually written down:
 // each instruction folds or REFLECTS the paper along a line through two
 // points on KNOWN EDGES — the paper's own edges, or an edge created by a
-// previous fold. Nobody draws a crease pattern: the pattern is what the
-// instructions leave behind. Press "Run" (or Cmd/Ctrl-Enter), then hit Play.
+// previous fold. Press "Run" (or Cmd/Ctrl-Enter), then hit Play.
 //
 // The instructions are ONE editable table ("steps" in the table panel):
 //   step   a name — later rows reference the edge this fold created, and a
-//          row re-using the name re-drives that fold (see below)
-//   op     "reflect" mirrors EVERYTHING on one side of the line over it (a
-//          flat 180° fold through every layer); "fold" rotates just the flap
+//          row re-using the name re-drives that fold (whole with no line,
+//          or just the stretch between p1/p2 given on its own edge)
+//   op     "reflect" mirrors EVERYTHING on one side of the line (a flat
+//          180° fold through every layer); "fold" rotates just the flap
 //          connected to \`move\` by \`deg\` degrees
-//   p1,p2  the two points defining the fold line. Every position sits ON A
-//          KNOWN EDGE — that is the whole language:
-//            "bottom@t" "top@t" "left@t" "right@t"   a fraction t along that
-//                      edge of the PAPER (bottom/top run left→right,
-//                      left/right run bottom→top), wherever the folding has
-//                      carried it — coincident layers are one point
-//            "name@t"  a fraction t along the edge CREATED by the earlier
-//                      fold \`name\` — "diag@0.5" is its midpoint
+//   p1,p2  the fold line, each point ON A KNOWN EDGE:
+//            "bottom@t" "top@t" "left@t" "right@t"  a fraction t along that
+//                      edge of the PAPER, wherever folding has carried it
+//            "name@t"  a fraction t along the edge CREATED by fold \`name\`
 //   move   a point (same language) on the side that moves
 //   dir    +1 folds toward you, −1 away
-//   at,dur the beat the fold starts, and how many beats it takes
-//   to     how far to drive the fold: 1 folded, 0 open, −1 folded the
-//          OTHER way (same flat endpoint, reached through the other side)
-// A row re-using a fold's name re-drives it: whole with no line, or — with
-// p1/p2 given on the fold's OWN edge — just that stretch of its crease.
+//   at,dur,to  timing, and how far to drive (1 folded, 0 open, − beyond)
+// Fold angles are the PAPER's own: a valley is a valley on its layer, so
+// one fold through a stack moves the front layer toward you and the back
+// layer away — which is what makes a collapse possible at all.
 //
-// The square base, the way hands actually make it:
-//   1. fold along a diagonal — the PRE-CREASE — then OPEN the sheet again
-//   2. reflect along the line from the coincident paper-edge midpoints to
-//      the midpoint of the diagonal. This is the COLLAPSE: the front layer
-//      folds toward you and the back layer away — both inward — while the
-//      diagonal refolds underneath: its half inside the corner one way, its
-//      other half the other way. Halfway through, seen from the top it is a
-//      T; from the front a <|; from the side a <|> — the middle "|" is the
-//      diagonal's crease standing upright between the two inward wedges.
-//      The "diag" rows below ARE that motion: the vertex mechanism between
-//      the four creases meeting at the paper's centre, sampled along its
-//      exact rigid path (every edge stays together, nothing stretches).
-//   3. the same reflection for the other pair of midpoints.
-// All four corners land on a single point, the paper's centre becomes the
-// opposite corner of the diamond, and the two reflections' edges become the
-// base's sides. Scrubbing backwards physically unfolds the paper.
+// THIS SAMPLE: fold the triangle, then squash it around its middle. Five
+// edges fold at once, all meeting at the centre of the triangle's long
+// edge (the paper's centre):
+//   - the centre line of the triangle, FRONT layer: a valley   ("s1")
+//   - the same line, BACK layer: a valley on its own side      (emerges)
+//   - centre → middle of the doubled edge, FRONT: a mountain   ("mtn")
+//   - the same on the BACK: a mountain                         ("mtn")
+//   - the right half of the triangle's long edge UNFOLDS flat  ("diag@…")
+// The mtn/s1 rows are keyframes along the squash's exact rigid path (the
+// five creases are one mechanism — drive three, the paper does the rest,
+// and every edge stays glued). It ends standing: <| from the front,
+// <|> from the side, a T from the top — then the camera walks those views.
 
 define("steps", () =>
   editable("steps", {
     step: "string", op: "string", p1: "string", p2: "string",
-    move: "string", dir: "number", at: "number", dur: "number", to: "number",
+    move: "string", dir: "number", deg: "number", at: "number", dur: "number", to: "number",
   }, [
-    // 1. pre-crease the diagonal, then open the sheet flat again
-    { step: "diag", op: "reflect", p1: "bottom@0",  p2: "top@1",    move: "bottom@1", dir: -1, at: 1, dur: 2, to: 1 },
-    { step: "diag", at: 3.5, dur: 1, to: 0 },
-    // 2. the collapse: the reflection…
-    { step: "s1",   op: "reflect", p1: "right@0.5", p2: "diag@0.5", move: "right@1",  dir: 1,  at: 5, dur: 2, to: 1 },
-    //    …while the diagonal refolds through the collapse: the half inside
-    //    the moving corner one way, the still half the other — coupled
-    //    keyframes along the centre vertex's exact folding path.
-    { step: "diag", p1: "diag@0.5", p2: "diag@1",   at: 5,   dur: 0.5, to: 0.1814 },
-    { step: "diag", p1: "diag@0.5", p2: "diag@1",   at: 5.5, dur: 0.5, to: 0.3918 },
-    { step: "diag", p1: "diag@0.5", p2: "diag@1",   at: 6,   dur: 0.5, to: 0.6627 },
-    { step: "diag", p1: "diag@0.5", p2: "diag@1",   at: 6.5, dur: 0.5, to: 1 },
-    { step: "diag", p1: "diag@0",   p2: "diag@0.5", at: 5,   dur: 0.5, to: -0.1814 },
-    { step: "diag", p1: "diag@0",   p2: "diag@0.5", at: 5.5, dur: 0.5, to: -0.3918 },
-    { step: "diag", p1: "diag@0",   p2: "diag@0.5", at: 6,   dur: 0.5, to: -0.6627 },
-    { step: "diag", p1: "diag@0",   p2: "diag@0.5", at: 6.5, dur: 0.5, to: -1 },
-    // 3. the other side of the base
-    { step: "s2",   op: "reflect", p1: "left@0.5",  p2: "diag@0.5", move: "left@0",   dir: -1, at: 8, dur: 2, to: 1 },
+    // 1. the triangle — and it STAYS folded
+    { step: "diag", op: "reflect", p1: "bottom@0", p2: "top@1", move: "bottom@1", dir: -1, at: 1, dur: 2, to: 1 },
+    // 2. the squash: mountains + centre valleys + the spine opening flat,
+    //    keyframed together along the mechanism's path
+    { step: "mtn", op: "fold", deg: 90, p1: "diag@0.5", p2: "top@0.75", move: "top@1", at: 4, dur: 0.5, to: -0.392 },
+    { step: "s1", op: "reflect", p1: "right@0.5", p2: "diag@0.5", move: "right@1", dir: 1, at: 4, dur: 0.5, to: 0.086 },
+    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 4, dur: 2, to: 0 },
+    { step: "mtn", at: 4.5, dur: 0.5, to: -0.783 },
+    { step: "s1",  at: 4.5, dur: 0.5, to: 0.166 },
+    { step: "mtn", at: 5,   dur: 0.5, to: -1.152 },
+    { step: "s1",  at: 5,   dur: 0.5, to: 0.226 },
+    { step: "mtn", at: 5.5, dur: 0.5, to: -1.46 },
+    { step: "s1",  at: 5.5, dur: 0.5, to: 0.249 },
   ]))
 
-// Feed the instructions to a sheet of paper: steps() resolves each row
-// against the exactly-folded model and spawn()/sequence() emit the scene
-// object and its beat-timed fold keyframes. Rotation keyframes turn the
-// model as it folds (rx/ry/rz interpolate like everything else).
+// Feed the instructions to a sheet of paper, then walk the camera around
+// the finished T: face-on for the <|, around the side for the <|>, and
+// overhead for the T.
 define("events", (rand, table) => {
   const paper = origami().steps(table("steps"))
-  return paper.spawn({ id: "base", color: 0xd94f2a, py: 0.1, pz: 1.2, rx: -0.9 })
+  return paper.spawn({ id: "base", color: 0xd94f2a, py: -0.2, pz: 1.2, rx: -0.9, ry: 0.2 })
     .concat(paper.sequence())
     .concat(rows([
-      { id: "base", type: "update", beat: 5,  py: 0, rx: -0.55, ry: 0.35 },
-      { id: "base", type: "update", beat: 7,  py: 0, rx: -0.5,  ry: 0.55 },
-      { id: "base", type: "update", beat: 11, py: 0, rx: -0.45, ry: 0.9 },
+      { id: "base", type: "update", beat: 4,   py: -0.2, rx: -0.75, ry: 0.2, rz: 0 },
+      { id: "base", type: "update", beat: 6,   py: -0.5, rx: -1.57, ry: 0,    rz: 0.34 },
+      { id: "base", type: "update", beat: 7,   py: -0.5, rx: -1.57, ry: 0,    rz: 0.34 },
+      { id: "base", type: "update", beat: 8.5, py: -0.5, rx: -1.57, ry: 1.57, rz: 0.34 },
+      { id: "base", type: "update", beat: 10,  py: 0.1,  rx: -0.05, ry: 0,    rz: 0.34 },
     ]))
 })
 
-// Bake to a 12-beat loop cache — when the loop wraps, the paper opens flat
+// Bake to an 11-beat loop cache — when the loop wraps, the paper opens flat
 // and folds itself all over again.
-define("scene", (rand, table) => table("events").rasterize(12))
+define("scene", (rand, table) => table("events").rasterize(11))
 
 // A whisper of video feedback (the rendered scene is hydra's s0) so the
 // paper leaves faint trails as it moves. Delete this view for a clean look.
@@ -139,15 +126,12 @@ define("hydra", () => rows([
 ]))
 
 // Things to try, live in the "steps" tab:
-//   - Delete the eight coupling "diag" rows and run again: the corner still
-//     lands in the right place, but it swings over as a pressed stack
-//     instead of collapsing inward through the standing T.
-//   - Re-drive a fold: add { step: "s1", at: 11, dur: 1, to: 0 } (no line)
-//     and the corner opens back up before the loop ends.
-//   - Flip a \`dir\` and watch that fold move through the other half-space.
-//   - Change p2 of s1/s2 to "diag@0.3" and the corners miss each other — the
-//     reflections resolve against the REAL folded paper, so every edit stays
-//     a legal fold.
+//   - Delete the four mtn/s1 keyframe pairs after the first: the squash
+//     stops a quarter of the way in and holds — scrub to study it.
+//   - Drive "mtn" to 0 at beat 8 and the T folds back into the triangle.
+//   - Move the mountain: p2 "top@0.6" pulls the ridge toward the centre
+//     line — the mechanism changes and the paper visibly strains (the
+//     keyframes below belong to the "top@0.75" mechanism).
 `,
   },
   {

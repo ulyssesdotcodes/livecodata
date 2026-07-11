@@ -47,64 +47,110 @@ define("joined", () => table("cities").join(rows([{ id: "a", note: "hit" }]), "i
   assert.ok(tables.has('base'), 'flashed frame traces to the base object')
 })
 
-test('Origami Square Base sample folds exactly: four corners gather at one point', () => {
-  // The whole model is authored as INSTRUCTIONS (fold/reflect along a line
-  // through two points on known edges) in the sample's editable table, so
-  // this is the one place the construction is checked end-to-end: run the
-  // sample, take the compiled program off the create row, and assert the
-  // square base's exact landmarks.
+test('Origami Square Base sample: the five-crease squash stands the T exactly', () => {
+  // The sample folds the triangle, then squashes it around its middle: the
+  // centre valleys, the two mountains to the doubled edge's midpoint, and
+  // the spine unfolding flat — one mechanism, keyframed along its exact
+  // rigid path. Run the sample and check the standing T.
   const sample = SAMPLES.find((s) => s.name === 'Origami Square Base')!
   const { views } = createRuntime({
     editableRows: (_name, _schema, seedRows) => seedRows ?? [],
   }).run(sample.code, { seed: 1 })
 
   const events = views.get('events')!
-  assert.ok(events.length > 0)
   const create = events.rows.find((r) => r.type === 'create')!
   assert.equal(create.shape, 'origami')
   const program = create.program as FoldProgram
-  // Three folds, plus the two halves of the diagonal carved out by the
-  // collapse's coupling rows (the centre-vertex mechanism).
-  assert.deepEqual(program.groups, ['diag', 's1', 'diag~0.5-1', 'diag~0-0.5', 's2'])
-  assert.equal(program.warnings.length, 0, program.warnings.join('; '))
+  assert.deepEqual(program.groups, ['diag', 'mtn', 's1', 'diag~0.5-1'])
+  // The mountains are a transient, non-flat fold — the one expected warning.
+  assert.equal(program.warnings.length, 1, program.warnings.join('; '))
+  assert.ok(program.warnings[0].includes('mtn'))
 
-  // The exact folded model: all four paper corners on ONE point, √2 from the
-  // paper's centre (the base's opposite corner); the four edge midpoints in
-  // TWO stacks (the base's side corners) √2 apart, each 1 from the centre.
-  const fold = (p: Vec2): Vec2 => foldedPosition(program.faces, p)!
-  const corners: Vec2[] = [[1, 1], [-1, 1], [-1, -1], [1, -1]]
-  const fc = corners.map(fold)
-  for (const p of fc) {
-    assert.ok(Math.hypot(p[0] - fc[0][0], p[1] - fc[0][1]) < 1e-9, 'corners stack at one point')
-  }
-  const centre = fold([0, 0])
-  const cornerDist = Math.hypot(fc[0][0] - centre[0], fc[0][1] - centre[1])
-  assert.ok(Math.abs(cornerDist - Math.SQRT2) < 1e-9, `corner stack √2 from centre (${cornerDist})`)
-  const mids: Vec2[] = [[1, 0], [0, 1], [-1, 0], [0, -1]]
-  const fm = mids.map(fold)
-  assert.ok(Math.hypot(fm[0][0] - fm[1][0], fm[0][1] - fm[1][1]) < 1e-9, 'right/top midpoints stack')
-  assert.ok(Math.hypot(fm[2][0] - fm[3][0], fm[2][1] - fm[3][1]) < 1e-9, 'left/bottom midpoints stack')
-  const midSep = Math.hypot(fm[0][0] - fm[2][0], fm[0][1] - fm[2][1])
-  assert.ok(Math.abs(midSep - Math.SQRT2) < 1e-9, `side corners √2 apart (${midSep})`)
-
-  // Playback: at the end of the baked schedule the paper stacks into a thin
-  // flat packet (the player backs each 180° fold off a sliver so layers
-  // don't z-fight). Read the final fractions off the last keyframe — the
-  // collapse leaves the diagonal's halves at +1/−1, both flat.
-  const player = createFoldPlayer(program)
-  const updates = events.rows.filter((r) => r.type === 'update' && typeof r.s2 === 'number')
+  // Take the fractions at the end of the squash off the baked keyframes and
+  // check the T: the spine (right half of the triangle's long edge) lies
+  // flat ON the table pointing up-right, the mountain ridge stands mid-air,
+  // the centre line's end stays on the fold line — and nothing stretches.
+  const updates = events.rows.filter((r) => r.type === 'update' && typeof r.mtn === 'number')
   const last = updates.reduce((a, b) => ((a.beat as number) > (b.beat as number) ? a : b))
-  const finals: Record<string, number> = {}
-  for (const g of program.groups) finals[g] = typeof last[g] === 'number' ? last[g] as number : 0
-  player.step(finals)
-  let zLo = Infinity
-  let zHi = -Infinity
-  for (let i = 2; i < player.positions.length; i += 3) {
-    assert.ok(Number.isFinite(player.positions[i]))
-    zLo = Math.min(zLo, player.positions[i])
-    zHi = Math.max(zHi, player.positions[i])
+  const fracs: Record<string, number> = {}
+  for (const g of program.groups) fracs[g] = typeof last[g] === 'number' ? last[g] as number : 0
+  const player = createFoldPlayer(program)
+  player.step(fracs)
+
+  const cornerPos = (probe: Vec2, pt: Vec2): number[] => {
+    const fi = program.faces.findIndex((f) => {
+      for (let i = 0; i < f.poly.length; i++) {
+        const a = f.poly[i]
+        const b = f.poly[(i + 1) % f.poly.length]
+        if ((b[0] - a[0]) * (probe[1] - a[1]) - (b[1] - a[1]) * (probe[0] - a[0]) < -1e-7) return false
+      }
+      return true
+    })
+    let base = 0
+    for (let i = 0; i < fi; i++) base += (program.faces[i].poly.length - 2) * 3
+    const f = program.faces[fi]
+    for (let i = 1; i + 1 < f.poly.length; i++) {
+      const tri = [f.poly[0], f.poly[i], f.poly[i + 1]]
+      for (let k = 0; k < 3; k++) {
+        if (Math.hypot(tri[k][0] - pt[0], tri[k][1] - pt[1]) < 1e-9) {
+          const o = (base + (i - 1) * 3 + k) * 3
+          return [player.positions[o], player.positions[o + 1], player.positions[o + 2]]
+        }
+      }
+    }
+    throw new Error('corner not found')
   }
-  assert.ok(zHi - zLo < 0.15, `square base stacks flat (z extent ${(zHi - zLo).toFixed(3)})`)
+  const near = (a: number[], b: number[], eps: number): boolean =>
+    Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < eps
+
+  // Spine tip flat on the table at √2·(1/3, 2√2/3): the top-view T's stem.
+  assert.ok(near(cornerPos([0.9, 0.97], [1, 1]), [Math.SQRT2 / 3, 4 / 3, 0], 0.02),
+    `tip at ${cornerPos([0.9, 0.97], [1, 1])}`)
+  // The mountain ridge's outer end stands mid-air over the doubled edge.
+  assert.ok(near(cornerPos([0.4, 0.9], [0.5, 1]), [0.354, 1, 0.354], 0.02),
+    `ridge at ${cornerPos([0.4, 0.9], [0.5, 1])}`)
+  // The centre line's outer end stays put on the fold line.
+  assert.ok(near(cornerPos([-0.3, 0.8], [0, 1]), [0, 1, 0], 0.02))
+  // The still triangle hasn't moved.
+  assert.ok(near(cornerPos([-0.9, -0.8], [-1, -1]), [-1, -1, 0], 1e-6))
+
+  // Rigid throughout: sample a few beats of the baked schedule and check no
+  // face edge stretches (the welded mesh turns any mechanism error into
+  // stretch — there must be none).
+  const kfAt = (beat: number): Record<string, number> => {
+    const fr: Record<string, number> = {}
+    for (const g of program.groups) {
+      let v = 0
+      for (const r of updates) {
+        if ((r.beat as number) <= beat && typeof r[g] === 'number') v = r[g] as number
+      }
+      fr[g] = v
+    }
+    return fr
+  }
+  const flat = (() => {
+    player.step({})
+    return Float32Array.from(player.positions)
+  })()
+  const stretchNow = (): number => {
+    let worst = 0
+    for (let i = 0; i + 8 < flat.length; i += 9) {
+      for (const [a, b] of [[0, 3], [3, 6], [6, 0]]) {
+        const rest = Math.hypot(
+          flat[i + a] - flat[i + b], flat[i + a + 1] - flat[i + b + 1], flat[i + a + 2] - flat[i + b + 2])
+        const now = Math.hypot(
+          player.positions[i + a] - player.positions[i + b],
+          player.positions[i + a + 1] - player.positions[i + b + 1],
+          player.positions[i + a + 2] - player.positions[i + b + 2])
+        worst = Math.max(worst, Math.abs(now - rest))
+      }
+    }
+    return worst
+  }
+  for (const beat of [2, 4.5, 5, 5.5, 6]) {
+    player.step(kfAt(beat))
+    assert.ok(stretchNow() < 0.03, `beat ${beat}: stretch ${stretchNow().toFixed(4)}`)
+  }
 
   const scene = views.get('scene')!
   assert.ok(scene.length > 0, 'rasterized to a frame cache')
