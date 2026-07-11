@@ -106,29 +106,39 @@ test('Origami Crane sample folds the traditional bird base without blowing up', 
   checkKawasaki(d, -d)
   checkKawasaki(-d, d)
 
-  // Fold the tutorial's arc as the sample schedules it — a loose collapse to
-  // 0.55, then each petal fold completes its side — and check the resulting
+  // Fold the sample's stepwise path: collapse into the TRUE square base
+  // (eight segments folded backward), then the phased petal fold — open the
+  // pockets, swing the corners through, press flat — and check the resulting
   // bird base is numerically sane and inextensible.
-  const segs = [
-    'd1', 'd2', 'd3', 'd4', 'a1', 'a2', 'a3', 'a4',
-    'bx1', 'bx2', 'bx3', 'bx4', 'by1', 'by2', 'by3', 'by4',
-  ]
-  const front = ['d3', 'd4', 'a1', 'a2', 'bx1', 'bx2', 'by3', 'by4']
-  const back = segs.filter((g) => !front.includes(g))
+  const squareTo: Record<string, number> = {
+    d2: 1, d3: 1, a1: 1, a4: 1, bx1: 1, bx3: 1, by1: 1, by3: 1,
+    d1: -1, d4: -1, a2: -1, a3: -1, bx2: -1, bx4: -1, by2: -1, by4: -1,
+  }
+  const flips = ['d1', 'd4', 'a2', 'a3', 'bx2', 'bx4', 'by2', 'by4']
   const solver = createFoldSolver(pattern)
   const t: Record<string, number> = { petalF: 0, petalB: 0 }
-  for (let i = 0; i < 80; i++) {
-    for (const g of segs) t[g] = 0.55 * ((i + 1) / 80)
-    solver.step(t, 40)
-  }
-  for (const [petal, group] of [['petalF', front], ['petalB', back]] as [string, string[]][]) {
-    for (let i = 0; i < 80; i++) {
-      const f = (i + 1) / 80
-      for (const g of group) t[g] = 0.55 + 0.45 * f
-      t[petal] = f
+  const ramp = (n: number, set: (f: number) => void): void => {
+    for (let i = 0; i < n; i++) {
+      set((i + 1) / n)
       solver.step(t, 40)
     }
   }
+  ramp(80, (f) => {
+    for (const g in squareTo) t[g] = squareTo[g] * f
+  })
+  for (let i = 0; i < 40; i++) solver.step(t, 40) // rest at the square base
+  ramp(40, (f) => {
+    t.petalF = 0.6 * f
+    t.petalB = 0.6 * f
+  })
+  ramp(60, (f) => {
+    for (const g of flips) t[g] = -1 + 1.7 * f
+  })
+  ramp(40, (f) => {
+    t.petalF = 0.6 + 0.4 * f
+    t.petalB = 0.6 + 0.4 * f
+    for (const g of flips) t[g] = 0.7 + 0.3 * f
+  })
   for (let i = 0; i < 60; i++) solver.step(t, 40)
   for (let i = 0; i < solver.positions.length; i++) {
     assert.ok(Number.isFinite(solver.positions[i]), 'positions stay finite')
