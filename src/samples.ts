@@ -68,15 +68,18 @@ define("scene", (rand, table) => table("events").rasterize(8))
 // THIS SAMPLE: fold the triangle, then squash it around its middle. Five
 // edges fold at once, all meeting at the centre of the triangle's long
 // edge (the paper's centre):
-//   - the centre line of the triangle, FRONT layer: a valley   ("s1")
+//   - the fold that would HALVE the triangle (right-angle corner to the
+//     centre), FRONT layer: a valley                           ("s1")
 //   - the same line, BACK layer: a valley on its own side      (emerges)
-//   - centre → middle of the doubled edge, FRONT: a mountain   ("mtn")
+//   - centre → the coincident edge midpoints, FRONT: a mountain ("mtn")
 //   - the same on the BACK: a mountain                         ("mtn")
 //   - the right half of the triangle's long edge UNFOLDS flat  ("diag@…")
 // The mtn/s1 rows are keyframes along the squash's exact rigid path (the
 // five creases are one mechanism — drive three, the paper does the rest,
-// and every edge stays glued). It ends standing: <| from the front,
-// <|> from the side, a T from the top — then the camera walks those views.
+// and every edge stays glued). It ends as the standing square-base pocket:
+// <| from the front, <|> from the side, a T from the top — the tip arrives
+// beside the right-angle corner, one press away from the square base. The
+// camera walks those views after the fold.
 
 define("steps", () =>
   editable("steps", {
@@ -87,15 +90,15 @@ define("steps", () =>
     { step: "diag", op: "reflect", p1: "bottom@0", p2: "top@1", move: "bottom@1", dir: -1, at: 1, dur: 2, to: 1 },
     // 2. the squash: mountains + centre valleys + the spine opening flat,
     //    keyframed together along the mechanism's path
-    { step: "mtn", op: "fold", deg: 90, p1: "diag@0.5", p2: "top@0.75", move: "top@1", at: 4, dur: 0.5, to: -0.392 },
-    { step: "s1", op: "reflect", p1: "right@0.5", p2: "diag@0.5", move: "right@1", dir: 1, at: 4, dur: 0.5, to: 0.086 },
+    { step: "mtn", op: "fold", deg: 90, p1: "diag@0.5", p2: "right@0.5", move: "top@1", at: 4, dur: 0.5, to: -0.36 },
+    { step: "s1", op: "reflect", p1: "top@0", p2: "diag@0.5", move: "top@1", dir: 1, at: 4, dur: 0.5, to: 0.124 },
     { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 4, dur: 2, to: 0 },
-    { step: "mtn", at: 4.5, dur: 0.5, to: -0.783 },
-    { step: "s1",  at: 4.5, dur: 0.5, to: 0.166 },
-    { step: "mtn", at: 5,   dur: 0.5, to: -1.152 },
-    { step: "s1",  at: 5,   dur: 0.5, to: 0.226 },
-    { step: "mtn", at: 5.5, dur: 0.5, to: -1.46 },
-    { step: "s1",  at: 5.5, dur: 0.5, to: 0.249 },
+    { step: "mtn", at: 4.5, dur: 0.5, to: -0.78 },
+    { step: "s1",  at: 4.5, dur: 0.5, to: 0.249 },
+    { step: "mtn", at: 5,   dur: 0.5, to: -1.318 },
+    { step: "s1",  at: 5,   dur: 0.5, to: 0.372 },
+    { step: "mtn", at: 5.5, dur: 0.5, to: -1.929 },
+    { step: "s1",  at: 5.5, dur: 0.5, to: 0.475 },
   ]))
 
 // Feed the instructions to a sheet of paper, then walk the camera around
@@ -107,10 +110,10 @@ define("events", (rand, table) => {
     .concat(paper.sequence())
     .concat(rows([
       { id: "base", type: "update", beat: 4,   py: -0.2, rx: -0.75, ry: 0.2, rz: 0 },
-      { id: "base", type: "update", beat: 6,   py: -0.5, rx: -1.57, ry: 0,    rz: 0.34 },
-      { id: "base", type: "update", beat: 7,   py: -0.5, rx: -1.57, ry: 0,    rz: 0.34 },
-      { id: "base", type: "update", beat: 8.5, py: -0.5, rx: -1.57, ry: 1.57, rz: 0.34 },
-      { id: "base", type: "update", beat: 10,  py: 0.1,  rx: -0.05, ry: 0,    rz: 0.34 },
+      { id: "base", type: "update", beat: 6,   py: -0.4, rx: -1.57, ry: 0,    rz: -0.79 },
+      { id: "base", type: "update", beat: 7,   py: -0.4, rx: -1.57, ry: 0,    rz: -0.79 },
+      { id: "base", type: "update", beat: 8.5, py: -0.4, rx: -1.57, ry: 1.57, rz: -0.79 },
+      { id: "base", type: "update", beat: 10,  py: 0.1,  rx: -0.05, ry: 0,    rz: -0.79 },
     ]))
 })
 
