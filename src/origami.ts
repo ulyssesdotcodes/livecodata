@@ -1039,7 +1039,11 @@ export function createFoldPlayer(program: FoldProgram): FoldPlayer {
     faceM[root].set(IDENTITY)
     for (const te of tree) {
       const h = te.hinge
-      const theta = thetas[h.step]
+      // Fold angles live in the PAPER's frame — a valley is a valley on its
+      // own layer — so a crease on a face-down layer turns the other way in
+      // the world: one fold through a stack moves the front layer toward
+      // the viewer and the back layer away.
+      const theta = thetas[h.step] * h.sign
       if (theta === 0) {
         faceM[te.child].set(faceM[te.parent])
         continue
