@@ -29,6 +29,7 @@
 import { rasterizeRows } from './rasterize.js'
 import { withLineage, carry, unionLineage, getLineage, type Row } from './lineage.js'
 import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS } from './constants.js'
+import { compilePattern, fanPattern, type PatternSpec, type CreaseSpec } from './origami.js'
 import type { ColumnType } from './editable-tables.js'
 
 // ── Expr: a small, serializable, chainable expression over a row ─────────────
@@ -756,6 +757,162 @@ class PhysicsBuilder {
   }
 }
 
+// ── Origami ───────────────────────────────────────────────────────────────────
+// A sheet of paper plus creases, each in a named GROUP with a target fold
+// angle (degrees; + valley toward the viewer, − mountain). spawn() emits the
+// scene's create row (shape: "origami", with the compiled pattern riding along
+// as data); fold state is just numeric fields named after the groups —
+// 0 = flat, 1 = fully folded — so a fold schedule is ordinary update keyframes
+// and the baker interpolates them like any transform. sequence() is sugar that
+// turns sparse steps { fold, at, dur, to, ease } into those keyframes,
+// handling overlapping folds by baking every group's envelope value at every
+// breakpoint.
+
+interface FoldStep {
+  group: string
+  t0: number
+  t1: number
+  to: number
+  ease: ((t: number) => number) | null
+  start: number
+}
+
+export class OrigamiBuilder {
+  private _spec: PatternSpec
+  private _ctx: DSLContext | null
+  private _id: unknown = 'paper'
+
+  constructor(spec: PatternSpec, ctx: DSLContext | null) {
+    this._spec = spec
+    this._ctx = ctx
+  }
+
+  // Add one crease line (clipped to the sheet; crossings with other creases
+  // are split automatically). Returns a new builder, so chains don't mutate.
+  crease(x1: number, y1: number, x2: number, y2: number, group = 'fold', angle = 180): OrigamiBuilder {
+    const next = new OrigamiBuilder(
+      { ...this._spec, creases: [...this._spec.creases, { x1, y1, x2, y2, group, angle }] },
+      this._ctx,
+    )
+    next._id = this._id
+    return next
+  }
+
+  // Add many creases at once from a plain array of { x1, y1, x2, y2, group,
+  // angle } objects — the declarative counterpart of chaining .crease() over
+  // and over, for a whole crease pattern authored as data (e.g. a traditional
+  // base built up in the program itself, not hidden behind a preset).
+  creases(list: CreaseSpec[]): OrigamiBuilder {
+    const next = new OrigamiBuilder(
+      { ...this._spec, creases: [...this._spec.creases, ...list] },
+      this._ctx,
+    )
+    next._id = this._id
+    return next
+  }
+
+  groups(): string[] {
+    return compilePattern(this._spec).groups
+  }
+
+  // The create row: compiled pattern + all fold groups at 0 (flat sheet).
+  // Extra props (id, color, px/py/pz, rx/ry/rz, beat, …) merge over defaults.
+  spawn(props: Row = {}): Table {
+    const pattern = compilePattern(this._spec)
+    this._id = props.id ?? this._id
+    const zeros: Row = {}
+    for (const g of pattern.groups) zeros[g] = 0
+    return new Table([{
+      id: this._id, type: 'create', beat: 1, shape: 'origami',
+      px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, color: 0xd94f2a,
+      ...zeros, pattern, ...props,
+    }], this._ctx)
+  }
+
+  // Fold schedule → update keyframes. Steps: { fold, at, dur?, to?, ease? }
+  // (aliases: group/beat; dur defaults to 1 beat, to defaults to 1 = fully
+  // folded; ease is an easing fn or its name, e.g. "easeInOut"). Steps may
+  // overlap freely — each keyframe carries every scheduled group's value.
+  sequence(steps: Table | Row[], opts: { id?: unknown } = {}): Table {
+    const id = opts.id ?? this._id
+    const rows = steps instanceof Table ? steps.rows : steps ?? []
+    const norm: FoldStep[] = rows
+      .filter((r) => r && (r.fold ?? r.group) != null && (r.at ?? r.beat) != null)
+      .map((r) => {
+        const t0 = Number(r.at ?? r.beat)
+        const dur = r.dur != null ? Math.max(Number(r.dur), 1 / FRAMES_PER_BEAT) : 1
+        const easeRaw = r.ease
+        const ease = typeof easeRaw === 'function'
+          ? easeRaw as (t: number) => number
+          : typeof easeRaw === 'string' && easeRaw in EASINGS
+            ? EASINGS[easeRaw as keyof Easings]
+            : null
+        return {
+          group: String(r.fold ?? r.group), t0, t1: t0 + dur,
+          to: r.to != null ? Number(r.to) : 1, ease, start: 0,
+        }
+      })
+      .sort((a, b) => a.t0 - b.t0)
+
+    // Each step ramps from wherever its group's envelope sits at its start.
+    const byGroup = new Map<string, FoldStep[]>()
+    for (const s of norm) {
+      if (!byGroup.has(s.group)) byGroup.set(s.group, [])
+      byGroup.get(s.group)!.push(s)
+    }
+    const evalStep = (s: FoldStep, t: number): number => {
+      const p = Math.min(1, Math.max(0, (t - s.t0) / (s.t1 - s.t0)))
+      return s.start + (s.to - s.start) * (s.ease ? s.ease(p) : p)
+    }
+    for (const list of byGroup.values()) {
+      for (let i = 0; i < list.length; i++) {
+        list[i].start = i === 0 ? 0 : evalStep(list[i - 1], list[i].t0)
+      }
+    }
+    const valueAt = (group: string, t: number): number => {
+      const list = byGroup.get(group)!
+      let v = 0
+      for (const s of list) {
+        if (t <= s.t0) break
+        v = evalStep(s, t)
+      }
+      return v
+    }
+
+    // One keyframe per breakpoint, carrying every scheduled group. A segment
+    // that exactly spans a single eased step inherits its ease.
+    const times = [...new Set(norm.flatMap((s) => [s.t0, s.t1]))].sort((a, b) => a - b)
+    const out: Row[] = times.map((t, i) => {
+      const row: Row = { id, type: 'update', beat: t }
+      for (const g of byGroup.keys()) row[g] = valueAt(g, t)
+      const prev = i > 0 ? times[i - 1] : null
+      if (prev !== null) {
+        const eases = norm.filter((s) => s.ease && s.t0 === prev && s.t1 === t).map((s) => s.ease!)
+        if (eases.length && eases.every((e) => e === eases[0])) row.ease = eases[0]
+      }
+      return row
+    })
+    return new Table(out, this._ctx)
+  }
+}
+
+export interface OrigamiFactory {
+  // A bare square sheet spanning [-size, size]² (default size 1) — add your
+  // own creases with .crease() / .creases([...]).
+  (opts?: { size?: number }): OrigamiBuilder
+  // An accordion fan with one group per pleat ("fan0", "fan1", …), or pass
+  // { group } to gang every pleat into one fold.
+  fan(pleats?: number, opts?: { group?: string; angle?: number }): OrigamiBuilder
+}
+
+function makeOrigami(ctx: DSLContext | null): OrigamiFactory {
+  const factory = ((opts: { size?: number } = {}) =>
+    new OrigamiBuilder({ size: opts.size ?? 1, creases: [] }, ctx)) as OrigamiFactory
+  factory.fan = (pleats?: number, opts?: { group?: string; angle?: number }) =>
+    new OrigamiBuilder(fanPattern(pleats, opts), ctx)
+  return factory
+}
+
 class MathBuilder {
   private _fn: (t: number) => number
   private _ctx: DSLContext
@@ -826,6 +983,12 @@ export type DSLSurface = Easings & {
   json(data: Row[] | string | unknown): Table
   grid(cols: number, rowsN: number, opts?: { spacing?: number; y?: number }): Table
   physics(source: Table | Row[]): PhysicsBuilder
+  // Folding paper: origami() is a bare sheet (origami.fan(n) is the one
+  // built-in preset, an accordion). Chain .crease(x1,y1,x2,y2, group, angle)
+  // or .creases([...]) to build a whole crease pattern as data, then
+  // .spawn({ id, color, ... }) for the create row and .sequence(steps) for
+  // beat-timed fold keyframes.
+  origami: OrigamiFactory
   // A user-editable table: rows are entered/edited in the table panel (not
   // computed), keyed by `name` so edits persist across runs — stored as change
   // *events*, of which the visible table is the fold. `schema` declares the
@@ -874,6 +1037,7 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       return new Table(out, ctx)
     },
     physics: (source: Table | Row[]) => new PhysicsBuilder(source, ctx!),
+    origami: makeOrigami(ctx),
     editable: (name: string, schema: Record<string, ColumnType>, seedRows?: Row[]): Table => {
       const rows = (ctx?.editableRows?.(name, schema, seedRows) ?? []).map((r) => ({ ...r }))
       return new Table(rows, ctx).save(name)

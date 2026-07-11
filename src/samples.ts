@@ -40,6 +40,127 @@ define("scene", (rand, table) => table("events").rasterize(8))
 `,
   },
   {
+    name: "Origami Crane",
+    code: `// livecodata — Origami Crane
+// A square of paper folds itself into the traditional crane, then flaps its
+// wings on the beat. Press "Run" (or Cmd/Ctrl-Enter), then hit Play.
+//
+// origami() is a bare sheet; .crease(x1,y1,x2,y2, group, angle) or
+// .creases([...]) add fold lines — a line (clipped to the paper, split at
+// crossings) in a named GROUP with a target fold angle (degrees; + valley
+// folds toward you, − mountain away). Fold state is nothing special: a
+// numeric field per group on the scene rows, 0 = flat and 1 = fully folded,
+// interpolated between keyframes like any transform. The paper itself is
+// simulated — a little spring-mass sheet — so it eases into each crease, and
+// scrubbing backwards physically UNFOLDS it. (When the loop wraps, watch the
+// crane collapse flat and fold itself again.)
+
+// 1. The crease pattern, as DATA — a plain array of { x1, y1, x2, y2, group,
+//    angle } objects in [-1, 1]² sheet space, fed to .creases() below. This
+//    IS the crane: edit a coordinate or an angle here and Run to see it fold
+//    differently. Groups:
+//      base               — everything up to the bird base, folded as one motion
+//      neck, tail, head   — the staged point folds
+//      wings              — both wing folds (flap these!)
+const CRANE = []
+const base = (x1, y1, x2, y2, sign) => CRANE.push({ x1, y1, x2, y2, group: "base", angle: 165 * sign })
+
+// The traditional bird base: both diagonals and medians through the four
+// diagonal points (±d, ±d) and four median points (0, ±m), (±m, 0), where
+// d = √2 − 1 and m = 2 − √2 — every interior vertex satisfies Kawasaki's
+// theorem, so it folds flat. Each segment's mountain/valley sign below was
+// found by search (try every assignment consistent with Maekawa's theorem at
+// each interior vertex, fold with the solver, keep the one that folds
+// flattest with the least mid-fold strain) — try flipping one and Run again.
+const d = Math.SQRT2 - 1, m = 2 - Math.SQRT2
+base(-1, -1, -d, -d,  1); base(-d, -d, 0, 0, -1)   // (−1,−1) corner → neck/tail tip
+base( 1,  1,  d,  d, -1); base( d,  d, 0, 0,  1)   // (1,1) corner
+base( 1, -1,  d, -d, -1); base(-1,  1, -d,  d, -1) // wing corners
+base( d, -d,  0,  0,  1); base(-d,  d,  0,  0,  1)
+base( 1,  0,  m,  0,  1); base(0,  1, 0,  m,  1)   // medians
+base(-1,  0, -m,  0, -1); base(0, -1, 0, -m, -1)
+base( m,  0,  0,  0, -1); base(0,  m, 0,  0, -1)
+base(-m,  0,  0,  0,  1); base(0, -m, 0,  0,  1)
+// Petal octagon ring — every edge folds the same way.
+const ring = [[0, -m], [d, -d], [m, 0], [d, d], [0, m], [-d, d], [-m, 0], [-d, -d]]
+ring.forEach(([x1, y1], i) => { const [x2, y2] = ring[(i + 1) % 8]; base(x1, y1, x2, y2, -1) })
+
+// Staged details on top of the base: neck/tail kink their points upward, head
+// counter-folds near the neck's tip, wings sweep both flaps out. Each crosses
+// a flat-folded flap, so it's a mirrored PAIR of half-creases with opposite
+// signs — one layer folds mountain where its mirror image folds valley (a
+// single sign across the whole line just crumples the point).
+const mirrorPair = (group, angle, bx, by) => {
+  const tx = (bx + by) / 2
+  CRANE.push({ x1: bx, y1: by, x2: tx, y2: tx, group, angle })
+  CRANE.push({ x1: tx, y1: tx, x2: by, y2: bx, group, angle: -angle })
+}
+mirrorPair("neck", 136, -1, -0.2)
+mirrorPair("head", 144, -1, -0.75)
+mirrorPair("tail", 132, 1, 0.2)
+CRANE.push(
+  { x1: 0.45, y1: -1, x2: 0.725, y2: -0.725, group: "wings", angle: 60 },
+  { x1: 0.725, y1: -0.725, x2: 1, y2: -0.55, group: "wings", angle: -60 },
+  { x1: -1, y1: 0.45, x2: -0.725, y2: 0.725, group: "wings", angle: 60 },
+  { x1: -0.725, y1: 0.725, x2: -0.55, y2: 1, group: "wings", angle: -60 },
+)
+
+// 2. The fold schedule — live-editable in the table panel ("folds" tab):
+//    \`fold\` is the crease group, \`at\` the start beat, \`dur\` how many beats it
+//    takes, \`to\` the fraction to reach (default 1; below 1 part-folds, 0
+//    unfolds). Nudge a beat, stretch a dur, add flaps — then Run again.
+editable("folds", { fold: "string", at: "number", dur: "number", to: "number" }, [
+  { fold: "base",  at: 1,    dur: 5,   to: 1 },
+  { fold: "neck",  at: 6.5,  dur: 1.5, to: 1 },
+  { fold: "tail",  at: 7,    dur: 1.5, to: 1 },
+  { fold: "head",  at: 8.5,  dur: 1,   to: 1 },
+  { fold: "wings", at: 9.5,  dur: 1.5, to: 1 },
+  // …then flap on the half-beat.
+  { fold: "wings", at: 12,   dur: 0.5, to: 0.6 },
+  { fold: "wings", at: 12.5, dur: 0.5, to: 1 },
+  { fold: "wings", at: 13,   dur: 0.5, to: 0.6 },
+  { fold: "wings", at: 13.5, dur: 0.5, to: 1 },
+  { fold: "wings", at: 14,   dur: 0.5, to: 0.6 },
+  { fold: "wings", at: 14.5, dur: 0.5, to: 1 },
+])
+
+// 3. Spawn the paper and bake the schedule into fold keyframes; a couple of
+//    plain rotation keyframes turn the model while it folds (rx/ry/rz
+//    interpolate like everything else).
+define("events", (rand, table) => {
+  const paper = origami().creases(CRANE)
+  // Rotation is just three more numeric tracks: tip the flat sheet toward the
+  // camera to start, then glide to a side profile as the bird takes shape.
+  return paper.spawn({ id: "crane", color: 0xd94f2a, py: 0.1, pz: 1.2, rx: -0.7, ry: 0.15 })
+    .concat(paper.sequence(table("folds")))
+    .concat(rows([
+      { id: "crane", type: "update", beat: 10, py: -0.1, pz: 1.4, rx: 0.49, ry: -1.19 },
+      { id: "crane", type: "update", beat: 16, py: -0.1, pz: 1.4, rx: 0.55, ry: -0.85 },
+    ]))
+})
+
+// 4. Bake to a 16-beat loop cache.
+define("scene", (rand, table) => table("events").rasterize(16))
+
+// 5. A whisper of video feedback (the rendered scene is hydra's s0) so the
+//    paper leaves faint trails as it moves. Delete this view for a clean look.
+define("hydra", () => rows([
+  { beat: 1, event: "setCode",
+    code: "src(s0).blend(src(o0).scale(1.003), 0.18).out(o0)" },
+]))
+
+// Things to try, live:
+//   - In the "folds" tab: make \`base\` take 10 beats, or start \`neck\` before
+//     the base finishes — overlapping folds are fine.
+//   - Fold the wings to 1.4 (over-fold) or -0.3 (bend backwards).
+//   - Edit CRANE directly: flip a base sign, move a detail crease's border
+//     point, change 165 to 178 for a crisper fold. It's just an array.
+//   - Your own paper: origami.fan(7) is an accordion (groups fan0…fan6 — ripple
+//     them!), and origami().crease(-1, -1, 1, 1, "diag", -160) starts a sheet
+//     from scratch — creases split each other automatically, so just draw lines.
+`,
+  },
+  {
     name: "Hydra Sketch",
     code: `// livecodata — a video-synth sketch with hydra (hydra-ts, a port of ojack's hydra)
 // A generative hydra sketch — no 3D scene involved (see "House of Cards" for
