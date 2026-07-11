@@ -94,7 +94,9 @@ function makeOrigami(row: Record<string, unknown>): OrigamiObject {
 
   const obj: OrigamiObject = {
     root, solver, posAttr, targets, front, back, line, geometry, lineGeometry,
-    substeps: typeof row.substeps === 'number' ? row.substeps : 50,
+    // Generous default: fold meshes are tiny, and a fast fold schedule needs
+    // the solver to keep up with its ramps frame by frame.
+    substeps: typeof row.substeps === 'number' ? row.substeps : 140,
   }
   applyOrigamiRow(obj, row)
   return obj

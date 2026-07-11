@@ -647,7 +647,13 @@ export function createFoldSolver(pattern: CompiledPattern, opts: SolverOptions =
       if (theta - prev > Math.PI) theta -= 2 * Math.PI
       else if (theta - prev < -Math.PI) theta += 2 * Math.PI
       thetaPrev[hi] = theta
-      const k = (h.group === null ? FACET_K : FOLD_K) * hingeRest[hi]
+      // A crease that isn't being driven is just paper: blend its stiffness
+      // from facet-soft up to full fold stiffness as its target angle grows.
+      // Matters mid-sequence — an unused crease at full stiffness biases the
+      // sheet at the near-singular passages (e.g. through a petal fold).
+      const target = targets[hi]
+      const drive = h.group === null ? 0 : Math.min(1, Math.abs(target) / 0.1)
+      const k = (FACET_K + (FOLD_K - FACET_K) * drive) * hingeRest[hi]
       const f = -k * (theta - targets[hi])
       const [i0, i1] = h.e
       const [i2, i3] = h.w

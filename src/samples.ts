@@ -42,120 +42,141 @@ define("scene", (rand, table) => table("events").rasterize(8))
   {
     name: "Origami Crane",
     code: `// livecodata — Origami Crane
-// A square of paper folds itself into the traditional crane, then flaps its
-// wings on the beat. Press "Run" (or Cmd/Ctrl-Enter), then hit Play.
+// A square of paper folds itself into the traditional crane — following the
+// classic ~27-step tutorial sequence — then flaps its wings on the beat.
+// Press "Run" (or Cmd/Ctrl-Enter), then hit Play.
 //
 // The whole folding is ONE TABLE of physical fold steps ("folds" in the table
 // panel). Each row is a fold: a crease LINE in the original square's
 // coordinates ([-1,1]², before any folding) plus a degree — \`deg\` positive
 // folds toward you, negative folds away — and its timing: \`at\` the start
-// beat, \`dur\` how many beats the fold takes, \`to\` the fraction reached
-// (1 = fully folded, 0 = flat again). Rows sharing a \`fold\` name move
-// together as one motion; a row with timing but NO line re-folds an earlier
-// step by name (the wing flaps at the end). As the timeline advances the
-// paper works through the steps like hands folding it — and scrubbing
-// backwards physically UNFOLDS it. (When the loop wraps, watch the crane
-// collapse flat and fold itself again.)
+// beat, \`dur\` how many beats it takes, \`to\` the signed fraction of \`deg\`
+// reached (1 = fully folded, 0 = flat, −1 = folded the other way). Rows
+// sharing a \`fold\` name move together; a row with timing but NO line
+// re-folds an earlier line by name — that is how a crease folds, unfolds,
+// and later folds the OTHER way, exactly like paper in your hands. Scrubbing
+// backwards physically unfolds everything.
 
-// 1. The fold steps. The collapse to the bird base is three cascading
-//    motions — the corner-to-corner creases, then the book folds, then the
-//    petal ring that pulls everything down — followed by the point folds.
-//    d = √2−1 and m = 2−√2 mark where the petal creases cross the diagonals
-//    and medians; each line's ± degree was found by searching every
-//    assignment consistent with Maekawa's theorem for the one that folds
-//    flattest. Edit any line, degree, or beat in the table and Run.
+// The fold steps, following the classic tutorial's arc:
+//   step  5     collapse — every crease line gathers partway (to: 0.55)
+//   steps 6–9   petal fold the FRONT: its ring creases fold in and the
+//               front lines complete to their full angles (to: 1)
+//   steps 10–13 petal fold the BACK the same way → the BIRD BASE
+//   steps 17–20 reverse-fold the neck and tail up   (kinked, not tucked —
+//   steps 21–22 reverse-fold the head                see note below)
+//   step  23    fold the wings down, then flap
+// Two honest liberties, forced by the physics: the true square base folds
+// several creases BACKWARD and the petal folds reverse them — a spring-mass
+// sheet can't swing flaps through its own layers reliably, so here the
+// collapse gathers every line partway toward its FINAL angle (a loose
+// collapse, like unpressed paper) and each petal fold completes its side.
+// And steps 14–16 (thinning the legs) are skipped — that fold slides layers
+// against each other. The reverse folds are simple kinks rather than tucks.
 const STEPS = []
-const step = (fold, at, dur, x1, y1, x2, y2, deg) =>
-  STEPS.push({ fold, x1, y1, x2, y2, deg, at, dur, to: 1 })
-const d = 0.4142, m = 0.5858
+const line = (fold, x1, y1, x2, y2, deg, at, dur, to) =>
+  STEPS.push({ fold, x1, y1, x2, y2, deg, at, dur, to })
+const retime = (fold, at, dur, to) => STEPS.push({ fold, at, dur, to })
+const d = 0.4142136, m = 0.5857864 // where the petal ring crosses the lines
 
-// Fold 1 — the corner-to-corner creases start the collapse.
-step("diag", 1, 4.5,  -1, -1, -d, -d,  165)
-step("diag", 1, 4.5,  -d, -d,  0,  0, -165)
-step("diag", 1, 4.5,   1,  1,  d,  d, -165)
-step("diag", 1, 4.5,   d,  d,  0,  0,  165)
-step("diag", 1, 4.5,   1, -1,  d, -d, -165)
-step("diag", 1, 4.5,  -1,  1, -d,  d, -165)
-step("diag", 1, 4.5,   d, -d,  0,  0,  165)
-step("diag", 1, 4.5,  -d,  d,  0,  0,  165)
-// Fold 2 — the book folds join in as the collapse deepens.
-step("book", 1.4, 4.1,  1,  0,  m,  0,  165)
-step("book", 1.4, 4.1,  0,  1,  0,  m,  165)
-step("book", 1.4, 4.1, -1,  0, -m,  0, -165)
-step("book", 1.4, 4.1,  0, -1,  0, -m, -165)
-step("book", 1.4, 4.1,  m,  0,  0,  0, -165)
-step("book", 1.4, 4.1,  0,  m,  0,  0, -165)
-step("book", 1.4, 4.1, -m,  0,  0,  0,  165)
-step("book", 1.4, 4.1,  0, -m,  0,  0,  165)
-// Fold 3 — the petal folds: the ring linking the crease crossings pulls the
-// corners together into the bird base.
-const ring = [[0, -m], [d, -d], [m, 0], [d, d], [0, m], [-d, d], [-m, 0], [-d, -d]]
-ring.forEach(([x1, y1], i) => {
-  const [x2, y2] = ring[(i + 1) % 8]
-  step("petal", 1.8, 3.7, x1, y1, x2, y2, -165)
-})
+// Step 5 — the collapse: both diagonals and both book folds, all at once,
+// gathered to 0.55 of their final angles. Each line is four segments
+// (d1…d4 corner to corner) because the petal folds finish them at
+// different times; \`deg\` is each segment's final crane angle, found by
+// searching every assignment consistent with Maekawa's theorem for the one
+// that folds flattest.
+line("d1", -1, -1, -d, -d,  165, 1, 2.5, 0.55)
+line("d2", -d, -d,  0,  0, -165, 1, 2.5, 0.55)
+line("d3",  0,  0,  d,  d,  165, 1, 2.5, 0.55)
+line("d4",  d,  d,  1,  1, -165, 1, 2.5, 0.55)
+line("a1",  1, -1,  d, -d, -165, 1, 2.5, 0.55)
+line("a2",  d, -d,  0,  0,  165, 1, 2.5, 0.55)
+line("a3",  0,  0, -d,  d,  165, 1, 2.5, 0.55)
+line("a4", -d,  d, -1,  1, -165, 1, 2.5, 0.55)
+line("bx1",  1,  0,  m,  0,  165, 1, 2.5, 0.55)
+line("bx2",  m,  0,  0,  0, -165, 1, 2.5, 0.55)
+line("bx3", -m,  0,  0,  0,  165, 1, 2.5, 0.55)
+line("bx4", -1,  0, -m,  0, -165, 1, 2.5, 0.55)
+line("by1",  0,  1,  0,  m,  165, 1, 2.5, 0.55)
+line("by2",  0,  m,  0,  0, -165, 1, 2.5, 0.55)
+line("by3",  0, -m,  0,  0,  165, 1, 2.5, 0.55)
+line("by4",  0, -1,  0, -m, -165, 1, 2.5, 0.55)
 
-// Folds 4–7 — the point folds. Each crosses a flat-folded flap, so it is a
-// mirrored PAIR of lines with opposite degrees: one layer folds forward
-// where its mirror image folds back (one line with one sign just crumples
-// the point — try it).
-step("neck", 6.5, 1.5, -1, -0.2, -0.6, -0.6,  136)   // kink the neck flap up
-step("neck", 6.5, 1.5, -0.6, -0.6, -0.2, -1, -136)
-step("tail", 7, 1.5,    1, 0.2, 0.6, 0.6,  132)
-step("tail", 7, 1.5,    0.6, 0.6, 0.2, 1, -132)
-step("head", 8.5, 1,   -1, -0.75, -0.875, -0.875,  144) // counter-fold the tip
-step("head", 8.5, 1,   -0.875, -0.875, -0.75, -1, -144)
-step("wings", 9.5, 1.5,  0.45, -1, 0.725, -0.725,  60)  // sweep both wings out
-step("wings", 9.5, 1.5,  0.725, -0.725, 1, -0.55, -60)
-step("wings", 9.5, 1.5, -1, 0.45, -0.725, 0.725,   60)
-step("wings", 9.5, 1.5, -0.725, 0.725, -0.55, 1,  -60)
+// Steps 6–9 — petal fold the FRONT (the x>y half): the ring creases on
+// this side fold in while its lines complete from 0.55 to their full
+// angles. The paper visibly flexes here — a real petal fold isn't rigid
+// either.
+line("petalF",  0, -m,  d, -d, -165, 4, 2, 1)
+line("petalF",  d, -d,  m,  0, -165, 4, 2, 1)
+line("petalF",  m,  0,  d,  d, -165, 4, 2, 1)
+line("petalF", -d, -d,  0, -m, -165, 4, 2, 1)
+;["d3", "d4", "a1", "a2", "bx1", "bx2", "by3", "by4"].forEach((f) => retime(f, 4, 2, 1))
 
-// …then flap on the half-beat: timing-only rows re-folding "wings".
-STEPS.push(
-  { fold: "wings", at: 12,   dur: 0.5, to: 0.6 },
-  { fold: "wings", at: 12.5, dur: 0.5, to: 1 },
-  { fold: "wings", at: 13,   dur: 0.5, to: 0.6 },
-  { fold: "wings", at: 13.5, dur: 0.5, to: 1 },
-  { fold: "wings", at: 14,   dur: 0.5, to: 0.6 },
-  { fold: "wings", at: 14.5, dur: 0.5, to: 1 },
-)
+// Steps 10–13 — petal fold the BACK the same way → the bird base.
+line("petalB",  d,  d,  0,  m, -165, 6.2, 2, 1)
+line("petalB",  0,  m, -d,  d, -165, 6.2, 2, 1)
+line("petalB", -d,  d, -m,  0, -165, 6.2, 2, 1)
+line("petalB", -m,  0, -d, -d, -165, 6.2, 2, 1)
+;["d1", "d2", "a3", "a4", "bx3", "bx4", "by1", "by2"].forEach((f) => retime(f, 6.2, 2, 1))
+
+// Steps 17–20 — reverse-fold the neck and tail points up. Each fold crosses
+// a flat-folded flap, so it is a mirrored PAIR of lines with opposite
+// degrees: one layer folds forward where its mirror image folds back.
+line("neck", -1, -0.2, -0.6, -0.6,  136, 8.7, 1.2, 1)
+line("neck", -0.6, -0.6, -0.2, -1, -136, 8.7, 1.2, 1)
+line("tail",  1, 0.2, 0.6, 0.6,  132, 9.2, 1.2, 1)
+line("tail",  0.6, 0.6, 0.2, 1, -132, 9.2, 1.2, 1)
+
+// Steps 21–22 — reverse-fold the head near the neck's tip.
+line("head", -1, -0.75, -0.875, -0.875,  144, 10.7, 1, 1)
+line("head", -0.875, -0.875, -0.75, -1, -144, 10.7, 1, 1)
+
+// Step 23 — fold both wings down.
+line("wings",  0.45, -1, 0.725, -0.725,  60, 12, 1.5, 1)
+line("wings",  0.725, -0.725, 1, -0.55, -60, 12, 1.5, 1)
+line("wings", -1, 0.45, -0.725, 0.725,   60, 12, 1.5, 1)
+line("wings", -0.725, 0.725, -0.55, 1,  -60, 12, 1.5, 1)
+
+// …and flap on the half-beat: timing-only rows re-folding "wings".
+retime("wings", 14,   0.5, 0.6); retime("wings", 14.5, 0.5, 1)
+retime("wings", 15,   0.5, 0.6); retime("wings", 15.5, 0.5, 1)
 
 editable("folds", {
   fold: "string", x1: "number", y1: "number", x2: "number", y2: "number",
   deg: "number", at: "number", dur: "number", to: "number",
 }, STEPS)
 
-// 2. Feed the fold-step table to a sheet of paper: folds() turns each row's
-//    line into a crease and each row's timing into the fold sequence, then
-//    spawn() emits the scene object and sequence() the beat-timed keyframes.
-//    A couple of plain rotation keyframes turn the model while it folds
-//    (rx/ry/rz interpolate like everything else).
+// Feed the fold-step table to a sheet of paper: folds() turns each row\'s
+// line into a crease and each row\'s timing into the fold sequence, then
+// spawn() emits the scene object and sequence() the beat-timed keyframes.
+// Rotation keyframes turn the model as it folds (rx/ry/rz interpolate like
+// everything else).
 define("events", (rand, table) => {
   const paper = origami().folds(table("folds"))
   return paper.spawn({ id: "crane", color: 0xd94f2a, py: 0.1, pz: 1.2, rx: -0.7, ry: 0.15 })
     .concat(paper.sequence())
     .concat(rows([
+      { id: "crane", type: "update", beat: 5,  py: 0, pz: 1.3, rx: -0.2, ry: -0.6 },
       { id: "crane", type: "update", beat: 10, py: -0.1, pz: 1.4, rx: 0.49, ry: -1.19 },
       { id: "crane", type: "update", beat: 16, py: -0.1, pz: 1.4, rx: 0.55, ry: -0.85 },
     ]))
 })
 
-// 3. Bake to a 16-beat loop cache.
+// Bake to a 16-beat loop cache — when the loop wraps, the crane collapses
+// flat and folds itself all over again.
 define("scene", (rand, table) => table("events").rasterize(16))
 
-// 4. A whisper of video feedback (the rendered scene is hydra's s0) so the
-//    paper leaves faint trails as it moves. Delete this view for a clean look.
+// A whisper of video feedback (the rendered scene is hydra\'s s0) so the
+// paper leaves faint trails as it moves. Delete this view for a clean look.
 define("hydra", () => rows([
   { beat: 1, event: "setCode",
     code: "src(s0).blend(src(o0).scale(1.003), 0.18).out(o0)" },
 ]))
 
 // Things to try, live in the "folds" tab:
-//   - Stretch the collapse: give "diag" dur 8 and push everything later.
-//   - Start "neck" before the base finishes — overlapping folds are fine.
-//   - Flap harder: set the flap rows' \`to\` to 1.4 (over-fold) or -0.3.
-//   - Move a line: nudge the neck crease's border point (x1,y1) and Run.
-//   - Flip one \`deg\` sign on a "diag" row and watch the collapse change.
+//   - Slow the collapse: give the step-5 rows dur 5 and push everything later.
+//   - Flap harder: set the flap rows\' \`to\` to 1.4 (over-fold) or −0.3.
+//   - Gather looser: change the step-5 rows' \`to\` from 0.55 to 0.3 and the
+//     petals do more of the work; 0.9 and the collapse nearly finishes alone.
 //   - New paper: origami.fan(7) is an accordion (groups fan0…fan6 — ripple
 //     them!), or draw your own lines — crossings split automatically.
 `,

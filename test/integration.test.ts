@@ -62,7 +62,14 @@ test('Origami Crane sample folds the traditional bird base without blowing up', 
   const create = events.rows.find((r) => r.type === 'create')!
   assert.equal(create.shape, 'origami')
   const pattern = create.pattern as CompiledPattern
-  for (const g of ['diag', 'book', 'petal', 'neck', 'tail', 'head', 'wings']) {
+  // Per-segment groups (d1…, a1…, bx…, by…) so the tutorial sequence can
+  // fold each line one way, unfold it, and refold it the other way.
+  const baseGroups = [
+    'd1', 'd2', 'd3', 'd4', 'a1', 'a2', 'a3', 'a4',
+    'bx1', 'bx2', 'bx3', 'bx4', 'by1', 'by2', 'by3', 'by4',
+    'petalF', 'petalB',
+  ]
+  for (const g of [...baseGroups, 'neck', 'tail', 'head', 'wings']) {
     assert.ok(pattern.groups.includes(g), `missing group ${g}`)
   }
   assert.ok(pattern.faces.length >= 20, `expected a real mesh, got ${pattern.faces.length} faces`)
@@ -99,12 +106,30 @@ test('Origami Crane sample folds the traditional bird base without blowing up', 
   checkKawasaki(d, -d)
   checkKawasaki(-d, d)
 
-  // Folding the base most of the way must stay numerically sane and keep the
-  // paper inextensible. The collapse is three cascading motions in the sample;
-  // ramp them together here as they largely are by the end.
+  // Fold the tutorial's arc as the sample schedules it — a loose collapse to
+  // 0.55, then each petal fold completes its side — and check the resulting
+  // bird base is numerically sane and inextensible.
+  const segs = [
+    'd1', 'd2', 'd3', 'd4', 'a1', 'a2', 'a3', 'a4',
+    'bx1', 'bx2', 'bx3', 'bx4', 'by1', 'by2', 'by3', 'by4',
+  ]
+  const front = ['d3', 'd4', 'a1', 'a2', 'bx1', 'bx2', 'by3', 'by4']
+  const back = segs.filter((g) => !front.includes(g))
   const solver = createFoldSolver(pattern)
-  for (let i = 0; i < 80; i++) solver.step({ diag: i / 80, book: i / 80, petal: i / 80 }, 40)
-  for (let i = 0; i < 40; i++) solver.step({ diag: 1, book: 1, petal: 1 }, 40)
+  const t: Record<string, number> = { petalF: 0, petalB: 0 }
+  for (let i = 0; i < 80; i++) {
+    for (const g of segs) t[g] = 0.55 * ((i + 1) / 80)
+    solver.step(t, 40)
+  }
+  for (const [petal, group] of [['petalF', front], ['petalB', back]] as [string, string[]][]) {
+    for (let i = 0; i < 80; i++) {
+      const f = (i + 1) / 80
+      for (const g of group) t[g] = 0.55 + 0.45 * f
+      t[petal] = f
+      solver.step(t, 40)
+    }
+  }
+  for (let i = 0; i < 60; i++) solver.step(t, 40)
   for (let i = 0; i < solver.positions.length; i++) {
     assert.ok(Number.isFinite(solver.positions[i]), 'positions stay finite')
   }
