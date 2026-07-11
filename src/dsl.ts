@@ -29,7 +29,7 @@
 import { rasterizeRows } from './rasterize.js'
 import { withLineage, carry, unionLineage, getLineage, type Row } from './lineage.js'
 import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS } from './constants.js'
-import { compilePattern, cranePattern, fanPattern, type PatternSpec } from './origami.js'
+import { compilePattern, fanPattern, type PatternSpec, type CreaseSpec } from './origami.js'
 import type { ColumnType } from './editable-tables.js'
 
 // ── Expr: a small, serializable, chainable expression over a row ─────────────
@@ -798,6 +798,19 @@ export class OrigamiBuilder {
     return next
   }
 
+  // Add many creases at once from a plain array of { x1, y1, x2, y2, group,
+  // angle } objects — the declarative counterpart of chaining .crease() over
+  // and over, for a whole crease pattern authored as data (e.g. a traditional
+  // base built up in the program itself, not hidden behind a preset).
+  creases(list: CreaseSpec[]): OrigamiBuilder {
+    const next = new OrigamiBuilder(
+      { ...this._spec, creases: [...this._spec.creases, ...list] },
+      this._ctx,
+    )
+    next._id = this._id
+    return next
+  }
+
   groups(): string[] {
     return compilePattern(this._spec).groups
   }
@@ -885,11 +898,8 @@ export class OrigamiBuilder {
 
 export interface OrigamiFactory {
   // A bare square sheet spanning [-size, size]² (default size 1) — add your
-  // own creases with .crease().
+  // own creases with .crease() / .creases([...]).
   (opts?: { size?: number }): OrigamiBuilder
-  // The traditional crane: fold "base" to 1 for the bird base, then stage
-  // "neck", "tail", "head", and "wings".
-  crane(): OrigamiBuilder
   // An accordion fan with one group per pleat ("fan0", "fan1", …), or pass
   // { group } to gang every pleat into one fold.
   fan(pleats?: number, opts?: { group?: string; angle?: number }): OrigamiBuilder
@@ -898,7 +908,6 @@ export interface OrigamiFactory {
 function makeOrigami(ctx: DSLContext | null): OrigamiFactory {
   const factory = ((opts: { size?: number } = {}) =>
     new OrigamiBuilder({ size: opts.size ?? 1, creases: [] }, ctx)) as OrigamiFactory
-  factory.crane = () => new OrigamiBuilder(cranePattern(), ctx)
   factory.fan = (pleats?: number, opts?: { group?: string; angle?: number }) =>
     new OrigamiBuilder(fanPattern(pleats, opts), ctx)
   return factory
@@ -974,10 +983,11 @@ export type DSLSurface = Easings & {
   json(data: Row[] | string | unknown): Table
   grid(cols: number, rowsN: number, opts?: { spacing?: number; y?: number }): Table
   physics(source: Table | Row[]): PhysicsBuilder
-  // Folding paper: origami() is a bare sheet, origami.crane() /
-  // origami.fan(n) are presets. Chain .crease(x1,y1,x2,y2, group, angle),
-  // then .spawn({ id, color, ... }) for the create row and .sequence(steps)
-  // for beat-timed fold keyframes.
+  // Folding paper: origami() is a bare sheet (origami.fan(n) is the one
+  // built-in preset, an accordion). Chain .crease(x1,y1,x2,y2, group, angle)
+  // or .creases([...]) to build a whole crease pattern as data, then
+  // .spawn({ id, color, ... }) for the create row and .sequence(steps) for
+  // beat-timed fold keyframes.
   origami: OrigamiFactory
   // A user-editable table: rows are entered/edited in the table panel (not
   // computed), keyed by `name` so edits persist across runs — stored as change

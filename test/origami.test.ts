@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  compilePattern, createFoldSolver, hingeAngle, cranePattern, fanPattern,
+  compilePattern, createFoldSolver, hingeAngle, fanPattern,
   type PatternSpec, type Hinge,
 } from '../src/origami.js'
 
@@ -130,69 +130,6 @@ test('solver unfolds again when the fraction returns to 0', () => {
   assert.ok(maxZ < 0.08, `sheet should relax flat again (max |z| ${maxZ})`)
 })
 
-test('crane pattern compiles, satisfies Kawasaki at base vertices, and folds without blowing up', () => {
-  const p = compilePattern(cranePattern())
-  assert.ok(p.groups.includes('base'))
-  assert.ok(p.groups.includes('neck'))
-  assert.ok(p.groups.includes('wings'))
-  assert.ok(p.faces.length >= 20, `expected a real mesh, got ${p.faces.length} faces`)
-
-  // Kawasaki's theorem at the classic interior vertices of the bird base:
-  // alternating sector angles around each vertex sum to π.
-  const d = Math.SQRT2 - 1
-  const checkKawasaki = (vx: number, vy: number): void => {
-    const vi = p.vertices.findIndex(([x, y]) => Math.hypot(x - vx, y - vy) < 1e-6)
-    assert.ok(vi >= 0, `vertex (${vx},${vy}) exists`)
-    const dirs: number[] = []
-    const seen = new Set<string>()
-    for (const h of p.hinges) {
-      if (h.group === null) continue
-      for (const [a, b] of [[h.e[0], h.e[1]], [h.e[1], h.e[0]]]) {
-        if (a !== vi) continue
-        const key = `${a},${b}`
-        if (seen.has(key)) continue
-        seen.add(key)
-        dirs.push(Math.atan2(p.vertices[b][1] - vy, p.vertices[b][0] - vx))
-      }
-    }
-    dirs.sort((x, y) => x - y)
-    assert.ok(dirs.length >= 4 && dirs.length % 2 === 0, `even degree at (${vx},${vy}): ${dirs.length}`)
-    let alt = 0
-    for (let i = 0; i < dirs.length; i++) {
-      const gap = (i + 1 < dirs.length ? dirs[i + 1] : dirs[0] + 2 * Math.PI) - dirs[i]
-      alt += i % 2 === 0 ? gap : -gap
-    }
-    assert.ok(Math.abs(alt) < 1e-4, `Kawasaki at (${vx},${vy}): alternating sum ${alt}`)
-  }
-  checkKawasaki(d, -d)  // a diagonal point away from the staged detail creases
-  checkKawasaki(-d, d)
-
-  // Folding the base most of the way must stay numerically sane and keep the
-  // paper inextensible.
-  const solver = createFoldSolver(p)
-  for (let i = 0; i < 80; i++) solver.step({ base: i / 80 }, 40)
-  for (let i = 0; i < 40; i++) solver.step({ base: 1 }, 40)
-  for (let i = 0; i < solver.positions.length; i++) {
-    assert.ok(Number.isFinite(solver.positions[i]), 'positions stay finite')
-  }
-  let maxStretch = 0
-  for (const [a, b, c] of p.faces) {
-    for (const [i, j] of [[a, b], [b, c], [c, a]]) {
-      const rest = Math.hypot(
-        p.vertices[j][0] - p.vertices[i][0],
-        p.vertices[j][1] - p.vertices[i][1],
-      )
-      const now = Math.hypot(
-        solver.positions[j * 3] - solver.positions[i * 3],
-        solver.positions[j * 3 + 1] - solver.positions[i * 3 + 1],
-        solver.positions[j * 3 + 2] - solver.positions[i * 3 + 2],
-      )
-      maxStretch = Math.max(maxStretch, Math.abs(now - rest) / rest)
-    }
-  }
-  assert.ok(maxStretch < 0.12, `paper stretched ${(maxStretch * 100).toFixed(1)}%`)
-})
-
 test('fan pattern: one group per pleat, ripple-foldable', () => {
   const p = compilePattern(fanPattern(5))
   assert.equal(p.groups.length, 5)
@@ -233,6 +170,21 @@ test('origami().spawn emits one create row with the compiled pattern and zeroed 
   const pattern = r.pattern as { groups: string[]; faces: unknown[] }
   assert.deepEqual(pattern.groups, ['half'])
   assert.ok(pattern.faces.length >= 4)
+})
+
+test('origami().creases adds many creases at once from a plain array of objects', () => {
+  const paper = dsl.origami().creases([
+    { x1: 0, y1: -1, x2: 0, y2: 1, group: 'a', angle: 90 },
+    { x1: -1, y1: 0, x2: 1, y2: 0, group: 'b', angle: -90 },
+  ])
+  const pattern = paper.spawn({ id: 'sheet' }).rows[0].pattern as { groups: string[] }
+  assert.deepEqual(pattern.groups.sort(), ['a', 'b'])
+  // Chains with .crease() too — the two building blocks are interchangeable.
+  const mixed = dsl.origami().crease(0.5, -1, 0.5, 1, 'c', 45).creases([
+    { x1: -0.5, y1: -1, x2: -0.5, y2: 1, group: 'd', angle: 45 },
+  ])
+  const mixedPattern = mixed.spawn({ id: 'sheet2' }).rows[0].pattern as { groups: string[] }
+  assert.deepEqual(mixedPattern.groups.sort(), ['c', 'd'])
 })
 
 test('origami sequence bakes fold steps into all-group keyframes', () => {

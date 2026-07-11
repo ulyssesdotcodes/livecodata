@@ -686,95 +686,12 @@ export function createFoldSolver(pattern: CompiledPattern, opts: SolverOptions =
 }
 
 // ── Presets ───────────────────────────────────────────────────────────────────
-
-// The traditional crane / bird-base crease pattern on [-1, 1]²: both diagonals
-// and medians plus the octagonal ring of petal-fold creases through the four
-// diagonal points (±d, ±d) and four median points (0, ±m), (±m, 0) where
-// d = √2 − 1 and m = 2 − √2. Every interior vertex satisfies Kawasaki's
-// theorem, so the base folds flat. On top of the base sit simple staged
-// creases for the neck, tail, head, and wings.
-//
-// The mountain/valley assignment was found by search: enumerate sign choices
-// over the orbits of the pattern's mirror symmetry (across the neck/tail
-// diagonal), keep the ones satisfying Maekawa's theorem (|M−V| = 2) at every
-// interior vertex, fold each with the solver, and keep the assignment that
-// folds dead flat with the least mid-fold strain. One sign per orbit, in the
-// segment order built below.
-const BASE_SIGNS = [+1, -1, -1, +1, -1, +1, +1, -1, -1, +1, -1, -1, -1, -1]
-
-export function craneCreases(): CreaseSpec[] {
-  const d = Math.SQRT2 - 1 // 0.4142 — diagonal points
-  const m = 2 - Math.SQRT2 // 0.5858 — median points
-  // Base target just shy of flat-folded: the layers stay slightly splayed —
-  // like real paper — and the detail folds have room to move.
-  const A = 165
-  const creases: CreaseSpec[] = []
-  const add = (x1: number, y1: number, x2: number, y2: number, group: string, angle: number): void => {
-    creases.push({ x1, y1, x2, y2, group, angle })
-  }
-
-  // Base segments, one entry per (orbit, segment). Neck/tail corners sit on
-  // the main diagonal (−1,−1) & (1,1); wings on the anti-diagonal corners.
-  const S = (orbit: number, x1: number, y1: number, x2: number, y2: number): void =>
-    add(x1, y1, x2, y2, 'base', A * BASE_SIGNS[orbit])
-  // Main-diagonal (self-mirror) segments.
-  S(0, -1, -1, -d, -d)
-  S(1, -d, -d, 0, 0)
-  S(2, 1, 1, d, d)
-  S(3, d, d, 0, 0)
-  // Anti-diagonal corner flaps (mirror pairs share an orbit).
-  S(4, 1, -1, d, -d)
-  S(4, -1, 1, -d, d)
-  S(5, d, -d, 0, 0)
-  S(5, -d, d, 0, 0)
-  // Medians: edge midpoint → median point → center.
-  S(6, 1, 0, m, 0)
-  S(6, 0, 1, 0, m)
-  S(7, -1, 0, -m, 0)
-  S(7, 0, -1, 0, -m)
-  S(8, m, 0, 0, 0)
-  S(8, 0, m, 0, 0)
-  S(9, -m, 0, 0, 0)
-  S(9, 0, -m, 0, 0)
-  // Petal octagon ring.
-  S(10, 0, -m, d, -d)
-  S(10, -d, d, -m, 0)
-  S(11, d, -d, m, 0)
-  S(11, 0, m, -d, d)
-  S(12, m, 0, d, d)
-  S(12, d, d, 0, m)
-  S(13, -m, 0, -d, -d)
-  S(13, -d, -d, 0, -m)
-
-  // Staged details: creases across the flap regions. Each one crosses a
-  // flat-folded flap, so it is a mirrored PAIR of half-creases with opposite
-  // signs — one layer folds mountain where its mirror image folds valley.
-  // (A single sign across the whole line just crumples the point.) Angles and
-  // positions were tuned visually: neck & tail kink their points upward,
-  // head counter-folds near the neck's tip, wings sweep both big flaps out.
-  // A crease from border point (bx,by) to its mirror image (by,bx) across the
-  // main diagonal, split where it crosses it — +angle on one half, − on the
-  // other.
-  const detail = (group: string, angle: number, bx: number, by: number): void => {
-    const tx = (bx + by) / 2
-    add(bx, by, tx, tx, group, angle)
-    add(tx, tx, by, bx, group, -angle)
-  }
-  detail('neck', 136, -1, -0.2)   // kink the neck flap up
-  detail('head', 144, -1, -0.75)  // counter-fold near its tip
-  detail('tail', 132, 1, 0.2)
-  // wing flaps cross the anti-diagonal
-  add(0.45, -1, 0.725, -0.725, 'wings', 60)
-  add(0.725, -0.725, 1, -0.55, 'wings', -60)
-  add(-1, 0.45, -0.725, 0.725, 'wings', 60)
-  add(-0.725, 0.725, -0.55, 1, 'wings', -60)
-
-  return creases
-}
-
-export function cranePattern(): PatternSpec {
-  return { size: 1, creases: craneCreases() }
-}
+// The traditional crane isn't a built-in preset here — it's the "Origami
+// Crane" sample program (src/samples.ts), which builds its crease pattern as
+// a literal array of objects passed to origami().creases([...]), so the whole
+// thing is visible and live-editable rather than hidden behind a function
+// call. This module only ships the generic engine plus small parametric
+// presets like the fan below.
 
 // An accordion fan: `pleats` alternating full-width folds. One group per
 // pleat ("fan0", "fan1", …) so a schedule can ripple them in sequence, or pass
