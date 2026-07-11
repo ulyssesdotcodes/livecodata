@@ -37,8 +37,9 @@ const PALETTE = [0x4a9eff, 0xff6b6b, 0x51cf66, 0xffd43b, 0xcc5de8, 0xff922b]
 // straight out of it. The solver is kinematic: every hinge sits at exactly
 // its target angle (crease target × the row's fold fraction), faces are
 // positioned by composing those exact rotations, and where the crease
-// pattern's loops disagree mid-fold the sheet simply breaks apart — so
-// faces can't share vertices, and the geometry is per-face (non-indexed).
+// pattern's loops disagree mid-fold the solver stitches the sheet back
+// together, leaving small offsets between neighbouring faces — so faces
+// can't share vertices, and the geometry is per-face (non-indexed).
 interface OrigamiObject {
   root: THREE.Group
   solver: RigidSolver
