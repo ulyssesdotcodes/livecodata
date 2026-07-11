@@ -224,6 +224,70 @@ test('a re-drive row with a line drives just that stretch of the fold\'s edge', 
   assert.ok(near(at({ diag: 1, s1: 1, [spine]: -1 }) as never, [0, 1, 0], 0.1))
 })
 
+test('the collapse: pre-crease, open, fold inward — the centre vertex mechanism closes', () => {
+  // The square-base collapse as hands do it: crease the diagonal, open the
+  // sheet, then reflect the corner while the diagonal refolds — its half
+  // inside the corner one way, the still half the other, coupled along the
+  // degree-4 vertex's exact rigid path. Every shared edge stays together.
+  const { program } = compileFoldProgram([
+    { step: 'diag', op: 'reflect', p1: 'bottom@0', p2: 'top@1', move: 'bottom@1', dir: -1, at: 1, dur: 2 },
+    { step: 'diag', at: 3.5, dur: 1, to: 0 },
+    { step: 's1', op: 'reflect', p1: 'right@0.5', p2: 'diag@0.5', move: 'right@1', at: 5, dur: 2 },
+    { step: 'diag', p1: 'diag@0.5', p2: 'diag@1', at: 5, dur: 2, to: 1 },
+    { step: 'diag', p1: 'diag@0', p2: 'diag@0.5', at: 5, dur: 2, to: -1 },
+  ])
+  const player = createFoldPlayer(program)
+  const spine = 'diag~0.5-1'
+  const still = 'diag~0-0.5'
+
+  const cornerPos = (fi: number, p: Vec2): number[] | null => {
+    let base = 0
+    for (let i = 0; i < fi; i++) base += (program.faces[i].poly.length - 2) * 3
+    const f = program.faces[fi]
+    for (let i = 1; i + 1 < f.poly.length; i++) {
+      const tri = [f.poly[0], f.poly[i], f.poly[i + 1]]
+      for (let k = 0; k < 3; k++) {
+        if (Math.hypot(tri[k][0] - p[0], tri[k][1] - p[1]) < 1e-9) {
+          const o = (base + (i - 1) * 3 + k) * 3
+          return [player.positions[o], player.positions[o + 1], player.positions[o + 2]]
+        }
+      }
+    }
+    return null
+  }
+  const maxGap = (): number => {
+    let worst = 0
+    for (let i = 0; i < program.faces.length; i++) {
+      for (let j = i + 1; j < program.faces.length; j++) {
+        for (const v of program.faces[i].poly) {
+          if (!program.faces[j].poly.some((w) => Math.hypot(w[0] - v[0], w[1] - v[1]) < 1e-9)) continue
+          const a = cornerPos(i, v)
+          const b = cornerPos(j, v)
+          if (a && b) worst = Math.max(worst, Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]))
+        }
+      }
+    }
+    return worst
+  }
+
+  // The vertex's exact folding path: (reflection fraction, |diagonal-half|).
+  const branch: [number, number][] = [
+    [0.125, 0.0890], [0.25, 0.1814], [0.375, 0.2810], [0.5, 0.3918],
+    [0.625, 0.5180], [0.75, 0.6627], [0.875, 0.8254], [1, 1],
+  ]
+  for (const [f, v] of branch) {
+    player.step({ s1: f, [spine]: v, [still]: -v })
+    assert.ok(maxGap() < 0.002, `collapse closes at f=${f} (gap ${maxGap().toFixed(4)})`)
+  }
+
+  // Halfway: the corner tip stands straight up over the paper's centre line
+  // — the top view T, the front <|, the side <|>.
+  player.step({ s1: 0.5, [spine]: 0.3918, [still]: -0.3918 })
+  const faceOfTip = program.faces.findIndex((f) => f.poly.some((v) => Math.hypot(v[0] - 1, v[1] - 1) < 1e-9))
+  const tip = cornerPos(faceOfTip, [1, 1])!
+  assert.ok(Math.hypot(tip[0] - 0, tip[1] - 1, tip[2] - 1) < 0.01, `tip stands at (0,1,1), got ${tip}`)
+})
+
 // ── Playback ──────────────────────────────────────────────────────────────────
 
 const SQUARE_BASE = [

@@ -67,28 +67,49 @@ define("scene", (rand, table) => table("events").rasterize(8))
 //   at,dur the beat the fold starts, and how many beats it takes
 //   to     how far to drive the fold: 1 folded, 0 open, −1 folded the
 //          OTHER way (same flat endpoint, reached through the other side)
+// A row re-using a fold's name re-drives it: whole with no line, or — with
+// p1/p2 given on the fold's OWN edge — just that stretch of its crease.
 //
-// The square base, as an origamist would say it:
-//   1. fold along a diagonal
+// The square base, the way hands actually make it:
+//   1. fold along a diagonal — the PRE-CREASE — then OPEN the sheet again
 //   2. reflect along the line from the coincident paper-edge midpoints to
-//      the midpoint of the first fold — one side of the square base. Watch
-//      it halfway: the corner's two triangles stand straight up in a T,
-//      then fold on down — every stacked edge staying together.
-//   3. the same reflection, folded away, for the other pair of midpoints.
+//      the midpoint of the diagonal. This is the COLLAPSE: the front layer
+//      folds toward you and the back layer away — both inward — while the
+//      diagonal refolds underneath: its half inside the corner one way, its
+//      other half the other way. Halfway through, seen from the top it is a
+//      T; from the front a <|; from the side a <|> — the middle "|" is the
+//      diagonal's crease standing upright between the two inward wedges.
+//      The "diag" rows below ARE that motion: the vertex mechanism between
+//      the four creases meeting at the paper's centre, sampled along its
+//      exact rigid path (every edge stays together, nothing stretches).
+//   3. the same reflection for the other pair of midpoints.
 // All four corners land on a single point, the paper's centre becomes the
 // opposite corner of the diamond, and the two reflections' edges become the
-// base's sides. Playback is exact kinematics: faces hinge about the creases
-// the folds made — the only independently moving pieces are faces created
-// by a previous fold — and scrubbing backwards physically unfolds the paper.
+// base's sides. Scrubbing backwards physically unfolds the paper.
 
 define("steps", () =>
   editable("steps", {
     step: "string", op: "string", p1: "string", p2: "string",
     move: "string", dir: "number", at: "number", dur: "number", to: "number",
   }, [
+    // 1. pre-crease the diagonal, then open the sheet flat again
     { step: "diag", op: "reflect", p1: "bottom@0",  p2: "top@1",    move: "bottom@1", dir: -1, at: 1, dur: 2, to: 1 },
-    { step: "s1",   op: "reflect", p1: "right@0.5", p2: "diag@0.5", move: "right@1",  dir: 1,  at: 4, dur: 2, to: 1 },
-    { step: "s2",   op: "reflect", p1: "left@0.5",  p2: "diag@0.5", move: "left@0",   dir: -1, at: 7, dur: 2, to: 1 },
+    { step: "diag", at: 3.5, dur: 1, to: 0 },
+    // 2. the collapse: the reflection…
+    { step: "s1",   op: "reflect", p1: "right@0.5", p2: "diag@0.5", move: "right@1",  dir: 1,  at: 5, dur: 2, to: 1 },
+    //    …while the diagonal refolds through the collapse: the half inside
+    //    the moving corner one way, the still half the other — coupled
+    //    keyframes along the centre vertex's exact folding path.
+    { step: "diag", p1: "diag@0.5", p2: "diag@1",   at: 5,   dur: 0.5, to: 0.1814 },
+    { step: "diag", p1: "diag@0.5", p2: "diag@1",   at: 5.5, dur: 0.5, to: 0.3918 },
+    { step: "diag", p1: "diag@0.5", p2: "diag@1",   at: 6,   dur: 0.5, to: 0.6627 },
+    { step: "diag", p1: "diag@0.5", p2: "diag@1",   at: 6.5, dur: 0.5, to: 1 },
+    { step: "diag", p1: "diag@0",   p2: "diag@0.5", at: 5,   dur: 0.5, to: -0.1814 },
+    { step: "diag", p1: "diag@0",   p2: "diag@0.5", at: 5.5, dur: 0.5, to: -0.3918 },
+    { step: "diag", p1: "diag@0",   p2: "diag@0.5", at: 6,   dur: 0.5, to: -0.6627 },
+    { step: "diag", p1: "diag@0",   p2: "diag@0.5", at: 6.5, dur: 0.5, to: -1 },
+    // 3. the other side of the base
+    { step: "s2",   op: "reflect", p1: "left@0.5",  p2: "diag@0.5", move: "left@0",   dir: -1, at: 8, dur: 2, to: 1 },
   ]))
 
 // Feed the instructions to a sheet of paper: steps() resolves each row
@@ -100,14 +121,15 @@ define("events", (rand, table) => {
   return paper.spawn({ id: "base", color: 0xd94f2a, py: 0.1, pz: 1.2, rx: -0.9 })
     .concat(paper.sequence())
     .concat(rows([
-      { id: "base", type: "update", beat: 5,  py: 0, rx: -0.6, ry: 0.4 },
-      { id: "base", type: "update", beat: 10, py: 0, rx: -0.45, ry: 0.9 },
+      { id: "base", type: "update", beat: 5,  py: 0, rx: -0.55, ry: 0.35 },
+      { id: "base", type: "update", beat: 7,  py: 0, rx: -0.5,  ry: 0.55 },
+      { id: "base", type: "update", beat: 11, py: 0, rx: -0.45, ry: 0.9 },
     ]))
 })
 
-// Bake to an 11-beat loop cache — when the loop wraps, the paper opens flat
+// Bake to a 12-beat loop cache — when the loop wraps, the paper opens flat
 // and folds itself all over again.
-define("scene", (rand, table) => table("events").rasterize(11))
+define("scene", (rand, table) => table("events").rasterize(12))
 
 // A whisper of video feedback (the rendered scene is hydra's s0) so the
 // paper leaves faint trails as it moves. Delete this view for a clean look.
@@ -117,11 +139,11 @@ define("hydra", () => rows([
 ]))
 
 // Things to try, live in the "steps" tab:
-//   - Re-drive a fold: add { step: "s1", at: 10, dur: 1, to: 0 } (no line —
-//     it re-uses the name) and the corner opens back up before the loop ends.
-//   - Re-drive PART of a fold: a row with the name AND a line re-drives just
-//     that stretch of its edge — { step: "diag", p1: "diag@0.5", p2: "diag@1",
-//     at: 10, dur: 1, to: 0 } opens the pocket inside the folded corner.
+//   - Delete the eight coupling "diag" rows and run again: the corner still
+//     lands in the right place, but it swings over as a pressed stack
+//     instead of collapsing inward through the standing T.
+//   - Re-drive a fold: add { step: "s1", at: 11, dur: 1, to: 0 } (no line)
+//     and the corner opens back up before the loop ends.
 //   - Flip a \`dir\` and watch that fold move through the other half-space.
 //   - Change p2 of s1/s2 to "diag@0.3" and the corners miss each other — the
 //     reflections resolve against the REAL folded paper, so every edit stays
