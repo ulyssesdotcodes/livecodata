@@ -213,10 +213,12 @@ export interface FoldStep {
   // Indices into program.faces of the faces this step rotates.
   moving: number[]
   // The creases this step made, as SHEET segments oriented along the fold
-  // line as it lay at the moment of the fold. The player hinges faces about
-  // these material lines, so re-driving an earlier fold mid-step moves its
-  // creases with the paper.
-  spans: { a: Vec2; b: Vec2 }[]
+  // line as it lay at the moment of the fold (lo/hi are positions along that
+  // line). The player hinges faces about these material lines, so re-driving
+  // an earlier fold mid-step moves its creases with the paper.
+  spans: { a: Vec2; b: Vec2; lo: number; hi: number }[]
+  // The step this group was split from by a range re-drive, or null.
+  parent: string | null
   at: number
   dur: number
 }
@@ -325,7 +327,8 @@ export function compileFoldProgram(
     theta: number
     flat: boolean
     k: number
-    spans: { a: Vec2; b: Vec2 }[]
+    spans: { a: Vec2; b: Vec2; lo: number; hi: number }[]
+    parent: string | null
     at: number
     dur: number
   }
@@ -438,6 +441,64 @@ export function compileFoldProgram(
     )
   }
 
+  // Carve the portion [ta, tb] (fractions along the fold's edge as it was
+  // made) out of `group` into a derived group of its own, so a re-drive can
+  // open one pocket of a crease while the rest stays pressed. The derived
+  // group inherits the fold's schedule so far, and the same range always
+  // maps to the same derived group.
+  const splitRange = (group: string, ta: number, tb: number, label: string): string => {
+    const dname = `${group}~${ta}-${tb}`
+    if (groups.includes(dname)) return dname
+    const parentRec = steps.find((st) => st.group === group)!
+    const runs = edgesByGroup.get(group)!
+    const keep: StepRec['spans'] = []
+    const carved: StepRec['spans'] = []
+    for (const sp of parentRec.spans) {
+      // The run this span lies in sets the range's absolute positions.
+      const run = runs.find((r) => sp.lo >= r.lo - 1e-6 && sp.hi <= r.hi + 1e-6)
+      if (!run) {
+        keep.push(sp)
+        continue
+      }
+      const qa = run.lo + ta * (run.hi - run.lo)
+      const qb = run.lo + tb * (run.hi - run.lo)
+      const lo = Math.max(sp.lo, qa)
+      const hi = Math.min(sp.hi, qb)
+      if (hi - lo < 1e-6) {
+        keep.push(sp)
+        continue
+      }
+      const pt = (q: number): Vec2 => {
+        const w = (q - sp.lo) / (sp.hi - sp.lo)
+        return [sp.a[0] + w * (sp.b[0] - sp.a[0]), sp.a[1] + w * (sp.b[1] - sp.a[1])]
+      }
+      if (lo - sp.lo > 1e-6) keep.push({ a: sp.a, b: pt(lo), lo: sp.lo, hi: lo })
+      carved.push({ a: pt(lo), b: pt(hi), lo, hi })
+      if (sp.hi - hi > 1e-6) keep.push({ a: pt(hi), b: sp.b, lo: hi, hi: sp.hi })
+    }
+    if (!carved.length) {
+      warnings.push(`${label}: "${group}@${ta}".."${group}@${tb}" carves nothing off fold "${group}"`)
+      return group
+    }
+    parentRec.spans = keep
+    steps.push({
+      group: dname,
+      theta: parentRec.theta,
+      flat: parentRec.flat,
+      k: parentRec.k,
+      spans: carved,
+      parent: group,
+      at: parentRec.at,
+      dur: parentRec.dur,
+    })
+    groups.push(dname)
+    // Until now the carved portion moved with its fold — inherit that.
+    for (const r of [...schedule]) {
+      if (r.fold === group) schedule.push({ ...r, fold: dname })
+    }
+    return dname
+  }
+
   rows.forEach((row, i) => {
     if (!row) return
     const group = row.step != null && row.step !== '' ? String(row.step) : `step${i}`
@@ -446,25 +507,44 @@ export function compileFoldProgram(
     nextAt = Math.max(nextAt, at + dur)
 
     const hasLine = row.p1 != null && row.p1 !== '' && row.p2 != null && row.p2 !== ''
+    const isRedrive = groups.includes(group)
     // A fold's own row ramps to 1 unless told otherwise — `to` 0 there is
     // meaningless (the folded model always treats the fold as made), and
-    // editable tables fill blank number cells with 0. Timing-only rows keep
-    // 0: that's an unfold.
-    const to = typeof row.to === 'number' && !(hasLine && row.to === 0) ? row.to : 1
-    if (!hasLine) {
-      // Timing-only row: re-drive an earlier fold (flap, hold, part-unfold).
-      // The exact model keeps treating the fold as folded — re-targets are
-      // animation, and later point references assume the folded state.
-      if (!groups.includes(group)) {
-        warnings.push(`row ${i + 1}: no fold named "${group}" to re-time — skipped`)
+    // editable tables fill blank number cells with 0. Re-drive rows keep
+    // any value: 0 opens the crease flat, −1 refolds it the OTHER way
+    // (the same flat endpoint reached through the opposite half-space).
+    const to = typeof row.to === 'number' && !(hasLine && !isRedrive && row.to === 0) ? row.to : 1
+
+    if (isRedrive || !hasLine) {
+      // Re-drive an earlier fold (flap, open, refold). Animation only — the
+      // exact model keeps treating the fold as made, and later point
+      // references assume the folded state. With p1/p2 the row drives just
+      // the PORTION of the fold's edge between those two points (they must
+      // be "name@t" references on the fold itself) — how a collapse opens
+      // one pocket of a crease while the rest of it stays pressed.
+      if (!isRedrive) {
+        warnings.push(`row ${i + 1}: no fold named "${group}" to re-drive — skipped`)
         return
       }
-      schedule.push({ fold: group, at, dur, to, ease: row.ease })
+      let target = group
+      if (hasLine) {
+        const ownT = (raw: unknown, which: string): number => {
+          const parts = typeof raw === 'string' ? raw.split('@').map((p) => p.trim()) : []
+          const t = parts.length > 1 ? Number(parts[1]) : NaN
+          if (parts[0] !== group || !Number.isFinite(t)) {
+            throw new Error(
+              `fold "${group}" is defined twice — a row re-driving part of it gives ${which} `
+              + `as a point on its own edge ("${group}@t")`,
+            )
+          }
+          return Math.min(1, Math.max(0, t))
+        }
+        const ta = ownT(row.p1, 'p1')
+        const tb = ownT(row.p2, 'p2')
+        target = splitRange(group, Math.min(ta, tb), Math.max(ta, tb), `row ${i + 1}`)
+      }
+      schedule.push({ fold: target, at, dur, to, ease: row.ease })
       return
-    }
-
-    if (groups.includes(group)) {
-      throw new Error(`fold "${group}" is defined twice — rows re-driving a fold carry timing only (no p1/p2)`)
     }
 
     const label = `fold "${group}"`
@@ -618,7 +698,7 @@ export function compileFoldProgram(
     // Rotating by +θ about a span (oriented along the fold line) lifts the
     // line's LEFT side toward the viewer, seen in the pre-fold state.
     const theta = (dir * sideSign * Math.abs(deg) * Math.PI) / 180
-    steps.push({ group, theta, flat, k, spans: spans.map(({ a, b }) => ({ a, b })), at, dur })
+    steps.push({ group, theta, flat, k, spans, parent: null, at, dur })
     groups.push(group)
     schedule.push({ fold: group, at, dur, to, ease: row.ease })
   })
@@ -635,6 +715,7 @@ export function compileFoldProgram(
         return acc
       }, []),
       spans: st.spans,
+      parent: st.parent,
       at: st.at,
       dur: st.dur,
     })),
@@ -838,18 +919,47 @@ export function createFoldPlayer(program: FoldProgram): FoldPlayer {
     hinge: Hinge
     childIsMover: boolean
   }
+  // Pick the tree's hinges OLDEST CREASE FIRST (a range split keeps its
+  // fold's age): a fold made later moves whole layered assemblies through
+  // their older connections — the two layers of a folded corner hang
+  // together at the crease between them, so re-driving that crease steers
+  // the collapse, and any closure error shows on the newest crease instead.
+  const stepAge = program.steps.map((st, si) => {
+    if (!st.parent) return si
+    const pi = program.steps.findIndex((s) => s.group === st.parent)
+    return pi >= 0 ? pi : si
+  })
   const tree: TreeEdge[] = []
   {
+    const order = hinges.map((_, i) => i).sort((x, y) =>
+      stepAge[hinges[x].step] - stepAge[hinges[y].step] || x - y)
+    const comp = Array.from({ length: nf }, (_, i) => i)
+    const find = (i: number): number => {
+      while (comp[i] !== i) {
+        comp[i] = comp[comp[i]]
+        i = comp[i]
+      }
+      return i
+    }
+    const adj: { other: number; hinge: Hinge }[][] = Array.from({ length: nf }, () => [])
+    for (const hi of order) {
+      const h = hinges[hi]
+      const ra = find(h.fa)
+      const rb = find(h.fb)
+      if (ra === rb) continue
+      comp[ra] = rb
+      adj[h.fa].push({ other: h.fb, hinge: h })
+      adj[h.fb].push({ other: h.fa, hinge: h })
+    }
     const seen = new Array<boolean>(nf).fill(false)
     seen[root] = true
     const queue = [root]
     while (queue.length) {
       const p = queue.shift()!
-      for (const h of hinges) {
-        const other = h.fa === p ? h.fb : h.fb === p ? h.fa : -1
-        if (other < 0 || seen[other]) continue
+      for (const { other, hinge } of adj[p]) {
+        if (seen[other]) continue
         seen[other] = true
-        tree.push({ child: other, parent: p, hinge: h, childIsMover: h.fb === other })
+        tree.push({ child: other, parent: p, hinge, childIsMover: hinge.fb === other })
         queue.push(other)
       }
     }

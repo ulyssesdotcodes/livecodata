@@ -50,7 +50,7 @@ define("scene", (rand, table) => table("events").rasterize(8))
 //
 // The instructions are ONE editable table ("steps" in the table panel):
 //   step   a name — later rows reference the edge this fold created, and a
-//          row with timing but NO line re-drives an earlier fold by name
+//          row re-using the name re-drives that fold (see below)
 //   op     "reflect" mirrors EVERYTHING on one side of the line over it (a
 //          flat 180° fold through every layer); "fold" rotates just the flap
 //          connected to \`move\` by \`deg\` degrees
@@ -65,14 +65,15 @@ define("scene", (rand, table) => table("events").rasterize(8))
 //   move   a point (same language) on the side that moves
 //   dir    +1 folds toward you, −1 away
 //   at,dur the beat the fold starts, and how many beats it takes
+//   to     how far to drive the fold: 1 folded, 0 open, −1 folded the
+//          OTHER way (same flat endpoint, reached through the other side)
 //
 // The square base, as an origamist would say it:
 //   1. fold along a diagonal
 //   2. reflect along the line from the coincident paper-edge midpoints to
-//      the midpoint of the first fold — one side of the square base. While
-//      the corner swings over, the diagonal underneath OPENS HALFWAY and
-//      presses flat again — that transition is part of the instructions
-//      (the two timing-only "diag" rows), exactly like hands collapsing it.
+//      the midpoint of the first fold — one side of the square base. Watch
+//      it halfway: the corner's two triangles stand straight up in a T,
+//      then fold on down — every stacked edge staying together.
 //   3. the same reflection, folded away, for the other pair of midpoints.
 // All four corners land on a single point, the paper's centre becomes the
 // opposite corner of the diamond, and the two reflections' edges become the
@@ -87,11 +88,7 @@ define("steps", () =>
   }, [
     { step: "diag", op: "reflect", p1: "bottom@0",  p2: "top@1",    move: "bottom@1", dir: -1, at: 1, dur: 2, to: 1 },
     { step: "s1",   op: "reflect", p1: "right@0.5", p2: "diag@0.5", move: "right@1",  dir: 1,  at: 4, dur: 2, to: 1 },
-    { step: "diag", at: 4, dur: 1, to: 0.5 },
-    { step: "diag", at: 5, dur: 1, to: 1 },
     { step: "s2",   op: "reflect", p1: "left@0.5",  p2: "diag@0.5", move: "left@0",   dir: -1, at: 7, dur: 2, to: 1 },
-    { step: "diag", at: 7, dur: 1, to: 0.5 },
-    { step: "diag", at: 8, dur: 1, to: 1 },
   ]))
 
 // Feed the instructions to a sheet of paper: steps() resolves each row
@@ -120,10 +117,12 @@ define("hydra", () => rows([
 ]))
 
 // Things to try, live in the "steps" tab:
-//   - Deepen the collapse: set the dip rows' \`to\` to 0.25 and the pocket
-//     opens wider mid-fold; 1 and it stays pressed flat (a stiff rigid flip).
+//   - Re-drive a fold: add { step: "s1", at: 10, dur: 1, to: 0 } (no line —
+//     it re-uses the name) and the corner opens back up before the loop ends.
+//   - Re-drive PART of a fold: a row with the name AND a line re-drives just
+//     that stretch of its edge — { step: "diag", p1: "diag@0.5", p2: "diag@1",
+//     at: 10, dur: 1, to: 0 } opens the pocket inside the folded corner.
 //   - Flip a \`dir\` and watch that fold move through the other half-space.
-//   - Slow a fold down: give a row dur 4 and push the later \`at\`s back.
 //   - Change p2 of s1/s2 to "diag@0.3" and the corners miss each other — the
 //     reflections resolve against the REAL folded paper, so every edit stays
 //     a legal fold.

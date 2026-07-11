@@ -793,16 +793,19 @@ export class OrigamiBuilder {
   }
 
   // One table = the whole folding, written as instructions. Each row is a
-  // fold: `p1`/`p2` name the two points defining the fold line ("x,y" a
-  // paper point in sheet coordinates, "name@t" a fraction along the edge
-  // created by the earlier fold `name`), `move` a paper point on the side
-  // that moves, `op` "reflect" (a flat 180° fold through every layer on that
-  // side) or "fold" (rotate just the flap connected to `move` by `deg`
-  // degrees), `dir` +1 toward the viewer / −1 away, and its timing (`at`,
-  // `dur`, `to`). A row with timing but NO line re-drives an earlier fold by
-  // name (flapping, part-unfolding — animation only; the exact model keeps
-  // treating the fold as folded). The timings become the default steps for
-  // sequence(), so as the timeline advances the paper folds step by step.
+  // fold: `p1`/`p2` name the two points defining the fold line — every
+  // position is ON A KNOWN EDGE: a paper edge ("bottom@t", "top@t",
+  // "left@t", "right@t") or the edge created by an earlier fold ("name@t") —
+  // `move` a point (same language) on the side that moves, `op` "reflect"
+  // (a flat 180° fold through every layer on that side) or "fold" (rotate
+  // just the flap connected to `move` by `deg` degrees), `dir` +1 toward
+  // the viewer / −1 away, and its timing (`at`, `dur`, `to` — 1 folded,
+  // 0 open, −1 folded the other way). A row re-using an earlier fold's name
+  // re-drives it (flapping, opening — animation only; the exact model keeps
+  // treating the fold as made): with no line it drives the whole fold, with
+  // p1/p2 on the fold's own edge ("name@t") just that stretch. The timings
+  // become the default steps for sequence(), so as the timeline advances
+  // the paper folds step by step.
   steps(steps: Table | Row[]): OrigamiBuilder {
     const next = new OrigamiBuilder(this._size, this._ctx)
     next._id = this._id

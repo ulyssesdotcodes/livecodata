@@ -165,6 +165,65 @@ test('errors name the fold and the problem', () => {
   )
 })
 
+test('a re-drive row with a line drives just that stretch of the fold\'s edge', () => {
+  const { program, schedule } = compileFoldProgram([
+    { step: 'diag', op: 'reflect', p1: 'bottom@0', p2: 'top@1', move: 'bottom@1', dir: -1, at: 1, dur: 2 },
+    { step: 's1', op: 'reflect', p1: 'right@0.5', p2: 'diag@0.5', move: 'right@1', at: 4, dur: 2 },
+    // Open just the part of the diagonal inside the folded corner (the
+    // spine between the corner's two triangles), then refold it the other
+    // way — the same flat endpoint through the opposite half-space.
+    { step: 'diag', p1: 'diag@0.5', p2: 'diag@1', at: 4, dur: 1, to: 0 },
+    { step: 'diag', p1: 'diag@0.5', p2: 'diag@1', at: 5, dur: 1, to: -1 },
+  ])
+  const spine = 'diag~0.5-1'
+  assert.deepEqual(program.groups, ['diag', 's1', spine])
+  // The carved group inherits the fold's schedule so far, then its own rows.
+  const derived = schedule.filter((r) => r.fold === spine)
+  assert.deepEqual(derived.map((r) => [r.at, r.to]), [[1, 1], [4, 0], [5, -1]])
+
+  // Where the right paper-edge midpoint (1,0) sits AS CARRIED BY the
+  // corner's inner triangle (the face interior to (0.7, 0.4)), which hinges
+  // on the spine. The point also exists on the static layer across the
+  // closure crease — that copy is the one that tears in impossible poses.
+  const player = createFoldPlayer(program)
+  const at = (fracs: Record<string, number>): Vec2 & { 2?: number } => {
+    player.step(fracs)
+    const p: Vec2 = [1, 0]
+    const probe: Vec2 = [0.7, 0.4]
+    const fi = program.faces.findIndex((f) => {
+      for (let i = 0; i < f.poly.length; i++) {
+        const a = f.poly[i]
+        const b = f.poly[(i + 1) % f.poly.length]
+        if ((b[0] - a[0]) * (probe[1] - a[1]) - (b[1] - a[1]) * (probe[0] - a[0]) < -1e-7) return false
+      }
+      return true
+    })
+    let base = 0
+    for (let i = 0; i < fi; i++) base += (program.faces[i].poly.length - 2) * 3
+    const f = program.faces[fi]
+    for (let i = 1; i + 1 < f.poly.length; i++) {
+      const tri = [f.poly[0], f.poly[i], f.poly[i + 1]]
+      for (let k = 0; k < 3; k++) {
+        if (Math.hypot(tri[k][0] - p[0], tri[k][1] - p[1]) < 1e-9) {
+          const o = (base + (i - 1) * 3 + k) * 3
+          return [player.positions[o], player.positions[o + 1], player.positions[o + 2]] as never
+        }
+      }
+    }
+    throw new Error('corner not found')
+  }
+  const near = (a: number[], b: number[], eps: number): boolean =>
+    Math.hypot(a[0] - b[0], a[1] - b[1], (a[2] ?? 0) - (b[2] ?? 0)) < eps
+
+  // Spine pressed: the inner triangle lies mirrored against its twin.
+  assert.ok(near(at({ diag: 1, s1: 0.5, [spine]: 1 }) as never, [0, 1, 0], 0.1))
+  // Spine open at the swing's midpoint: the corner's two triangles stand
+  // coplanar — the T — with the edge midpoint straight up.
+  assert.ok(near(at({ diag: 1, s1: 0.5, [spine]: 0 }) as never, [0, 0, 1], 1e-5))
+  // Refolded the other way: back flat on the base.
+  assert.ok(near(at({ diag: 1, s1: 1, [spine]: -1 }) as never, [0, 1, 0], 0.1))
+})
+
 // ── Playback ──────────────────────────────────────────────────────────────────
 
 const SQUARE_BASE = [
