@@ -57,14 +57,13 @@ define("scene", (rand, table) => table("events").rasterize(8))
 // re-folds an earlier line by name — that is how a crease folds, unfolds,
 // and later folds the OTHER way, exactly like paper in your hands.
 //
-// The folds are TRUSTED as written: every crease sits at exactly the angle
-// its rows say, faces stay perfectly rigid, and undriven creases stay
-// perfectly flat. Where a fold disagrees with itself mid-motion, the sheet
-// is stitched back together like real paper: the mismatch is shared out
-// across the whole sheet as slight offsets between neighbouring faces (the
-// offsets are also what gives the flat-folded states their depth), so edges
-// stay next to each other instead of tearing open. Scrubbing shows the
-// exact fold state at any beat.
+// The folding is SIMULATED as paper — a small physics solver in the spirit
+// of Amanda Ghassaei's Origami Simulator: stiff springs keep the sheet from
+// stretching while each crease is pulled toward the angle its row schedules,
+// so mid-motion the paper flexes and finds its own way through a collapse,
+// exactly like the real sheet between your hands. The whole schedule is
+// baked against the beat when the program runs, so playback and scrubbing
+// land on the same pose every time, at any frame rate.
 
 // The fold steps — one motion at a time, with a rest between each, like
 // hands folding it:

@@ -244,138 +244,66 @@ test('origami sequence supports partial folds, refolds, and named eases', () => 
   assert.equal(typeof at(5).ease, 'function', 'named ease resolved onto the keyframe')
 })
 
-// ── Rigid (kinematic) solver ─────────────────────────────────────────────────
+// ── Baked folding ─────────────────────────────────────────────────────────────
 
-import { createRigidSolver } from '../src/origami.js'
+import { createBakedFolding } from '../src/origami.js'
 
-test('rigid solver: a valley fold lifts the far side toward +z by exactly the target', () => {
-  const p = compilePattern(halfFold(90))
-  const solver = createRigidSolver(p)
-  solver.step({ half: 1 })
-  // Faces are per-corner now; every corner with x away from the crease on the
-  // folded side must sit at exactly |x| height (90° rotation), and the kept
-  // side stays in the plane.
-  let folded = 0
-  for (let f = 0; f < p.faces.length; f++) {
-    for (let k = 0; k < 3; k++) {
-      const x = solver.positions[f * 9 + k * 3]
-      const z = solver.positions[f * 9 + k * 3 + 2]
-      if (Math.abs(z) > 1e-6) {
-        folded++
-        assert.ok(z > 0, `folded side went up, got z=${z}`)
-        assert.ok(Math.abs(Math.abs(x) - 0) < 1e-6 || Math.abs(z) > 0, 'rotated by 90°')
-      }
-    }
+test('baked folding: poses are a pure function of the beat', () => {
+  const p = compilePattern(halfFold(150))
+  const drive = [
+    { beat: 1, values: { half: 0 } },
+    { beat: 2, values: { half: 1 } }, // fold over one beat…
+    { beat: 4, values: { half: 1 } }, // …then rest so the paper settles
+  ]
+  const baked = createBakedFolding(p, drive)
+
+  baked.poseAt(4)
+  const settled = Float32Array.from(baked.positions)
+  const hinge = p.hinges.find((h) => h.group === 'half')!
+  const theta = hingeAngle(settled, hinge)
+  assert.ok(Math.abs(theta - (150 * Math.PI) / 180) < 0.08, `theta ${theta}`)
+
+  // Scrub back to the start: exactly flat (the cached first frame).
+  baked.poseAt(0)
+  for (let i = 0; i < p.vertices.length; i++) {
+    assert.ok(Math.abs(baked.positions[i * 3 + 2]) < 1e-6, 'flat at beat 0')
   }
-  assert.ok(folded > 0, 'something folded')
-  // Rigidity is exact: every face's edge lengths match the pattern.
-  for (let f = 0; f < p.faces.length; f++) {
-    const [a, b, c] = p.faces[f]
-    const idx = [a, b, c]
-    for (let k = 0; k < 3; k++) {
-      const k2 = (k + 1) % 3
-      const rest = Math.hypot(
-        p.vertices[idx[k2]][0] - p.vertices[idx[k]][0],
-        p.vertices[idx[k2]][1] - p.vertices[idx[k]][1],
-      )
-      const now = Math.hypot(
-        solver.positions[f * 9 + k2 * 3] - solver.positions[f * 9 + k * 3],
-        solver.positions[f * 9 + k2 * 3 + 1] - solver.positions[f * 9 + k * 3 + 1],
-        solver.positions[f * 9 + k2 * 3 + 2] - solver.positions[f * 9 + k * 3 + 2],
-      )
-      assert.ok(Math.abs(now - rest) < 1e-6, `face ${f} edge ${k} exact`)
-    }
-  }
+
+  // Scrubbing around never changes what a beat looks like: byte-identical.
+  baked.poseAt(2.37)
+  const mid = Float32Array.from(baked.positions)
+  baked.poseAt(4)
+  baked.poseAt(0.2)
+  baked.poseAt(2.37)
+  assert.deepEqual(Array.from(baked.positions), Array.from(mid))
+  baked.poseAt(4)
+  assert.deepEqual(Array.from(baked.positions), Array.from(settled))
+
+  // …and a fresh bake reproduces the same poses (fixed substep rate).
+  const again = createBakedFolding(p, drive)
+  again.poseAt(2.37)
+  assert.deepEqual(Array.from(again.positions), Array.from(mid))
 })
 
-test('rigid solver: undriven creases stay exactly flat', () => {
-  const p = compilePattern({
-    size: 1,
-    creases: [
-      { x1: 0, y1: -1, x2: 0, y2: 1, group: 'v', angle: 150 },
-      { x1: -1, y1: 0, x2: 1, y2: 0, group: 'h', angle: -150 },
-    ],
-  })
-  const solver = createRigidSolver(p)
-  solver.step({ v: 1, h: 0 })
-  // With h undriven, the sheet is a clean single fold: every corner lies
-  // either in the z=0 plane or on the half-plane rotated exactly 150° about
-  // the crease — nothing in between (the h crease shows no kink at all).
-  for (let f = 0; f < p.faces.length; f++) {
-    for (let k = 0; k < 3; k++) {
-      const x = solver.positions[f * 9 + k * 3]
-      const z = solver.positions[f * 9 + k * 3 + 2]
-      const onFlat = Math.abs(z) < 1e-6
-      const angle = (Math.atan2(z, x) * 180) / Math.PI
-      const onFolded = Math.abs(angle - 150) < 1e-4
-      assert.ok(onFlat || onFolded, `corner x=${x} z=${z} on a rigid half-plane (angle ${angle})`)
-    }
-  }
-})
-
-test('rigid solver: stitching keeps shared edges together where folds disagree', () => {
-  // Two full crossing creases driven at once — not rigid-origami feasible
-  // mid-fold, so the raw spanning-tree solution tears the loop around the
-  // centre wide open. Stitching must close it (small offsets only) while
-  // every face stays exactly rigid.
-  const p = compilePattern({
-    size: 1,
-    creases: [
-      { x1: 0, y1: -1, x2: 0, y2: 1, group: 'v', angle: 178 },
-      { x1: -1, y1: 0, x2: 1, y2: 0, group: 'h', angle: 178 },
-    ],
-  })
-  const solver = createRigidSolver(p)
-  const copies: number[][] = p.vertices.map(() => [])
-  p.faces.forEach((tri, f) => tri.forEach((v, k) => copies[v].push(f * 3 + k)))
-  const maxTear = (): number => {
-    let worst = 0
-    for (const list of copies) {
-      let ax = 0
-      let ay = 0
-      let az = 0
-      for (const c of list) {
-        ax += solver.positions[c * 3]
-        ay += solver.positions[c * 3 + 1]
-        az += solver.positions[c * 3 + 2]
-      }
-      ax /= list.length
-      ay /= list.length
-      az /= list.length
-      for (const c of list) {
-        worst = Math.max(worst, Math.hypot(
-          solver.positions[c * 3] - ax,
-          solver.positions[c * 3 + 1] - ay,
-          solver.positions[c * 3 + 2] - az,
-        ))
-      }
-    }
-    return worst
-  }
-
-  solver.step({ v: 0.5, h: 0.5 }, 0)
-  const torn = maxTear()
-  assert.ok(torn > 0.1, `unstitched tree solution tears (${torn.toFixed(3)})`)
-
-  solver.step({ v: 0.5, h: 0.5 })
-  const stitched = maxTear()
-  assert.ok(stitched < 0.05, `stitched sheet holds together (${stitched.toFixed(3)})`)
-  // Rigidity survives the stitch exactly.
-  for (let f = 0; f < p.faces.length; f++) {
-    const [a, b, c] = p.faces[f]
-    const idx = [a, b, c]
-    for (let k = 0; k < 3; k++) {
-      const k2 = (k + 1) % 3
-      const rest = Math.hypot(
-        p.vertices[idx[k2]][0] - p.vertices[idx[k]][0],
-        p.vertices[idx[k2]][1] - p.vertices[idx[k]][1],
-      )
-      const now = Math.hypot(
-        solver.positions[f * 9 + k2 * 3] - solver.positions[f * 9 + k * 3],
-        solver.positions[f * 9 + k2 * 3 + 1] - solver.positions[f * 9 + k * 3 + 1],
-        solver.positions[f * 9 + k2 * 3 + 2] - solver.positions[f * 9 + k * 3 + 2],
-      )
-      assert.ok(Math.abs(now - rest) < 1e-6, `face ${f} edge ${k} exact after stitching`)
-    }
-  }
+test('baked folding: drive ease shapes the ramp, lines follow the fold', () => {
+  const p = compilePattern(halfFold(120))
+  const easeIn = (t: number): number => t * t
+  const baked = createBakedFolding(p, [
+    { beat: 0, values: { half: 0 } },
+    { beat: 2, ease: easeIn, values: { half: 1 } },
+    { beat: 3, values: { half: 1 } },
+  ])
+  // With ease-in, the fold has barely moved a quarter of the way in.
+  baked.poseAt(0.5)
+  const hinge = p.hinges.find((h) => h.group === 'half')!
+  const early = Math.abs(hingeAngle(baked.positions, hinge))
+  assert.ok(early < 0.35, `ease-in keeps the early fold shallow (${early})`)
+  // The crease's drawn line segments sit on the fold, not at the rest pose.
+  baked.poseAt(3)
+  const li = p.lines.findIndex(([i, j]) =>
+    Math.abs(p.vertices[i][0]) < 1e-9 && Math.abs(p.vertices[j][0]) < 1e-9)
+  assert.ok(li >= 0, 'crease line exists')
+  const [i0] = p.lines[li]
+  assert.equal(baked.linePositions[li * 6], baked.positions[i0 * 3])
+  assert.equal(baked.linePositions[li * 6 + 2], baked.positions[i0 * 3 + 2])
 })

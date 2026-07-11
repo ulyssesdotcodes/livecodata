@@ -845,15 +845,32 @@ export class OrigamiBuilder {
 
   // The create row: compiled pattern + all fold groups at 0 (flat sheet).
   // Extra props (id, color, px/py/pz, rx/ry/rz, beat, …) merge over defaults.
+  // When folds() captured a schedule, it rides along as `drive`, and the
+  // renderer BAKES the folding: a physics solver (after Ghassaei's Origami
+  // Simulator) simulates the whole schedule once at a fixed rate, so playback
+  // and scrubbing just look poses up by beat — deterministic every time.
   spawn(props: Row = {}): Table {
     const pattern = compilePattern(this._spec)
     this._id = props.id ?? this._id
     const zeros: Row = {}
     for (const g of pattern.groups) zeros[g] = 0
+    const drive = this._steps.length
+      ? this.sequence().rows.map((r) => {
+          const values: Record<string, number> = {}
+          for (const g of pattern.groups) {
+            if (typeof r[g] === 'number') values[g] = r[g] as number
+          }
+          return {
+            beat: r.beat as number,
+            ease: typeof r.ease === 'function' ? (r.ease as (t: number) => number) : null,
+            values,
+          }
+        })
+      : null
     return new Table([{
       id: this._id, type: 'create', beat: 1, shape: 'origami',
       px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, color: 0xd94f2a,
-      ...zeros, pattern, ...props,
+      ...zeros, pattern, ...(drive ? { drive } : {}), ...props,
     }], this._ctx)
   }
 

@@ -1,5 +1,9 @@
 import * as THREE from 'three'
-import { createRigidSolver, type CompiledPattern, type RigidSolver } from './origami.js'
+import { FRAMES_PER_BEAT } from './constants.js'
+import {
+  createBakedFolding, createFoldSolver,
+  type BakedFolding, type CompiledPattern, type DriveKey, type FoldSolver,
+} from './origami.js'
 
 export interface SceneAPI {
   createObject(row: Record<string, unknown>): void
@@ -34,15 +38,19 @@ const PALETTE = [0x4a9eff, 0xff6b6b, 0x51cf66, 0xffd43b, 0xcc5de8, 0xff922b]
 
 // A live sheet of folding paper: the solver owns the vertex buffer, the two
 // meshes (colored front / paper-white back) and the crease lines all render
-// straight out of it. The solver is kinematic: every hinge sits at exactly
-// its target angle (crease target × the row's fold fraction), faces are
-// positioned by composing those exact rotations, and where the crease
-// pattern's loops disagree mid-fold the solver stitches the sheet back
-// together, leaving small offsets between neighbouring faces — so faces
-// can't share vertices, and the geometry is per-face (non-indexed).
+// straight out of it (indexed geometry — real paper shares its vertices).
 interface OrigamiObject {
   root: THREE.Group
-  solver: RigidSolver
+  // The fold schedule rides on the create row, so the folding is BAKED: a
+  // physics solver (in the spirit of Ghassaei's Origami Simulator) simulates
+  // the whole schedule once, and playback just looks poses up by beat —
+  // deterministic under scrubbing and any frame rate. Without a schedule
+  // (creases driven directly by row fields), the solver steps live instead.
+  baked: BakedFolding | null
+  live: FoldSolver | null
+  pattern: CompiledPattern
+  linePositions: Float32Array
+  beat: number
   posAttr: THREE.BufferAttribute
   linePosAttr: THREE.BufferAttribute
   targets: Record<string, number>
@@ -57,12 +65,19 @@ const PAPER_BACK = 0xf4efe2
 
 function makeOrigami(row: Record<string, unknown>): OrigamiObject {
   const pattern = row.pattern as CompiledPattern
-  const solver = createRigidSolver(pattern)
+  const drive = Array.isArray(row.drive) ? (row.drive as DriveKey[]) : null
+  const baked = drive && drive.length ? createBakedFolding(pattern, drive) : null
+  const live = baked ? null : createFoldSolver(pattern)
+  const positions = baked ? baked.positions : live!.positions
+  const linePositions = baked
+    ? baked.linePositions
+    : new Float32Array(pattern.lines.length * 6)
 
-  const posAttr = new THREE.BufferAttribute(solver.positions, 3)
+  const posAttr = new THREE.BufferAttribute(positions, 3)
   posAttr.setUsage(THREE.DynamicDrawUsage)
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', posAttr)
+  geometry.setIndex(pattern.faces.flat())
 
   const color = row.color != null ? (row.color as number) : 0xd94f2a
   // Two single-sided materials so the paper's front and back read differently
@@ -79,7 +94,7 @@ function makeOrigami(row: Record<string, unknown>): OrigamiObject {
   const front = new THREE.MeshStandardMaterial({ ...common, color, side: THREE.FrontSide })
   const back = new THREE.MeshStandardMaterial({ ...common, color: PAPER_BACK, side: THREE.BackSide })
 
-  const linePosAttr = new THREE.BufferAttribute(solver.linePositions, 3)
+  const linePosAttr = new THREE.BufferAttribute(linePositions, 3)
   linePosAttr.setUsage(THREE.DynamicDrawUsage)
   const lineGeometry = new THREE.BufferGeometry()
   lineGeometry.setAttribute('position', linePosAttr)
@@ -94,19 +109,44 @@ function makeOrigami(row: Record<string, unknown>): OrigamiObject {
   for (const g of pattern.groups) targets[g] = 0
 
   const obj: OrigamiObject = {
-    root, solver, posAttr, linePosAttr, targets, front, back, line, geometry, lineGeometry,
+    root, baked, live, pattern, linePositions, beat: 0,
+    posAttr, linePosAttr, targets, front, back, line, geometry, lineGeometry,
   }
   applyOrigamiRow(obj, row)
   return obj
 }
 
 function applyOrigamiRow(obj: OrigamiObject, row: Record<string, unknown>): void {
-  const { px, py, pz, rx, ry, rz, color } = row
+  const { px, py, pz, rx, ry, rz, color, beat, frame } = row
   obj.root.position.set((px as number) ?? 0, (py as number) ?? 0, (pz as number) ?? 0)
   obj.root.rotation.set((rx as number) ?? 0, (ry as number) ?? 0, (rz as number) ?? 0)
   if (color != null) obj.front.color.set(color as number)
+  // The pose is keyed by beat. Rasterized frame-cache rows carry `frame`
+  // (frame 0 = beat 1); unbaked event rows carry `beat` directly.
+  if (typeof frame === 'number' && Number.isFinite(frame)) {
+    obj.beat = frame / FRAMES_PER_BEAT + 1
+  } else if (typeof beat === 'number' && Number.isFinite(beat)) {
+    obj.beat = beat
+  }
   for (const g of Object.keys(obj.targets)) {
     if (typeof row[g] === 'number') obj.targets[g] = row[g] as number
+  }
+}
+
+function tickOrigami(obj: OrigamiObject): void {
+  if (obj.baked) {
+    obj.baked.poseAt(obj.beat)
+  } else {
+    obj.live!.step(obj.targets, 20)
+    const p = obj.live!.positions
+    obj.pattern.lines.forEach(([i, j], li) => {
+      obj.linePositions[li * 6] = p[i * 3]
+      obj.linePositions[li * 6 + 1] = p[i * 3 + 1]
+      obj.linePositions[li * 6 + 2] = p[i * 3 + 2]
+      obj.linePositions[li * 6 + 3] = p[j * 3]
+      obj.linePositions[li * 6 + 4] = p[j * 3 + 1]
+      obj.linePositions[li * 6 + 5] = p[j * 3 + 2]
+    })
   }
 }
 
@@ -153,7 +193,7 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
 
   function animate(): void {
     for (const o of origamis.values()) {
-      o.solver.step(o.targets)
+      tickOrigami(o)
       o.posAttr.needsUpdate = true
       o.linePosAttr.needsUpdate = true
     }
