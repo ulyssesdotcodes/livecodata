@@ -722,11 +722,12 @@ export interface RigidSolver {
   step(fracs: Record<string, number>, stitchIterations?: number): void
 }
 
-type Affine = Float64Array // row-major 3x4
+export type Affine = Float64Array // row-major 3x4
 
-const IDENTITY: Affine = new Float64Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0])
+export const IDENTITY_AFFINE: Affine = new Float64Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0])
+const IDENTITY = IDENTITY_AFFINE
 
-function mulAffine(a: Affine, b: Affine, out: Affine): void {
+export function mulAffine(a: Affine, b: Affine, out: Affine): void {
   for (let r = 0; r < 3; r++) {
     const r4 = r * 4
     for (let c = 0; c < 4; c++) {
@@ -738,7 +739,7 @@ function mulAffine(a: Affine, b: Affine, out: Affine): void {
 
 // Rotation by θ about the z=0 line through p → q (Rodrigues, then conjugate by
 // the translation taking the origin to p).
-function rotAboutLine2D(px: number, py: number, qx: number, qy: number, theta: number, out: Affine): void {
+export function rotAboutLine2D(px: number, py: number, qx: number, qy: number, theta: number, out: Affine): void {
   let ux = qx - px
   let uy = qy - py
   const L = Math.hypot(ux, uy)
