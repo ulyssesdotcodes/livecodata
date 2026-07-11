@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { createRigidSolver, type CompiledPattern, type RigidSolver } from './origami.js'
+import { createFoldPlayer, type FoldProgram, type FoldPlayer } from './origami.js'
 
 export interface SceneAPI {
   createObject(row: Record<string, unknown>): void
@@ -32,17 +32,16 @@ function makeGeometry(shape: string, dims: Record<string, unknown>): THREE.Buffe
 
 const PALETTE = [0x4a9eff, 0xff6b6b, 0x51cf66, 0xffd43b, 0xcc5de8, 0xff922b]
 
-// A live sheet of folding paper: the solver owns the vertex buffer, the two
+// A live sheet of folding paper: the player owns the vertex buffer, the two
 // meshes (colored front / paper-white back) and the crease lines all render
-// straight out of it. The solver is kinematic: every hinge sits at exactly
-// its target angle (crease target × the row's fold fraction), faces are
-// positioned by composing those exact rotations, and where the crease
-// pattern's loops disagree mid-fold the solver stitches the sheet back
-// together, leaving small offsets between neighbouring faces — so faces
-// can't share vertices, and the geometry is per-face (non-indexed).
+// straight out of it. Playback is pure kinematics: each fold step rigidly
+// rotates the faces it moves about its fold line by (step angle × the row's
+// fold fraction), so the only independently moving pieces are faces created
+// by a previous fold and a pose is a pure function of the fractions. Faces
+// are positioned independently, so the geometry is per-face (non-indexed).
 interface OrigamiObject {
   root: THREE.Group
-  solver: RigidSolver
+  player: FoldPlayer
   posAttr: THREE.BufferAttribute
   linePosAttr: THREE.BufferAttribute
   targets: Record<string, number>
@@ -56,10 +55,10 @@ interface OrigamiObject {
 const PAPER_BACK = 0xf4efe2
 
 function makeOrigami(row: Record<string, unknown>): OrigamiObject {
-  const pattern = row.pattern as CompiledPattern
-  const solver = createRigidSolver(pattern)
+  const program = row.program as FoldProgram
+  const player = createFoldPlayer(program)
 
-  const posAttr = new THREE.BufferAttribute(solver.positions, 3)
+  const posAttr = new THREE.BufferAttribute(player.positions, 3)
   posAttr.setUsage(THREE.DynamicDrawUsage)
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', posAttr)
@@ -79,7 +78,7 @@ function makeOrigami(row: Record<string, unknown>): OrigamiObject {
   const front = new THREE.MeshStandardMaterial({ ...common, color, side: THREE.FrontSide })
   const back = new THREE.MeshStandardMaterial({ ...common, color: PAPER_BACK, side: THREE.BackSide })
 
-  const linePosAttr = new THREE.BufferAttribute(solver.linePositions, 3)
+  const linePosAttr = new THREE.BufferAttribute(player.linePositions, 3)
   linePosAttr.setUsage(THREE.DynamicDrawUsage)
   const lineGeometry = new THREE.BufferGeometry()
   lineGeometry.setAttribute('position', linePosAttr)
@@ -91,10 +90,10 @@ function makeOrigami(row: Record<string, unknown>): OrigamiObject {
   root.add(new THREE.LineSegments(lineGeometry, line))
 
   const targets: Record<string, number> = {}
-  for (const g of pattern.groups) targets[g] = 0
+  for (const g of program.groups) targets[g] = 0
 
   const obj: OrigamiObject = {
-    root, solver, posAttr, linePosAttr, targets, front, back, line, geometry, lineGeometry,
+    root, player, posAttr, linePosAttr, targets, front, back, line, geometry, lineGeometry,
   }
   applyOrigamiRow(obj, row)
   return obj
@@ -153,7 +152,7 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
 
   function animate(): void {
     for (const o of origamis.values()) {
-      o.solver.step(o.targets)
+      o.player.step(o.targets)
       o.posAttr.needsUpdate = true
       o.linePosAttr.needsUpdate = true
     }
@@ -166,7 +165,7 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
     createObject(row: Record<string, unknown>): void {
       const { id, shape, px, py, pz, rx, ry, rz, color } = row
       if (objects.has(id) || origamis.has(id)) return
-      if (shape === 'origami' && row.pattern) {
+      if (shape === 'origami' && row.program) {
         const obj = makeOrigami(row)
         scene.add(obj.root)
         origamis.set(id, obj)
