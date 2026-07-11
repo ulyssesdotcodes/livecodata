@@ -45,119 +45,119 @@ define("scene", (rand, table) => table("events").rasterize(8))
 // A square of paper folds itself into the traditional crane, then flaps its
 // wings on the beat. Press "Run" (or Cmd/Ctrl-Enter), then hit Play.
 //
-// origami() is a bare sheet; .crease(x1,y1,x2,y2, group, angle) or
-// .creases([...]) add fold lines — a line (clipped to the paper, split at
-// crossings) in a named GROUP with a target fold angle (degrees; + valley
-// folds toward you, − mountain away). Fold state is nothing special: a
-// numeric field per group on the scene rows, 0 = flat and 1 = fully folded,
-// interpolated between keyframes like any transform. The paper itself is
-// simulated — a little spring-mass sheet — so it eases into each crease, and
-// scrubbing backwards physically UNFOLDS it. (When the loop wraps, watch the
-// crane collapse flat and fold itself again.)
+// The whole folding is ONE TABLE of physical fold steps ("folds" in the table
+// panel). Each row is a fold: a crease LINE in the original square's
+// coordinates ([-1,1]², before any folding) plus a degree — \`deg\` positive
+// folds toward you, negative folds away — and its timing: \`at\` the start
+// beat, \`dur\` how many beats the fold takes, \`to\` the fraction reached
+// (1 = fully folded, 0 = flat again). Rows sharing a \`fold\` name move
+// together as one motion; a row with timing but NO line re-folds an earlier
+// step by name (the wing flaps at the end). As the timeline advances the
+// paper works through the steps like hands folding it — and scrubbing
+// backwards physically UNFOLDS it. (When the loop wraps, watch the crane
+// collapse flat and fold itself again.)
 
-// 1. The crease pattern, as DATA — a plain array of { x1, y1, x2, y2, group,
-//    angle } objects in [-1, 1]² sheet space, fed to .creases() below. This
-//    IS the crane: edit a coordinate or an angle here and Run to see it fold
-//    differently. Groups:
-//      base               — everything up to the bird base, folded as one motion
-//      neck, tail, head   — the staged point folds
-//      wings              — both wing folds (flap these!)
-const CRANE = []
-const base = (x1, y1, x2, y2, sign) => CRANE.push({ x1, y1, x2, y2, group: "base", angle: 165 * sign })
+// 1. The fold steps. The collapse to the bird base is three cascading
+//    motions — the corner-to-corner creases, then the book folds, then the
+//    petal ring that pulls everything down — followed by the point folds.
+//    d = √2−1 and m = 2−√2 mark where the petal creases cross the diagonals
+//    and medians; each line's ± degree was found by searching every
+//    assignment consistent with Maekawa's theorem for the one that folds
+//    flattest. Edit any line, degree, or beat in the table and Run.
+const STEPS = []
+const step = (fold, at, dur, x1, y1, x2, y2, deg) =>
+  STEPS.push({ fold, x1, y1, x2, y2, deg, at, dur, to: 1 })
+const d = 0.4142, m = 0.5858
 
-// The traditional bird base: both diagonals and medians through the four
-// diagonal points (±d, ±d) and four median points (0, ±m), (±m, 0), where
-// d = √2 − 1 and m = 2 − √2 — every interior vertex satisfies Kawasaki's
-// theorem, so it folds flat. Each segment's mountain/valley sign below was
-// found by search (try every assignment consistent with Maekawa's theorem at
-// each interior vertex, fold with the solver, keep the one that folds
-// flattest with the least mid-fold strain) — try flipping one and Run again.
-const d = Math.SQRT2 - 1, m = 2 - Math.SQRT2
-base(-1, -1, -d, -d,  1); base(-d, -d, 0, 0, -1)   // (−1,−1) corner → neck/tail tip
-base( 1,  1,  d,  d, -1); base( d,  d, 0, 0,  1)   // (1,1) corner
-base( 1, -1,  d, -d, -1); base(-1,  1, -d,  d, -1) // wing corners
-base( d, -d,  0,  0,  1); base(-d,  d,  0,  0,  1)
-base( 1,  0,  m,  0,  1); base(0,  1, 0,  m,  1)   // medians
-base(-1,  0, -m,  0, -1); base(0, -1, 0, -m, -1)
-base( m,  0,  0,  0, -1); base(0,  m, 0,  0, -1)
-base(-m,  0,  0,  0,  1); base(0, -m, 0,  0,  1)
-// Petal octagon ring — every edge folds the same way.
+// Fold 1 — the corner-to-corner creases start the collapse.
+step("diag", 1, 4.5,  -1, -1, -d, -d,  165)
+step("diag", 1, 4.5,  -d, -d,  0,  0, -165)
+step("diag", 1, 4.5,   1,  1,  d,  d, -165)
+step("diag", 1, 4.5,   d,  d,  0,  0,  165)
+step("diag", 1, 4.5,   1, -1,  d, -d, -165)
+step("diag", 1, 4.5,  -1,  1, -d,  d, -165)
+step("diag", 1, 4.5,   d, -d,  0,  0,  165)
+step("diag", 1, 4.5,  -d,  d,  0,  0,  165)
+// Fold 2 — the book folds join in as the collapse deepens.
+step("book", 1.4, 4.1,  1,  0,  m,  0,  165)
+step("book", 1.4, 4.1,  0,  1,  0,  m,  165)
+step("book", 1.4, 4.1, -1,  0, -m,  0, -165)
+step("book", 1.4, 4.1,  0, -1,  0, -m, -165)
+step("book", 1.4, 4.1,  m,  0,  0,  0, -165)
+step("book", 1.4, 4.1,  0,  m,  0,  0, -165)
+step("book", 1.4, 4.1, -m,  0,  0,  0,  165)
+step("book", 1.4, 4.1,  0, -m,  0,  0,  165)
+// Fold 3 — the petal folds: the ring linking the crease crossings pulls the
+// corners together into the bird base.
 const ring = [[0, -m], [d, -d], [m, 0], [d, d], [0, m], [-d, d], [-m, 0], [-d, -d]]
-ring.forEach(([x1, y1], i) => { const [x2, y2] = ring[(i + 1) % 8]; base(x1, y1, x2, y2, -1) })
+ring.forEach(([x1, y1], i) => {
+  const [x2, y2] = ring[(i + 1) % 8]
+  step("petal", 1.8, 3.7, x1, y1, x2, y2, -165)
+})
 
-// Staged details on top of the base: neck/tail kink their points upward, head
-// counter-folds near the neck's tip, wings sweep both flaps out. Each crosses
-// a flat-folded flap, so it's a mirrored PAIR of half-creases with opposite
-// signs — one layer folds mountain where its mirror image folds valley (a
-// single sign across the whole line just crumples the point).
-const mirrorPair = (group, angle, bx, by) => {
-  const tx = (bx + by) / 2
-  CRANE.push({ x1: bx, y1: by, x2: tx, y2: tx, group, angle })
-  CRANE.push({ x1: tx, y1: tx, x2: by, y2: bx, group, angle: -angle })
-}
-mirrorPair("neck", 136, -1, -0.2)
-mirrorPair("head", 144, -1, -0.75)
-mirrorPair("tail", 132, 1, 0.2)
-CRANE.push(
-  { x1: 0.45, y1: -1, x2: 0.725, y2: -0.725, group: "wings", angle: 60 },
-  { x1: 0.725, y1: -0.725, x2: 1, y2: -0.55, group: "wings", angle: -60 },
-  { x1: -1, y1: 0.45, x2: -0.725, y2: 0.725, group: "wings", angle: 60 },
-  { x1: -0.725, y1: 0.725, x2: -0.55, y2: 1, group: "wings", angle: -60 },
-)
+// Folds 4–7 — the point folds. Each crosses a flat-folded flap, so it is a
+// mirrored PAIR of lines with opposite degrees: one layer folds forward
+// where its mirror image folds back (one line with one sign just crumples
+// the point — try it).
+step("neck", 6.5, 1.5, -1, -0.2, -0.6, -0.6,  136)   // kink the neck flap up
+step("neck", 6.5, 1.5, -0.6, -0.6, -0.2, -1, -136)
+step("tail", 7, 1.5,    1, 0.2, 0.6, 0.6,  132)
+step("tail", 7, 1.5,    0.6, 0.6, 0.2, 1, -132)
+step("head", 8.5, 1,   -1, -0.75, -0.875, -0.875,  144) // counter-fold the tip
+step("head", 8.5, 1,   -0.875, -0.875, -0.75, -1, -144)
+step("wings", 9.5, 1.5,  0.45, -1, 0.725, -0.725,  60)  // sweep both wings out
+step("wings", 9.5, 1.5,  0.725, -0.725, 1, -0.55, -60)
+step("wings", 9.5, 1.5, -1, 0.45, -0.725, 0.725,   60)
+step("wings", 9.5, 1.5, -0.725, 0.725, -0.55, 1,  -60)
 
-// 2. The fold schedule — live-editable in the table panel ("folds" tab):
-//    \`fold\` is the crease group, \`at\` the start beat, \`dur\` how many beats it
-//    takes, \`to\` the fraction to reach (default 1; below 1 part-folds, 0
-//    unfolds). Nudge a beat, stretch a dur, add flaps — then Run again.
-editable("folds", { fold: "string", at: "number", dur: "number", to: "number" }, [
-  { fold: "base",  at: 1,    dur: 5,   to: 1 },
-  { fold: "neck",  at: 6.5,  dur: 1.5, to: 1 },
-  { fold: "tail",  at: 7,    dur: 1.5, to: 1 },
-  { fold: "head",  at: 8.5,  dur: 1,   to: 1 },
-  { fold: "wings", at: 9.5,  dur: 1.5, to: 1 },
-  // …then flap on the half-beat.
+// …then flap on the half-beat: timing-only rows re-folding "wings".
+STEPS.push(
   { fold: "wings", at: 12,   dur: 0.5, to: 0.6 },
   { fold: "wings", at: 12.5, dur: 0.5, to: 1 },
   { fold: "wings", at: 13,   dur: 0.5, to: 0.6 },
   { fold: "wings", at: 13.5, dur: 0.5, to: 1 },
   { fold: "wings", at: 14,   dur: 0.5, to: 0.6 },
   { fold: "wings", at: 14.5, dur: 0.5, to: 1 },
-])
+)
 
-// 3. Spawn the paper and bake the schedule into fold keyframes; a couple of
-//    plain rotation keyframes turn the model while it folds (rx/ry/rz
-//    interpolate like everything else).
+editable("folds", {
+  fold: "string", x1: "number", y1: "number", x2: "number", y2: "number",
+  deg: "number", at: "number", dur: "number", to: "number",
+}, STEPS)
+
+// 2. Feed the fold-step table to a sheet of paper: folds() turns each row's
+//    line into a crease and each row's timing into the fold sequence, then
+//    spawn() emits the scene object and sequence() the beat-timed keyframes.
+//    A couple of plain rotation keyframes turn the model while it folds
+//    (rx/ry/rz interpolate like everything else).
 define("events", (rand, table) => {
-  const paper = origami().creases(CRANE)
-  // Rotation is just three more numeric tracks: tip the flat sheet toward the
-  // camera to start, then glide to a side profile as the bird takes shape.
+  const paper = origami().folds(table("folds"))
   return paper.spawn({ id: "crane", color: 0xd94f2a, py: 0.1, pz: 1.2, rx: -0.7, ry: 0.15 })
-    .concat(paper.sequence(table("folds")))
+    .concat(paper.sequence())
     .concat(rows([
       { id: "crane", type: "update", beat: 10, py: -0.1, pz: 1.4, rx: 0.49, ry: -1.19 },
       { id: "crane", type: "update", beat: 16, py: -0.1, pz: 1.4, rx: 0.55, ry: -0.85 },
     ]))
 })
 
-// 4. Bake to a 16-beat loop cache.
+// 3. Bake to a 16-beat loop cache.
 define("scene", (rand, table) => table("events").rasterize(16))
 
-// 5. A whisper of video feedback (the rendered scene is hydra's s0) so the
+// 4. A whisper of video feedback (the rendered scene is hydra's s0) so the
 //    paper leaves faint trails as it moves. Delete this view for a clean look.
 define("hydra", () => rows([
   { beat: 1, event: "setCode",
     code: "src(s0).blend(src(o0).scale(1.003), 0.18).out(o0)" },
 ]))
 
-// Things to try, live:
-//   - In the "folds" tab: make \`base\` take 10 beats, or start \`neck\` before
-//     the base finishes — overlapping folds are fine.
-//   - Fold the wings to 1.4 (over-fold) or -0.3 (bend backwards).
-//   - Edit CRANE directly: flip a base sign, move a detail crease's border
-//     point, change 165 to 178 for a crisper fold. It's just an array.
-//   - Your own paper: origami.fan(7) is an accordion (groups fan0…fan6 — ripple
-//     them!), and origami().crease(-1, -1, 1, 1, "diag", -160) starts a sheet
-//     from scratch — creases split each other automatically, so just draw lines.
+// Things to try, live in the "folds" tab:
+//   - Stretch the collapse: give "diag" dur 8 and push everything later.
+//   - Start "neck" before the base finishes — overlapping folds are fine.
+//   - Flap harder: set the flap rows' \`to\` to 1.4 (over-fold) or -0.3.
+//   - Move a line: nudge the neck crease's border point (x1,y1) and Run.
+//   - Flip one \`deg\` sign on a "diag" row and watch the collapse change.
+//   - New paper: origami.fan(7) is an accordion (groups fan0…fan6 — ripple
+//     them!), or draw your own lines — crossings split automatically.
 `,
   },
   {

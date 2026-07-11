@@ -62,16 +62,18 @@ test('Origami Crane sample folds the traditional bird base without blowing up', 
   const create = events.rows.find((r) => r.type === 'create')!
   assert.equal(create.shape, 'origami')
   const pattern = create.pattern as CompiledPattern
-  for (const g of ['base', 'neck', 'tail', 'head', 'wings']) {
+  for (const g of ['diag', 'book', 'petal', 'neck', 'tail', 'head', 'wings']) {
     assert.ok(pattern.groups.includes(g), `missing group ${g}`)
   }
   assert.ok(pattern.faces.length >= 20, `expected a real mesh, got ${pattern.faces.length} faces`)
 
   // Kawasaki's theorem at the classic interior vertices of the bird base:
-  // alternating sector angles around each vertex sum to π.
+  // alternating sector angles around each vertex sum to π. The sample writes
+  // its coordinates rounded to 4 decimals, hence the loose vertex lookup —
+  // and the theorem still holding on the rounded pattern is the point.
   const d = Math.SQRT2 - 1
   const checkKawasaki = (vx: number, vy: number): void => {
-    const vi = pattern.vertices.findIndex(([x, y]) => Math.hypot(x - vx, y - vy) < 1e-6)
+    const vi = pattern.vertices.findIndex(([x, y]) => Math.hypot(x - vx, y - vy) < 1e-3)
     assert.ok(vi >= 0, `vertex (${vx},${vy}) exists`)
     const dirs: number[] = []
     const seen = new Set<string>()
@@ -92,16 +94,17 @@ test('Origami Crane sample folds the traditional bird base without blowing up', 
       const gap = (i + 1 < dirs.length ? dirs[i + 1] : dirs[0] + 2 * Math.PI) - dirs[i]
       alt += i % 2 === 0 ? gap : -gap
     }
-    assert.ok(Math.abs(alt) < 1e-4, `Kawasaki at (${vx},${vy}): alternating sum ${alt}`)
+    assert.ok(Math.abs(alt) < 1e-3, `Kawasaki at (${vx},${vy}): alternating sum ${alt}`)
   }
   checkKawasaki(d, -d)
   checkKawasaki(-d, d)
 
   // Folding the base most of the way must stay numerically sane and keep the
-  // paper inextensible.
+  // paper inextensible. The collapse is three cascading motions in the sample;
+  // ramp them together here as they largely are by the end.
   const solver = createFoldSolver(pattern)
-  for (let i = 0; i < 80; i++) solver.step({ base: i / 80 }, 40)
-  for (let i = 0; i < 40; i++) solver.step({ base: 1 }, 40)
+  for (let i = 0; i < 80; i++) solver.step({ diag: i / 80, book: i / 80, petal: i / 80 }, 40)
+  for (let i = 0; i < 40; i++) solver.step({ diag: 1, book: 1, petal: 1 }, 40)
   for (let i = 0; i < solver.positions.length; i++) {
     assert.ok(Number.isFinite(solver.positions[i]), 'positions stay finite')
   }
