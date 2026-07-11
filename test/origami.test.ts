@@ -312,3 +312,70 @@ test('rigid solver: undriven creases stay exactly flat', () => {
     }
   }
 })
+
+test('rigid solver: stitching keeps shared edges together where folds disagree', () => {
+  // Two full crossing creases driven at once — not rigid-origami feasible
+  // mid-fold, so the raw spanning-tree solution tears the loop around the
+  // centre wide open. Stitching must close it (small offsets only) while
+  // every face stays exactly rigid.
+  const p = compilePattern({
+    size: 1,
+    creases: [
+      { x1: 0, y1: -1, x2: 0, y2: 1, group: 'v', angle: 178 },
+      { x1: -1, y1: 0, x2: 1, y2: 0, group: 'h', angle: 178 },
+    ],
+  })
+  const solver = createRigidSolver(p)
+  const copies: number[][] = p.vertices.map(() => [])
+  p.faces.forEach((tri, f) => tri.forEach((v, k) => copies[v].push(f * 3 + k)))
+  const maxTear = (): number => {
+    let worst = 0
+    for (const list of copies) {
+      let ax = 0
+      let ay = 0
+      let az = 0
+      for (const c of list) {
+        ax += solver.positions[c * 3]
+        ay += solver.positions[c * 3 + 1]
+        az += solver.positions[c * 3 + 2]
+      }
+      ax /= list.length
+      ay /= list.length
+      az /= list.length
+      for (const c of list) {
+        worst = Math.max(worst, Math.hypot(
+          solver.positions[c * 3] - ax,
+          solver.positions[c * 3 + 1] - ay,
+          solver.positions[c * 3 + 2] - az,
+        ))
+      }
+    }
+    return worst
+  }
+
+  solver.step({ v: 0.5, h: 0.5 }, 0)
+  const torn = maxTear()
+  assert.ok(torn > 0.1, `unstitched tree solution tears (${torn.toFixed(3)})`)
+
+  solver.step({ v: 0.5, h: 0.5 })
+  const stitched = maxTear()
+  assert.ok(stitched < 0.05, `stitched sheet holds together (${stitched.toFixed(3)})`)
+  // Rigidity survives the stitch exactly.
+  for (let f = 0; f < p.faces.length; f++) {
+    const [a, b, c] = p.faces[f]
+    const idx = [a, b, c]
+    for (let k = 0; k < 3; k++) {
+      const k2 = (k + 1) % 3
+      const rest = Math.hypot(
+        p.vertices[idx[k2]][0] - p.vertices[idx[k]][0],
+        p.vertices[idx[k2]][1] - p.vertices[idx[k]][1],
+      )
+      const now = Math.hypot(
+        solver.positions[f * 9 + k2 * 3] - solver.positions[f * 9 + k * 3],
+        solver.positions[f * 9 + k2 * 3 + 1] - solver.positions[f * 9 + k * 3 + 1],
+        solver.positions[f * 9 + k2 * 3 + 2] - solver.positions[f * 9 + k * 3 + 2],
+      )
+      assert.ok(Math.abs(now - rest) < 1e-6, `face ${f} edge ${k} exact after stitching`)
+    }
+  }
+})

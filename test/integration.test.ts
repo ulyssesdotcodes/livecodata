@@ -110,16 +110,56 @@ test('Origami Crane sample folds the traditional bird base without blowing up', 
   // fractions, so check the sample's rest states directly. Rigidity is exact
   // by construction — assert it as a regression on the transform math — and
   // the flat-foldable rests must stack into thin packets.
+  // The square base folds the book folds fully while the DIAGONALS end up
+  // flat inside (fold them fully too and the whole sheet piles into one 45°
+  // wedge — a triangle, not a square base).
   const squareTo: Record<string, number> = {
-    d2: 1, d3: 1, a1: 1, a4: 1, bx1: 1, bx3: 1, by1: 1, by3: 1,
-    d1: -1, d4: -1, a2: -1, a3: -1, bx2: -1, bx4: -1, by2: -1, by4: -1,
+    bx1: 1, bx3: 1, by1: 1, by3: 1, bx2: -1, bx4: -1, by2: -1, by4: -1,
+    d1: 0, d2: 0, d3: 0, d4: 0, a1: 0, a2: 0, a3: 0, a4: 0,
     petalF: 0, petalB: 0, neck: 0, tail: 0, head: 0, wings: 0,
   }
   const birdTo: Record<string, number> = {
-    ...squareTo, d1: 1, d4: 1, a2: 1, a3: 1, bx2: 1, bx4: 1, by2: 1, by4: 1,
+    ...squareTo,
+    d1: 1, d2: 1, d3: 1, d4: 1, a1: 1, a2: 1, a3: 1, a4: 1,
+    bx2: 1, bx4: 1, by2: 1, by4: 1,
     petalF: 1, petalB: 1,
   }
   const solver = createRigidSolver(pattern)
+
+  // Every pattern vertex's per-face copies, for tear + landmark checks.
+  const copies: number[][] = pattern.vertices.map(() => [])
+  pattern.faces.forEach((tri, f) => tri.forEach((v, k) => copies[v].push(f * 3 + k)))
+  const avgPos = (v: number): [number, number, number] => {
+    let x = 0
+    let y = 0
+    let z = 0
+    for (const c of copies[v]) {
+      x += solver.positions[c * 3]
+      y += solver.positions[c * 3 + 1]
+      z += solver.positions[c * 3 + 2]
+    }
+    const n = copies[v].length
+    return [x / n, y / n, z / n]
+  }
+  const maxTear = (): number => {
+    let worst = 0
+    for (let v = 0; v < pattern.vertices.length; v++) {
+      const [ax, ay, az] = avgPos(v)
+      for (const c of copies[v]) {
+        worst = Math.max(worst, Math.hypot(
+          solver.positions[c * 3] - ax,
+          solver.positions[c * 3 + 1] - ay,
+          solver.positions[c * 3 + 2] - az,
+        ))
+      }
+    }
+    return worst
+  }
+  const vtx = (x: number, y: number): number => {
+    const i = pattern.vertices.findIndex(([vx, vy]) => Math.hypot(vx - x, vy - y) < 1e-3)
+    assert.ok(i >= 0, `vertex (${x},${y}) exists`)
+    return i
+  }
 
   const checkRigidity = (label: string): void => {
     for (let f = 0; f < pattern.faces.length; f++) {
@@ -154,15 +194,48 @@ test('Origami Crane sample folds the traditional bird base without blowing up', 
   solver.step({})
   assert.ok(zExtent() < 1e-9, 'undriven sheet is exactly flat')
 
-  // Square base: a thin flat packet (near-flat 178° folds stack the layers).
+  // Square base: a thin flat packet (near-flat 178° folds stack the layers),
+  // stitched so the sheet never pulls apart…
   solver.step(squareTo)
   checkRigidity('square base')
-  assert.ok(zExtent() < 0.3, `square base stacks flat (z extent ${zExtent().toFixed(3)})`)
+  assert.ok(zExtent() < 0.15, `square base stacks flat (z extent ${zExtent().toFixed(3)})`)
+  assert.ok(maxTear() < 0.02, `square base holds together (tear ${maxTear().toFixed(3)})`)
+  // …and shaped like the SQUARE base, not a triangle: the four corners stack
+  // at one point √2 from the centre, and the four edge midpoints land in TWO
+  // stacks (the base's side corners) √2 apart. A wedge/triangle collapse puts
+  // all four midpoints in a single stack.
+  const o = avgPos(vtx(0, 0))
+  const cps = [vtx(1, 1), vtx(-1, 1), vtx(-1, -1), vtx(1, -1)].map(avgPos)
+  const cx = cps.reduce((s, p) => s + p[0], 0) / 4
+  const cy = cps.reduce((s, p) => s + p[1], 0) / 4
+  const cz = cps.reduce((s, p) => s + p[2], 0) / 4
+  for (const p of cps) {
+    assert.ok(Math.hypot(p[0] - cx, p[1] - cy, p[2] - cz) < 0.05, 'corners stack at one point')
+  }
+  const cornerDist = Math.hypot(cx - o[0], cy - o[1], cz - o[2])
+  assert.ok(Math.abs(cornerDist - Math.SQRT2) < 0.05, `corner stack √2 from centre (${cornerDist.toFixed(3)})`)
+  const mps = [vtx(1, 0), vtx(0, 1), vtx(-1, 0), vtx(0, -1)].map(avgPos)
+  let midSep = 0
+  for (let i = 0; i < 4; i++) {
+    for (let j = i + 1; j < 4; j++) {
+      midSep = Math.max(midSep, Math.hypot(mps[i][0] - mps[j][0], mps[i][1] - mps[j][1], mps[i][2] - mps[j][2]))
+    }
+    const dO = Math.hypot(mps[i][0] - o[0], mps[i][1] - o[1], mps[i][2] - o[2])
+    assert.ok(Math.abs(dO - 1) < 0.05, `midpoint ${i} sits 1 from centre (${dO.toFixed(3)})`)
+  }
+  assert.ok(Math.abs(midSep - Math.SQRT2) < 0.05, `midpoints form two stacks √2 apart (${midSep.toFixed(3)})`)
 
-  // Bird base: likewise.
+  // Bird base: likewise flat and stitched.
   solver.step(birdTo)
   checkRigidity('bird base')
   assert.ok(zExtent() < 0.3, `bird base stacks flat (z extent ${zExtent().toFixed(3)})`)
+  assert.ok(maxTear() < 0.02, `bird base holds together (tear ${maxTear().toFixed(3)})`)
+
+  // Mid-motion (petal fold half-open, the historically worst state): the
+  // sheet may offset slightly but must not pull apart.
+  solver.step({ ...birdTo, petalF: 0.6, petalB: 0.6, d1: 0.5, d2: 0.5, d3: 0.5, d4: 0.5, a1: 0.5, a2: 0.5, a3: 0.5, a4: 0.5, bx2: 0, bx4: 0, by2: 0, by4: 0 })
+  checkRigidity('mid petal fold')
+  assert.ok(maxTear() < 0.15, `mid-fold sheet stays stitched (tear ${maxTear().toFixed(3)})`)
 
   const scene = views.get('scene')!
   assert.ok(scene.length > 0, 'rasterized to a frame cache')
