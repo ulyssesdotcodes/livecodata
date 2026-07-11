@@ -103,15 +103,15 @@ test('Origami Square Base sample: the five-crease squash stands the T exactly', 
   const near = (a: number[], b: number[], eps: number): boolean =>
     Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < eps
 
-  // Spine tip flat on the table at √2·(1/3, 2√2/3): the top-view T's stem.
-  assert.ok(near(cornerPos([0.9, 0.97], [1, 1]), [Math.SQRT2 / 3, 4 / 3, 0], 0.02),
+  // The tip arrives on the table beside the right-angle corner — the
+  // square-base pocket standing, one press from done.
+  assert.ok(near(cornerPos([0.9, 0.97], [1, 1]), [-0.918, 1.076, 0], 0.02),
     `tip at ${cornerPos([0.9, 0.97], [1, 1])}`)
-  // The mountain ridge's outer end stands mid-air over the doubled edge.
-  assert.ok(near(cornerPos([0.4, 0.9], [0.5, 1]), [0.354, 1, 0.354], 0.02),
-    `ridge at ${cornerPos([0.4, 0.9], [0.5, 1])}`)
-  // The centre line's outer end stays put on the fold line.
-  assert.ok(near(cornerPos([-0.3, 0.8], [0, 1]), [0, 1, 0], 0.02))
-  // The still triangle hasn't moved.
+  // The kite's ridge (the coincident edge midpoints) stands over the median.
+  assert.ok(near(cornerPos([0.2, 0.85], [0, 1]), [-0.46, 0.54, 0.705], 0.02),
+    `ridge at ${cornerPos([0.2, 0.85], [0, 1])}`)
+  // The right-angle corner and the still half haven't moved.
+  assert.ok(near(cornerPos([-0.85, 0.9], [-1, 1]), [-1, 1, 0], 1e-6))
   assert.ok(near(cornerPos([-0.9, -0.8], [-1, -1]), [-1, -1, 0], 1e-6))
 
   // Rigid throughout: sample a few beats of the baked schedule and check no
