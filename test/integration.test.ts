@@ -63,7 +63,9 @@ test('Origami Square Base sample folds exactly: four corners gather at one point
   const create = events.rows.find((r) => r.type === 'create')!
   assert.equal(create.shape, 'origami')
   const program = create.program as FoldProgram
-  assert.deepEqual(program.groups, ['diag', 's1', 's2'])
+  // Three folds, plus the two halves of the diagonal carved out by the
+  // collapse's coupling rows (the centre-vertex mechanism).
+  assert.deepEqual(program.groups, ['diag', 's1', 'diag~0.5-1', 'diag~0-0.5', 's2'])
   assert.equal(program.warnings.length, 0, program.warnings.join('; '))
 
   // The exact folded model: all four paper corners on ONE point, √2 from the
@@ -85,10 +87,16 @@ test('Origami Square Base sample folds exactly: four corners gather at one point
   const midSep = Math.hypot(fm[0][0] - fm[2][0], fm[0][1] - fm[2][1])
   assert.ok(Math.abs(midSep - Math.SQRT2) < 1e-9, `side corners √2 apart (${midSep})`)
 
-  // Playback: fully driven, the paper stacks into a thin flat packet (the
-  // player backs each 180° fold off a sliver so layers don't z-fight).
+  // Playback: at the end of the baked schedule the paper stacks into a thin
+  // flat packet (the player backs each 180° fold off a sliver so layers
+  // don't z-fight). Read the final fractions off the last keyframe — the
+  // collapse leaves the diagonal's halves at +1/−1, both flat.
   const player = createFoldPlayer(program)
-  player.step({ diag: 1, s1: 1, s2: 1 })
+  const updates = events.rows.filter((r) => r.type === 'update' && typeof r.s2 === 'number')
+  const last = updates.reduce((a, b) => ((a.beat as number) > (b.beat as number) ? a : b))
+  const finals: Record<string, number> = {}
+  for (const g of program.groups) finals[g] = typeof last[g] === 'number' ? last[g] as number : 0
+  player.step(finals)
   let zLo = Infinity
   let zHi = -Infinity
   for (let i = 2; i < player.positions.length; i += 3) {

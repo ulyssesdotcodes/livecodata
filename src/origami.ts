@@ -213,10 +213,16 @@ export interface FoldStep {
   // Indices into program.faces of the faces this step rotates.
   moving: number[]
   // The creases this step made, as SHEET segments oriented along the fold
-  // line as it lay at the moment of the fold. The player hinges faces about
-  // these material lines, so re-driving an earlier fold mid-step moves its
-  // creases with the paper.
-  spans: { a: Vec2; b: Vec2 }[]
+  // line as it lay at the moment of the fold (lo/hi are positions along that
+  // line). The player hinges faces about these material lines, so re-driving
+  // an earlier fold mid-step moves its creases with the paper. `sign` is the
+  // parity of the layer the crease was cut into (+1 face-up, −1 face-down):
+  // the fold angle is uniform in the PAPER's frame, so a crease on a
+  // mirrored layer turns the other way in the world — one reflection folds
+  // the front layer toward the viewer and the back layer away.
+  spans: { a: Vec2; b: Vec2; lo: number; hi: number; sign: number }[]
+  // The step this group was split from by a range re-drive, or null.
+  parent: string | null
   at: number
   dur: number
 }
@@ -325,7 +331,8 @@ export function compileFoldProgram(
     theta: number
     flat: boolean
     k: number
-    spans: { a: Vec2; b: Vec2 }[]
+    spans: { a: Vec2; b: Vec2; lo: number; hi: number; sign: number }[]
+    parent: string | null
     at: number
     dur: number
   }
@@ -438,6 +445,64 @@ export function compileFoldProgram(
     )
   }
 
+  // Carve the portion [ta, tb] (fractions along the fold's edge as it was
+  // made) out of `group` into a derived group of its own, so a re-drive can
+  // open one pocket of a crease while the rest stays pressed. The derived
+  // group inherits the fold's schedule so far, and the same range always
+  // maps to the same derived group.
+  const splitRange = (group: string, ta: number, tb: number, label: string): string => {
+    const dname = `${group}~${ta}-${tb}`
+    if (groups.includes(dname)) return dname
+    const parentRec = steps.find((st) => st.group === group)!
+    const runs = edgesByGroup.get(group)!
+    const keep: StepRec['spans'] = []
+    const carved: StepRec['spans'] = []
+    for (const sp of parentRec.spans) {
+      // The run this span lies in sets the range's absolute positions.
+      const run = runs.find((r) => sp.lo >= r.lo - 1e-6 && sp.hi <= r.hi + 1e-6)
+      if (!run) {
+        keep.push(sp)
+        continue
+      }
+      const qa = run.lo + ta * (run.hi - run.lo)
+      const qb = run.lo + tb * (run.hi - run.lo)
+      const lo = Math.max(sp.lo, qa)
+      const hi = Math.min(sp.hi, qb)
+      if (hi - lo < 1e-6) {
+        keep.push(sp)
+        continue
+      }
+      const pt = (q: number): Vec2 => {
+        const w = (q - sp.lo) / (sp.hi - sp.lo)
+        return [sp.a[0] + w * (sp.b[0] - sp.a[0]), sp.a[1] + w * (sp.b[1] - sp.a[1])]
+      }
+      if (lo - sp.lo > 1e-6) keep.push({ a: sp.a, b: pt(lo), lo: sp.lo, hi: lo, sign: sp.sign })
+      carved.push({ a: pt(lo), b: pt(hi), lo, hi, sign: sp.sign })
+      if (sp.hi - hi > 1e-6) keep.push({ a: pt(hi), b: sp.b, lo: hi, hi: sp.hi, sign: sp.sign })
+    }
+    if (!carved.length) {
+      warnings.push(`${label}: "${group}@${ta}".."${group}@${tb}" carves nothing off fold "${group}"`)
+      return group
+    }
+    parentRec.spans = keep
+    steps.push({
+      group: dname,
+      theta: parentRec.theta,
+      flat: parentRec.flat,
+      k: parentRec.k,
+      spans: carved,
+      parent: group,
+      at: parentRec.at,
+      dur: parentRec.dur,
+    })
+    groups.push(dname)
+    // Until now the carved portion moved with its fold — inherit that.
+    for (const r of [...schedule]) {
+      if (r.fold === group) schedule.push({ ...r, fold: dname })
+    }
+    return dname
+  }
+
   rows.forEach((row, i) => {
     if (!row) return
     const group = row.step != null && row.step !== '' ? String(row.step) : `step${i}`
@@ -446,25 +511,44 @@ export function compileFoldProgram(
     nextAt = Math.max(nextAt, at + dur)
 
     const hasLine = row.p1 != null && row.p1 !== '' && row.p2 != null && row.p2 !== ''
+    const isRedrive = groups.includes(group)
     // A fold's own row ramps to 1 unless told otherwise — `to` 0 there is
     // meaningless (the folded model always treats the fold as made), and
-    // editable tables fill blank number cells with 0. Timing-only rows keep
-    // 0: that's an unfold.
-    const to = typeof row.to === 'number' && !(hasLine && row.to === 0) ? row.to : 1
-    if (!hasLine) {
-      // Timing-only row: re-drive an earlier fold (flap, hold, part-unfold).
-      // The exact model keeps treating the fold as folded — re-targets are
-      // animation, and later point references assume the folded state.
-      if (!groups.includes(group)) {
-        warnings.push(`row ${i + 1}: no fold named "${group}" to re-time — skipped`)
+    // editable tables fill blank number cells with 0. Re-drive rows keep
+    // any value: 0 opens the crease flat, −1 refolds it the OTHER way
+    // (the same flat endpoint reached through the opposite half-space).
+    const to = typeof row.to === 'number' && !(hasLine && !isRedrive && row.to === 0) ? row.to : 1
+
+    if (isRedrive || !hasLine) {
+      // Re-drive an earlier fold (flap, open, refold). Animation only — the
+      // exact model keeps treating the fold as made, and later point
+      // references assume the folded state. With p1/p2 the row drives just
+      // the PORTION of the fold's edge between those two points (they must
+      // be "name@t" references on the fold itself) — how a collapse opens
+      // one pocket of a crease while the rest of it stays pressed.
+      if (!isRedrive) {
+        warnings.push(`row ${i + 1}: no fold named "${group}" to re-drive — skipped`)
         return
       }
-      schedule.push({ fold: group, at, dur, to, ease: row.ease })
+      let target = group
+      if (hasLine) {
+        const ownT = (raw: unknown, which: string): number => {
+          const parts = typeof raw === 'string' ? raw.split('@').map((p) => p.trim()) : []
+          const t = parts.length > 1 ? Number(parts[1]) : NaN
+          if (parts[0] !== group || !Number.isFinite(t)) {
+            throw new Error(
+              `fold "${group}" is defined twice — a row re-driving part of it gives ${which} `
+              + `as a point on its own edge ("${group}@t")`,
+            )
+          }
+          return Math.min(1, Math.max(0, t))
+        }
+        const ta = ownT(row.p1, 'p1')
+        const tb = ownT(row.p2, 'p2')
+        target = splitRange(group, Math.min(ta, tb), Math.max(ta, tb), `row ${i + 1}`)
+      }
+      schedule.push({ fold: target, at, dur, to, ease: row.ease })
       return
-    }
-
-    if (groups.includes(group)) {
-      throw new Error(`fold "${group}" is defined twice — rows re-driving a fold carry timing only (no p1/p2)`)
     }
 
     const label = `fold "${group}"`
@@ -558,7 +642,7 @@ export function compileFoldProgram(
     // Commit: split the faces whose halves part ways, mirror the movers.
     const k = steps.length
     const R = reflectAcross(P, D)
-    const spans: { a: Vec2; b: Vec2; lo: number; hi: number }[] = []
+    const spans: { a: Vec2; b: Vec2; lo: number; hi: number; sign: number }[] = []
     const nextFaces: Face[] = []
     for (let fi = 0; fi < faces.length; fi++) {
       const f = faces[fi]
@@ -577,13 +661,17 @@ export function compileFoldProgram(
         continue
       }
       const stay = mine.find((p) => p !== mover)!
-      // Record the crease as a span of the fold line (oriented p1→p2).
+      // Record the crease as a span of the fold line (oriented p1→p2), with
+      // the parity of the layer it was cut into: the fold angle is uniform
+      // in the paper's frame, so a crease cut into a face-down layer turns
+      // the other way in the world (front folds toward you, back away).
       const [c1, c2] = mover.chord!
       const t1 = dot2(D, sub2(applyIso(f.T, c1), P))
       const t2 = dot2(D, sub2(applyIso(f.T, c2), P))
+      const sign = f.T.a * f.T.d - f.T.b * f.T.c > 0 ? 1 : -1
       spans.push(t1 <= t2
-        ? { a: c1, b: c2, lo: t1, hi: t2 }
-        : { a: c2, b: c1, lo: t2, hi: t1 })
+        ? { a: c1, b: c2, lo: t1, hi: t2, sign }
+        : { a: c2, b: c1, lo: t2, hi: t1, sign })
       nextFaces.push({ poly: stay.poly, T: f.T, movedAt: [...f.movedAt] })
       nextFaces.push({
         poly: mover.poly,
@@ -618,7 +706,7 @@ export function compileFoldProgram(
     // Rotating by +θ about a span (oriented along the fold line) lifts the
     // line's LEFT side toward the viewer, seen in the pre-fold state.
     const theta = (dir * sideSign * Math.abs(deg) * Math.PI) / 180
-    steps.push({ group, theta, flat, k, spans: spans.map(({ a, b }) => ({ a, b })), at, dur })
+    steps.push({ group, theta, flat, k, spans, parent: null, at, dur })
     groups.push(group)
     schedule.push({ fold: group, at, dur, to, ease: row.ease })
   })
@@ -635,6 +723,7 @@ export function compileFoldProgram(
         return acc
       }, []),
       spans: st.spans,
+      parent: st.parent,
       at: st.at,
       dur: st.dur,
     })),
@@ -706,8 +795,9 @@ function rotAboutLine2D(px: number, py: number, qx: number, qy: number, theta: n
 }
 
 // Fully-folded flat steps stop just short of 180° so stacked layers keep a
-// sliver of daylight (no z-fighting) while the EXACT model stays exact.
-const FLAT_MAX = Math.PI * 0.99
+// sliver of daylight (no z-fighting) while the EXACT model stays exact. The
+// welded mesh spreads the deficit as a whisper of face flex, so keep it small.
+const FLAT_MAX = Math.PI * 0.998
 
 // The overlap segment two convex sheet polygons share, or null.
 function sharedSegment(pa: Vec2[], pb: Vec2[]): [Vec2, Vec2] | null {
@@ -750,23 +840,60 @@ export function createFoldPlayer(program: FoldProgram): FoldPlayer {
   }
   const positions = new Float32Array(corners * 3)
 
-  // Unique edges by sheet endpoints, each drawn with one adjacent face.
-  const edgeKey = (a: Vec2, b: Vec2): string => {
-    const ka = `${a[0].toFixed(6)},${a[1].toFixed(6)}`
-    const kb = `${b[0].toFixed(6)},${b[1].toFixed(6)}`
-    return ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`
+  // ── Welded vertices: paper edges are TRUE edges ──
+  // Every distinct sheet point is one animated vertex, shared by every face
+  // whose boundary carries it (as a corner or mid-edge). Each frame computes
+  // one position per vertex — the average of its faces' rigid predictions —
+  // so the mesh is watertight by construction: edges can never split,
+  // whatever the fold fractions do; any disagreement between faces reads as
+  // the slight flex of real paper instead of a tear.
+  const vkey = (p: Vec2): string => `${p[0].toFixed(6)},${p[1].toFixed(6)}`
+  const verts: Vec2[] = []
+  const vertIndex = new Map<string, number>()
+  faces.forEach((f) => {
+    for (const p of f.poly) {
+      const k = vkey(p)
+      if (!vertIndex.has(k)) {
+        vertIndex.set(k, verts.length)
+        verts.push(p)
+      }
+    }
+  })
+  const nv = verts.length
+  const onBoundary = (v: Vec2, poly: Vec2[]): boolean => {
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i]
+      const b = poly[(i + 1) % poly.length]
+      const d = sub2(b, a)
+      const L = len2(d)
+      if (L < EPS) continue
+      if (Math.abs(cross2(d, sub2(v, a))) > 1e-7 * L) continue
+      const t = dot2(d, sub2(v, a)) / (L * L)
+      if (t >= -1e-7 && t <= 1 + 1e-7) return true
+    }
+    return false
   }
-  const edges: { a: Vec2; b: Vec2; face: number }[] = []
+  const vertFaces: number[][] = verts.map((v) =>
+    faces.reduce<number[]>((acc, f, fi) => {
+      if (onBoundary(v, f.poly)) acc.push(fi)
+      return acc
+    }, []))
+  const vertPos = new Float64Array(nv * 3)
+  // Face corner → welded vertex.
+  const cornerVert: number[][] = faces.map((f) => f.poly.map((p) => vertIndex.get(vkey(p))!))
+
+  // Unique edges by welded endpoints (creases + paper border).
+  const edges: [number, number][] = []
   {
     const seen = new Set<string>()
     faces.forEach((f, fi) => {
       for (let i = 0; i < f.poly.length; i++) {
-        const a = f.poly[i]
-        const b = f.poly[(i + 1) % f.poly.length]
-        const key = edgeKey(a, b)
+        const va = cornerVert[fi][i]
+        const vb = cornerVert[fi][(i + 1) % f.poly.length]
+        const key = va < vb ? `${va}|${vb}` : `${vb}|${va}`
         if (seen.has(key)) continue
         seen.add(key)
-        edges.push({ a, b, face: fi })
+        edges.push([va, vb])
       }
     })
   }
@@ -783,6 +910,10 @@ export function createFoldPlayer(program: FoldProgram): FoldPlayer {
     qx: number
     qy: number
     step: number
+    // Layer parity of the crease (from its span): the fold angle is uniform
+    // in the paper's frame, so a crease on a face-down layer turns the other
+    // way in the world.
+    sign: number
   }
   const hinges: Hinge[] = []
   for (let i = 0; i < nf; i++) {
@@ -810,6 +941,7 @@ export function createFoldPlayer(program: FoldProgram): FoldPlayer {
             fb: bMoves ? j : i,
             px: p[0], py: p[1], qx: q[0], qy: q[1],
             step: si,
+            sign: sp.sign ?? 1,
           })
           found = true
           break
@@ -838,18 +970,57 @@ export function createFoldPlayer(program: FoldProgram): FoldPlayer {
     hinge: Hinge
     childIsMover: boolean
   }
+  // Pick the tree's hinges (a range split keeps its fold's age):
+  //   1. FIRST-LAYER creases (cut into face-up paper), oldest first — a fold
+  //      made later moves whole layered assemblies through their older
+  //      connections, and re-driving the crease between two layers steers
+  //      a collapse.
+  //   2. SECOND-LAYER creases (cut into face-down layers) only where nothing
+  //      else connects, newest first. When a reflection folds through a
+  //      stack, its crease on the mirrored layer is the vertex mechanism's
+  //      DEPENDENT crease — its angle follows the other three (one way
+  //      pressed, the other way in a collapse) — so it must be where the
+  //      loop closes, not a driven hinge.
+  const stepAge = program.steps.map((st, si) => {
+    if (!st.parent) return si
+    const pi = program.steps.findIndex((s) => s.group === st.parent)
+    return pi >= 0 ? pi : si
+  })
   const tree: TreeEdge[] = []
   {
+    const rank = (i: number): number => {
+      const h = hinges[i]
+      const age = stepAge[h.step]
+      return h.sign > 0 ? age : 1e6 - age
+    }
+    const order = hinges.map((_, i) => i).sort((x, y) => rank(x) - rank(y) || x - y)
+    const comp = Array.from({ length: nf }, (_, i) => i)
+    const find = (i: number): number => {
+      while (comp[i] !== i) {
+        comp[i] = comp[comp[i]]
+        i = comp[i]
+      }
+      return i
+    }
+    const adj: { other: number; hinge: Hinge }[][] = Array.from({ length: nf }, () => [])
+    for (const hi of order) {
+      const h = hinges[hi]
+      const ra = find(h.fa)
+      const rb = find(h.fb)
+      if (ra === rb) continue
+      comp[ra] = rb
+      adj[h.fa].push({ other: h.fb, hinge: h })
+      adj[h.fb].push({ other: h.fa, hinge: h })
+    }
     const seen = new Array<boolean>(nf).fill(false)
     seen[root] = true
     const queue = [root]
     while (queue.length) {
       const p = queue.shift()!
-      for (const h of hinges) {
-        const other = h.fa === p ? h.fb : h.fb === p ? h.fa : -1
-        if (other < 0 || seen[other]) continue
+      for (const { other, hinge } of adj[p]) {
+        if (seen[other]) continue
         seen[other] = true
-        tree.push({ child: other, parent: p, hinge: h, childIsMover: h.fb === other })
+        tree.push({ child: other, parent: p, hinge, childIsMover: hinge.fb === other })
         queue.push(other)
       }
     }
@@ -867,41 +1038,59 @@ export function createFoldPlayer(program: FoldProgram): FoldPlayer {
     })
     faceM[root].set(IDENTITY)
     for (const te of tree) {
-      const theta = thetas[te.hinge.step]
+      const h = te.hinge
+      const theta = thetas[h.step]
       if (theta === 0) {
         faceM[te.child].set(faceM[te.parent])
         continue
       }
-      const h = te.hinge
       rotAboutLine2D(h.px, h.py, h.qx, h.qy, te.childIsMover ? theta : -theta, rot)
       mulAffine(faceM[te.parent], rot, tmp)
       faceM[te.child].set(tmp)
     }
+    // Weld: one position per sheet vertex — the average of its faces' rigid
+    // predictions — so every edge stays a true edge.
+    for (let vi = 0; vi < nv; vi++) {
+      const v = verts[vi]
+      const list = vertFaces[vi]
+      let x = 0
+      let y = 0
+      let z = 0
+      for (const fi of list) {
+        const M = faceM[fi]
+        x += M[0] * v[0] + M[1] * v[1] + M[3]
+        y += M[4] * v[0] + M[5] * v[1] + M[7]
+        z += M[8] * v[0] + M[9] * v[1] + M[11]
+      }
+      const inv = 1 / list.length
+      vertPos[vi * 3] = x * inv
+      vertPos[vi * 3 + 1] = y * inv
+      vertPos[vi * 3 + 2] = z * inv
+    }
     for (let fi = 0; fi < nf; fi++) {
       const f = faces[fi]
-      const M = faceM[fi]
       let o = faceTriStart[fi] * 3
-      const put = (p: Vec2): void => {
-        positions[o] = M[0] * p[0] + M[1] * p[1] + M[3]
-        positions[o + 1] = M[4] * p[0] + M[5] * p[1] + M[7]
-        positions[o + 2] = M[8] * p[0] + M[9] * p[1] + M[11]
+      const put = (k: number): void => {
+        const vi = cornerVert[fi][k]
+        positions[o] = vertPos[vi * 3]
+        positions[o + 1] = vertPos[vi * 3 + 1]
+        positions[o + 2] = vertPos[vi * 3 + 2]
         o += 3
       }
       for (let i = 1; i + 1 < f.poly.length; i++) {
-        put(f.poly[0])
-        put(f.poly[i])
-        put(f.poly[i + 1])
+        put(0)
+        put(i)
+        put(i + 1)
       }
     }
-    edges.forEach((e, ei) => {
-      const M = faceM[e.face]
+    edges.forEach(([va, vb], ei) => {
       const o = ei * 6
-      linePositions[o] = M[0] * e.a[0] + M[1] * e.a[1] + M[3]
-      linePositions[o + 1] = M[4] * e.a[0] + M[5] * e.a[1] + M[7]
-      linePositions[o + 2] = M[8] * e.a[0] + M[9] * e.a[1] + M[11]
-      linePositions[o + 3] = M[0] * e.b[0] + M[1] * e.b[1] + M[3]
-      linePositions[o + 4] = M[4] * e.b[0] + M[5] * e.b[1] + M[7]
-      linePositions[o + 5] = M[8] * e.b[0] + M[9] * e.b[1] + M[11]
+      linePositions[o] = vertPos[va * 3]
+      linePositions[o + 1] = vertPos[va * 3 + 1]
+      linePositions[o + 2] = vertPos[va * 3 + 2]
+      linePositions[o + 3] = vertPos[vb * 3]
+      linePositions[o + 4] = vertPos[vb * 3 + 1]
+      linePositions[o + 5] = vertPos[vb * 3 + 2]
     })
   }
 
