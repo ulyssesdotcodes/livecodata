@@ -697,24 +697,29 @@ export function createFoldSolver(pattern: CompiledPattern, opts: SolverOptions =
 // facet diagonals at 0), and each face is positioned by composing those exact
 // rotations along a spanning tree of the face-adjacency graph. Panels stay
 // perfectly rigid, undriven creases stay perfectly flat, and there is no
-// physics state to tangle. The price: where the crease pattern's loops
-// disagree mid-fold, the sheet simply BREAKS — a face lies where its chain of
-// folds puts it, even if a neighbouring face (reached by another chain)
-// doesn't share the edge exactly. That's the intended contract.
+// physics state to tangle.
 //
 // Because a rotation about a crease commutes through the parent's transform,
 // every local rotation is about the crease's ORIGINAL 2D line:
 //   T_child = T_parent · RotLine2D(edge, θ)
+//
+// Where the crease pattern's loops disagree mid-fold, the raw tree solution
+// tears at the non-tree edges. A STITCHING pass (shape matching) closes those
+// tears so the sheet behaves like uncut paper: iterate a few times between
+// averaging every shared vertex across its faces' copies and rigidly
+// re-fitting each face to the averaged corners. Faces stay exactly rigid;
+// the residual closure error becomes small, evenly-spread offsets between
+// neighbouring faces instead of one open gap.
 
 export interface RigidSolver {
-  // xyz per face corner (faces × 9): faces don't share vertices — a broken
-  // sheet needs per-face positions.
+  // xyz per face corner (faces × 9): neighbouring faces may sit slightly
+  // offset (the stitched remainder of loop error), so positions are per-face.
   readonly positions: Float32Array
   // xyz pairs per pattern line (lines × 6), each drawn with one adjacent
   // face's transform.
   readonly linePositions: Float32Array
   readonly pattern: CompiledPattern
-  step(fracs: Record<string, number>): void
+  step(fracs: Record<string, number>, stitchIterations?: number): void
 }
 
 type Affine = Float64Array // row-major 3x4
@@ -854,7 +859,122 @@ export function createRigidSolver(pattern: CompiledPattern): RigidSolver {
     out[o + 2] = t[8] * x + t[9] * y + t[11]
   }
 
-  function step(fracs: Record<string, number>): void {
+  // ── Stitching (shape matching) ──
+  // Every pattern vertex lists its (face × 3 + corner) copies; each stitch
+  // iteration averages the copies, then rigidly re-fits every face to its
+  // averaged corners via matched orthonormal frames (rest frame is planar, so
+  // the fit is a closed-form Procrustes on a triangle).
+  const nv = pattern.vertices.length
+  const copies: number[][] = Array.from({ length: nv }, () => [])
+  pattern.faces.forEach((tri, f) => tri.forEach((v, k) => copies[v].push(f * 3 + k)))
+  const avg = new Float64Array(nv * 3)
+  const work = new Float64Array(nf * 9) // double-precision face corners
+
+  // Rest per-face data: corners, centroid, and orthonormal in-plane frame
+  // (u1, u2) with u3 = +z implied (faces are CCW).
+  const restU = new Float64Array(nf * 4) // u1x u1y u2x u2y
+  const restC = new Float64Array(nf * 2)
+  for (let f = 0; f < nf; f++) {
+    const [a, b, c] = pattern.faces[f]
+    const ax = pattern.vertices[a][0]
+    const ay = pattern.vertices[a][1]
+    const bx = pattern.vertices[b][0]
+    const by = pattern.vertices[b][1]
+    const cx = pattern.vertices[c][0]
+    const cy = pattern.vertices[c][1]
+    let u1x = bx - ax
+    let u1y = by - ay
+    const L = Math.hypot(u1x, u1y)
+    u1x /= L
+    u1y /= L
+    let u2x = cx - ax
+    let u2y = cy - ay
+    const dot = u2x * u1x + u2y * u1y
+    u2x -= dot * u1x
+    u2y -= dot * u1y
+    const L2 = Math.hypot(u2x, u2y)
+    u2x /= L2
+    u2y /= L2
+    restU[f * 4] = u1x
+    restU[f * 4 + 1] = u1y
+    restU[f * 4 + 2] = u2x
+    restU[f * 4 + 3] = u2y
+    restC[f * 2] = (ax + bx + cx) / 3
+    restC[f * 2 + 1] = (ay + by + cy) / 3
+  }
+
+  // Refit face f's transform so its rest triangle lands on the corners
+  // currently in `work` — exactly rigid by construction. Returns false when
+  // the target corners are too degenerate to define a frame.
+  const refit = (f: number): boolean => {
+    const o = f * 9
+    const q1x = work[o]
+    const q1y = work[o + 1]
+    const q1z = work[o + 2]
+    let v1x = work[o + 3] - q1x
+    let v1y = work[o + 4] - q1y
+    let v1z = work[o + 5] - q1z
+    const L1 = Math.hypot(v1x, v1y, v1z)
+    if (L1 < 1e-12) return false
+    v1x /= L1
+    v1y /= L1
+    v1z /= L1
+    let v2x = work[o + 6] - q1x
+    let v2y = work[o + 7] - q1y
+    let v2z = work[o + 8] - q1z
+    const dot = v2x * v1x + v2y * v1y + v2z * v1z
+    v2x -= dot * v1x
+    v2y -= dot * v1y
+    v2z -= dot * v1z
+    const L2 = Math.hypot(v2x, v2y, v2z)
+    if (L2 < 1e-12) return false
+    v2x /= L2
+    v2y /= L2
+    v2z /= L2
+    const v3x = v1y * v2z - v1z * v2y
+    const v3y = v1z * v2x - v1x * v2z
+    const v3z = v1x * v2y - v1y * v2x
+    // R = V · Eᵀ where E's columns are (u1, u2, +z). Only R's first two
+    // columns matter to `apply` (rest z = 0), but the third feeds nothing.
+    const u1x = restU[f * 4]
+    const u1y = restU[f * 4 + 1]
+    const u2x = restU[f * 4 + 2]
+    const u2y = restU[f * 4 + 3]
+    const t = transforms[f]
+    t[0] = v1x * u1x + v2x * u2x
+    t[1] = v1x * u1y + v2x * u2y
+    t[2] = v3x
+    t[4] = v1y * u1x + v2y * u2x
+    t[5] = v1y * u1y + v2y * u2y
+    t[6] = v3y
+    t[8] = v1z * u1x + v2z * u2x
+    t[9] = v1z * u1y + v2z * u2y
+    t[10] = v3z
+    // translation from centroids: t = q̄ − R·p̄
+    const qcx = (work[o] + work[o + 3] + work[o + 6]) / 3
+    const qcy = (work[o + 1] + work[o + 4] + work[o + 7]) / 3
+    const qcz = (work[o + 2] + work[o + 5] + work[o + 8]) / 3
+    const pcx = restC[f * 2]
+    const pcy = restC[f * 2 + 1]
+    t[3] = qcx - (t[0] * pcx + t[1] * pcy)
+    t[7] = qcy - (t[4] * pcx + t[5] * pcy)
+    t[11] = qcz - (t[8] * pcx + t[9] * pcy)
+    return true
+  }
+
+  const writeFace = (f: number): void => {
+    const [a, b, c] = pattern.faces[f]
+    const t = transforms[f]
+    for (let k = 0; k < 3; k++) {
+      const [x, y] = pattern.vertices[k === 0 ? a : k === 1 ? b : c]
+      const o = f * 9 + k * 3
+      work[o] = t[0] * x + t[1] * y + t[3]
+      work[o + 1] = t[4] * x + t[5] * y + t[7]
+      work[o + 2] = t[8] * x + t[9] * y + t[11]
+    }
+  }
+
+  function step(fracs: Record<string, number>, stitchIterations = 40): void {
     transforms[root].set(IDENTITY)
     for (const te of tree) {
       const h = pattern.hinges[te.hinge]
@@ -866,13 +986,57 @@ export function createRigidSolver(pattern: CompiledPattern): RigidSolver {
         mulAffine(transforms[te.parent], local, transforms[te.child])
       }
     }
-    for (let f = 0; f < nf; f++) {
-      const [a, b, c] = pattern.faces[f]
-      const t = transforms[f]
-      apply(t, pattern.vertices[a][0], pattern.vertices[a][1], positions, f * 9)
-      apply(t, pattern.vertices[b][0], pattern.vertices[b][1], positions, f * 9 + 3)
-      apply(t, pattern.vertices[c][0], pattern.vertices[c][1], positions, f * 9 + 6)
+    for (let f = 0; f < nf; f++) writeFace(f)
+
+    // Stitch: pull every shared vertex's copies together, keeping each face
+    // exactly rigid. Converges fast because the tree solution is already
+    // right everywhere except across the non-tree hinges.
+    const eps2 = 1e-14 * pattern.size * pattern.size
+    for (let it = 0; it < stitchIterations; it++) {
+      let spread = 0
+      for (let v = 0; v < nv; v++) {
+        const list = copies[v]
+        let sx = 0
+        let sy = 0
+        let sz = 0
+        for (const c of list) {
+          sx += work[c * 3]
+          sy += work[c * 3 + 1]
+          sz += work[c * 3 + 2]
+        }
+        const inv = 1 / list.length
+        sx *= inv
+        sy *= inv
+        sz *= inv
+        avg[v * 3] = sx
+        avg[v * 3 + 1] = sy
+        avg[v * 3 + 2] = sz
+        for (const c of list) {
+          const dx = work[c * 3] - sx
+          const dy = work[c * 3 + 1] - sy
+          const dz = work[c * 3 + 2] - sz
+          const d2 = dx * dx + dy * dy + dz * dz
+          if (d2 > spread) spread = d2
+        }
+      }
+      if (spread < eps2) break
+      for (let f = 0; f < nf; f++) {
+        const [a, b, c] = pattern.faces[f]
+        const o = f * 9
+        work[o] = avg[a * 3]
+        work[o + 1] = avg[a * 3 + 1]
+        work[o + 2] = avg[a * 3 + 2]
+        work[o + 3] = avg[b * 3]
+        work[o + 4] = avg[b * 3 + 1]
+        work[o + 5] = avg[b * 3 + 2]
+        work[o + 6] = avg[c * 3]
+        work[o + 7] = avg[c * 3 + 1]
+        work[o + 8] = avg[c * 3 + 2]
+        if (refit(f)) writeFace(f)
+      }
     }
+
+    positions.set(work)
     pattern.lines.forEach(([i, j], li) => {
       const t = transforms[lineFace[li]]
       apply(t, pattern.vertices[i][0], pattern.vertices[i][1], linePositions, li * 6)

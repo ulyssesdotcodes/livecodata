@@ -59,10 +59,12 @@ define("scene", (rand, table) => table("events").rasterize(8))
 //
 // The folds are TRUSTED as written: every crease sits at exactly the angle
 // its rows say, faces stay perfectly rigid, and undriven creases stay
-// perfectly flat. Where a fold disagrees with itself mid-motion the sheet is
-// allowed to break apart — real paper flexes; this paper tears briefly and
-// snaps back together at each rest. Scrubbing shows the exact fold state at
-// any beat.
+// perfectly flat. Where a fold disagrees with itself mid-motion, the sheet
+// is stitched back together like real paper: the mismatch is shared out
+// across the whole sheet as slight offsets between neighbouring faces (the
+// offsets are also what gives the flat-folded states their depth), so edges
+// stay next to each other instead of tearing open. Scrubbing shows the
+// exact fold state at any beat.
 
 // The fold steps — one motion at a time, with a rest between each, like
 // hands folding it:
@@ -88,20 +90,15 @@ const d = 0.4142136, m = 0.5857864 // where the petal ring crosses the lines
 
 // Step 1 (beats 1–3, rest until 4.5) — the square base. Each diagonal and
 // book fold is four segments (d1…d4 corner to corner) because they finish
-// at different angles later; \`deg\` is each segment's FINAL crane angle
-// (found by searching every assignment consistent with Maekawa's theorem
-// for the one that folds flattest), and the signed \`to\` picks the square
-// base's own mountain/valley state (found the same way) — eight segments
-// fold BACKWARD here (to: −1) and the petal fold reverses them, exactly
-// like real paper.
-line("d1", -1, -1, -d, -d,  178, 1, 2, -1)
-line("d2", -d, -d,  0,  0, -178, 1, 2,  1)
-line("d3",  0,  0,  d,  d,  178, 1, 2,  1)
-line("d4",  d,  d,  1,  1, -178, 1, 2, -1)
-line("a1",  1, -1,  d, -d, -178, 1, 2,  1)
-line("a2",  d, -d,  0,  0,  178, 1, 2, -1)
-line("a3",  0,  0, -d,  d,  178, 1, 2, -1)
-line("a4", -d,  d, -1,  1, -178, 1, 2,  1)
+// at different angles later; \`deg\` is each segment's FINAL crane angle and
+// the signed \`to\` picks how far (and which way) THIS step folds it.
+// The collapse is the classic one: the book folds go all the way UP while
+// the diagonals fold DOWN only halfway and then settle back FLAT — in a
+// finished square base the diagonals lie flat inside (lift a flap and it
+// opens into a full quadrant), which is what makes it a square: all four
+// corners stack at one point and the edge midpoints land in two stacks at
+// the side corners. Fold the diagonals all the way instead and everything
+// piles into a single wedge — a triangle, not a square base.
 line("bx1",  1,  0,  m,  0,  178, 1, 2,  1)
 line("bx2",  m,  0,  0,  0, -178, 1, 2, -1)
 line("bx3", -m,  0,  0,  0,  178, 1, 2,  1)
@@ -110,6 +107,15 @@ line("by1",  0,  1,  0,  m,  178, 1, 2,  1)
 line("by2",  0,  m,  0,  0, -178, 1, 2, -1)
 line("by3",  0, -m,  0,  0,  178, 1, 2,  1)
 line("by4",  0, -1,  0, -m, -178, 1, 2, -1)
+line("d1", -1, -1, -d, -d,  178, 1, 1, -0.5)
+line("d2", -d, -d,  0,  0, -178, 1, 1,  0.5)
+line("d3",  0,  0,  d,  d,  178, 1, 1, -0.5)
+line("d4",  d,  d,  1,  1, -178, 1, 1,  0.5)
+line("a1",  1, -1,  d, -d, -178, 1, 1,  0.5)
+line("a2",  d, -d,  0,  0,  178, 1, 1, -0.5)
+line("a3",  0,  0, -d,  d,  178, 1, 1, -0.5)
+line("a4", -d,  d, -1,  1, -178, 1, 1,  0.5)
+;["d1", "d2", "d3", "d4", "a1", "a2", "a3", "a4"].forEach((f) => retime(f, 2, 1, 0))
 
 // Step 2 (beats 4.5–8, rest until 9.5) — square base → bird base, the way
 // hands do it, in three sub-motions:
@@ -122,12 +128,13 @@ line("petalB",  d,  d,  0,  m, -178, 4.5, 1, 0.6)
 line("petalB",  0,  m, -d,  d, -178, 4.5, 1, 0.6)
 line("petalB", -d,  d, -m,  0, -178, 4.5, 1, 0.6)
 line("petalB", -m,  0, -d, -d, -178, 4.5, 1, 0.6)
-//   …lift the corners up through the middle (the backward creases reverse,
-//   swinging from −1 through flat to +0.7; the sheet visibly breaks apart
-//   mid-swing and snaps together into the diamond)…
-;["d1", "d4", "a2", "a3", "bx2", "bx4", "by2", "by4"].forEach((f) => retime(f, 5.5, 1.5, 0.7))
+//   …lift the corners up through the middle: the diagonals (flat inside the
+//   square base) fold up toward their crane angles, and the four backward
+//   book-fold halves reverse, swinging from −1 through flat to +0.7…
+;["d1", "d2", "d3", "d4", "a1", "a2", "a3", "a4", "bx2", "bx4", "by2", "by4"]
+  .forEach((f) => retime(f, 5.5, 1.5, 0.7))
 //   …then press everything flat into the long diamond.
-;["petalF", "petalB", "d1", "d4", "a2", "a3", "bx2", "bx4", "by2", "by4"]
+;["petalF", "petalB", "d1", "d2", "d3", "d4", "a1", "a2", "a3", "a4", "bx2", "bx4", "by2", "by4"]
   .forEach((f) => retime(f, 7, 1, 1))
 
 // Steps 3–4 (rest after each) — reverse-fold the neck and tail points up.
