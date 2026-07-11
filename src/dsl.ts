@@ -29,7 +29,7 @@
 import { rasterizeRows } from './rasterize.js'
 import { withLineage, carry, unionLineage, getLineage, type Row } from './lineage.js'
 import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS } from './constants.js'
-import { compilePattern, fanPattern, type PatternSpec, type CreaseSpec } from './origami.js'
+import { compileFoldProgram, type FoldProgram, type CompiledFold } from './origami.js'
 import type { ColumnType } from './editable-tables.js'
 
 // ── Expr: a small, serializable, chainable expression over a row ─────────────
@@ -758,15 +758,18 @@ class PhysicsBuilder {
 }
 
 // ── Origami ───────────────────────────────────────────────────────────────────
-// A sheet of paper plus creases, each in a named GROUP with a target fold
-// angle (degrees; + valley toward the viewer, − mountain). spawn() emits the
-// scene's create row (shape: "origami", with the compiled pattern riding along
-// as data); fold state is just numeric fields named after the groups —
-// 0 = flat, 1 = fully folded — so a fold schedule is ordinary update keyframes
-// and the baker interpolates them like any transform. sequence() is sugar that
-// turns sparse steps { fold, at, dur, to, ease } into those keyframes,
-// handling overlapping folds by baking every group's envelope value at every
-// breakpoint.
+// A sheet of paper folded by INSTRUCTIONS, the way origami is written down:
+// each row folds or reflects the paper along a line through two points on
+// known edges — the paper's edge ("1,0" in sheet coordinates, wherever
+// folding has carried it) or an edge created by an earlier fold ("diag@0.5").
+// steps() compiles the rows against the exactly-folded model (see origami.ts);
+// spawn() emits the scene's create row (shape: "origami", with the compiled
+// program riding along as data); fold state is just numeric fields named
+// after the steps — 0 = before that fold, 1 = folded — so a fold schedule is
+// ordinary update keyframes and the baker interpolates them like any
+// transform. sequence() turns the rows' at/dur timings (or explicit steps
+// { fold, at, dur, to, ease }) into those keyframes, handling overlapping
+// folds by baking every group's envelope value at every breakpoint.
 
 interface FoldStep {
   group: string
@@ -778,82 +781,62 @@ interface FoldStep {
 }
 
 export class OrigamiBuilder {
-  private _spec: PatternSpec
+  private _size: number
   private _ctx: DSLContext | null
   private _id: unknown = 'paper'
-  // Default sequence() steps, captured by folds().
-  private _steps: Row[] = []
+  private _rows: Row[] = []
+  private _compiled: CompiledFold | null = null
 
-  constructor(spec: PatternSpec, ctx: DSLContext | null) {
-    this._spec = spec
+  constructor(size: number, ctx: DSLContext | null) {
+    this._size = size
     this._ctx = ctx
   }
 
-  private _with(creases: CreaseSpec[], steps?: Row[]): OrigamiBuilder {
-    const next = new OrigamiBuilder({ ...this._spec, creases }, this._ctx)
+  // One table = the whole folding, written as instructions. Each row is a
+  // fold: `p1`/`p2` name the two points defining the fold line ("x,y" a
+  // paper point in sheet coordinates, "name@t" a fraction along the edge
+  // created by the earlier fold `name`), `move` a paper point on the side
+  // that moves, `op` "reflect" (a flat 180° fold through every layer on that
+  // side) or "fold" (rotate just the flap connected to `move` by `deg`
+  // degrees), `dir` +1 toward the viewer / −1 away, and its timing (`at`,
+  // `dur`, `to`). A row with timing but NO line re-drives an earlier fold by
+  // name (flapping, part-unfolding — animation only; the exact model keeps
+  // treating the fold as folded). The timings become the default steps for
+  // sequence(), so as the timeline advances the paper folds step by step.
+  steps(steps: Table | Row[]): OrigamiBuilder {
+    const next = new OrigamiBuilder(this._size, this._ctx)
     next._id = this._id
-    next._steps = steps ?? this._steps
+    next._rows = [...this._rows, ...(steps instanceof Table ? steps.rows : steps ?? [])]
     return next
   }
 
-  // Add one crease line (clipped to the sheet; crossings with other creases
-  // are split automatically). Returns a new builder, so chains don't mutate.
-  crease(x1: number, y1: number, x2: number, y2: number, group = 'fold', angle = 180): OrigamiBuilder {
-    return this._with([...this._spec.creases, { x1, y1, x2, y2, group, angle }])
+  private _compile(): CompiledFold {
+    if (!this._compiled) {
+      this._compiled = compileFoldProgram(this._rows, { size: this._size })
+      for (const w of this._compiled.program.warnings) console.warn(`origami: ${w}`)
+    }
+    return this._compiled
   }
 
-  // Add many creases at once from a plain array of { x1, y1, x2, y2, group,
-  // angle } objects — the declarative counterpart of chaining .crease() over
-  // and over, for a whole crease pattern authored as data (e.g. a traditional
-  // base built up in the program itself, not hidden behind a preset).
-  creases(list: CreaseSpec[]): OrigamiBuilder {
-    return this._with([...this._spec.creases, ...list])
-  }
-
-  // One table = the whole folding, written like physical origami steps. Each
-  // row is a fold: a crease LINE in original-sheet coordinates plus a degree
-  // (`deg`; + folds toward the viewer, − away) and its timing (`at`, `dur`,
-  // `to` — the sequence() columns). Rows sharing a `fold` name move together
-  // as one motion (a collapse, a mirrored pair); a row with timing but NO
-  // line re-targets an earlier fold by name (flapping, unfolding). The lines
-  // join the crease pattern, and the timings become the default steps for
-  // sequence() — so as the timeline advances, the paper folds step by step.
-  folds(steps: Table | Row[]): OrigamiBuilder {
-    const rows = steps instanceof Table ? steps.rows : steps ?? []
-    const creases = [...this._spec.creases]
-    const sched: Row[] = []
-    rows.forEach((r, i) => {
-      if (!r) return
-      const group = r.fold != null && r.fold !== '' ? String(r.fold) : `fold${i}`
-      const line = [r.x1, r.y1, r.x2, r.y2]
-      if (line.every((v) => typeof v === 'number' && Number.isFinite(v))) {
-        const angle = typeof r.deg === 'number' ? r.deg
-          : typeof r.angle === 'number' ? r.angle : 180
-        creases.push({
-          x1: r.x1 as number, y1: r.y1 as number,
-          x2: r.x2 as number, y2: r.y2 as number, group, angle,
-        })
-      }
-      if ((r.at ?? r.beat) != null) sched.push({ ...r, fold: group })
-    })
-    return this._with(creases, sched)
+  program(): FoldProgram {
+    return this._compile().program
   }
 
   groups(): string[] {
-    return compilePattern(this._spec).groups
+    return this._compile().program.groups
   }
 
-  // The create row: compiled pattern + all fold groups at 0 (flat sheet).
+  // The create row: compiled program + all fold groups at 0 (flat sheet).
   // Extra props (id, color, px/py/pz, rx/ry/rz, beat, …) merge over defaults.
   spawn(props: Row = {}): Table {
-    const pattern = compilePattern(this._spec)
+    const program = this._compile().program
     this._id = props.id ?? this._id
     const zeros: Row = {}
-    for (const g of pattern.groups) zeros[g] = 0
+    for (const g of program.groups) zeros[g] = 0
     return new Table([{
       id: this._id, type: 'create', beat: 1, shape: 'origami',
       px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, color: 0xd94f2a,
-      ...zeros, pattern, ...props,
+      ...zeros, program, ...props,
     }], this._ctx)
   }
 
@@ -861,10 +844,10 @@ export class OrigamiBuilder {
   // (aliases: group/beat; dur defaults to 1 beat, to defaults to 1 = fully
   // folded; ease is an easing fn or its name, e.g. "easeInOut"). Steps may
   // overlap freely — each keyframe carries every scheduled group's value.
-  // With no argument, uses the steps captured by folds().
+  // With no argument, uses the timings from the steps() rows.
   sequence(steps?: Table | Row[] | null, opts: { id?: unknown } = {}): Table {
     const id = opts.id ?? this._id
-    const rows = steps instanceof Table ? steps.rows : steps ?? this._steps
+    const rows = steps instanceof Table ? steps.rows : steps ?? (this._compile().schedule as unknown as Row[])
     const norm: FoldStep[] = rows
       .filter((r) => r && (r.fold ?? r.group) != null && (r.at ?? r.beat) != null)
       .map((r) => {
@@ -926,20 +909,14 @@ export class OrigamiBuilder {
 }
 
 export interface OrigamiFactory {
-  // A bare square sheet spanning [-size, size]² (default size 1) — add your
-  // own creases with .crease() / .creases([...]).
+  // A bare square sheet spanning [-size, size]² (default size 1) — fold it
+  // with .steps(table).
   (opts?: { size?: number }): OrigamiBuilder
-  // An accordion fan with one group per pleat ("fan0", "fan1", …), or pass
-  // { group } to gang every pleat into one fold.
-  fan(pleats?: number, opts?: { group?: string; angle?: number }): OrigamiBuilder
 }
 
 function makeOrigami(ctx: DSLContext | null): OrigamiFactory {
-  const factory = ((opts: { size?: number } = {}) =>
-    new OrigamiBuilder({ size: opts.size ?? 1, creases: [] }, ctx)) as OrigamiFactory
-  factory.fan = (pleats?: number, opts?: { group?: string; angle?: number }) =>
-    new OrigamiBuilder(fanPattern(pleats, opts), ctx)
-  return factory
+  return ((opts: { size?: number } = {}) =>
+    new OrigamiBuilder(opts.size ?? 1, ctx)) as OrigamiFactory
 }
 
 class MathBuilder {
@@ -1012,11 +989,10 @@ export type DSLSurface = Easings & {
   json(data: Row[] | string | unknown): Table
   grid(cols: number, rowsN: number, opts?: { spacing?: number; y?: number }): Table
   physics(source: Table | Row[]): PhysicsBuilder
-  // Folding paper: origami() is a bare sheet (origami.fan(n) is the one
-  // built-in preset, an accordion). Chain .crease(x1,y1,x2,y2, group, angle)
-  // or .creases([...]) to build a whole crease pattern as data, then
-  // .spawn({ id, color, ... }) for the create row and .sequence(steps) for
-  // beat-timed fold keyframes.
+  // Folding paper: origami() is a bare sheet. Chain .steps(table) to fold it
+  // by instructions — each row a fold/reflection along a line through two
+  // points on known edges — then .spawn({ id, color, ... }) for the create
+  // row and .sequence() for beat-timed fold keyframes.
   origami: OrigamiFactory
   // A user-editable table: rows are entered/edited in the table panel (not
   // computed), keyed by `name` so edits persist across runs — stored as change

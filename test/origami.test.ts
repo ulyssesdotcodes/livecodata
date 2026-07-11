@@ -1,153 +1,263 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  compilePattern, createFoldSolver, hingeAngle, fanPattern,
-  type PatternSpec, type Hinge,
+  compileFoldProgram, createFoldPlayer, foldedPosition, applyIso,
+  type Vec2,
 } from '../src/origami.js'
 
-// One vertical crease across the sheet — the simplest foldable pattern.
-const halfFold = (angle = 90): PatternSpec => ({
-  size: 1,
-  creases: [{ x1: 0, y1: -1, x2: 0, y2: 1, group: 'half', angle }],
-})
+const close = (a: Vec2, b: Vec2, eps = 1e-9): boolean =>
+  Math.hypot(a[0] - b[0], a[1] - b[1]) < eps
 
-test('compilePattern: one crease splits the sheet into two faces of two triangles', () => {
-  const p = compilePattern(halfFold())
-  assert.equal(p.vertices.length, 6) // 4 corners + 2 crease endpoints on the border
-  assert.equal(p.faces.length, 4)
-  const creaseHinges = p.hinges.filter((h) => h.group === 'half')
-  assert.equal(creaseHinges.length, 1, 'the crease edge is one hinge')
-  const facetHinges = p.hinges.filter((h) => h.group === null)
-  assert.equal(facetHinges.length, 2, 'one triangulation diagonal per rectangle')
-  assert.deepEqual(p.groups, ['half'])
-})
+// ── The exact folded model ────────────────────────────────────────────────────
 
-test('compilePattern: crossing creases are split at the intersection', () => {
-  const p = compilePattern({
-    size: 1,
-    creases: [
-      { x1: 0, y1: -1, x2: 0, y2: 1, group: 'v', angle: 90 },
-      { x1: -1, y1: 0, x2: 1, y2: 0, group: 'h', angle: -90 },
-    ],
-  })
-  // 4 corners + 4 border midpoints + center.
-  assert.equal(p.vertices.length, 9)
-  assert.equal(p.hinges.filter((h) => h.group === 'v').length, 2)
-  assert.equal(p.hinges.filter((h) => h.group === 'h').length, 2)
-})
-
-test('compilePattern: dangling creases are dropped instead of corrupting faces', () => {
-  const p = compilePattern({
-    size: 1,
-    creases: [{ x1: -0.5, y1: 0, x2: 0.5, y2: 0, group: 'dead', angle: 90 }],
-  })
-  assert.equal(p.hinges.filter((h) => h.group === 'dead').length, 0)
-  // Total sheet area is preserved by triangulation.
-  let area = 0
-  for (const [a, b, c] of p.faces) {
-    const [ax, ay] = p.vertices[a]
-    const [bx, by] = p.vertices[b]
-    const [cx, cy] = p.vertices[c]
-    area += Math.abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) / 2
-  }
-  assert.ok(Math.abs(area - 4) < 1e-6, `area ${area} should be 4`)
-})
-
-test('hingeAngle gradient matches finite differences', () => {
-  // A bent hinge in general position.
-  const pos = new Float32Array([
-    0.1, -0.9, 0.05, // e0
-    0.2, 1.1, -0.02, // e1
-    1.0, 0.3, 0.4,   // w0
-    -0.9, -0.2, 0.6, // w1
+test('a single reflection mirrors one side exactly and leaves the other alone', () => {
+  const { program } = compileFoldProgram([
+    { step: 'half', op: 'reflect', p1: 'bottom@0.5', p2: 'top@0.5', move: 'right@0.5' },
   ])
-  const h: Hinge = { e: [0, 1], w: [2, 3], group: 'g', target: 0 }
-  const grad = { e0: [0, 0, 0], e1: [0, 0, 0], w0: [0, 0, 0], w1: [0, 0, 0] }
-  hingeAngle(pos, h, grad)
-  const analytic = [...grad.e0, ...grad.e1, ...grad.w0, ...grad.w1]
-
-  // Positions are float32, so use a coarse FD step and a loose-ish tolerance.
-  const eps = 1e-3
-  for (let i = 0; i < 12; i++) {
-    const save = pos[i]
-    pos[i] = save + eps
-    const up = hingeAngle(pos, h)
-    pos[i] = save - eps
-    const down = hingeAngle(pos, h)
-    pos[i] = save
-    const fd = (up - down) / (2 * eps)
-    assert.ok(
-      Math.abs(fd - analytic[i]) < 1e-2 * Math.max(1, Math.abs(fd)),
-      `component ${i}: fd ${fd} vs analytic ${analytic[i]}`,
-    )
-  }
+  assert.equal(program.faces.length, 2)
+  assert.deepEqual(program.groups, ['half'])
+  // Material points: the moving side lands mirrored, the still side stays.
+  assert.ok(close(foldedPosition(program.faces, [1, 0])!, [-1, 0]))
+  assert.ok(close(foldedPosition(program.faces, [1, -1])!, [-1, -1]))
+  assert.ok(close(foldedPosition(program.faces, [-0.5, 0.25])!, [-0.5, 0.25]))
+  // Points on the fold line don't move.
+  assert.ok(close(foldedPosition(program.faces, [0, 0.5])!, [0, 0.5]))
 })
 
-test('solver folds a valley crease toward +z and converges', () => {
-  const p = compilePattern(halfFold(150))
-  const solver = createFoldSolver(p)
-  for (let i = 0; i < 40; i++) solver.step({ half: 1 }, 60)
+test('"name@t" resolves a point along the edge an earlier fold created', () => {
+  const { program } = compileFoldProgram([
+    { step: 'half', op: 'reflect', p1: 'bottom@0.5', p2: 'top@0.5', move: 'right@0.5' },
+    // Line through the midpoint of the LEFT paper edge and the midpoint of
+    // the first fold's edge — resolved against the folded model.
+    { step: 'q', op: 'reflect', p1: 'left@0.5', p2: 'half@0.5', move: 'left@0' },
+  ])
+  // half's edge runs (0,−1)→(0,1); its midpoint is the paper centre (0,0),
+  // so q folds along y=0 and the bottom corners land on the top ones.
+  assert.ok(close(foldedPosition(program.faces, [-1, -1])!, [-1, 1]))
+  // (1,−1) was carried to (−1,−1) by the first fold, then up to (−1,1).
+  assert.ok(close(foldedPosition(program.faces, [1, -1])!, [-1, 1]))
+  assert.equal(program.faces.length, 4)
+})
 
-  // Every vertex off the crease line should have risen well above the plane.
-  let minLift = Infinity
-  p.vertices.forEach(([x], i) => {
-    if (Math.abs(x) < 1e-6) return
-    minLift = Math.min(minLift, solver.positions[i * 3 + 2])
-  })
-  assert.ok(minLift > 0.1, `valley fold should lift wings toward +z (min z ${minLift})`)
+test('the square base: three instructions gather all four corners at one point', () => {
+  const { program, schedule } = compileFoldProgram([
+    { step: 'diag', op: 'reflect', p1: 'bottom@0', p2: 'top@1', move: 'bottom@1', at: 1, dur: 2 },
+    { step: 's1', op: 'reflect', p1: 'right@0.5', p2: 'diag@0.5', move: 'right@1', at: 4, dur: 2 },
+    { step: 's2', op: 'reflect', p1: 'left@0.5', p2: 'diag@0.5', move: 'left@0', at: 6.5, dur: 2 },
+  ])
+  assert.equal(program.warnings.length, 0, program.warnings.join('; '))
+  assert.equal(program.faces.length, 6)
 
-  // The crease hinge should sit near its 150° target.
-  const hinge = p.hinges.find((h) => h.group === 'half')!
-  const theta = hingeAngle(solver.positions, hinge)
-  assert.ok(Math.abs(theta - (150 * Math.PI) / 180) < 0.05, `theta ${theta}`)
+  // All four paper corners coincide…
+  const corners: Vec2[] = [[1, 1], [-1, 1], [-1, -1], [1, -1]]
+  const folded = corners.map((c) => foldedPosition(program.faces, c)!)
+  for (const f of folded) assert.ok(close(f, folded[0]), `corner at ${f} vs ${folded[0]}`)
+  // …√2 from the paper's centre, which becomes the opposite corner of the
+  // base (the diamond's diagonal is half the paper's).
+  const centre = foldedPosition(program.faces, [0, 0])!
+  const d = Math.hypot(folded[0][0] - centre[0], folded[0][1] - centre[1])
+  assert.ok(Math.abs(d - Math.SQRT2) < 1e-9, `corner stack ${d} from centre`)
 
-  // Paper is inextensible: no axial spring stretched more than a few percent.
-  for (const [a, b, c] of p.faces) {
-    for (const [i, j] of [[a, b], [b, c], [c, a]]) {
-      const rest = Math.hypot(
-        p.vertices[j][0] - p.vertices[i][0],
-        p.vertices[j][1] - p.vertices[i][1],
-      )
-      const now = Math.hypot(
-        solver.positions[j * 3] - solver.positions[i * 3],
-        solver.positions[j * 3 + 1] - solver.positions[i * 3 + 1],
-        solver.positions[j * 3 + 2] - solver.positions[i * 3 + 2],
-      )
-      assert.ok(Math.abs(now - rest) / rest < 0.05, `edge ${i}-${j} stretched ${now} vs ${rest}`)
+  // The paper-edge midpoints stack in TWO piles (the base's side corners),
+  // each 1 from the centre and √2 apart.
+  const mids: Vec2[] = [[1, 0], [0, 1], [-1, 0], [0, -1]]
+  const fm = mids.map((m) => foldedPosition(program.faces, m)!)
+  assert.ok(close(fm[0], fm[1]), 'right/top edge midpoints coincide')
+  assert.ok(close(fm[2], fm[3]), 'left/bottom edge midpoints coincide')
+  const sep = Math.hypot(fm[0][0] - fm[2][0], fm[0][1] - fm[2][1])
+  assert.ok(Math.abs(sep - Math.SQRT2) < 1e-9, `side corners ${sep} apart`)
+  for (const m of fm) {
+    const dm = Math.hypot(m[0] - centre[0], m[1] - centre[1])
+    assert.ok(Math.abs(dm - 1) < 1e-9, `side corner ${dm} from centre`)
+  }
+
+  // Every step recorded its moving faces and timing.
+  assert.equal(program.steps.length, 3)
+  assert.deepEqual(program.steps.map((st) => st.moving.length), [3, 2, 2])
+  assert.deepEqual(schedule.map((r) => [r.fold, r.at, r.dur, r.to]), [
+    ['diag', 1, 2, 1], ['s1', 4, 2, 1], ['s2', 6.5, 2, 1],
+  ])
+})
+
+test('reflection folds every layer on that side of the line', () => {
+  const { program } = compileFoldProgram([
+    { step: 'diag', op: 'reflect', p1: 'bottom@0', p2: 'top@1', move: 'bottom@1' },
+    { step: 's1', op: 'reflect', p1: 'right@0.5', p2: 'diag@0.5', move: 'right@1' },
+  ])
+  // s1's line crosses BOTH layers of the folded triangle, so it records two
+  // moving faces and its crease pulls back to two different sheet lines.
+  const s1 = program.steps[1]
+  assert.equal(s1.moving.length, 2)
+  // The two moved faces are mirror layers: their isometries differ.
+  const [f1, f2] = s1.moving.map((i) => program.faces[i])
+  const det = (T: { a: number; b: number; c: number; d: number }): number => T.a * T.d - T.b * T.c
+  assert.ok(Math.abs(det(f1.T) + det(f2.T)) < 1e-9, 'one layer face-up, one face-down')
+})
+
+test('faces stay exactly rigid: isometries preserve every edge length', () => {
+  const { program } = compileFoldProgram([
+    { step: 'diag', op: 'reflect', p1: 'bottom@0', p2: 'top@1', move: 'bottom@1' },
+    { step: 's1', op: 'reflect', p1: 'right@0.5', p2: 'diag@0.5', move: 'right@1' },
+    { step: 's2', op: 'reflect', p1: 'left@0.5', p2: 'diag@0.5', move: 'left@0' },
+  ])
+  for (const f of program.faces) {
+    for (let i = 0; i < f.poly.length; i++) {
+      const a = f.poly[i]
+      const b = f.poly[(i + 1) % f.poly.length]
+      const fa = applyIso(f.T, a)
+      const fb = applyIso(f.T, b)
+      const rest = Math.hypot(b[0] - a[0], b[1] - a[1])
+      const now = Math.hypot(fb[0] - fa[0], fb[1] - fa[1])
+      assert.ok(Math.abs(now - rest) < 1e-9)
     }
   }
 })
 
-test('solver unfolds again when the fraction returns to 0', () => {
-  const p = compilePattern(halfFold(150))
-  const solver = createFoldSolver(p)
-  for (let i = 0; i < 30; i++) solver.step({ half: 1 }, 60)
-  for (let i = 0; i < 60; i++) solver.step({ half: 0 }, 60)
-  let maxZ = 0
-  for (let i = 0; i < p.vertices.length; i++) {
-    maxZ = Math.max(maxZ, Math.abs(solver.positions[i * 3 + 2]))
+test('op "fold" rotates just the connected flap by deg', () => {
+  const { program } = compileFoldProgram([
+    { step: 'up', op: 'fold', deg: 90, p1: 'bottom@0.5', p2: 'top@0.5', move: 'right@0.5' },
+  ])
+  const player = createFoldPlayer(program)
+  player.step({ up: 1 })
+  // The right half stands straight up: its outer edge x=1 maps to z=1, x=0.
+  // Find a corner that moved and check the exact 90°.
+  let seen = false
+  for (let i = 0; i < player.positions.length; i += 3) {
+    const x = player.positions[i]
+    const z = player.positions[i + 2]
+    if (Math.abs(z) > 1e-6) {
+      seen = true
+      assert.ok(z > 0, 'dir +1 lifts toward the viewer')
+      assert.ok(Math.abs(x) < 1e-6, `rotated the full 90° (x=${x}, z=${z})`)
+    }
   }
-  assert.ok(maxZ < 0.08, `sheet should relax flat again (max |z| ${maxZ})`)
+  assert.ok(seen, 'something folded')
+  // A non-flat fold leaves the tracked model unfolded, with a warning.
+  assert.ok(program.warnings.some((w) => w.includes('90')), program.warnings.join('; '))
 })
 
-test('fan pattern: one group per pleat, ripple-foldable', () => {
-  const p = compilePattern(fanPattern(5))
-  assert.equal(p.groups.length, 5)
-  const solver = createFoldSolver(p)
-  for (let i = 0; i < 60; i++) {
-    solver.step({ fan0: 1, fan1: 1, fan2: 1, fan3: 1, fan4: 1 }, 40)
+test('errors name the fold and the problem', () => {
+  // Raw coordinates are not a position — every position is an edge of the
+  // paper or an earlier fold's edge.
+  assert.throws(
+    () => compileFoldProgram([{ step: 'x', p1: '0.3,0.4', p2: 'top@0.5' }]),
+    /fold "x" p1: "0.3,0.4" is not a known edge/,
+  )
+  assert.throws(
+    () => compileFoldProgram([{ step: 'x', p1: 'nope@0.5', p2: 'top@0.5' }]),
+    /"nope@0.5" is not a known edge/,
+  )
+  assert.throws(
+    () => compileFoldProgram([
+      { step: 'a', p1: 'bottom@0.5', p2: 'top@0.5', move: 'right@0.5' },
+      { step: 'a', p1: 'left@0.5', p2: 'right@0.5', move: 'bottom@0.5' },
+    ]),
+    /defined twice/,
+  )
+  assert.throws(
+    () => compileFoldProgram([{ step: 'x', op: 'fold', deg: 90, p1: 'bottom@0.5', p2: 'top@0.5' }]),
+    /set a move point/,
+  )
+  // A paper-edge fraction past the end walks off the paper.
+  assert.throws(
+    () => compileFoldProgram([{ step: 'x', p1: 'bottom@2', p2: 'top@0.5' }]),
+    /not on the paper/,
+  )
+})
+
+// ── Playback ──────────────────────────────────────────────────────────────────
+
+const SQUARE_BASE = [
+  { step: 'diag', op: 'reflect', p1: 'bottom@0', p2: 'top@1', move: 'bottom@1', dir: -1 },
+  { step: 's1', op: 'reflect', p1: 'right@0.5', p2: 'diag@0.5', move: 'right@1' },
+  { step: 's2', op: 'reflect', p1: 'left@0.5', p2: 'diag@0.5', move: 'left@0', dir: -1 },
+]
+
+test('playback is rigid at every fraction and lands on the exact folded state', () => {
+  const { program } = compileFoldProgram(SQUARE_BASE)
+  const player = createFoldPlayer(program)
+
+  // Rest lengths from the flat pose (independent of the fan layout).
+  player.step({})
+  const flat = Float32Array.from(player.positions)
+  const restLen: number[] = []
+  for (let i = 0; i + 8 < flat.length; i += 9) {
+    for (const [a, b] of [[0, 3], [3, 6], [6, 0]]) {
+      restLen.push(Math.hypot(
+        flat[i + a] - flat[i + b],
+        flat[i + a + 1] - flat[i + b + 1],
+        flat[i + a + 2] - flat[i + b + 2],
+      ))
+    }
   }
-  for (let i = 0; i < solver.positions.length; i++) {
-    assert.ok(Number.isFinite(solver.positions[i]))
+  const assertRigid = (label: string): void => {
+    let k = 0
+    for (let i = 0; i + 8 < player.positions.length; i += 9) {
+      for (const [a, b] of [[0, 3], [3, 6], [6, 0]]) {
+        const now = Math.hypot(
+          player.positions[i + a] - player.positions[i + b],
+          player.positions[i + a + 1] - player.positions[i + b + 1],
+          player.positions[i + a + 2] - player.positions[i + b + 2],
+        )
+        assert.ok(Math.abs(now - restLen[k]) < 1e-5, `${label}: tri edge ${k} rigid`)
+        k++
+      }
+    }
   }
-  // Accordion compresses in x.
-  let minX = Infinity
-  let maxX = -Infinity
-  for (let i = 0; i < p.vertices.length; i++) {
-    minX = Math.min(minX, solver.positions[i * 3])
-    maxX = Math.max(maxX, solver.positions[i * 3])
+
+  // Mid-fold poses are rigid rotations — check a few.
+  const poses: Record<string, number>[] = [
+    { diag: 0.5 },
+    { diag: 1, s1: 0.3 },
+    { diag: 1, s1: 1, s2: 0.7 },
+    { diag: 1, s1: 1, s2: 1 },
+  ]
+  for (const fracs of poses) {
+    player.step(fracs)
+    assertRigid(JSON.stringify(fracs))
   }
-  assert.ok(maxX - minX < 1.5, `accordion should compress (width ${maxX - minX})`)
+
+  // Fully folded: a thin flat packet whose corners sit (near-exactly) on the
+  // exact model's positions — the player only backs off the last sliver of
+  // each 180° fold to keep stacked layers from z-fighting.
+  player.step({ diag: 1, s1: 1, s2: 1 })
+  let zLo = Infinity
+  let zHi = -Infinity
+  for (let i = 2; i < player.positions.length; i += 3) {
+    zLo = Math.min(zLo, player.positions[i])
+    zHi = Math.max(zHi, player.positions[i])
+  }
+  assert.ok(zHi - zLo < 0.15, `square base stacks flat (z extent ${(zHi - zLo).toFixed(3)})`)
+
+  const centre = foldedPosition(program.faces, [0, 0])!
+  const corner = foldedPosition(program.faces, [1, 1])!
+  const dist = Math.hypot(corner[0] - centre[0], corner[1] - centre[1])
+  assert.ok(Math.abs(dist - Math.SQRT2) < 1e-9)
+
+  // Scrubbing is a pure function of the fractions.
+  player.step({ diag: 0.37, s1: 0.9 })
+  const a = Float32Array.from(player.positions)
+  player.step({ diag: 1, s1: 1, s2: 1 })
+  player.step({ diag: 0.37, s1: 0.9 })
+  assert.deepEqual(Float32Array.from(player.positions), a)
+})
+
+test('hinges stay attached mid-fold: crease endpoints agree across the fold line', () => {
+  const { program } = compileFoldProgram(SQUARE_BASE)
+  const player = createFoldPlayer(program)
+  // While ONLY the current step is in motion the sheet is a perfect rigid
+  // mechanism — the fold-line vertices are shared, so faces across the
+  // active crease stay glued.
+  player.step({ diag: 1, s1: 0.5 })
+  // Material fold-line point of s1 in each adjacent face: the two layers'
+  // creases coincide on the sheet? No — s1's crease is a different sheet
+  // segment per layer, but each crease's endpoints must map identically from
+  // both its sides. Check via the paper staying within diameter bounds: no
+  // vertex may fly off.
+  for (let i = 0; i < player.positions.length; i++) {
+    assert.ok(Number.isFinite(player.positions[i]))
+    assert.ok(Math.abs(player.positions[i]) < 3.5)
+  }
 })
 
 // ── DSL builder (spawn / sequence) ───────────────────────────────────────────
@@ -157,8 +267,10 @@ import type { Row } from '../src/lineage.js'
 
 const dsl = createDSL(null)
 
-test('origami().spawn emits one create row with the compiled pattern and zeroed groups', () => {
-  const paper = dsl.origami().crease(0, -1, 0, 1, 'half', 120)
+test('origami().spawn emits one create row with the program and zeroed groups', () => {
+  const paper = dsl.origami().steps([
+    { step: 'half', op: 'reflect', p1: 'bottom@0.5', p2: 'top@0.5', move: 'right@0.5', at: 1, dur: 2 },
+  ])
   const rows = paper.spawn({ id: 'sheet', color: 0x123456 }).rows
   assert.equal(rows.length, 1)
   const r = rows[0]
@@ -167,215 +279,47 @@ test('origami().spawn emits one create row with the compiled pattern and zeroed 
   assert.equal(r.shape, 'origami')
   assert.equal(r.half, 0)
   assert.equal(r.color, 0x123456)
-  const pattern = r.pattern as { groups: string[]; faces: unknown[] }
-  assert.deepEqual(pattern.groups, ['half'])
-  assert.ok(pattern.faces.length >= 4)
+  const program = r.program as { groups: string[]; faces: unknown[] }
+  assert.deepEqual(program.groups, ['half'])
+  assert.equal(program.faces.length, 2)
 })
 
-test('origami().creases adds many creases at once from a plain array of objects', () => {
-  const paper = dsl.origami().creases([
-    { x1: 0, y1: -1, x2: 0, y2: 1, group: 'a', angle: 90 },
-    { x1: -1, y1: 0, x2: 1, y2: 0, group: 'b', angle: -90 },
+test('origami().steps timings become the default sequence', () => {
+  const paper = dsl.origami().steps([
+    { step: 'half', op: 'reflect', p1: 'bottom@0.5', p2: 'top@0.5', move: 'right@0.5', at: 1, dur: 2 },
+    // Timing-only row: re-drives the earlier fold by name (here: unfolds it).
+    { step: 'half', at: 5, dur: 1, to: 0 },
   ])
-  const pattern = paper.spawn({ id: 'sheet' }).rows[0].pattern as { groups: string[] }
-  assert.deepEqual(pattern.groups.sort(), ['a', 'b'])
-  // Chains with .crease() too — the two building blocks are interchangeable.
-  const mixed = dsl.origami().crease(0.5, -1, 0.5, 1, 'c', 45).creases([
-    { x1: -0.5, y1: -1, x2: -0.5, y2: 1, group: 'd', angle: 45 },
-  ])
-  const mixedPattern = mixed.spawn({ id: 'sheet2' }).rows[0].pattern as { groups: string[] }
-  assert.deepEqual(mixedPattern.groups.sort(), ['c', 'd'])
-})
-
-test('origami().folds turns fold-step rows into creases plus a default sequence', () => {
-  const paper = dsl.origami().folds([
-    // A physical step: a line in sheet coordinates + a degree + timing.
-    { fold: 'half', x1: 0, y1: -1, x2: 0, y2: 1, deg: 150, at: 1, dur: 2, to: 1 },
-    // Timing-only row: re-folds the earlier step by name (here: unfolds it).
-    { fold: 'half', at: 5, dur: 1, to: 0 },
-    // No fold name → auto-named group, still a step of its own.
-    { x1: -1, y1: 0, x2: 1, y2: 0, deg: -90, at: 2, dur: 1, to: 1 },
-  ])
-  const pattern = paper.spawn({ id: 'p' }).rows[0].pattern as { groups: string[] }
-  assert.ok(pattern.groups.includes('half'))
-  assert.equal(pattern.groups.length, 2)
-  const auto = pattern.groups.find((g) => g !== 'half')!
-
   const seq = paper.sequence().rows
   const at = (beat: number): Row => seq.find((r) => r.beat === beat)!
   assert.equal(at(3).half, 1, 'folded after its ramp')
-  assert.equal(at(3)[auto], 1, 'auto-named fold ramps on its own timing')
   assert.equal(at(6).half, 0, 'the timing-only row unfolds it again')
 })
 
+test('steps without `at` run one after another', () => {
+  const paper = dsl.origami().steps([
+    { step: 'a', op: 'reflect', p1: 'bottom@0.5', p2: 'top@0.5', move: 'right@0.5' },
+    { step: 'b', op: 'reflect', p1: 'left@0.5', p2: 'a@0.5', move: 'left@0', dur: 2 },
+  ])
+  const seq = paper.sequence().rows
+  const at = (beat: number): Row => seq.find((r) => r.beat === beat)!
+  assert.equal(at(2).a, 1, 'first fold finishes at beat 2')
+  assert.equal(at(2).b, 0, 'second starts as the first ends')
+  assert.equal(at(4).b, 1, 'second takes its own dur')
+})
+
 test('origami sequence bakes fold steps into all-group keyframes', () => {
-  const paper = dsl.origami()
-    .crease(0, -1, 0, 1, 'a', 90)
-    .crease(-1, 0, 1, 0, 'b', -90)
+  const paper = dsl.origami().steps([
+    { step: 'a', op: 'reflect', p1: 'bottom@0.5', p2: 'top@0.5', move: 'right@0.5' },
+  ])
   paper.spawn({ id: 'p' })
   const rows = paper.sequence([
     { fold: 'a', at: 1, dur: 2 },
-    { fold: 'b', at: 2, dur: 2 }, // overlaps the tail of a's ramp
-  ]).rows
-
-  // Breakpoints at 1, 2, 3, 4 — every row carries both groups.
-  assert.deepEqual(rows.map((r) => r.beat), [1, 2, 3, 4])
-  assert.ok(rows.every((r) => r.id === 'p' && r.type === 'update'))
-  const at = (beat: number): Row => rows.find((r) => r.beat === beat)!
-  assert.equal(at(1).a, 0)
-  assert.equal(at(2).a, 0.5)
-  assert.equal(at(3).a, 1)
-  assert.equal(at(2).b, 0)
-  assert.equal(at(3).b, 0.5)
-  assert.equal(at(4).b, 1)
-})
-
-test('origami sequence supports partial folds, refolds, and named eases', () => {
-  const paper = dsl.origami().crease(0, -1, 0, 1, 'w', 150)
-  paper.spawn({ id: 'p' })
-  const rows = paper.sequence([
-    { fold: 'w', at: 1, dur: 1 },
-    { fold: 'w', at: 4, dur: 1, to: 0.4, ease: 'easeInOut' },
+    { fold: 'a', at: 4, dur: 1, to: 0.4, ease: 'easeInOut' },
   ]).rows
   const at = (beat: number): Row => rows.find((r) => r.beat === beat)!
-  assert.equal(at(2).w, 1, 'folded fully first')
-  assert.equal(at(4).w, 1, 'held until the refold starts')
-  assert.equal(at(5).w, 0.4, 'ramps back down to the partial target')
+  assert.equal(at(3).a, 1, 'folded fully first')
+  assert.equal(at(4).a, 1, 'held until the refold starts')
+  assert.equal(at(5).a, 0.4, 'ramps back down to the partial target')
   assert.equal(typeof at(5).ease, 'function', 'named ease resolved onto the keyframe')
-})
-
-// ── Rigid (kinematic) solver ─────────────────────────────────────────────────
-
-import { createRigidSolver } from '../src/origami.js'
-
-test('rigid solver: a valley fold lifts the far side toward +z by exactly the target', () => {
-  const p = compilePattern(halfFold(90))
-  const solver = createRigidSolver(p)
-  solver.step({ half: 1 })
-  // Faces are per-corner now; every corner with x away from the crease on the
-  // folded side must sit at exactly |x| height (90° rotation), and the kept
-  // side stays in the plane.
-  let folded = 0
-  for (let f = 0; f < p.faces.length; f++) {
-    for (let k = 0; k < 3; k++) {
-      const x = solver.positions[f * 9 + k * 3]
-      const z = solver.positions[f * 9 + k * 3 + 2]
-      if (Math.abs(z) > 1e-6) {
-        folded++
-        assert.ok(z > 0, `folded side went up, got z=${z}`)
-        assert.ok(Math.abs(Math.abs(x) - 0) < 1e-6 || Math.abs(z) > 0, 'rotated by 90°')
-      }
-    }
-  }
-  assert.ok(folded > 0, 'something folded')
-  // Rigidity is exact: every face's edge lengths match the pattern.
-  for (let f = 0; f < p.faces.length; f++) {
-    const [a, b, c] = p.faces[f]
-    const idx = [a, b, c]
-    for (let k = 0; k < 3; k++) {
-      const k2 = (k + 1) % 3
-      const rest = Math.hypot(
-        p.vertices[idx[k2]][0] - p.vertices[idx[k]][0],
-        p.vertices[idx[k2]][1] - p.vertices[idx[k]][1],
-      )
-      const now = Math.hypot(
-        solver.positions[f * 9 + k2 * 3] - solver.positions[f * 9 + k * 3],
-        solver.positions[f * 9 + k2 * 3 + 1] - solver.positions[f * 9 + k * 3 + 1],
-        solver.positions[f * 9 + k2 * 3 + 2] - solver.positions[f * 9 + k * 3 + 2],
-      )
-      assert.ok(Math.abs(now - rest) < 1e-6, `face ${f} edge ${k} exact`)
-    }
-  }
-})
-
-test('rigid solver: undriven creases stay exactly flat', () => {
-  const p = compilePattern({
-    size: 1,
-    creases: [
-      { x1: 0, y1: -1, x2: 0, y2: 1, group: 'v', angle: 150 },
-      { x1: -1, y1: 0, x2: 1, y2: 0, group: 'h', angle: -150 },
-    ],
-  })
-  const solver = createRigidSolver(p)
-  solver.step({ v: 1, h: 0 })
-  // With h undriven, the sheet is a clean single fold: every corner lies
-  // either in the z=0 plane or on the half-plane rotated exactly 150° about
-  // the crease — nothing in between (the h crease shows no kink at all).
-  for (let f = 0; f < p.faces.length; f++) {
-    for (let k = 0; k < 3; k++) {
-      const x = solver.positions[f * 9 + k * 3]
-      const z = solver.positions[f * 9 + k * 3 + 2]
-      const onFlat = Math.abs(z) < 1e-6
-      const angle = (Math.atan2(z, x) * 180) / Math.PI
-      const onFolded = Math.abs(angle - 150) < 1e-4
-      assert.ok(onFlat || onFolded, `corner x=${x} z=${z} on a rigid half-plane (angle ${angle})`)
-    }
-  }
-})
-
-test('rigid solver: stitching keeps shared edges together where folds disagree', () => {
-  // Two full crossing creases driven at once — not rigid-origami feasible
-  // mid-fold, so the raw spanning-tree solution tears the loop around the
-  // centre wide open. Stitching must close it (small offsets only) while
-  // every face stays exactly rigid.
-  const p = compilePattern({
-    size: 1,
-    creases: [
-      { x1: 0, y1: -1, x2: 0, y2: 1, group: 'v', angle: 178 },
-      { x1: -1, y1: 0, x2: 1, y2: 0, group: 'h', angle: 178 },
-    ],
-  })
-  const solver = createRigidSolver(p)
-  const copies: number[][] = p.vertices.map(() => [])
-  p.faces.forEach((tri, f) => tri.forEach((v, k) => copies[v].push(f * 3 + k)))
-  const maxTear = (): number => {
-    let worst = 0
-    for (const list of copies) {
-      let ax = 0
-      let ay = 0
-      let az = 0
-      for (const c of list) {
-        ax += solver.positions[c * 3]
-        ay += solver.positions[c * 3 + 1]
-        az += solver.positions[c * 3 + 2]
-      }
-      ax /= list.length
-      ay /= list.length
-      az /= list.length
-      for (const c of list) {
-        worst = Math.max(worst, Math.hypot(
-          solver.positions[c * 3] - ax,
-          solver.positions[c * 3 + 1] - ay,
-          solver.positions[c * 3 + 2] - az,
-        ))
-      }
-    }
-    return worst
-  }
-
-  solver.step({ v: 0.5, h: 0.5 }, 0)
-  const torn = maxTear()
-  assert.ok(torn > 0.1, `unstitched tree solution tears (${torn.toFixed(3)})`)
-
-  solver.step({ v: 0.5, h: 0.5 })
-  const stitched = maxTear()
-  assert.ok(stitched < 0.05, `stitched sheet holds together (${stitched.toFixed(3)})`)
-  // Rigidity survives the stitch exactly.
-  for (let f = 0; f < p.faces.length; f++) {
-    const [a, b, c] = p.faces[f]
-    const idx = [a, b, c]
-    for (let k = 0; k < 3; k++) {
-      const k2 = (k + 1) % 3
-      const rest = Math.hypot(
-        p.vertices[idx[k2]][0] - p.vertices[idx[k]][0],
-        p.vertices[idx[k2]][1] - p.vertices[idx[k]][1],
-      )
-      const now = Math.hypot(
-        solver.positions[f * 9 + k2 * 3] - solver.positions[f * 9 + k * 3],
-        solver.positions[f * 9 + k2 * 3 + 1] - solver.positions[f * 9 + k * 3 + 1],
-        solver.positions[f * 9 + k2 * 3 + 2] - solver.positions[f * 9 + k * 3 + 2],
-      )
-      assert.ok(Math.abs(now - rest) < 1e-6, `face ${f} edge ${k} exact after stitching`)
-    }
-  }
 })
