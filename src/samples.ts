@@ -55,8 +55,14 @@ define("scene", (rand, table) => table("events").rasterize(8))
 // reached (1 = fully folded, 0 = flat, −1 = folded the other way). Rows
 // sharing a \`fold\` name move together; a row with timing but NO line
 // re-folds an earlier line by name — that is how a crease folds, unfolds,
-// and later folds the OTHER way, exactly like paper in your hands. Scrubbing
-// backwards physically unfolds everything.
+// and later folds the OTHER way, exactly like paper in your hands.
+//
+// The folds are TRUSTED as written: every crease sits at exactly the angle
+// its rows say, faces stay perfectly rigid, and undriven creases stay
+// perfectly flat. Where a fold disagrees with itself mid-motion the sheet is
+// allowed to break apart — real paper flexes; this paper tears briefly and
+// snaps back together at each rest. Scrubbing shows the exact fold state at
+// any beat.
 
 // The fold steps — one motion at a time, with a rest between each, like
 // hands folding it:
@@ -72,7 +78,7 @@ define("scene", (rand, table) => table("events").rasterize(8))
 //   step 6  fold the wings down                              (rest)
 //   …then flap.
 // (Thinning the legs is skipped — that fold slides layers against each
-// other, which a spring-mass sheet can't do; the reverse folds are simple
+// other, which line folds can't express; the reverse folds are simple
 // kinks rather than layer tucks.)
 const STEPS = []
 const line = (fold, x1, y1, x2, y2, deg, at, dur, to) =>
@@ -88,36 +94,37 @@ const d = 0.4142136, m = 0.5857864 // where the petal ring crosses the lines
 // base's own mountain/valley state (found the same way) — eight segments
 // fold BACKWARD here (to: −1) and the petal fold reverses them, exactly
 // like real paper.
-line("d1", -1, -1, -d, -d,  165, 1, 2, -1)
-line("d2", -d, -d,  0,  0, -165, 1, 2,  1)
-line("d3",  0,  0,  d,  d,  165, 1, 2,  1)
-line("d4",  d,  d,  1,  1, -165, 1, 2, -1)
-line("a1",  1, -1,  d, -d, -165, 1, 2,  1)
-line("a2",  d, -d,  0,  0,  165, 1, 2, -1)
-line("a3",  0,  0, -d,  d,  165, 1, 2, -1)
-line("a4", -d,  d, -1,  1, -165, 1, 2,  1)
-line("bx1",  1,  0,  m,  0,  165, 1, 2,  1)
-line("bx2",  m,  0,  0,  0, -165, 1, 2, -1)
-line("bx3", -m,  0,  0,  0,  165, 1, 2,  1)
-line("bx4", -1,  0, -m,  0, -165, 1, 2, -1)
-line("by1",  0,  1,  0,  m,  165, 1, 2,  1)
-line("by2",  0,  m,  0,  0, -165, 1, 2, -1)
-line("by3",  0, -m,  0,  0,  165, 1, 2,  1)
-line("by4",  0, -1,  0, -m, -165, 1, 2, -1)
+line("d1", -1, -1, -d, -d,  178, 1, 2, -1)
+line("d2", -d, -d,  0,  0, -178, 1, 2,  1)
+line("d3",  0,  0,  d,  d,  178, 1, 2,  1)
+line("d4",  d,  d,  1,  1, -178, 1, 2, -1)
+line("a1",  1, -1,  d, -d, -178, 1, 2,  1)
+line("a2",  d, -d,  0,  0,  178, 1, 2, -1)
+line("a3",  0,  0, -d,  d,  178, 1, 2, -1)
+line("a4", -d,  d, -1,  1, -178, 1, 2,  1)
+line("bx1",  1,  0,  m,  0,  178, 1, 2,  1)
+line("bx2",  m,  0,  0,  0, -178, 1, 2, -1)
+line("bx3", -m,  0,  0,  0,  178, 1, 2,  1)
+line("bx4", -1,  0, -m,  0, -178, 1, 2, -1)
+line("by1",  0,  1,  0,  m,  178, 1, 2,  1)
+line("by2",  0,  m,  0,  0, -178, 1, 2, -1)
+line("by3",  0, -m,  0,  0,  178, 1, 2,  1)
+line("by4",  0, -1,  0, -m, -178, 1, 2, -1)
 
 // Step 2 (beats 4.5–8, rest until 9.5) — square base → bird base, the way
 // hands do it, in three sub-motions:
 //   open the petal pockets partway…
-line("petalF",  0, -m,  d, -d, -165, 4.5, 1, 0.6)
-line("petalF",  d, -d,  m,  0, -165, 4.5, 1, 0.6)
-line("petalF",  m,  0,  d,  d, -165, 4.5, 1, 0.6)
-line("petalF", -d, -d,  0, -m, -165, 4.5, 1, 0.6)
-line("petalB",  d,  d,  0,  m, -165, 4.5, 1, 0.6)
-line("petalB",  0,  m, -d,  d, -165, 4.5, 1, 0.6)
-line("petalB", -d,  d, -m,  0, -165, 4.5, 1, 0.6)
-line("petalB", -m,  0, -d, -d, -165, 4.5, 1, 0.6)
+line("petalF",  0, -m,  d, -d, -178, 4.5, 1, 0.6)
+line("petalF",  d, -d,  m,  0, -178, 4.5, 1, 0.6)
+line("petalF",  m,  0,  d,  d, -178, 4.5, 1, 0.6)
+line("petalF", -d, -d,  0, -m, -178, 4.5, 1, 0.6)
+line("petalB",  d,  d,  0,  m, -178, 4.5, 1, 0.6)
+line("petalB",  0,  m, -d,  d, -178, 4.5, 1, 0.6)
+line("petalB", -d,  d, -m,  0, -178, 4.5, 1, 0.6)
+line("petalB", -m,  0, -d, -d, -178, 4.5, 1, 0.6)
 //   …lift the corners up through the middle (the backward creases reverse,
-//   swinging from −1 through flat to +0.7)…
+//   swinging from −1 through flat to +0.7; the sheet visibly breaks apart
+//   mid-swing and snaps together into the diamond)…
 ;["d1", "d4", "a2", "a3", "bx2", "bx4", "by2", "by4"].forEach((f) => retime(f, 5.5, 1.5, 0.7))
 //   …then press everything flat into the long diamond.
 ;["petalF", "petalB", "d1", "d4", "a2", "a3", "bx2", "bx4", "by2", "by4"]

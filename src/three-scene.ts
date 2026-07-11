@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { createFoldSolver, type CompiledPattern, type FoldSolver } from './origami.js'
+import { createRigidSolver, type CompiledPattern, type RigidSolver } from './origami.js'
 
 export interface SceneAPI {
   createObject(row: Record<string, unknown>): void
@@ -34,35 +34,34 @@ const PALETTE = [0x4a9eff, 0xff6b6b, 0x51cf66, 0xffd43b, 0xcc5de8, 0xff922b]
 
 // A live sheet of folding paper: the solver owns the vertex buffer, the two
 // meshes (colored front / paper-white back) and the crease lines all render
-// straight out of it, and each animation frame steps the fold toward the
-// group targets the latest scene row asked for. Because the solver integrates
-// from wherever the paper currently is, scrubbing backwards physically
-// unfolds it.
+// straight out of it. The solver is kinematic: every hinge sits at exactly
+// its target angle (crease target × the row's fold fraction), faces are
+// positioned by composing those exact rotations, and where the crease
+// pattern's loops disagree mid-fold the sheet simply breaks apart — so
+// faces can't share vertices, and the geometry is per-face (non-indexed).
 interface OrigamiObject {
   root: THREE.Group
-  solver: FoldSolver
+  solver: RigidSolver
   posAttr: THREE.BufferAttribute
+  linePosAttr: THREE.BufferAttribute
   targets: Record<string, number>
   front: THREE.MeshStandardMaterial
   back: THREE.MeshStandardMaterial
   line: THREE.LineBasicMaterial
   geometry: THREE.BufferGeometry
   lineGeometry: THREE.BufferGeometry
-  substeps: number
 }
 
 const PAPER_BACK = 0xf4efe2
 
 function makeOrigami(row: Record<string, unknown>): OrigamiObject {
   const pattern = row.pattern as CompiledPattern
-  const solver = createFoldSolver(pattern)
+  const solver = createRigidSolver(pattern)
 
   const posAttr = new THREE.BufferAttribute(solver.positions, 3)
   posAttr.setUsage(THREE.DynamicDrawUsage)
-
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', posAttr)
-  geometry.setIndex(pattern.faces.flat())
 
   const color = row.color != null ? (row.color as number) : 0xd94f2a
   // Two single-sided materials so the paper's front and back read differently
@@ -79,9 +78,10 @@ function makeOrigami(row: Record<string, unknown>): OrigamiObject {
   const front = new THREE.MeshStandardMaterial({ ...common, color, side: THREE.FrontSide })
   const back = new THREE.MeshStandardMaterial({ ...common, color: PAPER_BACK, side: THREE.BackSide })
 
+  const linePosAttr = new THREE.BufferAttribute(solver.linePositions, 3)
+  linePosAttr.setUsage(THREE.DynamicDrawUsage)
   const lineGeometry = new THREE.BufferGeometry()
-  lineGeometry.setAttribute('position', posAttr)
-  lineGeometry.setIndex(pattern.lines.flat())
+  lineGeometry.setAttribute('position', linePosAttr)
   const line = new THREE.LineBasicMaterial({ color: 0x1c1713, transparent: true, opacity: 0.5 })
 
   const root = new THREE.Group()
@@ -93,10 +93,7 @@ function makeOrigami(row: Record<string, unknown>): OrigamiObject {
   for (const g of pattern.groups) targets[g] = 0
 
   const obj: OrigamiObject = {
-    root, solver, posAttr, targets, front, back, line, geometry, lineGeometry,
-    // Generous default: fold meshes are tiny, and a fast fold schedule needs
-    // the solver to keep up with its ramps frame by frame.
-    substeps: typeof row.substeps === 'number' ? row.substeps : 140,
+    root, solver, posAttr, linePosAttr, targets, front, back, line, geometry, lineGeometry,
   }
   applyOrigamiRow(obj, row)
   return obj
@@ -155,8 +152,9 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
 
   function animate(): void {
     for (const o of origamis.values()) {
-      o.solver.step(o.targets, o.substeps)
+      o.solver.step(o.targets)
       o.posAttr.needsUpdate = true
+      o.linePosAttr.needsUpdate = true
     }
     renderer.render(scene, camera)
     requestAnimationFrame(animate)

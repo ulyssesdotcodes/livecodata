@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createRuntime } from '../src/runtime.js'
 import { getLineage } from '../src/lineage.js'
-import { createFoldSolver, type CompiledPattern } from '../src/origami.js'
+import { createRigidSolver, type CompiledPattern } from '../src/origami.js'
 import { SAMPLES } from '../src/samples.js'
 
 test('new verbs cook end-to-end (grid/derive/groupBy/csv/join/triggerEach + lineage)', () => {
@@ -106,59 +106,63 @@ test('Origami Crane sample folds the traditional bird base without blowing up', 
   checkKawasaki(d, -d)
   checkKawasaki(-d, d)
 
-  // Fold the sample's stepwise path: collapse into the TRUE square base
-  // (eight segments folded backward), then the phased petal fold — open the
-  // pockets, swing the corners through, press flat — and check the resulting
-  // bird base is numerically sane and inextensible.
+  // The rigid solver is kinematic: a pose is a pure function of the fold
+  // fractions, so check the sample's rest states directly. Rigidity is exact
+  // by construction — assert it as a regression on the transform math — and
+  // the flat-foldable rests must stack into thin packets.
   const squareTo: Record<string, number> = {
     d2: 1, d3: 1, a1: 1, a4: 1, bx1: 1, bx3: 1, by1: 1, by3: 1,
     d1: -1, d4: -1, a2: -1, a3: -1, bx2: -1, bx4: -1, by2: -1, by4: -1,
+    petalF: 0, petalB: 0, neck: 0, tail: 0, head: 0, wings: 0,
   }
-  const flips = ['d1', 'd4', 'a2', 'a3', 'bx2', 'bx4', 'by2', 'by4']
-  const solver = createFoldSolver(pattern)
-  const t: Record<string, number> = { petalF: 0, petalB: 0 }
-  const ramp = (n: number, set: (f: number) => void): void => {
-    for (let i = 0; i < n; i++) {
-      set((i + 1) / n)
-      solver.step(t, 40)
+  const birdTo: Record<string, number> = {
+    ...squareTo, d1: 1, d4: 1, a2: 1, a3: 1, bx2: 1, bx4: 1, by2: 1, by4: 1,
+    petalF: 1, petalB: 1,
+  }
+  const solver = createRigidSolver(pattern)
+
+  const checkRigidity = (label: string): void => {
+    for (let f = 0; f < pattern.faces.length; f++) {
+      const [a, b, c] = pattern.faces[f]
+      const idx = [a, b, c]
+      for (let k = 0; k < 3; k++) {
+        const k2 = (k + 1) % 3
+        const rest = Math.hypot(
+          pattern.vertices[idx[k2]][0] - pattern.vertices[idx[k]][0],
+          pattern.vertices[idx[k2]][1] - pattern.vertices[idx[k]][1],
+        )
+        const now = Math.hypot(
+          solver.positions[f * 9 + k2 * 3] - solver.positions[f * 9 + k * 3],
+          solver.positions[f * 9 + k2 * 3 + 1] - solver.positions[f * 9 + k * 3 + 1],
+          solver.positions[f * 9 + k2 * 3 + 2] - solver.positions[f * 9 + k * 3 + 2],
+        )
+        assert.ok(Number.isFinite(now) && Math.abs(now - rest) < 1e-5, `${label}: face ${f} rigid`)
+      }
     }
   }
-  ramp(80, (f) => {
-    for (const g in squareTo) t[g] = squareTo[g] * f
-  })
-  for (let i = 0; i < 40; i++) solver.step(t, 40) // rest at the square base
-  ramp(40, (f) => {
-    t.petalF = 0.6 * f
-    t.petalB = 0.6 * f
-  })
-  ramp(60, (f) => {
-    for (const g of flips) t[g] = -1 + 1.7 * f
-  })
-  ramp(40, (f) => {
-    t.petalF = 0.6 + 0.4 * f
-    t.petalB = 0.6 + 0.4 * f
-    for (const g of flips) t[g] = 0.7 + 0.3 * f
-  })
-  for (let i = 0; i < 60; i++) solver.step(t, 40)
-  for (let i = 0; i < solver.positions.length; i++) {
-    assert.ok(Number.isFinite(solver.positions[i]), 'positions stay finite')
-  }
-  let maxStretch = 0
-  for (const [a, b, c] of pattern.faces) {
-    for (const [i, j] of [[a, b], [b, c], [c, a]]) {
-      const rest = Math.hypot(
-        pattern.vertices[j][0] - pattern.vertices[i][0],
-        pattern.vertices[j][1] - pattern.vertices[i][1],
-      )
-      const now = Math.hypot(
-        solver.positions[j * 3] - solver.positions[i * 3],
-        solver.positions[j * 3 + 1] - solver.positions[i * 3 + 1],
-        solver.positions[j * 3 + 2] - solver.positions[i * 3 + 2],
-      )
-      maxStretch = Math.max(maxStretch, Math.abs(now - rest) / rest)
+  const zExtent = (): number => {
+    let lo = Infinity
+    let hi = -Infinity
+    for (let i = 2; i < solver.positions.length; i += 3) {
+      lo = Math.min(lo, solver.positions[i])
+      hi = Math.max(hi, solver.positions[i])
     }
+    return hi - lo
   }
-  assert.ok(maxStretch < 0.12, `paper stretched ${(maxStretch * 100).toFixed(1)}%`)
+
+  // Flat: every corner exactly on the sheet.
+  solver.step({})
+  assert.ok(zExtent() < 1e-9, 'undriven sheet is exactly flat')
+
+  // Square base: a thin flat packet (near-flat 178° folds stack the layers).
+  solver.step(squareTo)
+  checkRigidity('square base')
+  assert.ok(zExtent() < 0.3, `square base stacks flat (z extent ${zExtent().toFixed(3)})`)
+
+  // Bird base: likewise.
+  solver.step(birdTo)
+  checkRigidity('bird base')
+  assert.ok(zExtent() < 0.3, `bird base stacks flat (z extent ${zExtent().toFixed(3)})`)
 
   const scene = views.get('scene')!
   assert.ok(scene.length > 0, 'rasterized to a frame cache')
