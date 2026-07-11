@@ -7,9 +7,16 @@
 //
 // Input event rows (sparse), keyed by object `id`, ordered by `beat`:
 //   create  — { id, type:"create", beat, shape, px,py,pz, rx,ry,rz, color? }
-//   update  — { id, type:"update", beat, px,py,pz, rx,ry,rz }  (movement keyframe)
+//   update  — { id, type:"update", beat, px,py,pz, rx,ry,rz, ease? }  (keyframe)
 //   color   — { id, type:"color",  beat, color, dur?, ease?, to? }  (pulse/step)
 //   destroy — { id, type:"destroy", beat }
+//
+// Every numeric field is its own keyframe TRACK: it eases between the
+// previous and next keyframe that carry it — the transform, but equally
+// custom numerics (origami fold fractions, hydra variables) — and keyframes
+// that omit a field don't interrupt its glide. An `ease` function on a
+// keyframe shapes the segment arriving at it. Non-numeric custom fields step
+// (most recent event wins).
 //
 // All timing fields (`beat`, `dur`) are in **beats** (beat 1 = the first frame;
 // `dur` is a length in beats). Rasterization bakes onto the internal frame grid
@@ -93,40 +100,65 @@ function sampleColor(events: Row[], createEv: Row, i: number): { color: number |
   return { color: mixColor(colorEv.color as number | null, base, eased), source: colorEv }
 }
 
+// Numeric keyframe fields that must NOT be interpolated as tracks: timing
+// bookkeeping, identity, and color (which has its own pulse semantics).
+const NO_TRACK = new Set(['frame', 'beat', 'dur', 'id', 'color'])
+
 function sampleObject(events: Row[], i: number): SampledState | null {
   const createEv = events.find((e) => e.type === 'create')
   if (!createEv || i < (createEv.frame as number)) return null
   if (events.some((e) => e.type === 'destroy' && (e.frame as number) <= i)) return null
 
   const keyframes = events.filter((e) => e.type === 'create' || e.type === 'update')
-  let from: Row | null = keyframes[0] ?? null
-  let to: Row | null = null
-  for (const kf of keyframes) {
-    if ((kf.frame as number) <= i) from = kf
-    else if (!to) to = kf
-  }
 
   const fields: Row = { ...createEv }
-  if (from) {
-    for (const [k, v] of Object.entries(from))
-      if (typeof v === 'number') fields[k] = v
-  }
-  if (from && to) {
-    const t = (i - (from.frame as number)) / ((to.frame as number) - (from.frame as number))
-    for (const [k, v] of Object.entries(to))
-      if (typeof v === 'number' && typeof from[k] === 'number')
-        fields[k] = lerp(from[k] as number, v, t)
-  }
-  // Non-numeric custom fields — e.g. a { $expr } streaming binding from
-  // setField("amount", midi("c4")) — don't lerp; carry the most recent
-  // event's value through untouched (resolved per frame at playback).
+  // Custom fields — a { $expr } streaming binding from setField("amount",
+  // midi("c4")), a string, … — carry the most recent event's value through
+  // (last write wins, whatever the event type).
   Object.assign(fields, gatherExtra(events, i))
+
+  // Numeric fields are per-field TRACKS: each one eases between the previous
+  // and next keyframe that actually carry it — px/py/pz and rx/ry/rz, but
+  // equally custom numerics like origami fold fractions. Keyframes that omit
+  // a field don't interrupt its glide (so a fold schedule and a slow rotation
+  // interleave freely). An `ease` function on the destination keyframe shapes
+  // that segment.
+  const names = new Set<string>()
+  for (const kf of keyframes) {
+    for (const k in kf) {
+      if (!NO_TRACK.has(k) && typeof kf[k] === 'number') names.add(k)
+    }
+  }
+  const sources = new Set<Row>([createEv])
+  for (const name of names) {
+    let prev: Row | null = null
+    let next: Row | null = null
+    for (const kf of keyframes) {
+      if (typeof kf[name] !== 'number') continue
+      if ((kf.frame as number) <= i) prev = kf
+      else {
+        next = kf
+        break
+      }
+    }
+    if (!prev) continue
+    sources.add(prev)
+    if (next) {
+      const raw = (i - (prev.frame as number)) / ((next.frame as number) - (prev.frame as number))
+      const easeFn = next.ease as ((t: number) => number) | undefined
+      const t = typeof easeFn === 'function' ? easeFn(raw) : raw
+      fields[name] = lerp(prev[name] as number, next[name] as number, t)
+      sources.add(next)
+    } else {
+      fields[name] = prev[name]
+    }
+  }
 
   const { color, source: colorSource } = sampleColor(events, createEv, i)
   fields.color = color
+  if (colorSource) sources.add(colorSource)
 
-  const sources = [createEv, from, to, colorSource].filter((x): x is Row => x !== null)
-  return { fields, sources }
+  return { fields, sources: [...sources] }
 }
 
 export function rasterizeRows(eventRows: Row[] | null | undefined, maxBeats?: number): Row[] {

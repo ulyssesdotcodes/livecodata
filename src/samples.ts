@@ -40,6 +40,77 @@ define("scene", (rand, table) => table("events").rasterize(8))
 `,
   },
   {
+    name: "Origami Crane",
+    code: `// livecodata — Origami Crane
+// A square of paper folds itself into the traditional crane, then flaps its
+// wings on the beat. Press "Run" (or Cmd/Ctrl-Enter), then hit Play.
+//
+// origami.crane() is the traditional crane crease pattern. Every crease
+// belongs to a GROUP with a target fold angle (degrees; + valley folds toward
+// you, − mountain away). The crane's groups:
+//   base               — everything up to the bird base, folded as one motion
+//   neck, tail, head   — the staged point folds
+//   wings              — both wing folds (flap these!)
+// Fold state is nothing special: a numeric field per group on the scene rows,
+// 0 = flat and 1 = fully folded, interpolated between keyframes like any
+// transform. The paper itself is simulated — a little spring-mass sheet — so
+// it eases into each crease, and scrubbing backwards physically UNFOLDS it.
+// (When the loop wraps, watch the crane collapse flat and fold itself again.)
+
+// 1. The fold schedule — live-editable in the table panel ("folds" tab):
+//    \`fold\` is the crease group, \`at\` the start beat, \`dur\` how many beats it
+//    takes, \`to\` the fraction to reach (default 1; below 1 part-folds, 0
+//    unfolds). Nudge a beat, stretch a dur, add flaps — then Run again.
+editable("folds", { fold: "string", at: "number", dur: "number", to: "number" }, [
+  { fold: "base",  at: 1,    dur: 5,   to: 1 },
+  { fold: "neck",  at: 6.5,  dur: 1.5, to: 1 },
+  { fold: "tail",  at: 7,    dur: 1.5, to: 1 },
+  { fold: "head",  at: 8.5,  dur: 1,   to: 1 },
+  { fold: "wings", at: 9.5,  dur: 1.5, to: 1 },
+  // …then flap on the half-beat.
+  { fold: "wings", at: 12,   dur: 0.5, to: 0.6 },
+  { fold: "wings", at: 12.5, dur: 0.5, to: 1 },
+  { fold: "wings", at: 13,   dur: 0.5, to: 0.6 },
+  { fold: "wings", at: 13.5, dur: 0.5, to: 1 },
+  { fold: "wings", at: 14,   dur: 0.5, to: 0.6 },
+  { fold: "wings", at: 14.5, dur: 0.5, to: 1 },
+])
+
+// 2. Spawn the paper and bake the schedule into fold keyframes; a couple of
+//    plain rotation keyframes turn the model while it folds (rx/ry/rz
+//    interpolate like everything else).
+define("events", (rand, table) => {
+  const paper = origami.crane()
+  // Rotation is just three more numeric tracks: tip the flat sheet toward the
+  // camera to start, then glide to a side profile as the bird takes shape.
+  return paper.spawn({ id: "crane", color: 0xd94f2a, py: 0.1, pz: 1.2, rx: -0.7, ry: 0.15 })
+    .concat(paper.sequence(table("folds")))
+    .concat(rows([
+      { id: "crane", type: "update", beat: 10, py: -0.1, pz: 1.4, rx: 0.49, ry: -1.19 },
+      { id: "crane", type: "update", beat: 16, py: -0.1, pz: 1.4, rx: 0.55, ry: -0.85 },
+    ]))
+})
+
+// 3. Bake to a 16-beat loop cache.
+define("scene", (rand, table) => table("events").rasterize(16))
+
+// 4. A whisper of video feedback (the rendered scene is hydra's s0) so the
+//    paper leaves faint trails as it moves. Delete this view for a clean look.
+define("hydra", () => rows([
+  { beat: 1, event: "setCode",
+    code: "src(s0).blend(src(o0).scale(1.003), 0.18).out(o0)" },
+]))
+
+// Things to try, live:
+//   - In the "folds" tab: make \`base\` take 10 beats, or start \`neck\` before
+//     the base finishes — overlapping folds are fine.
+//   - Fold the wings to 1.4 (over-fold) or -0.3 (bend backwards).
+//   - Your own paper: origami.fan(7) is an accordion (groups fan0…fan6 — ripple
+//     them!), and origami().crease(-1, -1, 1, 1, "diag", -160) starts a sheet
+//     from scratch — creases split each other automatically, so just draw lines.
+`,
+  },
+  {
     name: "Hydra Sketch",
     code: `// livecodata — a video-synth sketch with hydra (hydra-ts, a port of ojack's hydra)
 // A generative hydra sketch — no 3D scene involved (see "House of Cards" for

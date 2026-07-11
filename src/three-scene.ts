@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { createFoldSolver, type CompiledPattern, type FoldSolver } from './origami.js'
 
 export interface SceneAPI {
   createObject(row: Record<string, unknown>): void
@@ -31,6 +32,92 @@ function makeGeometry(shape: string, dims: Record<string, unknown>): THREE.Buffe
 
 const PALETTE = [0x4a9eff, 0xff6b6b, 0x51cf66, 0xffd43b, 0xcc5de8, 0xff922b]
 
+// A live sheet of folding paper: the solver owns the vertex buffer, the two
+// meshes (colored front / paper-white back) and the crease lines all render
+// straight out of it, and each animation frame steps the fold toward the
+// group targets the latest scene row asked for. Because the solver integrates
+// from wherever the paper currently is, scrubbing backwards physically
+// unfolds it.
+interface OrigamiObject {
+  root: THREE.Group
+  solver: FoldSolver
+  posAttr: THREE.BufferAttribute
+  targets: Record<string, number>
+  front: THREE.MeshStandardMaterial
+  back: THREE.MeshStandardMaterial
+  line: THREE.LineBasicMaterial
+  geometry: THREE.BufferGeometry
+  lineGeometry: THREE.BufferGeometry
+  substeps: number
+}
+
+const PAPER_BACK = 0xf4efe2
+
+function makeOrigami(row: Record<string, unknown>): OrigamiObject {
+  const pattern = row.pattern as CompiledPattern
+  const solver = createFoldSolver(pattern)
+
+  const posAttr = new THREE.BufferAttribute(solver.positions, 3)
+  posAttr.setUsage(THREE.DynamicDrawUsage)
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', posAttr)
+  geometry.setIndex(pattern.faces.flat())
+
+  const color = row.color != null ? (row.color as number) : 0xd94f2a
+  // Two single-sided materials so the paper's front and back read differently
+  // (classic origami: colored face, white back). flatShading derives face
+  // normals in-shader, so no normal attribute needs recomputing per frame.
+  const common = {
+    metalness: 0.05,
+    roughness: 0.85,
+    flatShading: true,
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
+  }
+  const front = new THREE.MeshStandardMaterial({ ...common, color, side: THREE.FrontSide })
+  const back = new THREE.MeshStandardMaterial({ ...common, color: PAPER_BACK, side: THREE.BackSide })
+
+  const lineGeometry = new THREE.BufferGeometry()
+  lineGeometry.setAttribute('position', posAttr)
+  lineGeometry.setIndex(pattern.lines.flat())
+  const line = new THREE.LineBasicMaterial({ color: 0x1c1713, transparent: true, opacity: 0.5 })
+
+  const root = new THREE.Group()
+  root.add(new THREE.Mesh(geometry, front))
+  root.add(new THREE.Mesh(geometry, back))
+  root.add(new THREE.LineSegments(lineGeometry, line))
+
+  const targets: Record<string, number> = {}
+  for (const g of pattern.groups) targets[g] = 0
+
+  const obj: OrigamiObject = {
+    root, solver, posAttr, targets, front, back, line, geometry, lineGeometry,
+    substeps: typeof row.substeps === 'number' ? row.substeps : 50,
+  }
+  applyOrigamiRow(obj, row)
+  return obj
+}
+
+function applyOrigamiRow(obj: OrigamiObject, row: Record<string, unknown>): void {
+  const { px, py, pz, rx, ry, rz, color } = row
+  obj.root.position.set((px as number) ?? 0, (py as number) ?? 0, (pz as number) ?? 0)
+  obj.root.rotation.set((rx as number) ?? 0, (ry as number) ?? 0, (rz as number) ?? 0)
+  if (color != null) obj.front.color.set(color as number)
+  for (const g of Object.keys(obj.targets)) {
+    if (typeof row[g] === 'number') obj.targets[g] = row[g] as number
+  }
+}
+
+function disposeOrigami(obj: OrigamiObject): void {
+  obj.geometry.dispose()
+  obj.lineGeometry.dispose()
+  obj.front.dispose()
+  obj.back.dispose()
+  obj.line.dispose()
+}
+
 // The Three.js scene renders to its own canvas, which is *not* shown directly —
 // hydra (see hydra-scene.ts) takes it as a source texture and post-processes it
 // onto the visible canvas. So this module is pure scene + render, no effects.
@@ -60,19 +147,30 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
   resize()
   new ResizeObserver(resize).observe(sizeFrom)
 
+  const objects = new Map<unknown, THREE.Mesh>()
+  const origamis = new Map<unknown, OrigamiObject>()
+  let colorIdx = 0
+
   function animate(): void {
+    for (const o of origamis.values()) {
+      o.solver.step(o.targets, o.substeps)
+      o.posAttr.needsUpdate = true
+    }
     renderer.render(scene, camera)
     requestAnimationFrame(animate)
   }
   requestAnimationFrame(animate)
 
-  const objects = new Map<unknown, THREE.Mesh>()
-  let colorIdx = 0
-
   return {
     createObject(row: Record<string, unknown>): void {
       const { id, shape, px, py, pz, rx, ry, rz, color } = row
-      if (objects.has(id)) return
+      if (objects.has(id) || origamis.has(id)) return
+      if (shape === 'origami' && row.pattern) {
+        const obj = makeOrigami(row)
+        scene.add(obj.root)
+        origamis.set(id, obj)
+        return
+      }
       const geo = makeGeometry(shape as string, row)
       const mat = new THREE.MeshStandardMaterial({
         color: color != null ? color as number : PALETTE[colorIdx % PALETTE.length],
@@ -90,6 +188,11 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
 
     updateObject(row: Record<string, unknown>): void {
       const { id, px, py, pz, rx, ry, rz, color } = row
+      const origami = origamis.get(id)
+      if (origami) {
+        applyOrigamiRow(origami, row)
+        return
+      }
       const mesh = objects.get(id)
       if (!mesh) return
       mesh.position.set(px as number, py as number, pz as number)
@@ -98,6 +201,13 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
     },
 
     destroyObject(id: unknown): void {
+      const origami = origamis.get(id)
+      if (origami) {
+        scene.remove(origami.root)
+        disposeOrigami(origami)
+        origamis.delete(id)
+        return
+      }
       const mesh = objects.get(id)
       if (!mesh) return
       scene.remove(mesh)
@@ -113,6 +223,11 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
         ;(mesh.material as THREE.MeshStandardMaterial).dispose()
       }
       objects.clear()
+      for (const origami of origamis.values()) {
+        scene.remove(origami.root)
+        disposeOrigami(origami)
+      }
+      origamis.clear()
       colorIdx = 0
     },
   }

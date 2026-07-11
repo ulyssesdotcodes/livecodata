@@ -155,3 +155,46 @@ test('empty input yields an empty cache', () => {
   assert.equal(fi.maxFrame, 0)
   assert.deepEqual(stateAtFrame(fi, 0), [])
 })
+
+test('custom numeric fields interpolate between keyframes (fold fractions ride the grid)', () => {
+  const rows = rasterizeRows([
+    create({ wings: 0 }),
+    { id: 's', type: 'update', beat: b(10), wings: 1 },
+  ], mb(10))
+  const at5 = rows.find((r) => r.frame === 5)!
+  assert.equal(at5.wings, 0.5, 'halfway through the ramp')
+  assert.equal(rows.find((r) => r.frame === 10)!.wings, 1)
+})
+
+test('custom numeric fields hold their last value when the next keyframe omits them', () => {
+  const rows = rasterizeRows([
+    create({ wings: 0 }),
+    { id: 's', type: 'update', beat: b(4), wings: 1 },
+    { id: 's', type: 'update', beat: b(8), px: 3 }, // no wings field
+  ], mb(8))
+  assert.equal(rows.find((r) => r.frame === 6)!.wings, 1, 'held, not re-lerped')
+})
+
+test('an ease function on the destination keyframe shapes the segment', () => {
+  const easeIn = (t: number): number => t * t
+  const rows = rasterizeRows([
+    create({ px: 0, wings: 0 }),
+    { id: 's', type: 'update', beat: b(10), px: 10, wings: 1, ease: easeIn },
+  ], mb(10))
+  const at5 = rows.find((r) => r.frame === 5)!
+  assert.equal(at5.px, 2.5, 'position eased quadratically')
+  assert.equal(at5.wings, 0.25, 'custom numeric eased the same way')
+})
+
+test('numeric tracks glide across keyframes that omit them', () => {
+  const rows = rasterizeRows([
+    create({ ry: 0, wings: 0 }),
+    { id: 's', type: 'update', beat: b(4), wings: 1 },   // no ry
+    { id: 's', type: 'update', beat: b(10), ry: 5 },      // no wings
+  ], mb(10))
+  const at5 = rows.find((r) => r.frame === 5)!
+  assert.equal(at5.ry, 2.5, 'ry glides through the wings-only keyframe')
+  assert.equal(at5.wings, 1, 'wings holds after its own last keyframe')
+  const at2 = rows.find((r) => r.frame === 2)!
+  assert.equal(at2.wings, 0.5, 'wings ramp unaffected by the later ry keyframe')
+})
