@@ -29,7 +29,7 @@
 import { rasterizeRows } from './rasterize.js'
 import { withLineage, carry, unionLineage, getLineage, type Row } from './lineage.js'
 import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS } from './constants.js'
-import { compileFoldProgram, type FoldProgram, type CompiledFold } from './origami.js'
+import { compileFolds, type FoldProgram, type CompiledFold } from './origami.js'
 import type { ColumnType } from './editable-tables.js'
 
 // ── Expr: a small, serializable, chainable expression over a row ─────────────
@@ -758,18 +758,18 @@ class PhysicsBuilder {
 }
 
 // ── Origami ───────────────────────────────────────────────────────────────────
-// A sheet of paper folded by INSTRUCTIONS, the way origami is written down:
-// each row folds or reflects the paper along a line through two points on
-// known edges — the paper's edge ("1,0" in sheet coordinates, wherever
-// folding has carried it) or an edge created by an earlier fold ("diag@0.5").
-// steps() compiles the rows against the exactly-folded model (see origami.ts);
-// spawn() emits the scene's create row (shape: "origami", with the compiled
-// program riding along as data); fold state is just numeric fields named
-// after the steps — 0 = before that fold, 1 = folded — so a fold schedule is
-// ordinary update keyframes and the baker interpolates them like any
-// transform. sequence() turns the rows' at/dur timings (or explicit steps
-// { fold, at, dur, to, ease }) into those keyframes, handling overlapping
-// folds by baking every group's envelope value at every breakpoint.
+// A sheet of paper folded by a TABLE OF CREASES: every row gives one crease
+// as a literal sheet-coordinate segment (p1/p2 "x,y"), the pieces it moves
+// (move — sample points inside them), its layer parity (sign ±1) and signed
+// angle (deg), and its timing. steps() compiles the rows (see origami.ts —
+// the sheet is cut along the segments, nothing is inferred); spawn() emits
+// the scene's create row (shape: "origami", with the compiled program riding
+// along as data); fold state is just numeric fields named after the steps —
+// 0 = before that fold, 1 = folded — so a fold schedule is ordinary update
+// keyframes and the baker interpolates them like any transform. sequence()
+// turns the rows' at/dur timings (or explicit steps { fold, at, dur, to,
+// ease }) into those keyframes, handling overlapping folds by baking every
+// group's envelope value at every breakpoint.
 
 interface FoldStep {
   group: string
@@ -792,20 +792,19 @@ export class OrigamiBuilder {
     this._ctx = ctx
   }
 
-  // One table = the whole folding, written as instructions. Each row is a
-  // fold: `p1`/`p2` name the two points defining the fold line — every
-  // position is ON A KNOWN EDGE: a paper edge ("bottom@t", "top@t",
-  // "left@t", "right@t") or the edge created by an earlier fold ("name@t") —
-  // `move` a point (same language) on the side that moves, `op` "reflect"
-  // (a flat 180° fold through every layer on that side) or "fold" (rotate
-  // just the flap connected to `move` by `deg` degrees), `dir` +1 toward
-  // the viewer / −1 away, and its timing (`at`, `dur`, `to` — 1 folded,
-  // 0 open, −1 folded the other way). A row re-using an earlier fold's name
-  // re-drives it (flapping, opening — animation only; the exact model keeps
-  // treating the fold as made): with no line it drives the whole fold, with
-  // p1/p2 on the fold's own edge ("name@t") just that stretch. The timings
-  // become the default steps for sequence(), so as the timeline advances
-  // the paper folds step by step.
+  // One table = the whole folding, as a static crease list. Each row with a
+  // line is a crease: `p1`/`p2` its segment in sheet coordinates ("x,y"),
+  // `move` sample points ("x,y", ";"-separated) inside the pieces the fold
+  // rotates (only pieces touching the crease — the rest rides along through
+  // the hinge tree), `sign` the crease's turning sense for positive
+  // fractions (flipping it = swapping p1/p2; stacked layers often need
+  // opposite senses),
+  // `deg` the full signed angle (±180 = flat), and timing (`at`, `dur`,
+  // `to` — 1 folded, 0 open, −1 folded the other way; dur 0 = geometry
+  // only). Rows sharing a `step` name extend one fold across several
+  // layers; a row with no line re-drives an earlier fold (keyframes). The
+  // timings become the default steps for sequence(), so as the timeline
+  // advances the paper folds step by step.
   steps(steps: Table | Row[]): OrigamiBuilder {
     const next = new OrigamiBuilder(this._size, this._ctx)
     next._id = this._id
@@ -815,7 +814,7 @@ export class OrigamiBuilder {
 
   private _compile(): CompiledFold {
     if (!this._compiled) {
-      this._compiled = compileFoldProgram(this._rows, { size: this._size })
+      this._compiled = compileFolds(this._rows, { size: this._size })
       for (const w of this._compiled.program.warnings) console.warn(`origami: ${w}`)
     }
     return this._compiled

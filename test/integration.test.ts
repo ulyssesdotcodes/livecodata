@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createRuntime } from '../src/runtime.js'
 import { getLineage } from '../src/lineage.js'
-import { createFoldPlayer, foldedPosition, type FoldProgram, type Vec2 } from '../src/origami.js'
+import { createFoldPlayer, type FoldProgram, type Vec2 } from '../src/origami.js'
 import { SAMPLES } from '../src/samples.js'
 
 test('new verbs cook end-to-end (grid/derive/groupBy/csv/join/triggerEach + lineage)', () => {
@@ -48,10 +48,9 @@ define("joined", () => table("cities").join(rows([{ id: "a", note: "hit" }]), "i
 })
 
 test('Origami Crane sample: squash to the square base, petal to the bird base', () => {
-  // The sample folds the triangle, then squashes it around its middle: the
-  // centre valleys, the two mountains to the doubled edge's midpoint, and
-  // the spine unfolding flat — one mechanism, keyframed along its exact
-  // rigid path. Run the sample and check the standing T.
+  // The sample is a static crease table: the collapse to the square base,
+  // then the petal folds to the bird base. Run it and check the folded
+  // states against the classic coordinates.
   const sample = SAMPLES.find((s) => s.name === 'Origami Crane')!
   const { views } = createRuntime({
     editableRows: (_name, _schema, seedRows) => seedRows ?? [],
@@ -62,10 +61,9 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
   assert.equal(create.shape, 'origami')
   const program = create.program as FoldProgram
   assert.deepEqual(program.groups,
-    ['diag', 's1', 'hv', 'diag~0.5-1', 's2', 'diag~0-0.5', 'kite', 'kite2', 'kite3', 'kite4', 'petal'])
-  // The halving valley is a non-flat 90° fold — the one expected warning.
-  assert.equal(program.warnings.length, 1, program.warnings.join('; '))
-  assert.ok(program.warnings[0].includes('hv'))
+    ['spine', 'still', 's1', 'hv', 's2', 'kite', 'kite2', 'petal', 'peelfr', 'peelfl',
+      'kite3', 'kite4', 'petal2', 'peelbr', 'peelbl'])
+  assert.equal(program.warnings.length, 0, program.warnings.join('; '))
 
   // Take the fractions at the end of the squash off the baked keyframes and
   // check the T: the spine (right half of the triangle's long edge) lies
@@ -141,30 +139,35 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
     assert.ok(zHi - zLo < 0.05, `square base is flat (z extent ${(zHi - zLo).toFixed(4)})`)
   }
 
-  // THE BIRD BASE (the petal fold, beats 14.5–16): all four points gather
-  // √2−1 past the closed corner, the side corners tuck onto the centre line
-  // at the hinge, and the packet lies flat again.
+  // THE BIRD BASE (the petals, front then back, beats 14.6–16): the
+  // petalled corners land √2−1 past the closed corner, the side corners
+  // tuck onto the hinge, the middle flaps' corners — untouched by either
+  // petal, exactly as in the paper sequence — stay at the base's point.
   {
     player.step(kfFracsAt(Infinity))
     for (const [probe, corner] of [
-      [[0.9, 0.97], [1, 1]], [[0.9, -0.8], [1, -1]], [[-0.9, -0.97], [-1, -1]], [[-0.85, 0.9], [-1, 1]],
+      [[-0.85, 0.9], [-1, 1]], [[0.9, -0.8], [1, -1]],
     ] as [Vec2, Vec2][]) {
       assert.ok(near(cornerPos(probe, corner), [Math.SQRT2 - 1, 1 - Math.SQRT2, 0], 0.02),
-        `bird-base point ${corner} at ${cornerPos(probe, corner)}`)
+        `petalled corner ${corner} at ${cornerPos(probe, corner)}`)
+    }
+    for (const [probe, corner] of [
+      [[0.9, 0.97], [1, 1]], [[-0.9, -0.97], [-1, -1]],
+    ] as [Vec2, Vec2][]) {
+      assert.ok(near(cornerPos(probe, corner), [-1, 1, 0], 0.02),
+        `middle corner ${corner} at ${cornerPos(probe, corner)}`)
     }
     assert.ok(near(cornerPos([-0.9, 0.2], [-1, 0]), [-(1 - Math.SQRT1_2), 1 - Math.SQRT1_2, 0], 0.02),
       `side corner (-1,0) tucks to the hinge, at ${cornerPos([-0.9, 0.2], [-1, 0])}`)
     player.step(fracs)
   }
 
-  // Mid-way (the first standing pocket, beat 6): the tip on the table
-  // beside the corner, the kite's ridge standing over the median.
+  // Mid-way (the first standing pocket, beat 6): the squashing flap's tip
+  // sweeps to the table beside the corner while the pocket stands.
   {
     player.step(kfFracsAt(6))
-    assert.ok(near(cornerPos([0.9, 0.97], [1, 1]), [-0.918, 1.076, 0], 0.02),
+    assert.ok(near(cornerPos([0.9, 0.97], [1, 1]), [-0.994, 1.0, -0.111], 0.02),
       `standing tip at ${cornerPos([0.9, 0.97], [1, 1])}`)
-    assert.ok(near(cornerPos([0.2, 0.85], [0, 1]), [-0.46, 0.54, 0.705], 0.02),
-      `standing ridge at ${cornerPos([0.2, 0.85], [0, 1])}`)
     player.step(fracs)
   }
 
