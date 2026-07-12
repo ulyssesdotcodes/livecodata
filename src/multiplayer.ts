@@ -9,14 +9,8 @@
 // main.ts's "activity" table) rather than needing a protocol message of their
 // own. Syncing is genuinely just "sync the log(s), replay on connection."
 //
-// Protocol (JSON text frames):
-//   client → server  { type: 'join', room, client, logs: { name: events[] } }
-//   client → server  { type: 'events', log, events }   one local append
-//   server → client  { type: 'sync', logs: { name: events[] } }  room union
-//   server → client  { type: 'events', log, events }   relayed from a peer
-//                                                       (or server-authored,
-//                                                       e.g. a peer-join/leave
-//                                                       — see server.ts)
+// The wire protocol (message shapes and parsing) is shared with both server
+// backends — see src/protocol.ts.
 //
 // The join carries the client's full logs, so joining seeds an empty room,
 // brings solo work into a jam, and heals any events missed while offline —
@@ -32,6 +26,7 @@
 // ----------------------------------------------------------------------------
 
 import { localSource, type EventLog, type StampedEvent } from './event-log.js'
+import { parseServerMessage, type ClientMessage } from './protocol.js'
 
 export type MultiplayerStatus = 'connecting' | 'connected' | 'closed'
 
@@ -46,13 +41,6 @@ export interface MultiplayerOptions {
 export interface MultiplayerConnection {
   readonly status: MultiplayerStatus
   close(): void
-}
-
-interface ServerMessage {
-  type: string
-  log?: string
-  events?: StampedEvent[]
-  logs?: Record<string, StampedEvent[]>
 }
 
 const RETRY_BASE_MS = 1000
@@ -70,7 +58,7 @@ export function connectMultiplayer({ url, room, logs, onStatus }: MultiplayerOpt
     onStatus?.(status)
   }
 
-  function send(msg: Record<string, unknown>): void {
+  function send(msg: ClientMessage): void {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg))
   }
 
@@ -81,17 +69,11 @@ export function connectMultiplayer({ url, room, logs, onStatus }: MultiplayerOpt
   }
 
   function handleMessage(raw: unknown): void {
-    let msg: ServerMessage
-    try {
-      msg = JSON.parse(String(raw)) as ServerMessage
-    } catch {
-      return
-    }
-    if (msg.type === 'sync' && msg.logs) {
-      for (const [name, events] of Object.entries(msg.logs)) {
-        if (Array.isArray(events)) logs[name]?.merge(events)
-      }
-    } else if (msg.type === 'events' && msg.log && Array.isArray(msg.events)) {
+    const msg = parseServerMessage(raw)
+    if (!msg) return
+    if (msg.type === 'sync') {
+      for (const [name, events] of Object.entries(msg.logs)) logs[name]?.merge(events)
+    } else {
       logs[msg.log]?.merge(msg.events)
     }
   }
