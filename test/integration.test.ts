@@ -290,3 +290,103 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
     assert.ok(stretchNow() < cap, `frame at beat ${beat.toFixed(2)}: stretch ${stretchNow().toFixed(3)}`)
   }
 })
+
+test('Origami Jumping Frog sample: waterbomb head, legs, sides, spring pleat', () => {
+  // Same static-crease-table dialect as the crane: run the sample and check
+  // every fold's end pose against the classic frog coordinates.
+  const sample = SAMPLES.find((s) => s.name === 'Origami Jumping Frog')!
+  const { views } = createRuntime({
+    editableRows: (_name, _schema, seedRows) => seedRows ?? [],
+  }).run(sample.code, { seed: 1 })
+
+  const events = views.get('events')!
+  const create = events.rows.find((r) => r.type === 'create')!
+  assert.equal(create.shape, 'origami')
+  const program = create.program as FoldProgram
+  assert.deepEqual(program.groups,
+    ['halve', 'horiz', 'diagB', 'diagA', 'legL', 'legR', 'sideL', 'sideR', 'bottomup', 'pleat'])
+  assert.equal(program.warnings.length, 0, program.warnings.join('; '))
+
+  const updates = events.rows.filter((r) => r.type === 'update' && typeof r.halve === 'number')
+  const kfFracsAt = (beat: number): Record<string, number> => {
+    const fr: Record<string, number> = {}
+    for (const g of program.groups) {
+      let v = 0
+      for (const r of updates) {
+        if ((r.beat as number) <= beat && typeof r[g] === 'number') v = r[g] as number
+      }
+      fr[g] = v
+    }
+    return fr
+  }
+  const player = createFoldPlayer(program)
+  player.step({})
+  const flat = Float32Array.from(player.positions)
+  const stretchNow = (): number => {
+    let worst = 0
+    for (let i = 0; i + 8 < flat.length; i += 9) {
+      for (const [a, b] of [[0, 3], [3, 6], [6, 0]]) {
+        const rest = Math.hypot(
+          flat[i + a] - flat[i + b], flat[i + a + 1] - flat[i + b + 1], flat[i + a + 2] - flat[i + b + 2])
+        const now = Math.hypot(
+          player.positions[i + a] - player.positions[i + b],
+          player.positions[i + a + 1] - player.positions[i + b + 1],
+          player.positions[i + a + 2] - player.positions[i + b + 2])
+        worst = Math.max(worst, Math.abs(now - rest))
+      }
+    }
+    return worst
+  }
+  const zExtent = (): number => {
+    let lo = Infinity
+    let hi = -Infinity
+    for (let i = 2; i < player.positions.length; i += 3) {
+      lo = Math.min(lo, player.positions[i])
+      hi = Math.max(hi, player.positions[i])
+    }
+    return hi - lo
+  }
+
+  // Every fold ends FLAT and strain-free: after the halve, the collapse,
+  // each leg, each side, the bottom-up and the pleat.
+  for (const beat of [2.5, 5, 6.6, 7.9, 9, 10, 11.4, 12.7]) {
+    player.step(kfFracsAt(beat))
+    assert.ok(stretchNow() < 0.01, `beat ${beat}: fold end strained (${stretchNow().toFixed(4)})`)
+    assert.ok(zExtent() < 0.05, `beat ${beat}: fold end not flat (z ${zExtent().toFixed(3)})`)
+  }
+
+  // The classic landmarks at the finished frog: the loose top-mid corner
+  // rides the leg folds to the apex; the square's bottom corners and the
+  // bottom edge's midpoint all gather at the spring's tip.
+  player.step(kfFracsAt(Infinity))
+  const cornerPos = (pt: Vec2): number[] => {
+    let base = 0
+    for (const f of program.faces) {
+      const j = f.poly.findIndex((p) => Math.hypot(p[0] - pt[0], p[1] - pt[1]) < 1e-6)
+      if (j >= 0) {
+        let tri: number
+        let slot: number
+        if (j === 0) { tri = 0; slot = 0 } else if (j <= f.poly.length - 2) { tri = j - 1; slot = 1 } else { tri = j - 2; slot = 2 }
+        const o = (base + tri * 3 + slot) * 3
+        return [player.positions[o], player.positions[o + 1], player.positions[o + 2]]
+      }
+      base += (f.poly.length - 2) * 3
+    }
+    throw new Error(`corner ${pt} not found`)
+  }
+  const near2 = (a: number[], b: [number, number]): boolean =>
+    Math.hypot(a[0] - b[0], a[1] - b[1]) < 0.02
+  assert.ok(near2(cornerPos([0, 1]), [0.5, 0.5]), `apex at ${cornerPos([0, 1])}`)
+  for (const pt of [[0, -1], [1, -1], [-1, -1]] as Vec2[]) {
+    assert.ok(near2(cornerPos(pt), [0.5, -0.5]), `spring tip ${pt} at ${cornerPos(pt)}`)
+  }
+
+  // Mid-fold the paper lerps (no solved rigid paths): bounded flex.
+  const scene = views.get('scene')!
+  for (const f of scene.rows) {
+    const fr: Record<string, number> = {}
+    for (const g of program.groups) fr[g] = f[g] as number
+    player.step(fr)
+    assert.ok(stretchNow() < 0.4, `frame ${f.frame}: flex ${stretchNow().toFixed(3)}`)
+  }
+})

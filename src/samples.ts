@@ -342,6 +342,103 @@ define("hydra", () => rows([
 `,
   },
   {
+    name: "Origami Jumping Frog",
+    code: `// livecodata — Origami Jumping Frog (the classic schoolyard frog)
+// A square folds itself from a STATIC TABLE OF CREASES — same dialect as
+// the Origami Crane sample (see its header for the full column notes):
+// every row is one crease given outright; rows sharing a "step" are one
+// fold through several layers; "sign" is the layer's turning sense
+// (mirrored plies turn the other way); at/dur/to schedule the drive.
+//
+// The sequence (all flat folds, straight off the classic diagrams):
+//   halve     fold the square in half, left onto right (beat 1)
+//   the head  waterbomb-collapse the TOP SQUARE of the halved model:
+//             both diagonals valley, the horizontal midline mountain —
+//             the top square becomes the head triangle, base on the
+//             body, apex up (beats 3–5). Each crease is written twice,
+//             once per sheet layer, mirrored with the opposite sign.
+//   legL/legR the front legs: fold each loose corner of the triangle up
+//             to the apex. Each flap is the L_t/T ply pair — the two
+//             plies whose spine lies INSIDE the flap (the other pair is
+//             continuous with the body and stays), times two layers.
+//   sideL/R   fold the body's sides onto the centre line. The creases
+//             run past the triangle's base to the diagonal creases, so
+//             the hidden corner slivers under the head ride along.
+//   bottomup  fold the bottom edge up to the triangle's base,
+//   pleat     then fold the same flap in half back down — the zigzag
+//             spring the frog jumps with.
+// Every crease was sliced ply-by-ply off the folded model; every fold's
+// end pose closes exactly (zero strain); mid-fold the paper lerps and
+// flexes like real paper rather than following a solved rigid path.
+
+define("steps", () => editable("steps", {
+  step: "string", p1: "string", p2: "string", move: "string",
+  sign: "number", deg: "number", at: "number", dur: "number", to: "number",
+}, [
+  // fold in half: left onto right
+  { step: "halve", p1: "bottom@0.5", p2: "top@0.5", move: "-0.5,0", sign: 1, deg: 180, at: 1, dur: 1.5, to: -1 },
+  // the waterbomb collapse of the top square (world x 0..1, y 0..1):
+  // horizontal midline (mountain), then the two diagonals (valleys) —
+  // rows ordered so each row's move sample lands in its own piece
+  { step: "horiz", p1: "0,0.5", p2: "1,0.5", move: "0.5,0.75", sign: -1, deg: 180, at: 3, dur: 2, to: -1 },
+  { step: "horiz", p1: "-1,0.5", p2: "0,0.5", move: "-0.5,0.75", sign: -1 },
+  { step: "diagB", p1: "1,0", p2: "0,1", move: "0.85,0.3", sign: 1, deg: 180, at: 3, dur: 2, to: 1 },
+  { step: "diagB", p1: "-1,0", p2: "0,1", move: "-0.85,0.3", sign: -1 },
+  { step: "diagA", p1: "0,0", p2: "1,1", move: "0.15,0.4;0.5,0.85", sign: -1, deg: 180, at: 3, dur: 2, to: 1 },
+  { step: "diagA", p1: "0,0", p2: "-1,1", move: "-0.15,0.4;-0.5,0.85", sign: -1 },
+  // front legs: each loose corner up to the apex, four plies per flap
+  { step: "legL", p1: "-0.5,1", p2: "-0.25,0.75", move: "-0.353789,0.89622", sign: -1, deg: 180, at: 5.6, dur: 1, to: 1 },
+  { step: "legL", p1: "0,0.5", p2: "-0.25,0.75", move: "-0.103783,0.646208", sign: -1 },
+  { step: "legL", p1: "0,0.5", p2: "0.25,0.75", move: "0.103782,0.64621", sign: 1 },
+  { step: "legL", p1: "0.5,1", p2: "0.25,0.75", move: "0.353794,0.896213", sign: 1 },
+  { step: "legR", p1: "-1,0.5", p2: "-0.75,0.75", move: "-0.89622,0.646209", sign: 1, deg: 180, at: 6.9, dur: 1, to: 1 },
+  { step: "legR", p1: "-0.5,1", p2: "-0.75,0.75", move: "-0.646212,0.896217", sign: 1 },
+  { step: "legR", p1: "0.5,1", p2: "0.75,0.75", move: "0.646227,0.896209", sign: 1 },
+  { step: "legR", p1: "1,0.5", p2: "0.75,0.75", move: "0.896212,0.646218", sign: 1 },
+  // sides onto the centre line (the creases run to the diagonals, so the
+  // corner slivers under the head fold along with the body)
+  { step: "sideL", p1: "-0.25,-1", p2: "-0.25,0.25", move: "-0.22,-0.375001", sign: -1, deg: 180, at: 8.2, dur: 0.8, to: -1 },
+  { step: "sideL", p1: "0,0.25", p2: "-0.25,0.25", move: "-0.125,0.220001", sign: -1 },
+  { step: "sideL", p1: "0,0.25", p2: "0.25,0.25", move: "0.125,0.220001", sign: -1 },
+  { step: "sideL", p1: "0.25,-1", p2: "0.25,0.25", move: "0.22,-0.375", sign: -1 },
+  { step: "sideR", p1: "-1,0.25", p2: "-0.75,0.25", move: "-0.874995,0.22001", sign: -1, deg: 180, at: 9.2, dur: 0.8, to: -1 },
+  { step: "sideR", p1: "-0.75,-1", p2: "-0.75,0.25", move: "-0.779989,-0.375018", sign: -1 },
+  { step: "sideR", p1: "0.75,-1", p2: "0.75,0.25", move: "0.78,-0.375", sign: -1 },
+  { step: "sideR", p1: "1,0.25", p2: "0.75,0.25", move: "0.875,0.220001", sign: -1 },
+  // the spring: bottom edge up to the triangle's base...
+  { step: "bottomup", p1: "-1,-0.5", p2: "-0.75,-0.5", move: "-0.875,-0.53002", sign: 1, deg: 180, at: 10.4, dur: 1, to: 1 },
+  { step: "bottomup", p1: "-0.25,-0.5", p2: "-0.75,-0.5", move: "-0.5,-0.530036", sign: 1 },
+  { step: "bottomup", p1: "-0.25,-0.5", p2: "0,-0.5", move: "-0.125,-0.530028", sign: 1 },
+  { step: "bottomup", p1: "0.25,-0.5", p2: "0,-0.5", move: "0.125,-0.530022", sign: 1 },
+  { step: "bottomup", p1: "0.25,-0.5", p2: "0.75,-0.5", move: "0.5,-0.530008", sign: 1 },
+  { step: "bottomup", p1: "1,-0.5", p2: "0.75,-0.5", move: "0.875,-0.53", sign: 1 },
+  // ...and the flap folded in half back down
+  { step: "pleat", p1: "-1,-0.75", p2: "-0.75,-0.75", move: "-0.874999,-0.779984", sign: 1, deg: 180, at: 11.7, dur: 1, to: -1 },
+  { step: "pleat", p1: "-0.25,-0.75", p2: "-0.75,-0.75", move: "-0.500001,-0.779987", sign: 1 },
+  { step: "pleat", p1: "-0.25,-0.75", p2: "0,-0.75", move: "-0.124999,-0.779991", sign: 1 },
+  { step: "pleat", p1: "0.25,-0.75", p2: "0,-0.75", move: "0.125,-0.779988", sign: 1 },
+  { step: "pleat", p1: "0.25,-0.75", p2: "0.75,-0.75", move: "0.500001,-0.779996", sign: 1 },
+  { step: "pleat", p1: "1,-0.75", p2: "0.75,-0.75", move: "0.874999,-0.780006", sign: 1 },
+]))
+
+// Feed the creases to a green sheet, head-on like the diagrams.
+define("events", (rand, table) => {
+  const paper = origami().steps(table("steps"))
+  return paper.spawn({ id: "frog", color: 0x3d9b4f, py: 0, pz: 1.2, rx: 0, ry: 0, rz: 0 })
+    .concat(paper.sequence())
+})
+
+// Bake to a 13.5-beat loop — fold, hold a moment, open flat, fold again.
+define("scene", (rand, table) => table("events").rasterize(13.5))
+
+// Things to try, live in the "steps" tab:
+//   - Flip the "pleat" row's \`to\` to −1: the spring folds the other way
+//     and the frog sits up on its haunches.
+//   - Drive "legL"/"legR" to 0 again at beat 12.5: the frog throws its
+//     front legs forward as if mid-jump.
+`,
+  },
+  {
     name: "Hydra Sketch",
     code: `// livecodata — a video-synth sketch with hydra (hydra-ts, a port of ojack's hydra)
 // A generative hydra sketch — no 3D scene involved (see "House of Cards" for
