@@ -13,13 +13,7 @@ import { rasterizeRows } from './rasterize.js'
 import { hydraRows } from './hydra.js'
 import type { Table } from './dsl.js'
 import type { Row } from './lineage.js'
-import type { RuntimeResult } from './runtime.js'
-
-interface ResolvedGraph {
-  table: Table
-  columns: string[]
-  viewName?: string | null
-}
+import type { ResolvedGraph, RunOptions, RuntimeResult } from './runtime.js'
 
 export interface CookedResult {
   views: Map<string, Table>
@@ -29,8 +23,10 @@ export interface CookedResult {
   hydraRows: Row[]
 }
 
+// The slice of createRuntime's return value cookProgram needs — typed from
+// runtime.ts's own exports so it can't drift from the real contract.
 interface Runtime {
-  run(code: string, opts?: { seed?: number; only?: string[]; dataCache?: Map<string, string> }): RuntimeResult
+  run(code: string, opts?: RunOptions): RuntimeResult
 }
 
 export function cookProgram(runtime: Runtime, code: string, seed: number, dataCache?: Map<string, string>): CookedResult {

@@ -1,19 +1,12 @@
 import * as THREE from 'three'
 import { createFoldPlayer, type FoldProgram, type FoldPlayer } from './origami.js'
+import { SHAPE_DEFAULTS } from './shapes.js'
 
 export interface SceneAPI {
   createObject(row: Record<string, unknown>): void
   updateObject(row: Record<string, unknown>): void
   destroyObject(id: unknown): void
   reset(): void
-}
-
-const SHAPE_DEFAULTS: Record<string, Record<string, number>> = {
-  box:      { hx: 0.25, hy: 0.25, hz: 0.25 },
-  sphere:   { r: 0.3 },
-  cylinder: { r: 0.2, h: 0.3 },
-  cone:     { r: 0.3, h: 0.3 },
-  torus:    { r: 0.3 },
 }
 
 function makeGeometry(shape: string, dims: Record<string, unknown>): THREE.BufferGeometry {

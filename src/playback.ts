@@ -12,6 +12,7 @@ import { FPS, FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS, framesT
 import type { Row } from './lineage.js'
 import type { SceneAPI } from './three-scene.js'
 import type { HydraAPI } from './hydra-scene.js'
+import { beatSecondsFromTaps } from './tap-log.js'
 
 export interface TapControl {
   tap(): void
@@ -140,25 +141,17 @@ export function createPlaybackEngine(
   // The position most recently shown to the view (what emit() reports as pos).
   let shownPos = 0
 
-  // Seconds per beat, live from the tapped tempo (average interval between taps)
-  // or the shared default until two taps set one. This is the whole of how tempo
-  // enters playback: it scales how fast the beat clock advances, never where
-  // content sits on the (fixed) beat grid.
+  // Seconds per beat, live from the tapped tempo (see tap-log.ts's
+  // beatSecondsFromTaps) or the shared default until two taps set one. This is
+  // the whole of how tempo enters playback: it scales how fast the beat clock
+  // advances, never where content sits on the (fixed) beat grid.
   function beatSeconds(): number {
-    const rows = tapControl?.rows()
-    if (rows && rows.length > 1) {
-      const first = rows[0].time as number
-      const last = rows[rows.length - 1].time as number
-      return (last - first) / (rows.length - 1) / 1000
-    }
-    return DEFAULT_BEAT_SECONDS
+    return beatSecondsFromTaps(tapControl?.rows()) ?? DEFAULT_BEAT_SECONDS
   }
 
   function tappedBpm(): number | null {
-    const rows = tapControl?.rows()
-    if (!rows || rows.length < 2) return null
-    const beat = ((rows[rows.length - 1].time as number) - (rows[0].time as number)) / (rows.length - 1) / 1000
-    return 60 / beat
+    const bs = beatSecondsFromTaps(tapControl?.rows())
+    return bs == null ? null : 60 / bs
   }
 
   function viewState(): PlaybackViewState {

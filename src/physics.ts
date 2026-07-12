@@ -8,6 +8,7 @@ import initJolt from 'jolt-physics'
 import type { Row } from './lineage.js'
 import type { SimulateOptions } from './dsl.js'
 import { FPS, secondsToBeat } from './constants.js'
+import { SHAPE_DEFAULTS } from './shapes.js'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type JoltModule = any
@@ -16,14 +17,6 @@ const LAYER_NON_MOVING = 0
 const LAYER_MOVING = 1
 const NUM_OBJECT_LAYERS = 2
 const NUM_BROAD_PHASE_LAYERS = 2
-
-const SHAPE_DEFAULTS: Record<string, Record<string, number>> = {
-  box:      { hx: 0.25, hy: 0.25, hz: 0.25 },
-  sphere:   { r: 0.3 },
-  cylinder: { r: 0.2, h: 0.3 },
-  cone:     { r: 0.3, h: 0.3 },
-  torus:    { r: 0.3 },
-}
 
 let _joltPromise: Promise<JoltModule> | null = null
 
