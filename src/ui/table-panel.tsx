@@ -14,7 +14,7 @@ import {
   createSignal, createMemo, createEffect, on, onCleanup, untrack,
   For, Index, Show, type Accessor, type Setter,
 } from 'solid-js'
-import { SERIES_COLORS, drawChartToCanvas, fmtNum, type GraphSpec, type ColRange } from '../graph-panel.js'
+import { SERIES_COLORS, computeColRanges, drawSeriesChart, fmtNum, PANEL_CHART_STYLE, type GraphSpec, type ColRange } from '../graph-panel.js'
 import {
   MAX_ROWS, COLUMN_TYPES, EVENTS_SUFFIX, formatCell, formatEditableCell,
   allNames, nextTableName, fallbackTab, chartFor, displayOrder, activeRowIndex,
@@ -197,8 +197,12 @@ function TablePanelView(props: PanelProps) {
   function drawCurrentChart(): void {
     const c = untrack(chart)
     if (!c || !graphCanvas) return
-    const ranges = drawChartToCanvas(graphCanvas, c, untrack(props.playIndex), untrack(props.playActive))
-    if (ranges) setColRanges(ranges)
+    const ranges = computeColRanges(c.rows, c.cols, PANEL_CHART_STYLE.yPadFrac)
+    drawSeriesChart(graphCanvas, c, ranges, {
+      playIndex: untrack(props.playIndex),
+      activeRows: untrack(props.playActive)?.get(c.name) ?? null,
+    })
+    setColRanges(ranges)
   }
 
   const ro = new ResizeObserver(() => drawCurrentChart())
