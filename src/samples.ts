@@ -158,20 +158,14 @@ define("steps", () =>
     { step: "diag", p1: "diag@0", p2: "diag@0.5", at: 14, dur: 0.5, to: -1 },
   ]))
 
-// Feed the instructions to a sheet of paper. The camera goes face-on as
-// the first press starts (watch the <| close), pulls back to three-quarter
-// for the second squash, then overhead for the finished square base.
+// Feed the instructions to a sheet of paper. One steady three-quarter view
+// for the whole sequence — high enough to see the layers, angled enough to
+// see the ridges stand up. (Add "update" rows with rx/ry/rz to re-pose the
+// paper mid-sequence if you want a tour.)
 define("events", (rand, table) => {
   const paper = origami().steps(table("steps"))
   return paper.spawn({ id: "base", color: 0xd94f2a, py: -0.2, pz: 1.2, rx: -0.9, ry: 0.2 })
     .concat(paper.sequence())
-    .concat(rows([
-      { id: "base", type: "update", beat: 4,    py: -0.2, rx: -0.75, ry: 0.2, rz: 0 },
-      { id: "base", type: "update", beat: 6.4,  py: -0.4, rx: -1.57, ry: 0,   rz: -0.79 },
-      { id: "base", type: "update", beat: 8.7,  py: -0.4, rx: -1.57, ry: 0,   rz: -0.79 },
-      { id: "base", type: "update", beat: 10.5, py: -0.2, rx: -0.75, ry: 0.2, rz: 0 },
-      { id: "base", type: "update", beat: 14.7, py: 0.1,  rx: -0.05, ry: 0,   rz: -0.79 },
-    ]))
 })
 
 // Bake to a 16-beat loop cache — when the loop wraps, the paper opens flat
