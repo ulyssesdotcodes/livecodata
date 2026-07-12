@@ -61,9 +61,11 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
   assert.equal(create.shape, 'origami')
   const program = create.program as FoldProgram
   assert.deepEqual(program.groups,
-    ['spine', 'still', 's1', 'hv', 's2', 'kite', 'kite2', 'petal', 'peelfr', 'peelfl',
-      'kite3', 'kite4', 'petal2', 'peelbr', 'peelbl',
-      'thinfr', 'thinfl', 'thinbr', 'thinbl'])
+    ['spine', 'spineN', 'still', 'stillN', 's1', 'hv', 's2',
+      'kite', 'kiteN', 'kite2', 'kite2N', 'petal', 'peelfr', 'peelfl',
+      'kite3', 'kite3N', 'kite4', 'kite4N', 'petal2', 'peelbr', 'peelbl',
+      'thinfr', 'thinfrN', 'thinfl', 'thinflN', 'thinbr', 'thinbrN', 'thinbl', 'thinblN',
+      'neck', 'tail'])
   assert.equal(program.warnings.length, 0, program.warnings.join('; '))
 
   // Take the fractions at the end of the squash off the baked keyframes and
@@ -145,7 +147,7 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
   // tuck onto the hinge, the middle flaps' corners — untouched by either
   // petal, exactly as in the paper sequence — stay at the base's point.
   {
-    player.step(kfFracsAt(Infinity))
+    player.step(kfFracsAt(16.2))
     for (const [probe, corner] of [
       [[-0.85, 0.9], [-1, 1]], [[0.9, -0.8], [1, -1]],
     ] as [Vec2, Vec2][]) {
@@ -211,7 +213,7 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
     }
     return hi - lo
   }
-  for (const beat of [3.5, 14.5, 15.3, 16, 17, 18]) {
+  for (const beat of [3.5, 14.5, 15.3, 16, 17, 18, 19.55, 20.65]) {
     player.step(kfFracsAt(beat))
     assert.ok(stretchNow() < 0.01, `beat ${beat}: fold end strained (${stretchNow().toFixed(4)})`)
     assert.ok(zExtent() < 0.05, `beat ${beat}: fold end not flat (z extent ${zExtent().toFixed(4)})`)
@@ -251,22 +253,31 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
       assert.ok(Math.abs(w[0] + w[1]) < 0.02,
         `thinned edge at (${pt}) should sit on the axis, got (${w.map((v) => v.toFixed(3))})`)
     }
+    // After the inside reverse folds (beat 20.65+): the points swing up and
+    // out, each the reflection of the old tip across its reverse line.
+    player.step(kfFracsAt(Infinity))
+    const neckTip = worldOfSheet([0.985, 0.985])
+    assert.ok(Math.hypot(neckTip[0] + 0.04, neckTip[1] - 1.238) < 0.04,
+      `neck tip at (${neckTip.map((v) => v.toFixed(3))})`)
+    const tailTip = worldOfSheet([-0.985, -0.985])
+    assert.ok(Math.hypot(tailTip[0] + 1.238, tailTip[1] - 0.04) < 0.04,
+      `tail tip at (${tailTip.map((v) => v.toFixed(3))})`)
     player.step(kfFracsAt(14.5))
   }
 
   const scene = views.get('scene')!
   assert.ok(scene.length > 0, 'rasterized to a frame cache')
 
-  // The petals ride the strain-solved path: the flap lifts with its wings
-  // flat while the peels open, and the kite mountains snap over inside a
-  // single cache frame — so no RENDERED frame catches the famous non-rigid
-  // pop mid-flip. Every baked frame of both petals stays gently flexed.
+  // Strain-solved paths throughout: petals and thinning stay under 0.2 per
+  // rendered frame; the inside reverse folds — pop through the layers, then
+  // press — flex a little more at the press's tightest moment.
   for (const f of scene.rows) {
     const beat = (f.frame as number) / 30 + 1
     if (beat <= 14.6) continue
     const fr: Record<string, number> = {}
     for (const g of program.groups) fr[g] = f[g] as number
     player.step(fr)
-    assert.ok(stretchNow() < 0.2, `petal frame at beat ${beat.toFixed(2)}: stretch ${stretchNow().toFixed(3)}`)
+    const cap = beat <= 18.5 ? 0.2 : 0.26
+    assert.ok(stretchNow() < cap, `frame at beat ${beat.toFixed(2)}: stretch ${stretchNow().toFixed(3)}`)
   }
 })
