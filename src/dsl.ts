@@ -793,18 +793,22 @@ export class OrigamiBuilder {
   }
 
   // One table = the whole folding, as a static crease list. Each row with a
-  // line is a crease: `p1`/`p2` its segment in sheet coordinates ("x,y"),
-  // `move` sample points ("x,y", ";"-separated) inside the pieces the fold
-  // rotates (only pieces touching the crease — the rest rides along through
-  // the hinge tree), `sign` the crease's turning sense for positive
+  // line is a crease: `p1`/`p2` its segment — each point "edge@t" (a
+  // fraction along an edge of the ORIGINAL square: bottom/top/left/right),
+  // "name@t" (a fraction along an earlier row's segment), or raw "x,y" —
+  // so every point is built from the sheet's boundary and the folds before
+  // it, the way origami constructions work. `move` gives sample points
+  // ("x,y", ";"-separated) inside the pieces the fold rotates (only pieces
+  // touching the crease — the rest rides along through the hinge tree); a
+  // row with a line but NO move is a construction line, referenceable but
+  // never folded. `sign` is the crease's turning sense for positive
   // fractions (flipping it = swapping p1/p2; stacked layers often need
-  // opposite senses),
-  // `deg` the full signed angle (±180 = flat), and timing (`at`, `dur`,
-  // `to` — 1 folded, 0 open, −1 folded the other way; dur 0 = geometry
-  // only). Rows sharing a `step` name extend one fold across several
-  // layers; a row with no line re-drives an earlier fold (keyframes). The
-  // timings become the default steps for sequence(), so as the timeline
-  // advances the paper folds step by step.
+  // opposite senses), `deg` the full signed angle (±180 = flat), and timing
+  // (`at`, `dur`, `to` — 1 folded, 0 open, −1 folded the other way; dur 0 =
+  // geometry only). Rows sharing a `step` name extend one fold across
+  // several layers; a row with no line re-drives an earlier fold
+  // (keyframes). The timings become the default steps for sequence(), so as
+  // the timeline advances the paper folds step by step.
   steps(steps: Table | Row[]): OrigamiBuilder {
     const next = new OrigamiBuilder(this._size, this._ctx)
     next._id = this._id

@@ -23,11 +23,18 @@
 //           (a fold through a stack creases several layers at once; give
 //           each layer's crease its own row), and rows with no p1/p2
 //           re-drive it (keyframes)
-//   p1,p2   the crease segment, sheet coordinates "x,y" (the sheet spans
-//           [-size, size]²)
-//   move    sample points "x,y" (";"-separated) inside the pieces this
-//           step rotates — only pieces TOUCHING the crease need naming;
-//           anything connected rides along through the hinge tree
+//   p1,p2   the crease segment. Each point is "edge@t" — a fraction along
+//           an edge of the ORIGINAL square (bottom/top run left→right,
+//           left/right bottom→top) — or "name@t", a fraction along an
+//           earlier row's segment (t past 0/1 extrapolates), or raw sheet
+//           coordinates "x,y". Folding as construction: every point is
+//           derived from the sheet's boundary and the folds already made,
+//           in the spirit of the Huzita–Justin fold axioms.
+//   move    sample points (same forms, usually "x,y") inside the pieces
+//           this step rotates — only pieces TOUCHING the crease need
+//           naming; anything connected rides along through the hinge
+//           tree. A row with a line but NO move is a CONSTRUCTION line:
+//           it cuts and folds nothing, and exists to be referenced.
 //   sign    which way this crease turns for positive fractions (+1
 //           default; flipping it is the same as swapping p1/p2). Layers of
 //           a stack often need opposite senses — if a flap tears away
@@ -221,10 +228,37 @@ export function compileFolds(
   const groups: string[] = []
   const warnings: string[] = []
   const schedule: ScheduleRow[] = []
+  // Every named row's segment, for "name@t" references (first row wins).
+  const lines = new Map<string, [Vec2, Vec2]>()
   let nextAt = 1
 
-  const parsePoint = (raw: unknown): Vec2 | null => {
+  // The four edges of the original square: bottom/top run left→right,
+  // left/right run bottom→top, so "@0" is always the lower-left end.
+  const EDGES: Record<string, [Vec2, Vec2]> = {
+    bottom: [[-s, -s], [s, -s]],
+    top: [[-s, s], [s, s]],
+    left: [[-s, -s], [-s, s]],
+    right: [[s, -s], [s, s]],
+  }
+
+  // A point is "edge@t" (a fraction along an edge of the ORIGINAL square),
+  // "name@t" (a fraction along an earlier row's segment — t past 0/1
+  // extrapolates along its line), or raw "x,y" sheet coordinates. Folding
+  // as construction: every point can be derived from the sheet's boundary
+  // and the folds already made.
+  const resolvePoint = (raw: unknown, label: string): Vec2 | null => {
     if (typeof raw !== 'string' || raw.trim() === '') return null
+    if (raw.includes('@')) {
+      const [name, tRaw] = raw.split('@').map((p) => p.trim())
+      const t = tRaw === '' ? 0.5 : Number(tRaw)
+      const seg = EDGES[name] ?? lines.get(name)
+      if (!seg) {
+        throw new Error(`${label}: "${raw}" — no edge or earlier row named "${name}"`
+          + ` (known: bottom, top, left, right${lines.size ? ', ' + [...lines.keys()].join(', ') : ''})`)
+      }
+      if (!Number.isFinite(t)) throw new Error(`${label}: bad fraction in "${raw}"`)
+      return [seg[0][0] + t * (seg[1][0] - seg[0][0]), seg[0][1] + t * (seg[1][1] - seg[0][1])]
+    }
     const m = raw.split(',')
     if (m.length !== 2) return null
     const x = Number(m[0])
@@ -237,11 +271,10 @@ export function compileFolds(
     const group = row.step != null && row.step !== '' ? String(row.step) : `step${i}`
     const at = typeof row.at === 'number' && row.at > 0 ? row.at : nextAt
     const dur = typeof row.dur === 'number' && row.dur > 0 ? row.dur : 0
-    nextAt = Math.max(nextAt, at + (dur || 1))
     const to = typeof row.to === 'number' ? row.to : 1
 
-    const a = parsePoint(row.p1)
-    const b = parsePoint(row.p2)
+    const a = resolvePoint(row.p1, `fold "${group}" p1`)
+    const b = resolvePoint(row.p2, `fold "${group}" p2`)
 
     if (!a || !b) {
       // A keyframe row: re-drive an earlier step.
@@ -249,6 +282,7 @@ export function compileFolds(
         warnings.push(`row ${i + 1}: no fold named "${group}" to drive — skipped`)
         return
       }
+      nextAt = Math.max(nextAt, at + (dur || 1))
       schedule.push({ fold: group, at, dur: dur || 1, to, ease: row.ease })
       return
     }
@@ -258,6 +292,18 @@ export function compileFolds(
       throw new Error(`fold "${group}": p1 and p2 are the same point — no crease`)
     }
     const u = norm2(sub2(b, a))
+    if (!lines.has(group)) lines.set(group, [a, b])
+
+    // A row with a line but nothing to move is a CONSTRUCTION line: it cuts
+    // nothing and folds nothing — it exists so later rows can reference
+    // points along it ("name@t"), the way origami geometry finds points by
+    // making helper creases.
+    const movesRaw = typeof row.move === 'string' ? row.move : ''
+    const movePts = movesRaw.split(';')
+      .map((m) => resolvePoint(m, `fold "${group}" move`))
+      .filter((p): p is Vec2 => !!p)
+    if (!movePts.length) return
+    nextAt = Math.max(nextAt, at + (dur || 1))
 
     // The step this row extends (rows sharing a name are one fold whose
     // creases run through several layers).
@@ -310,12 +356,7 @@ export function compileFolds(
     st.spans.push({ a, b, sign })
 
     // Mark the pieces this row rotates.
-    const movesRaw = typeof row.move === 'string' ? row.move : ''
-    const pts = movesRaw.split(';').map(parsePoint).filter((p): p is Vec2 => !!p)
-    if (!pts.length) {
-      warnings.push(`fold "${group}" row ${i + 1}: no move point — the crease exists but rotates nothing`)
-    }
-    for (const p of pts) {
+    for (const p of movePts) {
       const f = faces.find((f) => pointInPoly(p, f.poly))
       if (!f) {
         warnings.push(`fold "${group}": move point ${p[0]},${p[1]} is not on the paper`)
@@ -346,7 +387,145 @@ export function compileFolds(
     groups,
     warnings,
   }
+  flatFoldCheck(program, schedule)
   return { program, schedule }
+}
+
+// ── Flat-foldability (Kawasaki + Maekawa) ─────────────────────────────────────
+// The classical theorems of the mathematics of paper folding, checked
+// statically on the crease pattern at the schedule's FINAL state — no
+// solver: at every interior vertex of the creases that end fully folded,
+// (1) the degree is even, (2) Kawasaki: the alternating sum of the sector
+// angles is zero, and (3) Maekawa: mountains and valleys differ by exactly
+// two. A violation means the finished fold cannot lie flat there — the
+// welded player will render it as paper strain — so it becomes a warning
+// naming the vertex. (Vertices touched by a crease whose final fraction is
+// not flat, ±1 or 0, are skipped: the theorems only speak to flat states.)
+function flatFoldCheck(program: FoldProgram, schedule: ScheduleRow[]): void {
+  const s = program.size
+  // Each group's final driven value: the schedule entry that ends last.
+  const finals = new Map<string, number>()
+  for (const st of program.steps) {
+    let best: ScheduleRow | null = null
+    for (const r of schedule) {
+      if (r.fold !== st.group) continue
+      if (!best || r.at + r.dur >= best.at + best.dur) best = r
+    }
+    finals.set(st.group, best ? best.to : 0)
+  }
+
+  interface Crease {
+    a: Vec2
+    b: Vec2
+    mv: number // +1/−1 mountain-or-valley in the final state, 0 = open
+    exact: boolean // final fraction is flat (±1 or 0)
+  }
+  // Which side of a span its mover sits on (via an adjacent moving face) —
+  // the world sense of the fold, and so mountain-vs-valley, depends on it.
+  const moverSide = (k: number, a: Vec2, b: Vec2): number => {
+    const d = sub2(b, a)
+    const L = len2(d)
+    for (const fi of program.steps[k].moving) {
+      const poly = program.faces[fi].poly
+      for (let i = 0; i < poly.length; i++) {
+        const e1 = poly[i]
+        const e2 = poly[(i + 1) % poly.length]
+        if (Math.abs(cross2(d, sub2(e1, a))) > 1e-6 * L) continue
+        if (Math.abs(cross2(d, sub2(e2, a))) > 1e-6 * L) continue
+        const t1 = dot2(d, sub2(e1, a)) / (L * L)
+        const t2 = dot2(d, sub2(e2, a)) / (L * L)
+        if (Math.min(1, Math.max(t1, t2)) - Math.max(0, Math.min(t1, t2)) < 1e-6) continue
+        return Math.sign(cross2(d, sub2(polyCentroid(poly), a)))
+      }
+    }
+    return 0
+  }
+  const creases: Crease[] = []
+  program.steps.forEach((st, k) => {
+    const f = finals.get(st.group) ?? 0
+    const flatFinal = Math.abs(f) < 1e-9
+      || (st.flat && Math.abs(Math.abs(f) - 1) < 1e-9)
+    for (const sp of st.spans) {
+      const open = Math.abs(f) < 1e-9
+      const side = open ? 0 : moverSide(k, sp.a, sp.b)
+      creases.push({
+        a: sp.a,
+        b: sp.b,
+        // +θ about a→b lifts the line's LEFT side toward the viewer, so the
+        // crease is a valley (+1) when the mover is on the left.
+        mv: open || side === 0 ? 0 : Math.sign(st.theta * f * sp.sign * side),
+        exact: flatFinal,
+      })
+    }
+  })
+
+  // Interior vertices: crease endpoints and pairwise crossings, off the
+  // sheet's boundary.
+  const pts: Vec2[] = []
+  const addPt = (p: Vec2): void => {
+    if (Math.max(Math.abs(p[0]), Math.abs(p[1])) > s - 1e-7) return
+    if (!pts.some((q) => len2(sub2(q, p)) < 1e-7)) pts.push(p)
+  }
+  for (const c of creases) {
+    addPt(c.a)
+    addPt(c.b)
+  }
+  for (let i = 0; i < creases.length; i++) {
+    for (let j = i + 1; j < creases.length; j++) {
+      const p = creases[i]
+      const q = creases[j]
+      const dp = sub2(p.b, p.a)
+      const dq = sub2(q.b, q.a)
+      const den = cross2(dp, dq)
+      if (Math.abs(den) < 1e-9) continue
+      const t = cross2(sub2(q.a, p.a), dq) / den
+      const u = cross2(sub2(q.a, p.a), dp) / den
+      if (t < 1e-7 || t > 1 - 1e-7 || u < 1e-7 || u > 1 - 1e-7) continue
+      addPt([p.a[0] + t * dp[0], p.a[1] + t * dp[1]])
+    }
+  }
+
+  for (const v of pts) {
+    // Rays out of v along incident creases (a through-crease gives two).
+    const rays: { ang: number; mv: number }[] = []
+    let skip = false
+    for (const c of creases) {
+      const d = sub2(c.b, c.a)
+      const L = len2(d)
+      if (L < EPS || Math.abs(cross2(d, sub2(v, c.a))) > 1e-6 * L) continue
+      const t = dot2(d, sub2(v, c.a)) / (L * L)
+      if (t < -1e-7 || t > 1 + 1e-7) continue
+      if (!c.exact) skip = true // a mid-fold crease: the theorems don't apply
+      if (c.mv === 0) continue // open in the final state — not part of it
+      if (t > 1e-7) rays.push({ ang: Math.atan2(-d[1], -d[0]), mv: c.mv })
+      if (t < 1 - 1e-7) rays.push({ ang: Math.atan2(d[1], d[0]), mv: c.mv })
+    }
+    if (skip || !rays.length) continue
+    const at = `flat check at (${v[0].toFixed(4)}, ${v[1].toFixed(4)})`
+    if (rays.length % 2) {
+      program.warnings.push(`${at}: ${rays.length} creases meet — an odd vertex cannot fold flat`)
+      continue
+    }
+    rays.sort((x, y) => x.ang - y.ang)
+    let alt = 0
+    for (let i = 0; i < rays.length; i++) {
+      const a0 = rays[i].ang
+      const a1 = i + 1 < rays.length ? rays[i + 1].ang : rays[0].ang + 2 * Math.PI
+      alt += (i % 2 ? -1 : 1) * (a1 - a0)
+    }
+    if (Math.abs(alt) > 1e-6) {
+      program.warnings.push(
+        `${at}: Kawasaki fails (alternating angles off by ${((alt * 180) / Math.PI).toFixed(2)}°) — cannot fold flat`)
+    }
+    // Maekawa counts creases AT the vertex: a crease passing through counts
+    // twice (its two rays), once per side.
+    const m = rays.filter((r) => r.mv > 0).length
+    const vv = rays.filter((r) => r.mv < 0).length
+    if (m + vv === rays.length && Math.abs(m - vv) !== 2) {
+      program.warnings.push(
+        `${at}: Maekawa fails (${m} mountains vs ${vv} valleys — they must differ by 2)`)
+    }
+  }
 }
 
 // ── Playback ──────────────────────────────────────────────────────────────────

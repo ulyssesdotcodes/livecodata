@@ -50,11 +50,17 @@ define("scene", (rand, table) => table("events").rasterize(8))
 //   step    the fold's name. Rows sharing a name are one fold whose crease
 //           runs through several layers; rows with no p1/p2 re-drive it
 //           (keyframes along a collapse's path)
-//   p1,p2   the crease, a literal segment in sheet coordinates "x,y"
-//           (the sheet spans [-1,1]²)
+//   p1,p2   the crease: each point is "edge@t" — a fraction along an edge
+//           of the ORIGINAL square (bottom/top run left→right, left/right
+//           bottom→top) — or "name@t", a fraction along an earlier row's
+//           segment. Every point is built from the sheet's boundary and
+//           the folds before it, the way origami constructions work (raw
+//           "x,y" is also accepted)
 //   move    sample points ("x,y", ";"-separated) inside the pieces this
 //           crease rotates — only pieces TOUCHING it; everything attached
-//           rides along through the hinge tree
+//           rides along through the hinge tree. A row with a line but NO
+//           move is a CONSTRUCTION line: it cuts and folds nothing, and
+//           exists to be referenced
 //   sign    which way this crease turns for positive fractions (flipping
 //           it = swapping p1/p2). Layers of a stack often need opposite
 //           senses — that is what makes a collapse work at all; if a flap
@@ -89,7 +95,6 @@ define("scene", (rand, table) => table("events").rasterize(8))
 // famously not rigid-foldable).
 
 define("steps", () => {
-  // 0.5857864376 = 2−√2: where the petal's valley meets the medians.
   // keyframes shared by every layer of a crease: [at, dur, to]
   const kf = (steps, tl) => steps.flatMap((step) =>
     tl.map(([at, dur, to]) => ({ step, at, dur, to })))
@@ -97,33 +102,41 @@ define("steps", () => {
     step: "string", p1: "string", p2: "string", move: "string",
     sign: "number", deg: "number", at: "number", dur: "number", to: "number",
   }, [
-    // ── the creases ──
+    // ── construction lines (no move: nothing folds; they exist so later
+    //    rows can reference points along them, "name@t") ──
+    // the main diagonal, and the two medians the petal points sit on
+    { step: "diag", p1: "bottom@0", p2: "top@1" },
+    { step: "vm", p1: "bottom@0.5", p2: "top@0.5" },
+    { step: "hm", p1: "left@0.5", p2: "right@0.5" },
+    // ── the creases: every fold built from the sheet's edges and the
+    //    folds before it ──
     // the triangle fold: the diagonal, in two drivable halves
-    { step: "spine", p1: "0,0", p2: "1,1", move: "0.5286,0.3333", sign: 1, deg: 180, at: 1, dur: 2, to: 1 },
-    { step: "still", p1: "-1,-1", p2: "0,0", move: "-0.3333,-0.5286", sign: 1, deg: 180, at: 1, dur: 2, to: 1 },
-    // the squash folds, one crease per layer
-    { step: "s1", p1: "0,0.5857864376", p2: "0,0", move: "0.3333,0.5286", sign: 1, deg: 180, at: 4, dur: 0.5, to: -0.18 },
-    { step: "s1", p1: "0.5857864376,0", p2: "0,0", move: "0.5286,0.3333", sign: -1 },
-    { step: "hv", p1: "1,-1", p2: "0,0", move: "0.2929,-0.0976", sign: -1, deg: 90, at: 4, dur: 0.5, to: 0.248 },
-    { step: "s2", p1: "-0.5857864376,0", p2: "0,0", move: "-0.5286,-0.3333", sign: 1, deg: -180, at: 9.5, dur: 0.25, to: -0.125 },
-    { step: "s2", p1: "0,-0.5857864376", p2: "0,0", move: "-0.3333,-0.5286", sign: -1 },
-    // the petal fold, front: mountains, valley, and the ridge peels
-    { step: "kite", p1: "-1,1", p2: "-0.5857864376,0", move: "-0.8619,0.3333", sign: 1, deg: -180, at: 14.6, dur: 0.65, to: 1 },
-    { step: "kite", p1: "-1,-1", p2: "-0.5857864376,0", move: "-0.8619,-0.3333", sign: -1 },
-    { step: "kite2", p1: "1,1", p2: "0,0.5857864376", move: "0.3333,0.8619", sign: -1, deg: 180, at: 14.6, dur: 0.65, to: 1 },
-    { step: "kite2", p1: "-1,1", p2: "0,0.5857864376", move: "-0.3333,0.8619", sign: 1 },
-    { step: "petal", p1: "-0.5857864376,0", p2: "0,0.5857864376", move: "-0.5286,0.5286", sign: 1, deg: 180, at: 14.6, dur: 0.65, to: 1 },
-    { step: "peelfr", p1: "0,1", p2: "0,0.5857864376", move: "0.3333,0.8619", sign: 1, deg: 180, at: 4, dur: 0.5, to: -0.18 },
-    { step: "peelfl", p1: "-1,0", p2: "-0.5857864376,0", move: "-0.8619,-0.3333", sign: 1, deg: -180, at: 9.5, dur: 0.25, to: -0.125 },
+    { step: "spine", p1: "diag@0.5", p2: "diag@1", move: "0.5286,0.3333", sign: 1, deg: 180, at: 1, dur: 2, to: 1 },
+    { step: "still", p1: "diag@0", p2: "diag@0.5", move: "-0.3333,-0.5286", sign: 1, deg: 180, at: 1, dur: 2, to: 1 },
+    // the squash folds, one crease per layer — the petal points sit 2−√2
+    // along each median from the centre (vm/hm @ 0.7928… and 0.2071…)
+    { step: "s1", p1: "vm@0.7928932188", p2: "diag@0.5", move: "0.3333,0.5286", sign: 1, deg: 180, at: 4, dur: 0.5, to: -0.18 },
+    { step: "s1", p1: "hm@0.7928932188", p2: "diag@0.5", move: "0.5286,0.3333", sign: -1 },
+    { step: "hv", p1: "bottom@1", p2: "diag@0.5", move: "0.2929,-0.0976", sign: -1, deg: 90, at: 4, dur: 0.5, to: 0.248 },
+    { step: "s2", p1: "hm@0.2071067812", p2: "diag@0.5", move: "-0.5286,-0.3333", sign: 1, deg: -180, at: 9.5, dur: 0.25, to: -0.125 },
+    { step: "s2", p1: "vm@0.2071067812", p2: "diag@0.5", move: "-0.3333,-0.5286", sign: -1 },
+    // the petal fold, front: mountains from the corners to the squash
+    // folds' ends, the valley between them, and the ridge peels
+    { step: "kite", p1: "top@0", p2: "s2@0", move: "-0.8619,0.3333", sign: 1, deg: -180, at: 14.6, dur: 0.65, to: 1 },
+    { step: "kite", p1: "bottom@0", p2: "s2@0", move: "-0.8619,-0.3333", sign: -1 },
+    { step: "kite2", p1: "top@1", p2: "s1@0", move: "0.3333,0.8619", sign: -1, deg: 180, at: 14.6, dur: 0.65, to: 1 },
+    { step: "kite2", p1: "top@0", p2: "s1@0", move: "-0.3333,0.8619", sign: 1 },
+    { step: "petal", p1: "s2@0", p2: "s1@0", move: "-0.5286,0.5286", sign: 1, deg: 180, at: 14.6, dur: 0.65, to: 1 },
+    { step: "peelfr", p1: "top@0.5", p2: "s1@0", move: "0.3333,0.8619", sign: 1, deg: 180, at: 4, dur: 0.5, to: -0.18 },
+    { step: "peelfl", p1: "left@0.5", p2: "s2@0", move: "-0.8619,-0.3333", sign: 1, deg: -180, at: 9.5, dur: 0.25, to: -0.125 },
     // the petal fold, back: the same lines from the back corner
-    { step: "kite3", p1: "-1,-1", p2: "0,-0.5857864376", move: "-0.3333,-0.8619", sign: 1, deg: -180, at: 15.35, dur: 0.65, to: 1 },
-    { step: "kite3", p1: "1,-1", p2: "0,-0.5857864376", move: "0.3333,-0.8619", sign: -1 },
-    { step: "kite4", p1: "1,-1", p2: "0.5857864376,0", move: "0.8619,-0.3333", sign: -1, deg: 180, at: 15.35, dur: 0.65, to: 1 },
-    { step: "kite4", p1: "1,1", p2: "0.5857864376,0", move: "0.8619,0.3333", sign: 1 },
-    { step: "petal2", p1: "0,-0.5857864376", p2: "0.5857864376,0", move: "0.4310,-0.6262;0.6262,-0.4310", sign: -1, deg: 180, at: 15.35, dur: 0.65, to: 1 },
-    { step: "peelbr", p1: "1,0", p2: "0.5857864376,0", move: "0.8619,0.3333", sign: -1, deg: 180, at: 4, dur: 0.5, to: -0.18 },
-    { step: "peelbl", p1: "0,-1", p2: "0,-0.5857864376", move: "-0.3333,-0.8619", sign: -1, deg: -180, at: 9.5, dur: 0.25, to: -0.125 },
-
+    { step: "kite3", p1: "bottom@0", p2: "vm@0.2071067812", move: "-0.3333,-0.8619", sign: 1, deg: -180, at: 15.35, dur: 0.65, to: 1 },
+    { step: "kite3", p1: "bottom@1", p2: "vm@0.2071067812", move: "0.3333,-0.8619", sign: -1 },
+    { step: "kite4", p1: "bottom@1", p2: "hm@0.7928932188", move: "0.8619,-0.3333", sign: -1, deg: 180, at: 15.35, dur: 0.65, to: 1 },
+    { step: "kite4", p1: "top@1", p2: "hm@0.7928932188", move: "0.8619,0.3333", sign: 1 },
+    { step: "petal2", p1: "vm@0.2071067812", p2: "hm@0.7928932188", move: "0.4310,-0.6262;0.6262,-0.4310", sign: -1, deg: 180, at: 15.35, dur: 0.65, to: 1 },
+    { step: "peelbr", p1: "right@0.5", p2: "hm@0.7928932188", move: "0.8619,0.3333", sign: -1, deg: 180, at: 4, dur: 0.5, to: -0.18 },
+    { step: "peelbl", p1: "bottom@0.5", p2: "vm@0.2071067812", move: "-0.3333,-0.8619", sign: -1, deg: -180, at: 9.5, dur: 0.25, to: -0.125 },
     // ── the collapse, keyframed along the squash's solved path ──
     // squash 1 + press right (the peels are the same physical creases as
     // s1/s2, so they carry the same keyframes until their petal opens them)

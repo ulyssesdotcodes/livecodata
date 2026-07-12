@@ -82,17 +82,78 @@ test('rows sharing a step are one fold across layers, each crease with its own t
   assert.ok(near(front, back, 0.05), `layers stay together: ${front} vs ${back}`)
 })
 
-test('keyframe rows re-drive a step; unknown names and empty moves warn', () => {
+test('keyframe rows re-drive a step; unknown names warn', () => {
   const { program, schedule } = compileFolds([
     { step: 'half', p1: '0,-1', p2: '0,1', move: '0.5,0', sign: 1, deg: 180, at: 1, dur: 1, to: 1 },
     { step: 'half', at: 3, dur: 1, to: 0 },
     { step: 'nope', at: 4, dur: 1, to: 1 },
-    { step: 'silent', p1: '-1,0', p2: '1,0' },
   ])
   assert.deepEqual(schedule.map((r) => [r.fold, r.at, r.to]), [['half', 1, 1], ['half', 3, 0]])
-  assert.equal(program.warnings.length, 2, program.warnings.join('; '))
+  assert.equal(program.warnings.length, 1, program.warnings.join('; '))
   assert.ok(program.warnings[0].includes('nope'))
-  assert.ok(program.warnings[1].includes('rotates nothing'))
+})
+
+test('points are built from the square and earlier rows; construction lines fold nothing', () => {
+  // A construction line (no move) cuts nothing but can be referenced —
+  // folding as construction: the diagonal's midpoint IS the sheet's centre.
+  const { program } = compileFolds([
+    { step: 'diag', p1: 'bottom@0', p2: 'top@1' },
+    { step: 'half', p1: 'diag@0.5', p2: 'top@0.5', move: '0.5,0.5', sign: 1, deg: 180, at: 1, dur: 1, to: 1 },
+  ])
+  assert.deepEqual(program.groups, ['half'])
+  assert.equal(program.faces.length, 2)
+  const sp = program.steps[0].spans[0]
+  assert.deepEqual([sp.a, sp.b], [[0, 0], [0, 1]])
+  // …and the flat-fold check correctly flags this toy: one crease ending
+  // mid-sheet is an odd interior vertex — it cannot fold flat.
+  assert.equal(program.warnings.length, 1, program.warnings.join('; '))
+  assert.ok(program.warnings[0].includes('odd vertex'))
+  // Referencing a name that doesn't exist yet names the knowns.
+  assert.throws(() => compileFolds([
+    { step: 'x', p1: 'later@0.5', p2: 'top@0.5', move: '0,0', at: 1, dur: 1, to: 1 },
+  ]), /no edge or earlier row named "later"/)
+})
+
+test('flat-foldability is checked statically: Kawasaki and Maekawa at interior vertices', () => {
+  // The classic valid single-vertex fold: fold the square in half (the
+  // through-crease's two rays share one sense), then fold the packet in
+  // half — which creases the two layers with OPPOSITE senses. At the centre
+  // the four 90° sectors satisfy Kawasaki and the senses come out 1-vs-3,
+  // exactly Maekawa's ±2 — no warnings.
+  const ok = compileFolds([
+    { step: 'mid', p1: 'bottom@0.5', p2: 'top@0.5', move: '-0.5,0.5;-0.5,-0.5', sign: 1, deg: 180, at: 1, dur: 1, to: 1 },
+    { step: 'front', p1: '0,0', p2: '1,0', move: '0.5,0.5', sign: 1, deg: -180, at: 2, dur: 1, to: 1 },
+    { step: 'back', p1: '0,0', p2: '-1,0', move: '-0.5,0.5', sign: 1, deg: -180, at: 3, dur: 1, to: 1 },
+  ]).program
+  assert.equal(ok.warnings.length, 0, ok.warnings.join('; '))
+
+  // Give both layers of the second fold the SAME sense (impossible on real
+  // paper): Kawasaki still holds — the angles didn't move — but the senses
+  // are now 2-vs-2 and Maekawa fails.
+  const badMV = compileFolds([
+    { step: 'mid', p1: 'bottom@0.5', p2: 'top@0.5', move: '-0.5,0.5;-0.5,-0.5', sign: 1, deg: 180, at: 1, dur: 1, to: 1 },
+    { step: 'front', p1: '0,0', p2: '1,0', move: '0.5,0.5', sign: 1, deg: -180, at: 2, dur: 1, to: 1 },
+    { step: 'back', p1: '0,0', p2: '-1,0', move: '-0.5,0.5', sign: 1, deg: 180, at: 3, dur: 1, to: 1 },
+  ]).program
+  assert.ok(badMV.warnings.some((w) => w.includes('Maekawa')), badMV.warnings.join('; '))
+  assert.ok(!badMV.warnings.some((w) => w.includes('Kawasaki')), badMV.warnings.join('; '))
+
+  // Skew one crease off the right angle: the alternating angles no longer
+  // cancel — Kawasaki fails.
+  const badK = compileFolds([
+    { step: 'mid', p1: 'bottom@0.5', p2: 'top@0.5', move: '-0.5,0.5;-0.5,-0.5', sign: 1, deg: 180, at: 1, dur: 1, to: 1 },
+    { step: 'front', p1: '0,0', p2: '1,0', move: '0.5,0.5', sign: 1, deg: -180, at: 2, dur: 1, to: 1 },
+    { step: 'back', p1: '0,0', p2: '-1,0.4', move: '-0.5,0.5', sign: 1, deg: -180, at: 3, dur: 1, to: 1 },
+  ]).program
+  assert.ok(badK.warnings.some((w) => w.includes('Kawasaki')), badK.warnings.join('; '))
+
+  // Open creases (final 0) drop out of the pattern: fold and unfold a
+  // half-crease — no vertex remains, no warning.
+  const undone = compileFolds([
+    { step: 'a', p1: 'top@0.5', p2: '0,0', move: '0.5,0.5', sign: 1, deg: 180, at: 1, dur: 1, to: 1 },
+    { step: 'a', at: 3, dur: 1, to: 0 },
+  ]).program
+  assert.equal(undone.warnings.length, 0, undone.warnings.join('; '))
 })
 
 test('a geometry-only row (dur 0) writes the crease but schedules nothing', () => {
@@ -106,30 +167,35 @@ test('a geometry-only row (dur 0) writes the crease but schedules nothing', () =
 
 // ── The crane spec (the sample's static table, minus timing sugar) ───────────
 
-const P = '0.5857864376'
+// The crane's crease table, every point built from the square's edges and
+// earlier folds (construction lines diag/vm/hm carry the referenced points).
 const CRANE: Record<string, unknown>[] = [
-  { step: 'spine', p1: '0,0', p2: '1,1', move: '0.5286,0.3333', sign: 1, deg: 180 },
-  { step: 'still', p1: '-1,-1', p2: '0,0', move: '-0.3333,-0.5286', sign: 1, deg: 180 },
-  { step: 's1', p1: `0,${P}`, p2: '0,0', move: '0.3333,0.5286', sign: 1, deg: 180 },
-  { step: 's1', p1: `${P},0`, p2: '0,0', move: '0.5286,0.3333', sign: -1 },
-  { step: 'hv', p1: '1,-1', p2: '0,0', move: '0.2929,-0.0976', sign: -1, deg: 90 },
-  { step: 's2', p1: `-${P},0`, p2: '0,0', move: '-0.5286,-0.3333', sign: 1, deg: -180 },
-  { step: 's2', p1: `0,-${P}`, p2: '0,0', move: '-0.3333,-0.5286', sign: -1 },
-  { step: 'kite', p1: '-1,1', p2: `-${P},0`, move: '-0.8619,0.3333', sign: 1, deg: -180 },
-  { step: 'kite', p1: '-1,-1', p2: `-${P},0`, move: '-0.8619,-0.3333', sign: -1 },
-  { step: 'kite2', p1: '1,1', p2: `0,${P}`, move: '0.3333,0.8619', sign: -1, deg: 180 },
-  { step: 'kite2', p1: '-1,1', p2: `0,${P}`, move: '-0.3333,0.8619', sign: 1 },
-  { step: 'petal', p1: `-${P},0`, p2: `0,${P}`, move: '-0.5286,0.5286', sign: 1, deg: 180 },
-  { step: 'peelfr', p1: '0,1', p2: `0,${P}`, move: '0.3333,0.8619', sign: 1, deg: 180 },
-  { step: 'peelfl', p1: '-1,0', p2: `-${P},0`, move: '-0.8619,-0.3333', sign: 1, deg: -180 },
-  { step: 'kite3', p1: '-1,-1', p2: `0,-${P}`, move: '-0.3333,-0.8619', sign: 1, deg: -180 },
-  { step: 'kite3', p1: '1,-1', p2: `0,-${P}`, move: '0.3333,-0.8619', sign: -1 },
-  { step: 'kite4', p1: '1,-1', p2: `${P},0`, move: '0.8619,-0.3333', sign: -1, deg: 180 },
-  { step: 'kite4', p1: '1,1', p2: `${P},0`, move: '0.8619,0.3333', sign: 1 },
-  { step: 'petal2', p1: `0,-${P}`, p2: `${P},0`, move: '0.4310,-0.6262;0.6262,-0.4310', sign: -1, deg: 180 },
-  { step: 'peelbr', p1: '1,0', p2: `${P},0`, move: '0.8619,0.3333', sign: -1, deg: 180 },
-  { step: 'peelbl', p1: '0,-1', p2: `0,-${P}`, move: '-0.3333,-0.8619', sign: -1, deg: -180 },
+  { step: 'diag', p1: 'bottom@0', p2: 'top@1' },
+  { step: 'vm', p1: 'bottom@0.5', p2: 'top@0.5' },
+  { step: 'hm', p1: 'left@0.5', p2: 'right@0.5' },
+  { step: 'spine', p1: 'diag@0.5', p2: 'diag@1', move: '0.5286,0.3333', sign: 1, deg: 180 },
+  { step: 'still', p1: 'diag@0', p2: 'diag@0.5', move: '-0.3333,-0.5286', sign: 1, deg: 180 },
+  { step: 's1', p1: 'vm@0.7928932188', p2: 'diag@0.5', move: '0.3333,0.5286', sign: 1, deg: 180 },
+  { step: 's1', p1: 'hm@0.7928932188', p2: 'diag@0.5', move: '0.5286,0.3333', sign: -1 },
+  { step: 'hv', p1: 'bottom@1', p2: 'diag@0.5', move: '0.2929,-0.0976', sign: -1, deg: 90 },
+  { step: 's2', p1: 'hm@0.2071067812', p2: 'diag@0.5', move: '-0.5286,-0.3333', sign: 1, deg: -180 },
+  { step: 's2', p1: 'vm@0.2071067812', p2: 'diag@0.5', move: '-0.3333,-0.5286', sign: -1 },
+  { step: 'kite', p1: 'top@0', p2: 's2@0', move: '-0.8619,0.3333', sign: 1, deg: -180 },
+  { step: 'kite', p1: 'bottom@0', p2: 's2@0', move: '-0.8619,-0.3333', sign: -1 },
+  { step: 'kite2', p1: 'top@1', p2: 's1@0', move: '0.3333,0.8619', sign: -1, deg: 180 },
+  { step: 'kite2', p1: 'top@0', p2: 's1@0', move: '-0.3333,0.8619', sign: 1 },
+  { step: 'petal', p1: 's2@0', p2: 's1@0', move: '-0.5286,0.5286', sign: 1, deg: 180 },
+  { step: 'peelfr', p1: 'top@0.5', p2: 's1@0', move: '0.3333,0.8619', sign: 1, deg: 180 },
+  { step: 'peelfl', p1: 'left@0.5', p2: 's2@0', move: '-0.8619,-0.3333', sign: 1, deg: -180 },
+  { step: 'kite3', p1: 'bottom@0', p2: 'vm@0.2071067812', move: '-0.3333,-0.8619', sign: 1, deg: -180 },
+  { step: 'kite3', p1: 'bottom@1', p2: 'vm@0.2071067812', move: '0.3333,-0.8619', sign: -1 },
+  { step: 'kite4', p1: 'bottom@1', p2: 'hm@0.7928932188', move: '0.8619,-0.3333', sign: -1, deg: 180 },
+  { step: 'kite4', p1: 'top@1', p2: 'hm@0.7928932188', move: '0.8619,0.3333', sign: 1 },
+  { step: 'petal2', p1: 'vm@0.2071067812', p2: 'hm@0.7928932188', move: '0.4310,-0.6262;0.6262,-0.4310', sign: -1, deg: 180 },
+  { step: 'peelbr', p1: 'right@0.5', p2: 'hm@0.7928932188', move: '0.8619,0.3333', sign: -1, deg: 180 },
+  { step: 'peelbl', p1: 'bottom@0.5', p2: 'vm@0.2071067812', move: '-0.3333,-0.8619', sign: -1, deg: -180 },
 ]
+
 
 // The finished square base, point down: the collapse's flat endpoint.
 const BASE_FRACS: Record<string, number> = {
