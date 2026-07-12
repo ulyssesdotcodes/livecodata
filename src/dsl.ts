@@ -759,10 +759,12 @@ class PhysicsBuilder {
 
 // ── Origami ───────────────────────────────────────────────────────────────────
 // A sheet of paper folded by a TABLE OF CREASES: every row gives one crease
-// as a literal sheet-coordinate segment (p1/p2 "x,y"), the pieces it moves
-// (move — sample points inside them), its layer parity (sign ±1) and signed
-// angle (deg), and its timing. steps() compiles the rows (see origami.ts —
-// the sheet is cut along the segments, nothing is inferred); spawn() emits
+// as two point references (p1/p2 — "edge@t" on the original square, "name@t"
+// along an earlier row, or raw "x,y"), the pieces it moves (move — sample
+// points inside them), its turning sense (sign ±1) and signed angle (deg),
+// and its timing. steps() compiles the rows (see origami.ts — references
+// are resolved and the sheet is cut along the segments, nothing is
+// inferred from a folded model); spawn() emits
 // the scene's create row (shape: "origami", with the compiled program riding
 // along as data); fold state is just numeric fields named after the steps —
 // 0 = before that fold, 1 = folded — so a fold schedule is ordinary update

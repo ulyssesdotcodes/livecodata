@@ -1,14 +1,18 @@
 // livecodata origami — folds specified, not inferred
 // -----------------------------------------------------------------------------
-// A fold program is a TABLE OF CREASES. Every row gives one crease as a
-// literal segment in sheet coordinates, which pieces of paper it moves
-// (named by sample points), its signed angle, and its timing. Nothing is
-// derived from a folded model: what you write is exactly what folds.
+// A fold program is a TABLE OF CREASES. Every row gives one crease as two
+// points — each a fraction along an edge of the original square or along an
+// earlier row's crease (or raw coordinates) — which pieces of paper it
+// moves (named by sample points), its signed angle, and its timing. The
+// whole crease pattern is determined statically from the table alone;
+// nothing is derived from a folded model: what you write is exactly what
+// folds.
 //
-//   compileFolds(rows) — cut the sheet along each row's segment and record
-//     the step: its hinge segments (spans), the faces it rotates, the signed
-//     angle, and its schedule. The output is plain JSON that rides a scene
-//     row (shape: "origami", program: <FoldProgram>).
+//   compileFolds(rows) — resolve each row's point references, cut the sheet
+//     along its segment, and record the step: its hinge segments (spans),
+//     the faces it rotates, the signed angle, and its schedule. The output
+//     is plain JSON that rides a scene row (shape: "origami",
+//     program: <FoldProgram>).
 //
 //   createFoldPlayer(program) — pure kinematic playback. Faces hinge about
 //     the material crease segments along a spanning tree of the face graph;
@@ -42,9 +46,12 @@
 //   deg     the fold's full signed angle (default 180; ±180 folds flat)
 //   at,dur,to  timing, and how far to drive (fractions of deg)
 //
-// There is no validation that a set of creases can fold without tearing —
-// the player renders whatever is written, and impossible poses read as
-// paper strain. (A static tear-check is a planned addition.)
+// Because the pattern is known ahead of time, compileFolds checks the
+// final state's flat-foldability statically (see flatFoldCheck): Kawasaki
+// and Maekawa at every interior vertex, violations as warnings. The player
+// still renders whatever is written — an impossible pose reads as paper
+// strain, never a tear — and layer ordering (self-intersection) is not
+// checked.
 // -----------------------------------------------------------------------------
 
 export type Vec2 = [number, number]
@@ -233,25 +240,29 @@ export function compileFolds(
   let nextAt = 1
 
   // The four edges of the original square: bottom/top run left→right,
-  // left/right run bottom→top, so "@0" is always the lower-left end.
-  const EDGES: Record<string, [Vec2, Vec2]> = {
-    bottom: [[-s, -s], [s, -s]],
-    top: [[-s, s], [s, s]],
-    left: [[-s, -s], [-s, s]],
-    right: [[s, -s], [s, s]],
-  }
+  // left/right run bottom→top, so "@0" is always the lower-left end. (A Map,
+  // not an object, so names like "constructor" can't hit Object.prototype.)
+  const EDGES = new Map<string, [Vec2, Vec2]>([
+    ['bottom', [[-s, -s], [s, -s]]],
+    ['top', [[-s, s], [s, s]]],
+    ['left', [[-s, -s], [-s, s]]],
+    ['right', [[s, -s], [s, s]]],
+  ])
 
   // A point is "edge@t" (a fraction along an edge of the ORIGINAL square),
   // "name@t" (a fraction along an earlier row's segment — t past 0/1
   // extrapolates along its line), or raw "x,y" sheet coordinates. Folding
   // as construction: every point can be derived from the sheet's boundary
-  // and the folds already made.
+  // and the folds already made. Anything else that was clearly meant to be
+  // a point throws — a typo must never silently change what a row means.
   const resolvePoint = (raw: unknown, label: string): Vec2 | null => {
     if (typeof raw !== 'string' || raw.trim() === '') return null
-    if (raw.includes('@')) {
-      const [name, tRaw] = raw.split('@').map((p) => p.trim())
+    const cut = raw.indexOf('@')
+    if (cut >= 0) {
+      const name = raw.slice(0, cut).trim()
+      const tRaw = raw.slice(cut + 1).trim()
       const t = tRaw === '' ? 0.5 : Number(tRaw)
-      const seg = EDGES[name] ?? lines.get(name)
+      const seg = EDGES.get(name) ?? lines.get(name)
       if (!seg) {
         throw new Error(`${label}: "${raw}" — no edge or earlier row named "${name}"`
           + ` (known: bottom, top, left, right${lines.size ? ', ' + [...lines.keys()].join(', ') : ''})`)
@@ -260,10 +271,14 @@ export function compileFolds(
       return [seg[0][0] + t * (seg[1][0] - seg[0][0]), seg[0][1] + t * (seg[1][1] - seg[0][1])]
     }
     const m = raw.split(',')
-    if (m.length !== 2) return null
-    const x = Number(m[0])
-    const y = Number(m[1])
-    return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : null
+    if (m.length === 2) {
+      const x = Number(m[0])
+      const y = Number(m[1])
+      if (Number.isFinite(x) && Number.isFinite(y)) return [x, y]
+    }
+    const known = EDGES.has(raw.trim()) || lines.has(raw.trim())
+    throw new Error(`${label}: "${raw}" is neither "name@t" nor "x,y"`
+      + (known ? ` — did you mean "${raw.trim()}@t"?` : ''))
   }
 
   rows.forEach((row, i) => {
@@ -292,13 +307,21 @@ export function compileFolds(
       throw new Error(`fold "${group}": p1 and p2 are the same point — no crease`)
     }
     const u = norm2(sub2(b, a))
-    if (!lines.has(group)) lines.set(group, [a, b])
+    if (!lines.has(group)) {
+      if (EDGES.has(group)) {
+        warnings.push(`fold "${group}": named like a sheet edge — "${group}@t" always means the edge, so this row can't be referenced`)
+      } else if (group.includes('@')) {
+        warnings.push(`fold "${group}": names with "@" can't be referenced by later rows`)
+      }
+      lines.set(group, [a, b])
+    }
 
     // A row with a line but nothing to move is a CONSTRUCTION line: it cuts
     // nothing and folds nothing — it exists so later rows can reference
     // points along it ("name@t"), the way origami geometry finds points by
-    // making helper creases.
-    const movesRaw = typeof row.move === 'string' ? row.move : ''
+    // making helper creases. (Only an ABSENT move means that; a move that
+    // fails to parse throws in resolvePoint above.)
+    const movesRaw = row.move == null ? '' : String(row.move)
     const movePts = movesRaw.split(';')
       .map((m) => resolvePoint(m, `fold "${group}" move`))
       .filter((p): p is Vec2 => !!p)

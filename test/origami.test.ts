@@ -114,6 +114,46 @@ test('points are built from the square and earlier rows; construction lines fold
   ]), /no edge or earlier row named "later"/)
 })
 
+test('typos in point references fail loudly, never silently changing a row', () => {
+  // Object.prototype members are not edges…
+  assert.throws(() => compileFolds([
+    { step: 'x', p1: 'constructor@0.5', p2: 'top@0.5', move: '0,0.5', at: 1, dur: 1, to: 1 },
+  ]), /no edge or earlier row named "constructor"/)
+  // …and a line legitimately named like one is still referenceable.
+  {
+    const { program } = compileFolds([
+      { step: 'toString', p1: 'bottom@0', p2: 'top@1' },
+      { step: 'x', p1: 'toString@0.5', p2: 'top@0', move: '-0.5,0.6', sign: 1, deg: 180, at: 1, dur: 1, to: 0 },
+    ])
+    assert.deepEqual(program.steps[0].spans[0].a, [0, 0])
+    assert.deepEqual(program.steps[0].spans[0].b, [-1, 1])
+  }
+  // A bare name without "@t" is not a valid point — and must NOT silently
+  // turn a crease row into a keyframe row.
+  assert.throws(() => compileFolds([
+    { step: 'half', p1: '0,-1', p2: '0,1', move: '0.5,0', sign: 1, deg: 180, at: 1, dur: 1, to: 1 },
+    { step: 'half', p1: 'bottom', p2: 'top', at: 3, dur: 1, to: 0 },
+  ]), /did you mean "bottom@t"/)
+  // Trailing text after the fraction is an error, not silently dropped.
+  assert.throws(() => compileFolds([
+    { step: 'diag', p1: 'bottom@0', p2: 'top@1' },
+    { step: 'x', p1: 'diag@0.5@junk', p2: 'top@0', move: '-0.5,0.6', at: 1, dur: 1, to: 1 },
+  ]), /bad fraction/)
+  // A malformed move (space for comma) throws — it must NOT silently
+  // reclassify the row as a construction line.
+  assert.throws(() => compileFolds([
+    { step: 'half', p1: '0,-1', p2: '0,1', move: '0.5 0.5', sign: 1, deg: 180, at: 1, dur: 1, to: 1 },
+  ]), /neither "name@t" nor "x,y"/)
+  // Naming a fold like a sheet edge warns: "left@t" always means the edge.
+  {
+    const { program } = compileFolds([
+      { step: 'left', p1: '0,-1', p2: '0,1', move: '-0.5,0', sign: 1, deg: 180, at: 1, dur: 1, to: 1 },
+    ])
+    assert.ok(program.warnings.some((w) => w.includes('named like a sheet edge')),
+      program.warnings.join('; '))
+  }
+})
+
 test('flat-foldability is checked statically: Kawasaki and Maekawa at interior vertices', () => {
   // The classic valid single-vertex fold: fold the square in half (the
   // through-crease's two rays share one sense), then fold the packet in
