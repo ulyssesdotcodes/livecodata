@@ -103,16 +103,37 @@ test('Origami Square Base sample: the five-crease squash stands the T exactly', 
   const near = (a: number[], b: number[], eps: number): boolean =>
     Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < eps
 
-  // The tip arrives on the table beside the right-angle corner — the
-  // square-base pocket standing, one press from done.
-  assert.ok(near(cornerPos([0.9, 0.97], [1, 1]), [-0.918, 1.076, 0], 0.02),
+  // Pressed flat: the tip lands exactly ON the right-angle corner and the
+  // coincident edge midpoints stack at the side corner — one side of the
+  // square base.
+  assert.ok(near(cornerPos([0.9, 0.97], [1, 1]), [-1, 1, 0], 0.02),
     `tip at ${cornerPos([0.9, 0.97], [1, 1])}`)
-  // The kite's ridge (the coincident edge midpoints) stands over the median.
-  assert.ok(near(cornerPos([0.2, 0.85], [0, 1]), [-0.46, 0.54, 0.705], 0.02),
-    `ridge at ${cornerPos([0.2, 0.85], [0, 1])}`)
+  assert.ok(near(cornerPos([0.2, 0.85], [0, 1]), [-1, 0, 0], 0.02),
+    `front ridge at ${cornerPos([0.2, 0.85], [0, 1])}`)
+  assert.ok(near(cornerPos([0.85, 0.2], [1, 0]), [-1, 0, 0], 0.02),
+    `back ridge at ${cornerPos([0.85, 0.2], [1, 0])}`)
   // The right-angle corner and the still half haven't moved.
   assert.ok(near(cornerPos([-0.85, 0.9], [-1, 1]), [-1, 1, 0], 1e-6))
   assert.ok(near(cornerPos([-0.9, -0.8], [-1, -1]), [-1, -1, 0], 1e-6))
+
+  // Mid-way (the standing pocket, beat 6): the tip on the table beside the
+  // corner, the kite's ridge standing over the median.
+  {
+    const at6: Record<string, number> = {}
+    for (const g of program.groups) {
+      let v = 0
+      for (const r of updates) {
+        if ((r.beat as number) <= 6 && typeof r[g] === 'number') v = r[g] as number
+      }
+      at6[g] = v
+    }
+    player.step(at6)
+    assert.ok(near(cornerPos([0.9, 0.97], [1, 1]), [-0.918, 1.076, 0], 0.02),
+      `standing tip at ${cornerPos([0.9, 0.97], [1, 1])}`)
+    assert.ok(near(cornerPos([0.2, 0.85], [0, 1]), [-0.46, 0.54, 0.705], 0.02),
+      `standing ridge at ${cornerPos([0.2, 0.85], [0, 1])}`)
+    player.step(fracs)
+  }
 
   // Rigid throughout: sample a few beats of the baked schedule and check no
   // face edge stretches (the welded mesh turns any mechanism error into
@@ -147,7 +168,7 @@ test('Origami Square Base sample: the five-crease squash stands the T exactly', 
     }
     return worst
   }
-  for (const beat of [2, 4.5, 5, 5.5, 6]) {
+  for (const beat of [2, 4.5, 5, 5.5, 6, 7, 7.5, 8, 8.5, 9]) {
     player.step(kfAt(beat))
     assert.ok(stretchNow() < 0.03, `beat ${beat}: stretch ${stretchNow().toFixed(4)}`)
   }
