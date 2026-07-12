@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { wallAlignedTick } from '../src/playback.js'
+import { wallAlignedTick, wallAlignedLoop, loopEpochsFromApplies } from '../src/playback.js'
 
 test('wallAlignedTick is 0 exactly at the anchor instant', () => {
   assert.equal(wallAlignedTick(1000, 1000, 4), 0)
@@ -47,6 +47,8 @@ import type { Row } from '../src/lineage.js'
 
 function fakeScene() {
   return {
+    // SceneAPI's camera is for screenshot tooling; nothing here reads it.
+    camera: null as never,
     calls: [] as string[],
     createObject(): void { this.calls.push('create') },
     updateObject(): void { this.calls.push('update') },
@@ -210,4 +212,66 @@ test('retempo re-anchors to the new tapped tempo without moving a paused playhea
   time.advance(250)
   time.frame()
   assert.equal(engine.viewState().pos, 3)
+})
+
+// --- wallAlignedLoop — the quotient companion to wallAlignedTick -------------
+
+test('wallAlignedLoop counts completed loops since the anchor', () => {
+  assert.equal(wallAlignedLoop(1000, 1000, 4), 0)
+  assert.equal(wallAlignedLoop(1000 + 3999, 1000, 4), 0, 'still inside the first loop')
+  assert.equal(wallAlignedLoop(1000 + 4000, 1000, 4), 1, 'increments exactly at the wrap')
+  assert.equal(wallAlignedLoop(1000 + 4000 * 3 + 500, 1000, 4), 3)
+})
+
+test('wallAlignedLoop and wallAlignedTick are the quotient/remainder of one division', () => {
+  const anchorMs = 1000, loopSeconds = 4, nowMs = anchorMs + 10500
+  const elapsed = (nowMs - anchorMs) / 1000
+  assert.equal(
+    wallAlignedLoop(nowMs, anchorMs, loopSeconds) * loopSeconds + wallAlignedTick(nowMs, anchorMs, loopSeconds),
+    elapsed,
+  )
+})
+
+test('wallAlignedLoop returns 0 for a non-positive loop length', () => {
+  assert.equal(wallAlignedLoop(5000, 1000, 0), 0)
+  assert.equal(wallAlignedLoop(5000, 1000, -4), 0)
+})
+
+test('a multi-loop sequence resets by epoch difference, keeping the phase within the loop', () => {
+  // The pass a piece of content shows = loops-elapsed-now minus loops-elapsed
+  // at its epoch (the instant the content last changed / playback started).
+  const anchorMs = 0, loopSeconds = 8
+  const changedAt = 100_000 // mid-loop
+  const loopAt = (nowMs: number) =>
+    Math.max(0, wallAlignedLoop(nowMs, anchorMs, loopSeconds) - wallAlignedLoop(changedAt, anchorMs, loopSeconds))
+  assert.equal(loopAt(changedAt), 0, 'loop 0 at the instant of the change')
+  assert.equal(loopAt(changedAt + 3000), 0, 'still loop 0 later in the same wall-aligned loop')
+  // The change landed at 100s; with an 8s loop the grid wraps at 104s.
+  assert.equal(loopAt(104_000), 1, 'first wall-aligned wrap after the change starts loop 1')
+  assert.equal(loopAt(104_000 + 8000 * 2), 3)
+})
+
+// --- loopEpochsFromApplies — shared loop epochs from stamped apply pulses ----
+
+test('loopEpochsFromApplies keeps the newest apply stamp per changed kind', () => {
+  const epochs = loopEpochsFromApplies([
+    { kind: 'apply', changed: ['scene', 'hydra'], at: 1000 },
+    { kind: 'apply', changed: ['scene'], at: 5000 },
+  ])
+  assert.deepEqual(epochs, { scene: 5000, hydra: 1000 })
+})
+
+test('loopEpochsFromApplies ignores non-apply events and unstamped (legacy) pulses', () => {
+  const epochs = loopEpochsFromApplies([
+    { kind: 'peer-join', at: 1 },
+    { kind: 'session-start' },
+    { kind: 'apply' }, // legacy pulse, no stamp
+    { kind: 'apply', changed: ['timeline'], at: 2000 },
+    { kind: 'apply', changed: [], at: 9000 }, // a run that changed nothing
+  ])
+  assert.deepEqual(epochs, { timeline: 2000 })
+})
+
+test('a stamped apply without a changed list counts for every kind', () => {
+  assert.deepEqual(loopEpochsFromApplies([{ kind: 'apply', at: 7 }]), { scene: 7, timeline: 7, hydra: 7 })
 })

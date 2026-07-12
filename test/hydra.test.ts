@@ -5,6 +5,7 @@ import {
   hydraRows,
   buildHydraIndex,
   hydraFrameAt,
+  hydraLoops,
   type HydraFrame,
 } from '../src/hydra.js'
 import { frameToBeat } from '../src/constants.js'
@@ -107,4 +108,37 @@ test('a `beat` column places rows on the loop 1-indexed (30 frames/beat)', () =>
 test('rows without a beat default to beat 1 (frame 0)', () => {
   const idx = buildHydraIndex([{ event: 'setCode', code: 'osc(1).out(o0)' }])
   assert.equal(idx[0].index, 0)
+})
+
+// --- multi-loop sequences: the `loop` column next to `beat` ------------------
+
+test('hydraFrameAt samples the pass named by `loop`, folding earlier passes in full', () => {
+  const index = buildHydraIndex([
+    { beat: 1, loop: 0, event: 'setCode', code: 'a' },
+    { beat: 1, loop: 0, event: 'setVariable', name: 'amount', value: 1 },
+    { beat: b(10), loop: 1, event: 'setCode', code: 'b' },
+  ])
+  assert.equal(hydraFrameAt(index, 0, 0)!.code, 'a', 'pass 0')
+  assert.equal(hydraFrameAt(index, 0, 1)!.code, 'a', 'early in pass 1 the change has not hit yet')
+  assert.equal(hydraFrameAt(index, 10, 1)!.code, 'b', 'pass 1 reaches its setCode')
+  assert.equal(hydraFrameAt(index, 0, 2)!.code, 'b', 'a later pass folds pass 1 in full')
+  assert.deepEqual(hydraFrameAt(index, 0, 2)!.vars, { amount: 1 }, 'variables persist across passes')
+})
+
+test('buildHydraIndex orders rows by (loop, frame); hydraLoops counts the passes', () => {
+  const index = buildHydraIndex([
+    { beat: 1, loop: 1, event: 'setCode', code: 'later' },
+    { beat: b(5), event: 'setCode', code: 'first' }, // no loop → pass 0
+  ])
+  assert.deepEqual(index.map((r) => r.code), ['first', 'later'])
+  assert.equal(hydraLoops(index), 2)
+  assert.equal(hydraLoops(buildHydraIndex([{ beat: 1, event: 'setCode', code: 'x' }])), 1)
+})
+
+test('hydraFrameAt without a loop argument behaves as pass 0 (single-loop unchanged)', () => {
+  const index = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'a' },
+    { beat: 1, loop: 1, event: 'setCode', code: 'b' },
+  ])
+  assert.equal(hydraFrameAt(index, 99)!.code, 'a')
 })

@@ -10,7 +10,7 @@ import { activeLineage } from './lineage.js'
 import type { EvalCtx } from './dsl.js'
 import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS, framesToBeats } from './constants.js'
 import type { Row } from './lineage.js'
-import type { CookedVisualRows, Visualizer } from './visualizer.js'
+import type { CookedVisualRows, LoopEpochs, Visualizer } from './visualizer.js'
 import { beatSecondsFromTaps } from './tap-log.js'
 
 export interface TapControl {
@@ -38,6 +38,18 @@ export function wallAlignedTick(nowMs: number, anchorMs: number, loopSeconds: nu
   let phase = ((nowMs - anchorMs) / 1000) % loopSeconds
   if (phase < 0) phase += loopSeconds
   return phase
+}
+
+// Which pass of the loop "now" falls in on the same wall-aligned grid — the
+// quotient of the division wallAlignedTick keeps the remainder of. Multi-loop
+// sequences place content by the DIFFERENCE between this value now and at the
+// instant the content last changed (its loop epoch), so a re-cook restarts a
+// sequence at loop 0 while the phase within the loop stays exactly where it
+// was — and, like the phase, any two clients agree on the pass purely from
+// their own system clocks.
+export function wallAlignedLoop(nowMs: number, anchorMs: number, loopSeconds: number): number {
+  if (loopSeconds <= 0) return 0
+  return Math.floor((nowMs - anchorMs) / 1000 / loopSeconds)
 }
 
 export type PlayState = 'idle' | 'playing' | 'paused'
@@ -93,6 +105,28 @@ export interface PlaybackEngineOptions extends PlaybackOptions {
   clock?: PlaybackClock
 }
 
+// Fold an activity event stream (main.ts's ACTIVITY_TABLE) into per-kind loop
+// epochs: the newest 'apply' event naming each kind in `changed`, by its
+// absolute `at` stamp. The stamp is the AUTHOR's clock at the instant they
+// applied, and every replica folds the same merged events — so all clients in
+// a room (including one that joins later and replays the history) derive
+// identical epochs, and therefore the same pass of a multi-loop sequence,
+// with no extra sync message. This is the same trick the tap log uses for
+// tempo: record the absolute instant once, let every clock-synced client
+// derive the rest. An apply without a `changed` list counts for every kind;
+// events without a stamp are ignored (legacy pulses).
+export function loopEpochsFromApplies(events: Row[]): LoopEpochs {
+  const out: LoopEpochs = {}
+  for (const e of events ?? []) {
+    if (e.kind !== 'apply' || typeof e.at !== 'number') continue
+    const kinds: unknown[] = Array.isArray(e.changed) ? e.changed : ['scene', 'timeline', 'hydra']
+    for (const k of kinds) {
+      if (k === 'scene' || k === 'timeline' || k === 'hydra') out[k] = e.at
+    }
+  }
+  return out
+}
+
 // What load() consumes: every visualizer's row sets plus the timeline's (the
 // timeline is the engine's own — it remaps time, it doesn't render). replay's
 // CookedResult is structurally assignable.
@@ -146,6 +180,11 @@ export function createPlaybackEngine(
   let anchorBeatSec = DEFAULT_BEAT_SECONDS
   let pausedBeat = 0
   let timeline: Timeline = buildTimeline([])
+  // Absolute instant the timeline's multi-loop pass counting is based on — its
+  // shared apply stamp (see loopEpochsFromApplies; each visualizer keeps its
+  // own kind's stamp the same way). 0 (the Unix epoch) until stamped — the
+  // same arbitrary-but-shared reference the no-tap phase anchor uses.
+  let timelineEpoch = 0
   let maxBeats = 0 // loop length in beats — the one unit the playhead counts in
   let isScrubbing = false
   let scrubPos = 0
@@ -192,9 +231,10 @@ export function createPlaybackEngine(
 
   // The content/source beat shown at playhead beat `pos` (0-based elapsed beats):
   // the timeline remaps the 1-indexed playback beat to a 1-indexed source beat
-  // (identity when there is no timeline).
+  // (identity when there is no timeline). A multi-loop timeline also remaps by
+  // which pass of the loop we're in.
   function sourceBeatAt(pos: number): number {
-    return timeline.sourceBeatAt(pos + 1)
+    return timeline.sourceBeatAt(pos + 1, timeline.loops > 1 ? passesSince(timelineEpoch) : 0)
   }
 
   function applyAt(pos: number): void {
@@ -209,7 +249,7 @@ export function createPlaybackEngine(
     // a recorded sweep tracks the timeline (and the tempo) rather than wall time.
     const ctx = midiCtxAt ? midiCtxAt(Math.round(srcFrameF)) : null
     const states: Row[] = []
-    for (const v of visualizers) states.push(...v.applyFrame({ srcFrameF, ctx }))
+    for (const v of visualizers) states.push(...v.applyFrame({ srcFrameF, ctx, passAt: passesSince }))
     // Graphed/table views key their rows by `beat`, so report the source beat.
     onTick?.(pos, activeLineage(states), srcBeat)
   }
@@ -243,6 +283,21 @@ export function createPlaybackEngine(
     const bs = beatSeconds()
     if (maxBeats <= 0) return null
     return wallAlignedTick(epochNow(), anchorMs, maxBeats * bs) / bs
+  }
+
+  // How many wall-aligned loops have completed since the absolute instant
+  // `epochMs` — which pass of a multi-loop sequence to show right now (before
+  // wrapping by the sequence's own pass count): 0 within the loop the epoch
+  // falls in, incrementing once per loop-complete, on the same absolute grid
+  // as wallAlignedPhase — no per-wrap counter, and every clock-synced client
+  // agrees. This is the time half of multi-loop playback; the content half
+  // (how many passes, where each pass's rows sit) lives in each visualizer,
+  // which receives this function per frame (VisualizerFrame.passAt) and calls
+  // it with its own shared apply stamp.
+  function passesSince(epochMs: number): number {
+    const anchorMs = tapControl?.anchor?.() ?? 0
+    const loopSec = maxBeats * beatSeconds()
+    return Math.max(0, wallAlignedLoop(epochNow(), anchorMs, loopSec) - wallAlignedLoop(epochMs, anchorMs, loopSec))
   }
 
   // The content/source position (a 1-indexed beat) currently on screen — the
@@ -301,9 +356,16 @@ export function createPlaybackEngine(
   // Swap in a freshly cooked frame cache (+ optional timeline). A re-evaluate
   // does NOT move the playhead: keep the current position and play state, only
   // replacing the baked data. (First load is at 0 because that's where we are.)
+  // `cooked.loopEpochs` rides along with the rows: the shared apply stamps
+  // each multi-loop sequence counts passes from. Each visualizer picks its own
+  // kind's stamp in its load(); the engine keeps the timeline's. A kind
+  // present re-bases its pass counting to that absolute instant (the phase
+  // within the loop stays put, only the pass count rewinds); a kind absent
+  // keeps its current epoch.
   function load(cooked: LoadedRows): void {
     for (const v of visualizers) v.load(cooked)
     timeline = buildTimeline(cooked.timelineRows ?? [])
+    if (typeof cooked.loopEpochs?.timeline === 'number') timelineEpoch = cooked.loopEpochs.timeline
     recomputeMax()
     retimeTo(currentTime())
   }
@@ -373,6 +435,10 @@ export function createPlaybackEngine(
     // at beat 0 — so pressing Play doesn't reset "beat 0" to this moment, it
     // joins the beat grid wherever it currently is. `?? 0` only matters when
     // there's nothing to loop over yet (maxBeats <= 0).
+    // Loop epochs are deliberately NOT touched here: like the phase, the pass
+    // of a multi-loop sequence is anchored to the shared apply stamps, so
+    // pressing Play joins the sequence wherever it currently is — a client
+    // hitting Play mid-jam lands on the same pass as everyone else.
     const aligned = wallAlignedPhase() ?? 0
     reset(aligned)
     pausedBeat = aligned

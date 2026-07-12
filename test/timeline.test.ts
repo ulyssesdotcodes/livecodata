@@ -69,3 +69,28 @@ test('cookProgram yields no timeline rows when none is defined', () => {
   assert.deepEqual(cooked.timelineRows, [])
   assert.equal(buildTimeline(cooked.timelineRows).active, false)
 })
+
+// --- multi-loop sequences: the `loop` column next to `beat` ------------------
+
+test('a loop column gives each pass its own remap; beats stays the per-pass span', () => {
+  // Pass 0 plays source 1..5 forward; pass 1 plays it in reverse.
+  const tl = buildTimeline([
+    { beat: 1, loop: 0, source: 1 },
+    { beat: 5, loop: 0, source: 5 },
+    { beat: 1, loop: 1, source: 5 },
+    { beat: 5, loop: 1, source: 1 },
+  ])
+  assert.equal(tl.loops, 2)
+  assert.equal(tl.beats, 4, 'the playhead still wraps every pass, not once per sequence')
+  assert.equal(tl.sourceBeatAt(1, 0), 1)
+  assert.equal(tl.sourceBeatAt(3, 0), 3)
+  assert.equal(tl.sourceBeatAt(3, 1), 3, 'reverse pass, halfway')
+  assert.equal(tl.sourceBeatAt(5, 1), 1)
+  assert.equal(tl.sourceBeatAt(3, 2), 3, 'the loop argument wraps modulo the pass count')
+})
+
+test('rows without a loop column keep single-loop behavior (loops = 1, loop arg ignored)', () => {
+  const tl = buildTimeline([{ beat: 1, source: 1 }, { beat: 17, source: 5 }])
+  assert.equal(tl.loops, 1)
+  assert.equal(tl.sourceBeatAt(9), tl.sourceBeatAt(9, 3))
+})

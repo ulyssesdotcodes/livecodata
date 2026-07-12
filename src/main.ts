@@ -23,6 +23,7 @@ import { createMidiInput, type MidiInput } from './midi.js'
 import { createTapLog } from './tap-log.js'
 import { connectMultiplayer } from './multiplayer.js'
 import type { MultiplayerConnection, MultiplayerStatus } from './multiplayer.js'
+import { loopEpochsFromApplies } from './playback.js'
 import type { PlaybackAPI, PlaybackOptions } from './playback.js'
 import type { Row } from './lineage.js'
 import type { PeerPresence } from './ui/table-panel.js'
@@ -341,11 +342,40 @@ function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   return display
 }
 
+// Signature of one cooked output, to detect which of scene/timeline/hydra a
+// run actually changed. Functions on rows (easings, streaming bindings) hash
+// by their source text — every cook builds fresh closures, so identity would
+// always differ while the content is the same.
+function cookedSig(rows: Row[]): string {
+  return JSON.stringify(rows, (_k, v: unknown) => (typeof v === 'function' ? String(v) : v))
+}
+
+const lastCookedSigs = { scene: '', timeline: '', hydra: '' }
+
+// Which cooked outputs differ from what's currently showing (and re-baseline
+// the signatures for the next diff) — the determination stamped onto the apply
+// pulse so the whole room resets the same multi-loop sequences.
+function diffCooked({ sceneRows, timelineRows, hydraRows }: CookedData): { scene: boolean; timeline: boolean; hydra: boolean } {
+  const sigs = { scene: cookedSig(sceneRows), timeline: cookedSig(timelineRows), hydra: cookedSig(hydraRows) }
+  const changed = {
+    scene: sigs.scene !== lastCookedSigs.scene,
+    timeline: sigs.timeline !== lastCookedSigs.timeline,
+    hydra: sigs.hydra !== lastCookedSigs.hydra,
+  }
+  Object.assign(lastCookedSigs, sigs)
+  return changed
+}
+
+// Render a cooked program and hand its rows to playback. The loop epochs ride
+// along from the activity table's apply stamps (loopEpochsFromApplies) — the
+// author's absolute clock, NOT this replica's — so every client in the room,
+// including one that joins later and replays the same events, lands on the
+// same pass of a multi-loop sequence.
 function applyCooked(cooked: CookedData): void {
   lastViews = cooked.views
   tablePanel.setTables(tablesForDisplay(cooked.views))
   tablePanel.setGraphs(cooked.graphs)
-  playback.load(cooked)
+  playback.load({ ...cooked, loopEpochs: loopEpochsFromApplies(editableStore.get(ACTIVITY_TABLE)?.events ?? []) })
 }
 
 // A tap changed the tempo: refresh the "taps" table and re-anchor playback to
@@ -453,8 +483,18 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
     // Apply bookmark — the unit the session bar scrubs.
     setCodeRow(code, seed)
     editableStore.recordRun()
-    if (broadcast) editableStore.record(ACTIVITY_TABLE, 'apply')
     sessionBar.setLog({ length: sessionLength() })
+    // Stamp the apply pulse with which cooked outputs this run changed and the
+    // absolute instant it happened, BEFORE applyCooked — the loop epochs it
+    // folds (loopEpochsFromApplies) must already include this apply, so this
+    // replica re-bases from the very stamp its peers will. The reactive
+    // evaluate (broadcast:false) records nothing: the author's merged stamp is
+    // already in the fold.
+    const changed = diffCooked(cooked)
+    if (broadcast) {
+      const changedKinds = Object.keys(changed).filter((k) => changed[k as keyof typeof changed])
+      editableStore.record(ACTIVITY_TABLE, 'apply', { changed: changedKinds, at: Date.now() })
+    }
     applyCooked(cooked)
     if (persist) persistSession()
   } finally {
@@ -632,6 +672,9 @@ async function scrubSession(pos: number): Promise<void> {
     cooking--
   }
   editor.setError(null)
+  // Re-baseline the changed-detection at what's now showing, so the next Run's
+  // apply pulse reports its diff against the scrubbed view the user sees.
+  diffCooked(cooked)
   applyCooked(cooked)
 }
 
