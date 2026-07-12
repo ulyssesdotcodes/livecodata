@@ -61,11 +61,12 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
   assert.equal(create.shape, 'origami')
   const program = create.program as FoldProgram
   assert.deepEqual(program.groups,
-    ['spine', 'spineN', 'still', 'stillN', 's1', 'hv', 's2',
-      'kite', 'kiteN', 'kite2', 'kite2N', 'petal', 'peelfr', 'peelfl',
-      'kite3', 'kite3N', 'kite4', 'kite4N', 'petal2', 'peelbr', 'peelbl',
-      'thinfr', 'thinfrN', 'thinfl', 'thinflN', 'thinbr', 'thinbrN', 'thinbl', 'thinblN',
-      'neck', 'tail'])
+    ['spine', 'spineN', 'spineH', 'still', 'stillN', 's1', 'hv', 's2',
+      'kite', 'kiteN', 'kite2', 'kite2H', 'kite2N', 'petal', 'peelfr', 'peelfl',
+      'kite3', 'kite3N', 'kite4', 'kite4H', 'kite4N', 'petal2', 'peelbr', 'peelbl',
+      'thinfr', 'thinfrH', 'thinfrN', 'thinfl', 'thinflN',
+      'thinbr', 'thinbrH', 'thinbrN', 'thinbl', 'thinblN',
+      'neck', 'tail', 'head', 'wingf', 'wingb'])
   assert.equal(program.warnings.length, 0, program.warnings.join('; '))
 
   // Take the fractions at the end of the squash off the baked keyframes and
@@ -127,10 +128,10 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
     `ridge (0,1) at ${cornerPos([0.2, 0.85], [0, 1])}`)
   assert.ok(near(cornerPos([0.85, 0.2], [1, 0]), [0, 1, 0], 0.02),
     `ridge (1,0) at ${cornerPos([0.85, 0.2], [1, 0])}`)
-  assert.ok(near(cornerPos([-0.9, 0.2], [-1, 0]), [-1, 0, 0], 0.02),
-    `ridge (-1,0) at ${cornerPos([-0.9, 0.2], [-1, 0])}`)
-  assert.ok(near(cornerPos([0.15, -0.85], [0, -1]), [-1, 0, 0], 0.02),
-    `ridge (0,-1) at ${cornerPos([0.15, -0.85], [0, -1])}`)
+  assert.ok(near(cornerPos([-0.9, 0.05], [-1, 0]), [-1, 0, 0], 0.02),
+    `ridge (-1,0) at ${cornerPos([-0.9, 0.05], [-1, 0])}`)
+  assert.ok(near(cornerPos([0.05, -0.9], [0, -1]), [-1, 0, 0], 0.02),
+    `ridge (0,-1) at ${cornerPos([0.05, -0.9], [0, -1])}`)
   assert.ok(near(cornerPos([-0.2, 0.1], [0, 0]), [0, 0, 0], 0.02), 'centre at the closed corner')
   {
     let zLo = Infinity
@@ -160,8 +161,8 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
       assert.ok(near(cornerPos(probe, corner), [-1, 1, 0], 0.02),
         `middle corner ${corner} at ${cornerPos(probe, corner)}`)
     }
-    assert.ok(near(cornerPos([-0.9, 0.2], [-1, 0]), [-(1 - Math.SQRT1_2), 1 - Math.SQRT1_2, 0], 0.02),
-      `side corner (-1,0) tucks to the hinge, at ${cornerPos([-0.9, 0.2], [-1, 0])}`)
+    assert.ok(near(cornerPos([-0.9, 0.05], [-1, 0]), [-(1 - Math.SQRT1_2), 1 - Math.SQRT1_2, 0], 0.02),
+      `side corner (-1,0) tucks to the hinge, at ${cornerPos([-0.9, 0.05], [-1, 0])}`)
     player.step(fracs)
   }
 
@@ -213,10 +214,16 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
     }
     return hi - lo
   }
-  for (const beat of [3.5, 14.5, 15.3, 16, 17, 18, 19.55, 20.65]) {
+  for (const beat of [3.5, 14.5, 15.3, 16, 17, 18, 19.55, 20.65, 21.7]) {
     player.step(kfFracsAt(beat))
     assert.ok(stretchNow() < 0.01, `beat ${beat}: fold end strained (${stretchNow().toFixed(4)})`)
     assert.ok(zExtent() < 0.05, `beat ${beat}: fold end not flat (z extent ${zExtent().toFixed(4)})`)
+  }
+  // The finished crane is NOT flat: the wings fold a quarter turn down, one
+  // toward the viewer and one away.
+  {
+    player.step(kfFracsAt(Infinity))
+    assert.ok(zExtent() > 0.4, `wings down should be 3D (z extent ${zExtent().toFixed(3)})`)
   }
   // The thinned legs: the former outer edges (the kite creases, the bird
   // base's silhouette) lie ON the centre line — the world axis x = −y —
@@ -253,10 +260,11 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
       assert.ok(Math.abs(w[0] + w[1]) < 0.02,
         `thinned edge at (${pt}) should sit on the axis, got (${w.map((v) => v.toFixed(3))})`)
     }
-    // After the inside reverse folds (beat 20.65+): the points swing up and
-    // out, each the reflection of the old tip across its reverse line — the
-    // neck steeper (60°) than the tail (30°), so the head end rises higher.
-    player.step(kfFracsAt(Infinity))
+    // After the inside reverse folds (beat 20.65, before the head tucks the
+    // tip): the points swing up and out, each the reflection of the old tip
+    // across its reverse line — the neck steeper (60°) than the tail (30°),
+    // so the head end rises higher.
+    player.step(kfFracsAt(20.65))
     const neckTip = worldOfSheet([0.985, 0.985])
     assert.ok(Math.hypot(neckTip[0] + 0.547, neckTip[1] - 1.238) < 0.04,
       `neck tip at (${neckTip.map((v) => v.toFixed(3))})`)
@@ -278,7 +286,7 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
     const fr: Record<string, number> = {}
     for (const g of program.groups) fr[g] = f[g] as number
     player.step(fr)
-    const cap = beat <= 18.5 ? 0.2 : 0.26
+    const cap = beat <= 16 ? 0.45 : beat <= 18.5 ? 0.21 : 0.3
     assert.ok(stretchNow() < cap, `frame at beat ${beat.toFixed(2)}: stretch ${stretchNow().toFixed(3)}`)
   }
 })

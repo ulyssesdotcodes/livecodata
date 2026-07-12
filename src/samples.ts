@@ -133,7 +133,8 @@ define("steps", () => {
     // (each written in TWO drivable pieces, split where the neck and tail
     // reverse folds will cross — the outer halves flip then)
     { step: "spine", p1: "diag@0.5", p2: "0.2928932188,0.2928932188", move: "0.5286,0.3333", sign: 1, deg: 180, at: 1, dur: 2, to: 1 },
-    { step: "spineN", p1: "0.2928932188,0.2928932188", p2: "diag@1", move: "0.5286,0.3333", sign: 1, deg: 180, at: 1, dur: 2, to: 1 },
+    { step: "spineN", p1: "0.2928932188,0.2928932188", p2: "0.7522961665,0.7522961665", move: "0.5286,0.3333", sign: 1, deg: 180, at: 1, dur: 2, to: 1 },
+    { step: "spineH", p1: "0.7522961665,0.7522961665", p2: "diag@1", move: "0.5286,0.3333", sign: 1, deg: 180, at: 1, dur: 2, to: 1 },
     { step: "still", p1: "-0.2928932188,-0.2928932188", p2: "diag@0.5", move: "-0.3333,-0.5286", sign: 1, deg: 180, at: 1, dur: 2, to: 1 },
     { step: "stillN", p1: "diag@0", p2: "-0.2928932188,-0.2928932188", move: "-0.3333,-0.5286", sign: 1, deg: 180, at: 1, dur: 2, to: 1 },
     // the squash folds, one crease per layer — the petal points sit 2−√2
@@ -154,7 +155,8 @@ define("steps", () => {
     { step: "kiteN", p1: "bottom@0", p2: "-0.617298121,-0.0760759335", move: "-0.8619,-0.3333", sign: -1, deg: -180, at: 14.9333, dur: 0.0333, to: 1 },
     { step: "kite2", p1: "0.0760759335,0.617298121", p2: "s1@0", move: "0.3333,0.8619", sign: -1, deg: 180, at: 14.9333, dur: 0.0333, to: 1 },
     { step: "kite2", p1: "top@0", p2: "s1@0", move: "-0.3333,0.8619", sign: 1 },
-    { step: "kite2N", p1: "top@1", p2: "0.0760759335,0.617298121", move: "0.3333,0.8619", sign: -1, deg: 180, at: 14.9333, dur: 0.0333, to: 1 },
+    { step: "kite2H", p1: "top@1", p2: "0.6765031023,0.8660031976", move: "0.3333,0.8619", sign: -1, deg: 180, at: 14.9333, dur: 0.0333, to: 1 },
+    { step: "kite2N", p1: "0.6765031023,0.8660031976", p2: "0.0760759335,0.617298121", move: "0.3333,0.8619", sign: -1, deg: 180, at: 14.9333, dur: 0.0333, to: 1 },
     { step: "petal", p1: "s2@0", p2: "s1@0", move: "-0.5286,0.5286", sign: 1, deg: 180, at: 14.6, dur: 0.65, to: 1 },
     { step: "peelfr", p1: "top@0.5", p2: "s1@0", move: "0.3333,0.8619", sign: 1, deg: 180, at: 4, dur: 0.5, to: -0.18 },
     { step: "peelfl", p1: "left@0.5", p2: "s2@0", move: "-0.8619,-0.3333", sign: 1, deg: -180, at: 9.5, dur: 0.25, to: -0.125 },
@@ -164,7 +166,8 @@ define("steps", () => {
     { step: "kite3N", p1: "bottom@0", p2: "-0.076132636,-0.617321608", move: "-0.3333,-0.8619", sign: 1, deg: -180, at: 15.7, dur: 0.0333, to: 1 },
     { step: "kite4", p1: "bottom@1", p2: "hm@0.7928932188", move: "0.8619,-0.3333", sign: -1, deg: 180, at: 15.7, dur: 0.0333, to: 1 },
     { step: "kite4", p1: "0.617321608,0.076132636", p2: "hm@0.7928932188", move: "0.8619,0.3333", sign: 1 },
-    { step: "kite4N", p1: "top@1", p2: "0.617321608,0.076132636", move: "0.8619,0.3333", sign: 1, deg: 180, at: 15.7, dur: 0.0333, to: 1 },
+    { step: "kite4H", p1: "top@1", p2: "0.8660031976,0.6765031023", move: "0.8619,0.3333", sign: 1, deg: 180, at: 15.7, dur: 0.0333, to: 1 },
+    { step: "kite4N", p1: "0.8660031976,0.6765031023", p2: "0.617321608,0.076132636", move: "0.8619,0.3333", sign: 1, deg: 180, at: 15.7, dur: 0.0333, to: 1 },
     { step: "petal2", p1: "vm@0.2071067812", p2: "hm@0.7928932188", move: "0.4310,-0.6262;0.6262,-0.4310", sign: -1, deg: 180, at: 15.35, dur: 0.65, to: 1 },
     { step: "peelbr", p1: "right@0.5", p2: "hm@0.7928932188", move: "0.8619,0.3333", sign: -1, deg: 180, at: 4, dur: 0.5, to: -0.18 },
     { step: "peelbl", p1: "bottom@0.5", p2: "vm@0.2071067812", move: "-0.3333,-0.8619", sign: -1, deg: -180, at: 9.5, dur: 0.25, to: -0.125 },
@@ -179,8 +182,10 @@ define("steps", () => {
     { step: "thinfr", p1: "-0.1522,0.4335", p2: "-0.3512,0.7312", move: "-0.2268,0.5991", sign: 1 },
     { step: "thinfr", p1: "-0.1522,0.4335", p2: "0,0.3318", move: "-0.0595,0.4076", sign: 1 },
     { step: "thinfr", p1: "0.5135980841,0.6749862398", p2: "0,0.3318", move: "0.4833,0.6909", sign: 1 },
-    { step: "thinfrN", p1: "1,1", p2: "0.4262703879,0.8858851802", move: "0.5059,0.8711", sign: 1, deg: 180, at: 16.5, dur: 0.5, to: 1 },
-    { step: "thinfrN", p1: "1,1", p2: "0.5135980841,0.6749862398", move: "0.4833,0.6909", sign: 1 },
+    { step: "thinfrH", p1: "1,1", p2: "0.5271354908,0.9059472492", move: "0.5059,0.8711", sign: 1, deg: 180, at: 16.5, dur: 0.5, to: 1 },
+    { step: "thinfrN", p1: "0.5271354908,0.9059472492", p2: "0.4262703879,0.8858851802", move: "0.5059,0.8711", sign: 1, deg: 180, at: 16.5, dur: 0.5, to: 1 },
+    { step: "thinfrH", p1: "1,1", p2: "0.5992516924,0.7322199809", move: "0.4833,0.6909", sign: 1 },
+    { step: "thinfrN", p1: "0.5992516924,0.7322199809", p2: "0.5135980841,0.6749862398", move: "0.4833,0.6909", sign: 1 },
     { step: "thinfl", p1: "-0.2562347721,-0.8520650962", p2: "0,-0.8011", move: "-0.4942,-0.93", sign: 1, deg: 180, at: 16.5, dur: 0.5, to: 1 },
     { step: "thinfl", p1: "0,-0.8011", p2: "0.3512,-0.7312", move: "0.1814,-0.7956", sign: 1 },
     { step: "thinfl", p1: "0.1522,-0.4335", p2: "0.3512,-0.7312", move: "0.2766,-0.5657", sign: 1 },
@@ -193,8 +198,10 @@ define("steps", () => {
     { step: "thinbr", p1: "0.4335,-0.1522", p2: "0.7312,-0.3512", move: "0.5657,-0.2766", sign: -1 },
     { step: "thinbr", p1: "0.4335,-0.1522", p2: "0.3318,0", move: "0.3577,-0.0928", sign: -1 },
     { step: "thinbr", p1: "0.6749995558,0.5136180123", p2: "0.3318,0", move: "0.641,0.5167", sign: -1 },
-    { step: "thinbrN", p1: "1,1", p2: "0.8858720784,0.4262045167", move: "0.93,0.4942", sign: -1, deg: 180, at: 17.2, dur: 0.5, to: 1 },
-    { step: "thinbrN", p1: "1,1", p2: "0.6749995558,0.5136180123", move: "0.641,0.5167", sign: -1 },
+    { step: "thinbrH", p1: "1,1", p2: "0.9059472491,0.5271354908", move: "0.93,0.4942", sign: -1, deg: 180, at: 17.2, dur: 0.5, to: 1 },
+    { step: "thinbrN", p1: "0.9059472491,0.5271354908", p2: "0.8858720784,0.4262045167", move: "0.93,0.4942", sign: -1, deg: 180, at: 17.2, dur: 0.5, to: 1 },
+    { step: "thinbrH", p1: "1,1", p2: "0.7322199809,0.5992516924", move: "0.641,0.5167", sign: -1 },
+    { step: "thinbrN", p1: "0.7322199809,0.5992516924", p2: "0.6749995558,0.5136180123", move: "0.641,0.5167", sign: -1 },
     { step: "thinbl", p1: "-0.8520669717,-0.2562442014", p2: "-0.8011,0", move: "-0.93,-0.4942", sign: -1, deg: 180, at: 17.2, dur: 0.5, to: 1 },
     { step: "thinbl", p1: "-0.8011,0", p2: "-0.7312,0.3512", move: "-0.7956,0.1814", sign: -1 },
     { step: "thinbl", p1: "-0.4335,0.1522", p2: "-0.7312,0.3512", move: "-0.5657,0.2766", sign: -1 },
@@ -224,6 +231,33 @@ define("steps", () => {
     { step: "tail", p1: "-0.076132636,-0.617321608", p2: "-0.3694922085,-0.5786946937", move: "-0.226729,-0.627753", sign: 1 },
     { step: "tail", p1: "-0.076132636,-0.617321608", p2: "-0.2562347721,-0.8520650962", move: "-0.189986,-0.716426", sign: -1 },
     { step: "tail", p1: "bottom@0.5", p2: "-0.2562347721,-0.8520650962", move: "-0.143116,-0.952011", sign: 1 },
+    // the head (crane step 12): one more inside reverse fold at the neck's
+    // tip — the neck's lengthwise halves split AGAIN ("H" steps) and flip
+    { step: "head", p1: "0.5992516924,0.7322199809", p2: "0.7522961665,0.7522961665", move: "0.671852,0.771992", sign: -1, deg: 180, at: 21.07, dur: 0.5, to: 1 },
+    { step: "head", p1: "0.5992516924,0.7322199809", p2: "0.6765031023,0.8660031976", move: "0.663779,0.78408", sign: 1 },
+    { step: "head", p1: "0.5271354908,0.9059472492", p2: "0.6765031023,0.8660031976", move: "0.609565,0.914928", sign: -1 },
+    { step: "head", p1: "0.5271354908,0.9059472492", p2: "0.649695038,1", move: "0.606727,0.929191", sign: 1 },
+    { step: "head", p1: "0.7322199809,0.5992516924", p2: "0.7522961665,0.7522961665", move: "0.771987,0.67185", sign: 1 },
+    { step: "head", p1: "0.7322199809,0.5992516924", p2: "0.8660031976,0.6765031023", move: "0.784077,0.663772", sign: -1 },
+    { step: "head", p1: "0.9059472491,0.5271354908", p2: "0.8660031976,0.6765031023", move: "0.914941,0.609589", sign: 1 },
+    { step: "head", p1: "0.9059472491,0.5271354908", p2: "1,0.649695038", move: "0.929189,0.606755", sign: -1 },
+    // the wings fold down (crane step 13), a quarter turn about the
+    // shoulder line — each wing is its flap's three plies (panel + wraps)
+    { step: "wingf", p1: "-0.0230091937,0.5953171577", p2: "-0.0999893356,0.7811989335", move: "-0.089216,0.676776", sign: -1, deg: -90, at: 21.8, dur: 0.8, to: 1 },
+    { step: "wingf", p1: "-0.1000026298,1", p2: "-0.0999918502,0.781198433", move: "-0.129997,0.890598", sign: 1 },
+    { step: "wingf", p1: "-0.5183163294,0.2088961692", p2: "-0.595318401,0.0230121952", move: "-0.58453,0.127441", sign: 1 },
+    { step: "wingf", p1: "-0.5183163294,0.2088961692", p2: "-0.2088896014,0.5183065042", move: "-0.384815,0.384818", sign: -1 },
+    { step: "wingf", p1: "-0.0230079538,0.5953166441", p2: "-0.2088904689,0.518307802", move: "-0.127437,0.584525", sign: 1 },
+    { step: "wingf", p1: "-0.7811948794,0.1000097047", p2: "-1,0.1000026109", move: "-0.890598,0.130006", sign: 1 },
+    { step: "wingf", p1: "-0.7811954143,0.1000070171", p2: "-0.5953191667,0.023014044", move: "-0.676773,0.089226", sign: -1 },
+    { step: "wingb", p1: "0.0999788624,-0.781201018", p2: "0.0230079208,-0.5953166304", move: "0.089211,-0.676779", sign: 1, deg: -90, at: 21.8, dur: 0.8, to: 1 },
+    { step: "wingb", p1: "0.0999646969,-0.7812038374", p2: "0.1000137004,-1", move: "0.129991,-0.890598", sign: -1 },
+    { step: "wingb", p1: "0.2088845058,-0.5182988813", p2: "0.3635786374,-0.3635786374", move: "0.307446,-0.462151", sign: 1 },
+    { step: "wingb", p1: "0.2088845058,-0.5182988813", p2: "0.0230069267,-0.5953162187", move: "0.127433,-0.58452", sign: -1 },
+    { step: "wingb", p1: "0.5953090293,-0.0229895701", p2: "0.5183552825,-0.2089222076", move: "0.584553,-0.12743", sign: -1 },
+    { step: "wingb", p1: "0.3635649696,-0.3635649696", p2: "0.5183524683,-0.2089203265", move: "0.462165,-0.307465", sign: 1 },
+    { step: "wingb", p1: "1,-0.1000033065", p2: "0.7811892358,-0.1000380598", move: "0.890599,-0.130022", sign: -1 },
+    { step: "wingb", p1: "0.5953090293,-0.0229895701", p2: "0.7811893536,-0.1000374682", move: "0.676764,-0.089231", sign: 1 },
     // ── the collapse, keyframed along the squash's solved path ──
     // squash 1 + press right (the peels are the same physical creases as
     // s1/s2, so they carry the same keyframes until their petal opens them)
@@ -240,7 +274,7 @@ define("steps", () => {
       [10.5, 0.75, 0.914], [11.25, 0.25, 0.958],
       [12.5, 0.5, 0.718], [13, 0.5, 0.48], [13.5, 0.5, 0.24], [14, 0.5, 0],
     ]),
-    ...kf(["spine", "spineN"], [
+    ...kf(["spine", "spineN", "spineH"], [
       [4, 2, 0], [6.5, 0.5, -0.163], [7, 0.5, -0.284],
       [7.5, 0.5, -0.526], [8, 0.5, -0.763], [8.5, 0.5, -1],
     ]),
@@ -263,12 +297,16 @@ define("steps", () => {
     // hinge: spineN flips −1→1 while the kite/thin halves flip 1→−1) —
     // then the PRESS, the reverse crease folding flat while the wraps
     // breathe open and shut
-    ...kf(["spineN"], [[18.6, 0.12, 1]]),
-    ...kf(["kite2N", "kite4N", "thinfrN", "thinbrN"],
+    ...kf(["spineN", "spineH"], [[18.6, 0.12, 1]]),
+    ...kf(["kite2N", "kite4N", "thinfrN", "thinbrN", "kite2H", "kite4H", "thinfrH", "thinbrH"],
       [[18.72, 0.15, -1], [19.12, 0.07, -0.35], [19.19, 0.31, -1]]),
     ...kf(["stillN"], [[19.7, 0.12, 1]]),
     ...kf(["kiteN", "kite3N", "thinflN", "thinblN"],
       [[19.82, 0.15, -1], [19.97, 0.25, -0.72], [20.22, 0.18, -0.88], [20.4, 0.2, -1]]),
+    // the head's reverse: pop the tip through (spineH flips back, then its
+    // wraps), then the head crease presses flat
+    ...kf(["spineH"], [[20.8, 0.12, -1]]),
+    ...kf(["kite2H", "kite4H", "thinfrH", "thinbrH"], [[20.92, 0.15, 1]]),
   ])
 })
 
@@ -282,9 +320,9 @@ define("events", (rand, table) => {
     .concat(paper.sequence())
 })
 
-// Bake to a 21-beat loop cache — when the loop wraps, the paper opens flat
+// Bake to a 23-beat loop cache — when the loop wraps, the paper opens flat
 // and folds itself all over again.
-define("scene", (rand, table) => table("events").rasterize(21))
+define("scene", (rand, table) => table("events").rasterize(23))
 
 // A whisper of video feedback (the rendered scene is hydra's s0) so the
 // paper leaves faint trails as it moves. Delete this view for a clean look.

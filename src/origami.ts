@@ -576,6 +576,9 @@ export interface FoldPlayer {
   // the only independently moving pieces are faces a crease separates, and
   // re-driving an earlier fold mid-step carries its creases with the paper.
   step(fracs: Record<string, number>): void
+  // The spanning tree, for inspection: each face's parent and the crease it
+  // hinges about (step index into program.steps, span parity sign).
+  readonly tree: { child: number; parent: number; step: number; sign: number; p: Vec2; q: Vec2; childIsMover: boolean }[]
 }
 
 type Affine = Float64Array // row-major 3x4
@@ -917,5 +920,10 @@ export function createFoldPlayer(program: FoldProgram): FoldPlayer {
   }
 
   step({})
-  return { positions, linePositions, groups: program.groups, program, step }
+  const treeView = tree.map((te) => ({
+    child: te.child, parent: te.parent, step: te.hinge.step, sign: te.hinge.sign,
+    p: [te.hinge.px, te.hinge.py] as Vec2, q: [te.hinge.qx, te.hinge.qy] as Vec2,
+    childIsMover: te.childIsMover,
+  }))
+  return { positions, linePositions, groups: program.groups, program, step, tree: treeView }
 }
