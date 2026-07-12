@@ -254,10 +254,11 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
         `thinned edge at (${pt}) should sit on the axis, got (${w.map((v) => v.toFixed(3))})`)
     }
     // After the inside reverse folds (beat 20.65+): the points swing up and
-    // out, each the reflection of the old tip across its reverse line.
+    // out, each the reflection of the old tip across its reverse line — the
+    // neck steeper (60°) than the tail (30°), so the head end rises higher.
     player.step(kfFracsAt(Infinity))
     const neckTip = worldOfSheet([0.985, 0.985])
-    assert.ok(Math.hypot(neckTip[0] + 0.04, neckTip[1] - 1.238) < 0.04,
+    assert.ok(Math.hypot(neckTip[0] + 0.547, neckTip[1] - 1.238) < 0.04,
       `neck tip at (${neckTip.map((v) => v.toFixed(3))})`)
     const tailTip = worldOfSheet([-0.985, -0.985])
     assert.ok(Math.hypot(tailTip[0] + 1.238, tailTip[1] - 0.04) < 0.04,
