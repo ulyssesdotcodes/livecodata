@@ -77,8 +77,21 @@ export interface PlaybackOptions {
   midiCtxAt?: (srcFrame: number) => EvalCtx | null
 }
 
+// The engine's clocks and frame scheduler, injectable so tests can drive the
+// whole timing state machine deterministically. Production omits this and
+// gets the real ones.
+export interface PlaybackClock {
+  // Monotonic ms — the beat clock (performance.now).
+  now?: () => number
+  // Wall-clock epoch ms — the cross-client phase anchor (Date.now).
+  epochNow?: () => number
+  // Schedule the next animation frame (requestAnimationFrame).
+  raf?: (cb: () => void) => void
+}
+
 export interface PlaybackEngineOptions extends PlaybackOptions {
   onViewChange?: (vs: PlaybackViewState) => void
+  clock?: PlaybackClock
 }
 
 export interface PlaybackAPI {
@@ -114,8 +127,12 @@ export interface PlaybackEngine extends PlaybackAPI {
 export function createPlaybackEngine(
   sceneAPI: SceneAPI,
   hydraAPI: HydraAPI,
-  { onTick, onPlay, onLoop, tapControl, midiCtxAt, onViewChange }: PlaybackEngineOptions = {},
+  { onTick, onPlay, onLoop, tapControl, midiCtxAt, onViewChange, clock }: PlaybackEngineOptions = {},
 ): PlaybackEngine {
+  const now = clock?.now ?? ((): number => performance.now())
+  const epochNow = clock?.epochNow ?? ((): number => Date.now())
+  const raf = clock?.raf ?? ((cb: () => void): void => { requestAnimationFrame(cb) })
+
   let state: PlayState = 'idle'
   // The playhead is measured in BEATS. `startTime` is the wall epoch (ms) the
   // beat clock is anchored to, and `anchorBeatSec` the tempo it was anchored at,
@@ -247,7 +264,7 @@ export function createPlaybackEngine(
     const anchorMs = tapControl?.anchor?.() ?? 0
     const bs = beatSeconds()
     if (maxBeats <= 0) return null
-    return wallAlignedTick(Date.now(), anchorMs, maxBeats * bs) / bs
+    return wallAlignedTick(epochNow(), anchorMs, maxBeats * bs) / bs
   }
 
   // The content/source position (a 1-indexed beat) currently on screen — the
@@ -283,7 +300,7 @@ export function createPlaybackEngine(
   // the current tempo. The one place the tapped tempo is folded into the clock.
   function anchor(pos: number): void {
     anchorBeatSec = beatSeconds()
-    startTime = performance.now() - pos * anchorBeatSec * 1000
+    startTime = now() - pos * anchorBeatSec * 1000
   }
 
   // Re-anchor the clock + view to beat `pos` (clamped) and reconcile the
@@ -393,7 +410,7 @@ export function createPlaybackEngine(
 
   // The live playhead, in beats, at the anchored tempo.
   function position(): number {
-    return (performance.now() - (startTime ?? 0)) / 1000 / anchorBeatSec
+    return (now() - (startTime ?? 0)) / 1000 / anchorBeatSec
   }
 
   function tick(): void {
@@ -422,7 +439,7 @@ export function createPlaybackEngine(
       return
     }
 
-    requestAnimationFrame(tick)
+    raf(tick)
   }
 
   function play(): void {
