@@ -41,7 +41,7 @@ define("scene", (rand, table) => table("events").rasterize(8))
   },
   {
     name: "Origami Square Base",
-    code: `// livecodata — Origami Square Base, part 1: the squash to the standing T
+    code: `// livecodata — Origami Square Base: fold, squash, press
 // A square of paper folds itself the way origami is actually written down:
 // each instruction folds or REFLECTS the paper along a line through two
 // points on KNOWN EDGES — the paper's own edges, or an edge created by a
@@ -76,10 +76,11 @@ define("scene", (rand, table) => table("events").rasterize(8))
 //   - the right half of the triangle's long edge UNFOLDS flat  ("diag@…")
 // The mtn/s1 rows are keyframes along the squash's exact rigid path (the
 // five creases are one mechanism — drive three, the paper does the rest,
-// and every edge stays glued). It ends as the standing square-base pocket:
-// <| from the front, <|> from the side, a T from the top — the tip arrives
-// beside the right-angle corner, one press away from the square base. The
-// camera walks those views after the fold.
+// and every edge stays glued). Mid-squash it stands as the pocket: <| from
+// the front, <|> from the side, a T from the top. Then the PRESS: the
+// valley closes to 180° while the spine refolds home, and the pocket lies
+// down flat — the tip lands exactly ON the right-angle corner and the edge
+// midpoints stack at the side: one side of the square base, done.
 
 define("steps", () =>
   editable("steps", {
@@ -99,27 +100,45 @@ define("steps", () =>
     { step: "s1",  at: 5,   dur: 0.5, to: 0.372 },
     { step: "mtn", at: 5.5, dur: 0.5, to: -1.929 },
     { step: "s1",  at: 5.5, dur: 0.5, to: 0.475 },
+    // 3. press the standing pocket flat: the valley closes to 180 while the
+    //    spine refolds home and the mountains stay shut — the tip lands ON
+    //    the right-angle corner: one side of the square base, done.
+    { step: "s1",  at: 6.5, dur: 0.5, to: 0.54 },
+    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 6.5, dur: 0.5, to: 0.071 },
+    { step: "mtn", at: 6.5, dur: 0.5, to: -2.024 },
+    { step: "s1",  at: 7, dur: 0.5, to: 0.606 },
+    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 7, dur: 0.5, to: 0.208 },
+    { step: "mtn", at: 7, dur: 0.5, to: -2.009 },
+    { step: "s1",  at: 7.5, dur: 0.5, to: 0.737 },
+    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 7.5, dur: 0.5, to: 0.475 },
+    { step: "mtn", at: 7.5, dur: 0.5, to: -2.004 },
+    { step: "s1",  at: 8, dur: 0.5, to: 0.869 },
+    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 8, dur: 0.5, to: 0.738 },
+    { step: "mtn", at: 8, dur: 0.5, to: -2.003 },
+    { step: "s1",  at: 8.5, dur: 0.5, to: 1 },
+    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 8.5, dur: 0.5, to: 1 },
+    { step: "mtn", at: 8.5, dur: 0.5, to: -2 },
   ]))
 
-// Feed the instructions to a sheet of paper, then walk the camera around
-// the finished T: face-on for the <|, around the side for the <|>, and
-// overhead for the T.
+// Feed the instructions to a sheet of paper. The camera goes face-on as
+// the press starts (watch the <| close), swings around the side, then
+// overhead for the finished half-base.
 define("events", (rand, table) => {
   const paper = origami().steps(table("steps"))
   return paper.spawn({ id: "base", color: 0xd94f2a, py: -0.2, pz: 1.2, rx: -0.9, ry: 0.2 })
     .concat(paper.sequence())
     .concat(rows([
       { id: "base", type: "update", beat: 4,   py: -0.2, rx: -0.75, ry: 0.2, rz: 0 },
-      { id: "base", type: "update", beat: 6,   py: -0.4, rx: -1.57, ry: 0,    rz: -0.79 },
-      { id: "base", type: "update", beat: 7,   py: -0.4, rx: -1.57, ry: 0,    rz: -0.79 },
-      { id: "base", type: "update", beat: 8.5, py: -0.4, rx: -1.57, ry: 1.57, rz: -0.79 },
-      { id: "base", type: "update", beat: 10,  py: 0.1,  rx: -0.05, ry: 0,    rz: -0.79 },
+      { id: "base", type: "update", beat: 6.4, py: -0.4, rx: -1.57, ry: 0,    rz: -0.79 },
+      { id: "base", type: "update", beat: 7.2, py: -0.4, rx: -1.57, ry: 0,    rz: -0.79 },
+      { id: "base", type: "update", beat: 9,   py: -0.4, rx: -1.57, ry: 1.57, rz: -0.79 },
+      { id: "base", type: "update", beat: 10.5, py: 0.1, rx: -0.05, ry: 0,    rz: -0.79 },
     ]))
 })
 
-// Bake to an 11-beat loop cache — when the loop wraps, the paper opens flat
+// Bake to a 12-beat loop cache — when the loop wraps, the paper opens flat
 // and folds itself all over again.
-define("scene", (rand, table) => table("events").rasterize(11))
+define("scene", (rand, table) => table("events").rasterize(12))
 
 // A whisper of video feedback (the rendered scene is hydra's s0) so the
 // paper leaves faint trails as it moves. Delete this view for a clean look.
