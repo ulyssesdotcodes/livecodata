@@ -62,7 +62,8 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
   const program = create.program as FoldProgram
   assert.deepEqual(program.groups,
     ['spine', 'still', 's1', 'hv', 's2', 'kite', 'kite2', 'petal', 'peelfr', 'peelfl',
-      'kite3', 'kite4', 'petal2', 'peelbr', 'peelbl'])
+      'kite3', 'kite4', 'petal2', 'peelbr', 'peelbl',
+      'thinfr', 'thinfl', 'thinbr', 'thinbl'])
   assert.equal(program.warnings.length, 0, program.warnings.join('; '))
 
   // Take the fractions at the end of the squash off the baked keyframes and
@@ -199,7 +200,8 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
   }
 
   // Every fold ends FLAT: the triangle, the square base, each finished
-  // petal, the bird base.
+  // petal, the bird base, and each thinning pass (17 = front pair done,
+  // 18 = the thinned bird base).
   const zExtent = (): number => {
     let lo = Infinity
     let hi = -Infinity
@@ -209,10 +211,47 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
     }
     return hi - lo
   }
-  for (const beat of [3.5, 14.5, 15.3, 16]) {
+  for (const beat of [3.5, 14.5, 15.3, 16, 17, 18]) {
     player.step(kfFracsAt(beat))
     assert.ok(stretchNow() < 0.01, `beat ${beat}: fold end strained (${stretchNow().toFixed(4)})`)
     assert.ok(zExtent() < 0.05, `beat ${beat}: fold end not flat (z extent ${zExtent().toFixed(4)})`)
+  }
+  // The thinned legs: the former outer edges (the kite creases, the bird
+  // base's silhouette) lie ON the centre line — the world axis x = −y —
+  // after both thinning passes.
+  {
+    player.step(kfFracsAt(18))
+    const worldOfSheet = (pt: Vec2): number[] => {
+      let base = 0
+      for (const f of program.faces) {
+        const poly = f.poly
+        let inside = true
+        for (let i = 0; i < poly.length && inside; i++) {
+          const a = poly[i]
+          const b = poly[(i + 1) % poly.length]
+          if ((b[0] - a[0]) * (pt[1] - a[1]) - (b[1] - a[1]) * (pt[0] - a[0]) < -1e-9) inside = false
+        }
+        if (inside) {
+          const [s0, s1, s2] = poly
+          const det = (s1[0] - s0[0]) * (s2[1] - s0[1]) - (s1[1] - s0[1]) * (s2[0] - s0[0])
+          const a = ((pt[0] - s0[0]) * (s2[1] - s0[1]) - (pt[1] - s0[1]) * (s2[0] - s0[0])) / det
+          const b = ((s1[0] - s0[0]) * (pt[1] - s0[1]) - (s1[1] - s0[1]) * (pt[0] - s0[0])) / det
+          const o = base * 3
+          const P = player.positions
+          return [0, 1, 2].map((k) =>
+            P[o + k] + a * (P[o + 3 + k] - P[o + k]) + b * (P[o + 6 + k] - P[o + k]))
+        }
+        base += (poly.length - 2) * 3
+      }
+      throw new Error('sheet point not found')
+    }
+    // midpoints of the two former outer edges (on the kite2/kite creases)
+    for (const pt of [[0.5, 0.79289322], [-0.5, -0.79289322]] as Vec2[]) {
+      const w = worldOfSheet(pt)
+      assert.ok(Math.abs(w[0] + w[1]) < 0.02,
+        `thinned edge at (${pt}) should sit on the axis, got (${w.map((v) => v.toFixed(3))})`)
+    }
+    player.step(kfFracsAt(14.5))
   }
 
   const scene = views.get('scene')!

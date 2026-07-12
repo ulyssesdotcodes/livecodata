@@ -91,10 +91,16 @@ define("scene", (rand, table) => table("events").rasterize(8))
 // paper gives (the petal fold is famously not rigid-foldable, and this
 // snap path is the strain-solved way through). These are SINGLE folds:
 // the back face doesn't move until its own petal, from the back corner,
-// repeats the same lines ("kite3"/"kite4"/"petal2"). Every fold ends
-// FLAT: the square base, each finished petal, and the exact BIRD BASE —
-// petalled corners at the tip, the middle flaps' corners still at the
-// base's point, everything flat to ~1e-5.
+// repeats the same lines ("kite3"/"kite4"/"petal2").
+//
+// THINNING THE LEGS (beats 16.5–17.7, crane steps 9–10): fold the bird
+// base's lower edges onto the centre line, front pair then back pair.
+// One fold line per edge, but it pierces FIVE plies, so each fold is a
+// chain of five creases turning at the peel, valley and squash lines —
+// the creases were sliced ply-by-ply off the folded model, and the
+// Kawasaki/Maekawa check passes at every vertex of the chain. Every
+// fold ends FLAT: the square base, each petal, the exact BIRD BASE
+// (petalled corners at the tip, flat to ~1e-5), each thinning pass.
 
 define("steps", () => {
   // keyframes shared by every layer of a crease: [at, dur, to]
@@ -143,6 +149,32 @@ define("steps", () => {
     { step: "petal2", p1: "vm@0.2071067812", p2: "hm@0.7928932188", move: "0.4310,-0.6262;0.6262,-0.4310", sign: -1, deg: 180, at: 15.35, dur: 0.65, to: 1 },
     { step: "peelbr", p1: "right@0.5", p2: "hm@0.7928932188", move: "0.8619,0.3333", sign: -1, deg: 180, at: 4, dur: 0.5, to: -0.18 },
     { step: "peelbl", p1: "bottom@0.5", p2: "vm@0.2071067812", move: "-0.3333,-0.8619", sign: -1, deg: -180, at: 9.5, dur: 0.25, to: -0.125 },
+    // thin the legs (crane steps 9-10): fold the bird base's lower edges
+    // onto the centre line, front pair then back pair. ONE fold line per
+    // edge — but the line pierces five plies, turning at the peel, the
+    // petal valley and the squash crease, so each fold is a CHAIN of five
+    // creases (sliced ply by ply off the folded model; the extra folded
+    // triangles past the valley hide under the wings, as on real paper)
+    { step: "thinfr", p1: "1,1", p2: "0,0.8011", move: "0.5059,0.8711", sign: 1, deg: 180, at: 16.5, dur: 0.5, to: 1 },
+    { step: "thinfr", p1: "0,0.8011", p2: "-0.3512,0.7312", move: "-0.1697,0.7367", sign: 1 },
+    { step: "thinfr", p1: "-0.1522,0.4335", p2: "-0.3512,0.7312", move: "-0.2268,0.5991", sign: 1 },
+    { step: "thinfr", p1: "-0.1522,0.4335", p2: "0,0.3318", move: "-0.0595,0.4076", sign: 1 },
+    { step: "thinfr", p1: "1,1", p2: "0,0.3318", move: "0.4833,0.6909", sign: 1 },
+    { step: "thinfl", p1: "-1,-1", p2: "0,-0.8011", move: "-0.4942,-0.93", sign: 1, deg: 180, at: 16.5, dur: 0.5, to: 1 },
+    { step: "thinfl", p1: "0,-0.8011", p2: "0.3512,-0.7312", move: "0.1814,-0.7956", sign: 1 },
+    { step: "thinfl", p1: "0.1522,-0.4335", p2: "0.3512,-0.7312", move: "0.2766,-0.5657", sign: 1 },
+    { step: "thinfl", p1: "0.1522,-0.4335", p2: "0,-0.3318", move: "0.0928,-0.3577", sign: 1 },
+    { step: "thinfl", p1: "-1,-1", p2: "0,-0.3318", move: "-0.5167,-0.641", sign: 1 },
+    { step: "thinbr", p1: "1,1", p2: "0.8011,0", move: "0.93,0.4942", sign: -1, deg: 180, at: 17.2, dur: 0.5, to: 1 },
+    { step: "thinbr", p1: "0.8011,0", p2: "0.7312,-0.3512", move: "0.7956,-0.1814", sign: -1 },
+    { step: "thinbr", p1: "0.4335,-0.1522", p2: "0.7312,-0.3512", move: "0.5657,-0.2766", sign: -1 },
+    { step: "thinbr", p1: "0.4335,-0.1522", p2: "0.3318,0", move: "0.3577,-0.0928", sign: -1 },
+    { step: "thinbr", p1: "1,1", p2: "0.3318,0", move: "0.641,0.5167", sign: -1 },
+    { step: "thinbl", p1: "-1,-1", p2: "-0.8011,0", move: "-0.93,-0.4942", sign: -1, deg: 180, at: 17.2, dur: 0.5, to: 1 },
+    { step: "thinbl", p1: "-0.8011,0", p2: "-0.7312,0.3512", move: "-0.7956,0.1814", sign: -1 },
+    { step: "thinbl", p1: "-0.4335,0.1522", p2: "-0.7312,0.3512", move: "-0.5657,0.2766", sign: -1 },
+    { step: "thinbl", p1: "-0.4335,0.1522", p2: "-0.3318,0", move: "-0.3577,0.0928", sign: -1 },
+    { step: "thinbl", p1: "-1,-1", p2: "-0.3318,0", move: "-0.641,-0.5167", sign: -1 },
     // ── the collapse, keyframed along the squash's solved path ──
     // squash 1 + press right (the peels are the same physical creases as
     // s1/s2, so they carry the same keyframes until their petal opens them)
@@ -179,19 +211,19 @@ define("steps", () => {
   ])
 })
 
-// Feed the creases to a sheet of paper. One steady three-quarter view for
-// the whole sequence, rotated so the finished base sits POINT DOWN — the
-// paper starts as a diamond, the way the diagrams hold it. (Add "update"
+// Feed the creases to a sheet of paper. One steady head-on view for the
+// whole sequence — the paper faces the camera flat, like the diagrams,
+// rotated so the finished base sits POINT DOWN as a diamond. (Add "update"
 // rows with rx/ry/rz to re-pose the paper mid-sequence.)
 define("events", (rand, table) => {
   const paper = origami().steps(table("steps"))
-  return paper.spawn({ id: "base", color: 0xd94f2a, py: 0.15, pz: 1.2, rx: -0.9, ry: 0, rz: 2.356 })
+  return paper.spawn({ id: "base", color: 0xd94f2a, py: 0, pz: 1.2, rx: 0, ry: 0, rz: 2.356 })
     .concat(paper.sequence())
 })
 
-// Bake to a 16-beat loop cache — when the loop wraps, the paper opens flat
+// Bake to an 18-beat loop cache — when the loop wraps, the paper opens flat
 // and folds itself all over again.
-define("scene", (rand, table) => table("events").rasterize(16))
+define("scene", (rand, table) => table("events").rasterize(18))
 
 // A whisper of video feedback (the rendered scene is hydra's s0) so the
 // paper leaves faint trails as it moves. Delete this view for a clean look.

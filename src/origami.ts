@@ -443,22 +443,26 @@ function flatFoldCheck(program: FoldProgram, schedule: ScheduleRow[]): void {
     mv: number // +1/−1 mountain-or-valley in the final state, 0 = open
     exact: boolean // final fraction is flat (±1 or 0)
   }
-  // Which side of a span its mover sits on (via an adjacent moving face) —
-  // the world sense of the fold, and so mountain-vs-valley, depends on it.
+  // Which side of a span its mover sits on — the world sense of the fold,
+  // and so mountain-vs-valley, depends on it. Probe points just off the
+  // span at several stations: the side where a moving face contains the
+  // probe (and the other side doesn't) is the mover's side. Probing is
+  // robust to later cuts subdividing the neighbourhood, which broke the
+  // previous exact edge-collinearity match.
   const moverSide = (k: number, a: Vec2, b: Vec2): number => {
-    const d = sub2(b, a)
-    const L = len2(d)
-    for (const fi of program.steps[k].moving) {
-      const poly = program.faces[fi].poly
-      for (let i = 0; i < poly.length; i++) {
-        const e1 = poly[i]
-        const e2 = poly[(i + 1) % poly.length]
-        if (Math.abs(cross2(d, sub2(e1, a))) > 1e-6 * L) continue
-        if (Math.abs(cross2(d, sub2(e2, a))) > 1e-6 * L) continue
-        const t1 = dot2(d, sub2(e1, a)) / (L * L)
-        const t2 = dot2(d, sub2(e2, a)) / (L * L)
-        if (Math.min(1, Math.max(t1, t2)) - Math.max(0, Math.min(t1, t2)) < 1e-6) continue
-        return Math.sign(cross2(d, sub2(polyCentroid(poly), a)))
+    const d = norm2(sub2(b, a))
+    const n: Vec2 = [-d[1], d[0]]
+    const L = len2(sub2(b, a))
+    for (const eps of [1e-4, 1e-3, 5e-3]) {
+      for (const t of [0.5, 0.25, 0.75]) {
+        const mx = a[0] + t * (b[0] - a[0])
+        const my = a[1] + t * (b[1] - a[1])
+        if (eps * 2 > L) break
+        const inL = program.steps[k].moving.some((fi) =>
+          pointInPoly([mx + eps * n[0], my + eps * n[1]], program.faces[fi].poly))
+        const inR = program.steps[k].moving.some((fi) =>
+          pointInPoly([mx - eps * n[0], my - eps * n[1]], program.faces[fi].poly))
+        if (inL !== inR) return inL ? 1 : -1
       }
     }
     return 0
@@ -483,11 +487,14 @@ function flatFoldCheck(program: FoldProgram, schedule: ScheduleRow[]): void {
   })
 
   // Interior vertices: crease endpoints and pairwise crossings, off the
-  // sheet's boundary.
+  // sheet's boundary. Tables are written by hand, so coordinates carry a
+  // few decimals of precision — all matching here is to TOL, not machine
+  // epsilon (a point 1e-4 off a crease line still belongs to it).
+  const TOL = 5e-4
   const pts: Vec2[] = []
   const addPt = (p: Vec2): void => {
-    if (Math.max(Math.abs(p[0]), Math.abs(p[1])) > s - 1e-7) return
-    if (!pts.some((q) => len2(sub2(q, p)) < 1e-7)) pts.push(p)
+    if (Math.max(Math.abs(p[0]), Math.abs(p[1])) > s - TOL) return
+    if (!pts.some((q) => len2(sub2(q, p)) < TOL)) pts.push(p)
   }
   for (const c of creases) {
     addPt(c.a)
@@ -515,13 +522,13 @@ function flatFoldCheck(program: FoldProgram, schedule: ScheduleRow[]): void {
     for (const c of creases) {
       const d = sub2(c.b, c.a)
       const L = len2(d)
-      if (L < EPS || Math.abs(cross2(d, sub2(v, c.a))) > 1e-6 * L) continue
+      if (L < EPS || Math.abs(cross2(d, sub2(v, c.a))) > TOL * L) continue
       const t = dot2(d, sub2(v, c.a)) / (L * L)
-      if (t < -1e-7 || t > 1 + 1e-7) continue
+      if (t < -TOL / L || t > 1 + TOL / L) continue
       if (!c.exact) skip = true // a mid-fold crease: the theorems don't apply
       if (c.mv === 0) continue // open in the final state — not part of it
-      if (t > 1e-7) rays.push({ ang: Math.atan2(-d[1], -d[0]), mv: c.mv })
-      if (t < 1 - 1e-7) rays.push({ ang: Math.atan2(d[1], d[0]), mv: c.mv })
+      if (t > TOL / L) rays.push({ ang: Math.atan2(-d[1], -d[0]), mv: c.mv })
+      if (t < 1 - TOL / L) rays.push({ ang: Math.atan2(d[1], d[0]), mv: c.mv })
     }
     if (skip || !rays.length) continue
     const at = `flat check at (${v[0].toFixed(4)}, ${v[1].toFixed(4)})`
@@ -536,7 +543,10 @@ function flatFoldCheck(program: FoldProgram, schedule: ScheduleRow[]): void {
       const a1 = i + 1 < rays.length ? rays[i + 1].ang : rays[0].ang + 2 * Math.PI
       alt += (i % 2 ? -1 : 1) * (a1 - a0)
     }
-    if (Math.abs(alt) > 1e-6) {
+    // 0.15°: forgiving of hand-typed 4-decimal coordinates (which skew
+    // sector angles by a few hundredths of a degree), tight enough that
+    // any real misplacement — the smallest are whole degrees — still trips.
+    if (Math.abs(alt) > 0.15 * (Math.PI / 180)) {
       program.warnings.push(
         `${at}: Kawasaki fails (alternating angles off by ${((alt * 180) / Math.PI).toFixed(2)}°) — cannot fold flat`)
     }
