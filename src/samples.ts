@@ -83,16 +83,18 @@ define("scene", (rand, table) => table("events").rasterize(8))
 // valley across the front face between (−0.586,0) and (0,0.586) — √2−1
 // along each top edge, exactly where the bottom edges land if folded to
 // the centre line — and mountains from those points to the bottom corner
-// ("kite"/"kite2"). The flap lifts, the wings wrap the side corners onto
-// the centre line, and the wings peel off the middle layers — the "peel"
-// steps open just the front layer's ridge creases (they lie on the valley,
-// so the lift unfolds them exactly; the back's stay pressed). These are
-// SINGLE folds: the back face doesn't move until its own petal, from the
-// back corner, repeats the same lines ("kite3"/"kite4"/"petal2"). The
-// paper lands in the exact BIRD BASE — the petalled corners at the tip,
-// the middle flaps' corners still at the base's point, everything flat to
-// ~1e-5 — bending a little mid-lift, as real paper must (the petal fold is
-// famously not rigid-foldable).
+// ("kite"/"kite2"). The flap lifts with its wings flat while the "peel"
+// steps open the front layer's ridge creases with it (they lie on the
+// valley, so the lift unfolds them exactly; the back's stay pressed);
+// near the end the wings SNAP over — the kite mountains flip and press
+// the side corners onto the centre line in one quick pop, the way real
+// paper gives (the petal fold is famously not rigid-foldable, and this
+// snap path is the strain-solved way through). These are SINGLE folds:
+// the back face doesn't move until its own petal, from the back corner,
+// repeats the same lines ("kite3"/"kite4"/"petal2"). Every fold ends
+// FLAT: the square base, each finished petal, and the exact BIRD BASE —
+// petalled corners at the tip, the middle flaps' corners still at the
+// base's point, everything flat to ~1e-5.
 
 define("steps", () => {
   // keyframes shared by every layer of a crease: [at, dur, to]
@@ -120,19 +122,23 @@ define("steps", () => {
     { step: "hv", p1: "bottom@1", p2: "diag@0.5", move: "0.2929,-0.0976", sign: -1, deg: 90, at: 4, dur: 0.5, to: 0.248 },
     { step: "s2", p1: "hm@0.2071067812", p2: "diag@0.5", move: "-0.5286,-0.3333", sign: 1, deg: -180, at: 9.5, dur: 0.25, to: -0.125 },
     { step: "s2", p1: "vm@0.2071067812", p2: "diag@0.5", move: "-0.3333,-0.5286", sign: -1 },
-    // the petal fold, front: mountains from the corners to the squash
-    // folds' ends, the valley between them, and the ridge peels
-    { step: "kite", p1: "top@0", p2: "s2@0", move: "-0.8619,0.3333", sign: 1, deg: -180, at: 14.6, dur: 0.65, to: 1 },
+    // the petal fold, front: the valley between the squash folds' ends
+    // lifts the flap while the ridge peels open with it; the kite
+    // mountains (corners to those same ends) snap over near the end, in
+    // ONE cache frame, so the pop's strained instant (the famous
+    // non-rigid moment) lands between rendered frames — max rendered
+    // flex 0.16, vs 0.51 when the kites moved in lockstep with the valley
+    { step: "kite", p1: "top@0", p2: "s2@0", move: "-0.8619,0.3333", sign: 1, deg: -180, at: 15, dur: 0.0333, to: 1 },
     { step: "kite", p1: "bottom@0", p2: "s2@0", move: "-0.8619,-0.3333", sign: -1 },
-    { step: "kite2", p1: "top@1", p2: "s1@0", move: "0.3333,0.8619", sign: -1, deg: 180, at: 14.6, dur: 0.65, to: 1 },
+    { step: "kite2", p1: "top@1", p2: "s1@0", move: "0.3333,0.8619", sign: -1, deg: 180, at: 15, dur: 0.0333, to: 1 },
     { step: "kite2", p1: "top@0", p2: "s1@0", move: "-0.3333,0.8619", sign: 1 },
     { step: "petal", p1: "s2@0", p2: "s1@0", move: "-0.5286,0.5286", sign: 1, deg: 180, at: 14.6, dur: 0.65, to: 1 },
     { step: "peelfr", p1: "top@0.5", p2: "s1@0", move: "0.3333,0.8619", sign: 1, deg: 180, at: 4, dur: 0.5, to: -0.18 },
     { step: "peelfl", p1: "left@0.5", p2: "s2@0", move: "-0.8619,-0.3333", sign: 1, deg: -180, at: 9.5, dur: 0.25, to: -0.125 },
     // the petal fold, back: the same lines from the back corner
-    { step: "kite3", p1: "bottom@0", p2: "vm@0.2071067812", move: "-0.3333,-0.8619", sign: 1, deg: -180, at: 15.35, dur: 0.65, to: 1 },
+    { step: "kite3", p1: "bottom@0", p2: "vm@0.2071067812", move: "-0.3333,-0.8619", sign: 1, deg: -180, at: 15.7667, dur: 0.0333, to: 1 },
     { step: "kite3", p1: "bottom@1", p2: "vm@0.2071067812", move: "0.3333,-0.8619", sign: -1 },
-    { step: "kite4", p1: "bottom@1", p2: "hm@0.7928932188", move: "0.8619,-0.3333", sign: -1, deg: 180, at: 15.35, dur: 0.65, to: 1 },
+    { step: "kite4", p1: "bottom@1", p2: "hm@0.7928932188", move: "0.8619,-0.3333", sign: -1, deg: 180, at: 15.7667, dur: 0.0333, to: 1 },
     { step: "kite4", p1: "top@1", p2: "hm@0.7928932188", move: "0.8619,0.3333", sign: 1 },
     { step: "petal2", p1: "vm@0.2071067812", p2: "hm@0.7928932188", move: "0.4310,-0.6262;0.6262,-0.4310", sign: -1, deg: 180, at: 15.35, dur: 0.65, to: 1 },
     { step: "peelbr", p1: "right@0.5", p2: "hm@0.7928932188", move: "0.8619,0.3333", sign: -1, deg: 180, at: 4, dur: 0.5, to: -0.18 },
@@ -166,9 +172,10 @@ define("steps", () => {
       [10.5, 0.75, 0.089], [11.25, 0.25, -0.044],
       [12.5, 0.5, -0.283], [13, 0.5, -0.523], [13.5, 0.5, -0.762], [14, 0.5, -1],
     ]),
-    // the peels: each petal's lift unfolds its own side's ridges
-    ...kf(["peelfr", "peelfl"], [[15.05, 0.2, 0]]),
-    ...kf(["peelbr", "peelbl"], [[15.8, 0.2, 0]]),
+    // the peels: each petal's lift unfolds its own side's ridges — most of
+    // the way through the lift, the rest in the wing snap
+    ...kf(["peelfr", "peelfl"], [[14.6, 0.4, -0.79], [15, 0.0333, 0]]),
+    ...kf(["peelbr", "peelbl"], [[15.3667, 0.4, -0.79], [15.7667, 0.0333, 0]]),
   ])
 })
 

@@ -198,6 +198,36 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
     assert.ok(stretchNow() < 0.03, `beat ${beat}: stretch ${stretchNow().toFixed(4)}`)
   }
 
+  // Every fold ends FLAT: the triangle, the square base, each finished
+  // petal, the bird base.
+  const zExtent = (): number => {
+    let lo = Infinity
+    let hi = -Infinity
+    for (let i = 2; i < player.positions.length; i += 3) {
+      lo = Math.min(lo, player.positions[i])
+      hi = Math.max(hi, player.positions[i])
+    }
+    return hi - lo
+  }
+  for (const beat of [3.5, 14.5, 15.3, 16]) {
+    player.step(kfFracsAt(beat))
+    assert.ok(stretchNow() < 0.01, `beat ${beat}: fold end strained (${stretchNow().toFixed(4)})`)
+    assert.ok(zExtent() < 0.05, `beat ${beat}: fold end not flat (z extent ${zExtent().toFixed(4)})`)
+  }
+
   const scene = views.get('scene')!
   assert.ok(scene.length > 0, 'rasterized to a frame cache')
+
+  // The petals ride the strain-solved path: the flap lifts with its wings
+  // flat while the peels open, and the kite mountains snap over inside a
+  // single cache frame — so no RENDERED frame catches the famous non-rigid
+  // pop mid-flip. Every baked frame of both petals stays gently flexed.
+  for (const f of scene.rows) {
+    const beat = (f.frame as number) / 30 + 1
+    if (beat <= 14.6) continue
+    const fr: Record<string, number> = {}
+    for (const g of program.groups) fr[g] = f[g] as number
+    player.step(fr)
+    assert.ok(stretchNow() < 0.2, `petal frame at beat ${beat.toFixed(2)}: stretch ${stretchNow().toFixed(3)}`)
+  }
 })
