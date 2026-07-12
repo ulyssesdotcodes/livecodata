@@ -41,7 +41,7 @@ define("scene", (rand, table) => table("events").rasterize(8))
   },
   {
     name: "Origami Square Base",
-    code: `// livecodata — Origami Square Base: fold, squash, press
+    code: `// livecodata — Origami Square Base: fold, squash, press — both sides
 // A square of paper folds itself the way origami is actually written down:
 // each instruction folds or REFLECTS the paper along a line through two
 // points on KNOWN EDGES — the paper's own edges, or an edge created by a
@@ -78,9 +78,15 @@ define("scene", (rand, table) => table("events").rasterize(8))
 // five creases are one mechanism — drive three, the paper does the rest,
 // and every edge stays glued). Mid-squash it stands as the pocket: <| from
 // the front, <|> from the side, a T from the top. Then the PRESS: the
-// valley closes to 180° while the spine refolds home, and the pocket lies
-// down flat — the tip lands exactly ON the right-angle corner and the edge
-// midpoints stack at the side: one side of the square base, done.
+// pocket lies down flat to the RIGHT of the centre line — the valley OPENS
+// back to flat while the spine refolds the other way — the tip lands
+// exactly ON the right-angle corner and both edge midpoints stack at the
+// top corner: one side of the square base. Then the SAME squash-and-press
+// on the other flap — its mountains to the other pair of coincident
+// midpoints, the long edge's left half as its spine, the same halving
+// valleys rising and flattening again — finishes the CLASSIC SQUARE BASE:
+// all four paper corners on one point, the coincident edge midpoints at
+// the two side corners, the paper centre at the closed corner, flat.
 
 define("steps", () =>
   editable("steps", {
@@ -100,45 +106,77 @@ define("steps", () =>
     { step: "s1",  at: 5,   dur: 0.5, to: 0.372 },
     { step: "mtn", at: 5.5, dur: 0.5, to: -1.929 },
     { step: "s1",  at: 5.5, dur: 0.5, to: 0.475 },
-    // 3. press the standing pocket flat: the valley closes to 180 while the
-    //    spine refolds home and the mountains stay shut — the tip lands ON
-    //    the right-angle corner: one side of the square base, done.
-    { step: "s1",  at: 6.5, dur: 0.5, to: 0.54 },
-    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 6.5, dur: 0.5, to: 0.071 },
-    { step: "mtn", at: 6.5, dur: 0.5, to: -2.024 },
-    { step: "s1",  at: 7, dur: 0.5, to: 0.606 },
-    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 7, dur: 0.5, to: 0.208 },
-    { step: "mtn", at: 7, dur: 0.5, to: -2.009 },
-    { step: "s1",  at: 7.5, dur: 0.5, to: 0.737 },
-    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 7.5, dur: 0.5, to: 0.475 },
-    { step: "mtn", at: 7.5, dur: 0.5, to: -2.004 },
-    { step: "s1",  at: 8, dur: 0.5, to: 0.869 },
-    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 8, dur: 0.5, to: 0.738 },
-    { step: "mtn", at: 8, dur: 0.5, to: -2.003 },
-    { step: "s1",  at: 8.5, dur: 0.5, to: 1 },
-    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 8.5, dur: 0.5, to: 1 },
+    // 3. press the pocket flat to the RIGHT of the centre line: the valley
+    //    OPENS back to flat (it folded up, now it flattens) while the spine
+    //    refolds the other way — the kite lands right of the centre with
+    //    both edge midpoints stacked at the top corner, the tip on the
+    //    right-angle corner: one side of the square base, done.
+    { step: "s1",  at: 6.5, dur: 0.5, to: 0.415 },
+    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 6.5, dur: 0.5, to: -0.163 },
+    { step: "mtn", at: 6.5, dur: 0.5, to: -1.989 },
+    { step: "s1",  at: 7, dur: 0.5, to: 0.356 },
+    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 7, dur: 0.5, to: -0.284 },
+    { step: "mtn", at: 7, dur: 0.5, to: -1.994 },
+    { step: "s1",  at: 7.5, dur: 0.5, to: 0.237 },
+    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 7.5, dur: 0.5, to: -0.526 },
+    { step: "mtn", at: 7.5, dur: 0.5, to: -1.996 },
+    { step: "s1",  at: 8, dur: 0.5, to: 0.119 },
+    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 8, dur: 0.5, to: -0.763 },
+    { step: "mtn", at: 8, dur: 0.5, to: -1.997 },
+    { step: "s1",  at: 8.5, dur: 0.5, to: 0 },
+    { step: "diag", p1: "diag@0.5", p2: "diag@1", at: 8.5, dur: 0.5, to: -1 },
     { step: "mtn", at: 8.5, dur: 0.5, to: -2 },
+    // 4. THE SAME ON THE OTHER SIDE: squash the remaining flap — mountains
+    //    to the other pair of coincident midpoints, the long edge's LEFT
+    //    half as its spine, the same halving valleys rising again (they
+    //    carry the first flap up with them and set it back down)…
+    { step: "mtn2", op: "fold", deg: 90, p1: "diag@0.5", p2: "left@0.5", move: "bottom@0", at: 9.5, dur: 0.25, to: -0.25 },
+    { step: "diag", p1: "diag@0", p2: "diag@0.5", at: 9.5, dur: 0.25, to: 0.825 },
+    { step: "s1", at: 9.5, dur: 0.25, to: 0.088 },
+    { step: "mtn2", at: 9.75, dur: 0.5, to: -0.75 },
+    { step: "diag", p1: "diag@0", p2: "diag@0.5", at: 9.75, dur: 0.5, to: 0.518 },
+    { step: "s1", at: 9.75, dur: 0.5, to: 0.242 },
+    { step: "mtn2", at: 10.25, dur: 0.25, to: -1 },
+    { step: "diag", p1: "diag@0", p2: "diag@0.5", at: 10.25, dur: 0.25, to: 0.392 },
+    { step: "s1", at: 10.25, dur: 0.25, to: 0.305 },
+    { step: "mtn2", at: 10.5, dur: 0.75, to: -1.75 },
+    { step: "diag", p1: "diag@0", p2: "diag@0.5", at: 10.5, dur: 0.75, to: 0.089 },
+    { step: "s1", at: 10.5, dur: 0.75, to: 0.457 },
+    { step: "mtn2", at: 11.25, dur: 0.25, to: -2 },
+    { step: "diag", p1: "diag@0", p2: "diag@0.5", at: 11.25, dur: 0.25, to: -0.044 },
+    { step: "s1", at: 11.25, dur: 0.25, to: 0.479 },
+    // 5. …and press it flat to the LEFT: the SQUARE BASE — all four paper
+    //    corners on one point, the coincident midpoints at the two side
+    //    corners, the paper centre at the closed corner.
+    { step: "s1", at: 12.5, dur: 0.5, to: 0.359 },
+    { step: "diag", p1: "diag@0", p2: "diag@0.5", at: 12.5, dur: 0.5, to: -0.283 },
+    { step: "s1", at: 13, dur: 0.5, to: 0.24 },
+    { step: "diag", p1: "diag@0", p2: "diag@0.5", at: 13, dur: 0.5, to: -0.523 },
+    { step: "s1", at: 13.5, dur: 0.5, to: 0.12 },
+    { step: "diag", p1: "diag@0", p2: "diag@0.5", at: 13.5, dur: 0.5, to: -0.762 },
+    { step: "s1", at: 14, dur: 0.5, to: 0 },
+    { step: "diag", p1: "diag@0", p2: "diag@0.5", at: 14, dur: 0.5, to: -1 },
   ]))
 
 // Feed the instructions to a sheet of paper. The camera goes face-on as
-// the press starts (watch the <| close), swings around the side, then
-// overhead for the finished half-base.
+// the first press starts (watch the <| close), pulls back to three-quarter
+// for the second squash, then overhead for the finished square base.
 define("events", (rand, table) => {
   const paper = origami().steps(table("steps"))
   return paper.spawn({ id: "base", color: 0xd94f2a, py: -0.2, pz: 1.2, rx: -0.9, ry: 0.2 })
     .concat(paper.sequence())
     .concat(rows([
-      { id: "base", type: "update", beat: 4,   py: -0.2, rx: -0.75, ry: 0.2, rz: 0 },
-      { id: "base", type: "update", beat: 6.4, py: -0.4, rx: -1.57, ry: 0,    rz: -0.79 },
-      { id: "base", type: "update", beat: 7.2, py: -0.4, rx: -1.57, ry: 0,    rz: -0.79 },
-      { id: "base", type: "update", beat: 9,   py: -0.4, rx: -1.57, ry: 1.57, rz: -0.79 },
-      { id: "base", type: "update", beat: 10.5, py: 0.1, rx: -0.05, ry: 0,    rz: -0.79 },
+      { id: "base", type: "update", beat: 4,    py: -0.2, rx: -0.75, ry: 0.2, rz: 0 },
+      { id: "base", type: "update", beat: 6.4,  py: -0.4, rx: -1.57, ry: 0,   rz: -0.79 },
+      { id: "base", type: "update", beat: 8.7,  py: -0.4, rx: -1.57, ry: 0,   rz: -0.79 },
+      { id: "base", type: "update", beat: 10.5, py: -0.2, rx: -0.75, ry: 0.2, rz: 0 },
+      { id: "base", type: "update", beat: 14.7, py: 0.1,  rx: -0.05, ry: 0,   rz: -0.79 },
     ]))
 })
 
-// Bake to a 12-beat loop cache — when the loop wraps, the paper opens flat
+// Bake to a 16-beat loop cache — when the loop wraps, the paper opens flat
 // and folds itself all over again.
-define("scene", (rand, table) => table("events").rasterize(12))
+define("scene", (rand, table) => table("events").rasterize(16))
 
 // A whisper of video feedback (the rendered scene is hydra's s0) so the
 // paper leaves faint trails as it moves. Delete this view for a clean look.
