@@ -41,6 +41,7 @@ test('two independent "clients" sharing an anchor land on the same phase at the 
 // ---------------------------------------------------------------------------
 
 import { createPlaybackEngine, type PlaybackEngine, type TapControl } from '../src/playback.js'
+import { createSceneVisualizer, createHydraVisualizer } from '../src/visualizer.js'
 import { DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
 
@@ -85,8 +86,11 @@ function fakeTime(startMs: number) {
 const HYDRA_ROWS: Row[] = [{ event: 'setCode', code: 'osc().out()', beat: 1 }]
 
 function makeEngine(time: ReturnType<typeof fakeTime>, extra: { tapControl?: TapControl; onLoop?: () => void } = {}): PlaybackEngine {
-  const engine = createPlaybackEngine(fakeScene(), fakeHydra(), { clock: time.clock, ...extra })
-  engine.load([], [], HYDRA_ROWS)
+  const engine = createPlaybackEngine(
+    [createSceneVisualizer(fakeScene()), createHydraVisualizer(fakeHydra())],
+    { clock: time.clock, ...extra },
+  )
+  engine.load({ sceneRows: [], timelineRows: [], hydraRows: HYDRA_ROWS })
   return engine
 }
 

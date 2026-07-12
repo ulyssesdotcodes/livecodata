@@ -3,16 +3,15 @@
 // interaction straight to an engine method (or the TapControl); no playback
 // logic lives here. createPlaybackController bundles the engine with the
 // view-state signal it emits into; app.tsx renders <PlaybackControls> from
-// that bundle (once main.ts has built it — the engine needs the scene/hydra
-// APIs, which need the canvases the app render creates first).
+// that bundle (once main.ts has built it — the engine needs the visualizers,
+// which need the canvases the app render creates first).
 
 import { createSignal, Show, type Accessor } from 'solid-js'
 import { listenGlobal } from './dom.js'
 import { createPlaybackEngine } from '../playback.js'
 import type { PlaybackEngine, PlaybackOptions, PlaybackViewState, TapControl } from '../playback.js'
 import { FRAMES_PER_BEAT, DEFAULT_LOOP_BEATS } from '../constants.js'
-import type { SceneAPI } from '../three-scene.js'
-import type { HydraAPI } from '../hydra-scene.js'
+import type { Visualizer } from '../visualizer.js'
 
 export function PlaybackControls(props: {
   vs: Accessor<PlaybackViewState>
@@ -109,12 +108,11 @@ export interface PlaybackController {
 }
 
 export function createPlaybackController(
-  sceneAPI: SceneAPI,
-  hydraAPI: HydraAPI,
+  visualizers: Visualizer[],
   options: PlaybackOptions = {},
 ): PlaybackController {
   const [vs, setVs] = createSignal<PlaybackViewState | null>(null)
-  const engine = createPlaybackEngine(sceneAPI, hydraAPI, { ...options, onViewChange: setVs })
+  const engine = createPlaybackEngine(visualizers, { ...options, onViewChange: setVs })
   if (vs() == null) setVs(engine.viewState())
   return { engine, vs: () => vs()!, tapControl: options.tapControl }
 }

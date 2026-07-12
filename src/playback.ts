@@ -1,17 +1,16 @@
-// Playback engine — all timing/loop/scrub state and scene application, with
-// zero DOM. The transport controls are a humble SolidJS view
-// (ui/playback-controls.tsx) that renders the PlaybackViewState this engine
-// emits and calls straight back into the methods below.
+// Playback engine — all timing/loop/scrub state, with zero DOM and zero
+// knowledge of what gets drawn. What renders is the list of Visualizers the
+// engine is constructed with (see visualizer.ts); the engine only tells each
+// one which source frame to reconcile to. The transport controls are a humble
+// SolidJS view (ui/playback-controls.tsx) that renders the PlaybackViewState
+// this engine emits and calls straight back into the methods below.
 
-import { buildFrameIndex, sampleFrame, type FrameIndex } from './rasterize.js'
-import { buildHydraIndex, hydraFrameAt } from './hydra.js'
 import { buildTimeline, type Timeline } from './timeline.js'
 import { activeLineage } from './lineage.js'
-import { resolveBindings, type EvalCtx } from './dsl.js'
-import { FPS, FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS, framesToBeats } from './constants.js'
+import type { EvalCtx } from './dsl.js'
+import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS, framesToBeats } from './constants.js'
 import type { Row } from './lineage.js'
-import type { SceneAPI } from './three-scene.js'
-import type { HydraAPI } from './hydra-scene.js'
+import type { CookedVisualRows, Visualizer } from './visualizer.js'
 import { beatSecondsFromTaps } from './tap-log.js'
 
 export interface TapControl {
@@ -94,8 +93,13 @@ export interface PlaybackEngineOptions extends PlaybackOptions {
   clock?: PlaybackClock
 }
 
+// What load() consumes: every visualizer's row sets plus the timeline's (the
+// timeline is the engine's own — it remaps time, it doesn't render). replay's
+// CookedResult is structurally assignable.
+export type LoadedRows = CookedVisualRows & { timelineRows: Row[] }
+
 export interface PlaybackAPI {
-  load(sceneRows: Row[], timelineRows: Row[], hydraRows: Row[]): void
+  load(cooked: LoadedRows): void
   // The tap tempo changed: re-anchor the beat clock so the playhead keeps its
   // beat position (and the loop's wall-clock length follows the new tempo)
   // without re-cooking anything — content sits on a fixed beat grid, so only the
@@ -125,8 +129,7 @@ export interface PlaybackEngine extends PlaybackAPI {
 }
 
 export function createPlaybackEngine(
-  sceneAPI: SceneAPI,
-  hydraAPI: HydraAPI,
+  visualizers: Visualizer[],
   { onTick, onPlay, onLoop, tapControl, midiCtxAt, onViewChange, clock }: PlaybackEngineOptions = {},
 ): PlaybackEngine {
   const now = clock?.now ?? ((): number => performance.now())
@@ -142,10 +145,7 @@ export function createPlaybackEngine(
   let startTime: number | null = null
   let anchorBeatSec = DEFAULT_BEAT_SECONDS
   let pausedBeat = 0
-  let frameIndex: FrameIndex = buildFrameIndex([])
-  let hydraIndex: Row[] = buildHydraIndex([])
   let timeline: Timeline = buildTimeline([])
-  let aliveObjects = new Set<unknown>()
   let maxBeats = 0 // loop length in beats — the one unit the playhead counts in
   let isScrubbing = false
   let scrubPos = 0
@@ -201,50 +201,28 @@ export function createPlaybackEngine(
     // Source position as a fractional cache frame: the timeline maps this
     // playhead beat to a source beat, which sits at (beat - 1) * FRAMES_PER_BEAT
     // on the fixed grid. Fractional because the playhead sweeps continuously —
-    // sampleFrame eases the scene between cache frames, and hydra gets the same
-    // continuous position so its clock tracks the (tempo-scaled) source rate.
+    // each visualizer interpolates between cache frames however it needs to.
     const srcBeat = sourceBeatAt(pos)
     const srcFrameF = (srcBeat - 1) * FRAMES_PER_BEAT
-    const srcFrame = Math.round(srcFrameF)
     // Streaming context: midi() bindings resolve against the live MIDI table at
     // the source frame — the same content coordinate events are recorded in, so
     // a recorded sweep tracks the timeline (and the tempo) rather than wall time.
-    const ctx = midiCtxAt ? midiCtxAt(srcFrame) : null
-    const baked = sampleFrame(frameIndex, srcFrameF)
-    const states = ctx ? baked.map((s) => resolveBindings(s, ctx)) : baked
-    const present = new Set<unknown>()
-    for (const s of states) {
-      present.add(s.id)
-      if (!aliveObjects.has(s.id)) {
-        sceneAPI.createObject(s as Record<string, unknown>)
-        aliveObjects.add(s.id)
-      } else {
-        sceneAPI.updateObject(s as Record<string, unknown>)
-      }
-    }
-    for (const id of aliveObjects) {
-      if (!present.has(id)) {
-        sceneAPI.destroyObject(id)
-        aliveObjects.delete(id)
-      }
-    }
-    const sketch = hydraFrameAt(hydraIndex, Math.floor(srcFrameF))
-    hydraAPI.setSketch(sketch && ctx ? { ...sketch, vars: resolveBindings(sketch.vars, ctx) } : sketch)
-    hydraAPI.tick(srcFrameF / FPS)
+    const ctx = midiCtxAt ? midiCtxAt(Math.round(srcFrameF)) : null
+    const states: Row[] = []
+    for (const v of visualizers) states.push(...v.applyFrame({ srcFrameF, ctx }))
     // Graphed/table views key their rows by `beat`, so report the source beat.
     onTick?.(pos, activeLineage(states), srcBeat)
   }
 
   // Is there anything to play? A program can define a hydra sketch with no 3D
-  // scene at all (see the "Hydra Sketch" sample), so playback isn't gated on
-  // frameIndex alone.
+  // scene at all (see the "Hydra Sketch" sample), so any one visualizer with
+  // content is enough.
   function hasContent(): boolean {
-    return frameIndex.map.size > 0 || hydraIndex.length > 0
+    return visualizers.some((v) => v.hasContent())
   }
 
   function reset(pos: number = 0): void {
-    sceneAPI.reset()
-    aliveObjects = new Set()
+    for (const v of visualizers) v.clear()
     emit(pos)
     if (hasContent()) applyAt(pos)
   }
@@ -279,21 +257,21 @@ export function createPlaybackEngine(
     return sourceBeatAt(pos)
   }
 
-  // Loop length in beats. A timeline sizes it by its playback-beat span; else a
-  // 3D scene by its cache length; else — a pure hydra sketch — the loop-length
+  // Loop length in beats. A timeline sizes it by its playback-beat span; else
+  // the longest visualizer content (a 3D scene's cache length); else — content
+  // that declines to size the loop, like a pure hydra sketch — the loop-length
   // control (loopBeats). Sizing a hydra-only loop from the control rather than
   // the sketch's last keyframe is what keeps that keyframe visible instead of
   // landing exactly on the loop boundary.
   function recomputeMax(): void {
     if (timeline.active) {
       maxBeats = timeline.beats
-    } else if (frameIndex.maxFrame > 0) {
-      maxBeats = framesToBeats(frameIndex.maxFrame)
-    } else if (hydraIndex.length) {
-      maxBeats = loopBeats
-    } else {
-      maxBeats = 0
+      return
     }
+    const frames = visualizers.reduce((m, v) => Math.max(m, v.contentFrames()), 0)
+    if (frames > 0) maxBeats = framesToBeats(frames)
+    else if (hasContent()) maxBeats = loopBeats
+    else maxBeats = 0
   }
 
   // Anchor the beat clock so the live position reads `pos` beats right now, at
@@ -316,19 +294,16 @@ export function createPlaybackEngine(
     if (hasContent()) {
       applyAt(pos)
     } else {
-      sceneAPI.reset()
-      hydraAPI.reset()
-      aliveObjects = new Set()
+      for (const v of visualizers) v.blank()
     }
   }
 
   // Swap in a freshly cooked frame cache (+ optional timeline). A re-evaluate
   // does NOT move the playhead: keep the current position and play state, only
   // replacing the baked data. (First load is at 0 because that's where we are.)
-  function load(sceneRows: Row[], timelineRows: Row[], hydraRows: Row[]): void {
-    frameIndex = buildFrameIndex(sceneRows ?? [])
-    hydraIndex = buildHydraIndex(hydraRows ?? [])
-    timeline = buildTimeline(timelineRows ?? [])
+  function load(cooked: LoadedRows): void {
+    for (const v of visualizers) v.load(cooked)
+    timeline = buildTimeline(cooked.timelineRows ?? [])
     recomputeMax()
     retimeTo(currentTime())
   }

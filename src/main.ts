@@ -2,6 +2,7 @@ import './style.css'
 import { createSignal } from 'solid-js'
 import { initThree } from './three-scene.js'
 import { initHydra } from './hydra-scene.js'
+import { createSceneVisualizer, createHydraVisualizer } from './visualizer.js'
 import { mountApp } from './ui/app.js'
 import { createEditor, defaultProgram } from './ui/editor.js'
 import { createTablePanel } from './ui/table-panel.js'
@@ -331,11 +332,11 @@ function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   return display
 }
 
-function applyCooked({ views, graphs, sceneRows, timelineRows, hydraRows }: CookedData): void {
-  lastViews = views
-  tablePanel.setTables(tablesForDisplay(views))
-  tablePanel.setGraphs(graphs)
-  playback.load(sceneRows, timelineRows, hydraRows)
+function applyCooked(cooked: CookedData): void {
+  lastViews = cooked.views
+  tablePanel.setTables(tablesForDisplay(cooked.views))
+  tablePanel.setGraphs(cooked.graphs)
+  playback.load(cooked)
 }
 
 // A tap changed the tempo: refresh the "taps" table and re-anchor playback to
@@ -725,7 +726,10 @@ const mounts = mountApp(document.getElementById('app') as HTMLElement, {
 })
 const sceneAPI = initThree(mounts.threeCanvas, mounts.canvasPane)
 const hydraAPI = initHydra(mounts.hydraCanvas, mounts.threeCanvas)
-const playbackController = createPlaybackController(sceneAPI, hydraAPI, playbackOptions)
+const playbackController = createPlaybackController(
+  [createSceneVisualizer(sceneAPI), createHydraVisualizer(hydraAPI)],
+  playbackOptions,
+)
 setPlaybackCtl(playbackController)
 playback = playbackController.engine
 
