@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { initPhysics, simulateScene } from '../src/physics.js'
 import { createRuntime } from '../src/runtime.js'
+import { SAMPLES } from '../src/samples.js'
 import type { Row } from '../src/lineage.js'
 
 const engine = await initPhysics()
@@ -132,4 +133,40 @@ test('physics() throws a friendly error while the engine is still loading', () =
   assert.throws(() => runtime.run(`
     define("events", (rand, table) => physics(rows([{ id: "x", type: "create" }])).simulate())
   `, { seed: 1 }), /still loading/)
+})
+
+test('ABC Blocks sample: blocks carry letters, fall, and bounce off the mat', () => {
+  const sample = SAMPLES.find((s) => s.name === 'ABC Blocks')!
+  const { views } = createRuntime({ physics: () => engine }).run(sample.code, { seed: 1 })
+
+  const base = views.get('base')!
+  const mats = base.rows.filter((r) => String(r.id).startsWith('mat'))
+  const blocks = base.rows.filter((r) => String(r.id).startsWith('block'))
+  assert.equal(mats.length, 16, '4x4 playmat tiles')
+  assert.equal(blocks.length, 8, 'eight blocks')
+  assert.ok(mats.every((r) => r.motion === 'static' && (r.restitution as number) > 0.5), 'mat is static and springy')
+  assert.ok(blocks.every((r) => typeof r.letter === 'string' && (r.letter as string).length === 1), 'each block carries a letter')
+
+  const events = views.get('events')!
+  assert.ok(
+    events.rows.some((r) => r.type === 'collision' && String(r.id).startsWith('block') && String(r.other).startsWith('mat')),
+    'blocks reach the mat',
+  )
+
+  // Bounce: after a block first touches the mat, it climbs back up appreciably.
+  const bounced = blocks.some((b) => {
+    const touch = events.rows.find(
+      (r) => r.id === b.id && r.type === 'collision' && String(r.other).startsWith('mat'),
+    )
+    if (!touch) return false
+    const updates = events.rows.filter((r) => r.id === b.id && r.type === 'update')
+    const before = updates.filter((r) => (r.beat as number) <= (touch.beat as number))
+    const atTouch = (before[before.length - 1]?.py as number | undefined) ?? Infinity
+    return updates.some((r) => (r.beat as number) > (touch.beat as number) && (r.py as number) > atTouch + 0.15)
+  })
+  assert.ok(bounced, 'at least one block bounces off the springy mat')
+
+  const scene = views.get('scene')!
+  assert.ok(scene.rows.length > 0, 'rasterized to a frame cache')
+  assert.ok(scene.rows.some((r) => typeof r.letter === 'string'), 'letters ride through the frame cache')
 })

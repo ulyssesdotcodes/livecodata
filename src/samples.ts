@@ -397,6 +397,74 @@ define("hydra", (rand, table) =>
 `,
   },
   {
+    name: "ABC Blocks",
+    code: `// livecodata — ABC Blocks
+// Wooden alphabet blocks rain onto a bouncy foam playmat and clatter to rest.
+// Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
+//
+// Two things this sample shows:
+//   - a \`letter\` field on a box row stamps that letter on every face of the
+//     block (a canvas texture: cream face, the row's color as the frame and
+//     the letter itself) — any extra field like this rides through physics
+//     and the frame cache untouched, straight to the renderer.
+//   - bounciness is \`restitution\`. Jolt combines the two touching bodies'
+//     values by MAX, so a springy mat (0.65) makes everything that lands on
+//     it bounce, whatever the block's own restitution says.
+
+// 1. The scene: a 4×4 grid of foam tiles (static, springy) and eight blocks
+//    dropped from a staggered stack of heights with random tumbles. rand is
+//    the view's seeded PRNG — press Run again for a fresh Run's new seed, or
+//    scrub the session bar back to replay an old drop exactly.
+define("base", (rand) => {
+  const tileColors = [0x51cf66, 0xffd43b, 0x4a9eff, 0xff6b6b]
+  const mat = []
+  for (let ix = 0; ix < 4; ix++) {
+    for (let iz = 0; iz < 4; iz++) {
+      mat.push({
+        id: "mat" + ix + iz, type: "create", shape: "box",
+        color: tileColors[(ix + iz * 3) % 4],
+        motion: "static", restitution: 0.65, friction: 0.7,
+        px: (ix - 1.5) * 1.12, py: -1.35, pz: (iz - 1.5) * 1.12,
+        hx: 0.55, hy: 0.08, hz: 0.55,
+      })
+    }
+  }
+
+  const letterColors = [0xe74c3c, 0x2f7fe0, 0x2eaf5b, 0xd97f00, 0xa54ee0, 0xc0392b, 0x1f8f8f, 0xd4437f]
+  const blocks = "ABCDEFGH".split("").map((letter, i) => ({
+    id: "block" + letter, type: "create", shape: "box", letter,
+    color: letterColors[i],
+    motion: "dynamic", friction: 0.5, restitution: 0.25,
+    hx: 0.2, hy: 0.2, hz: 0.2,
+    px: ((i % 4) - 1.5) * 0.5 + (rand() - 0.5) * 0.25,
+    py: 0.6 + i * 0.25 + rand() * 0.25,
+    pz: (rand() - 0.5) * 0.8,
+    rx: rand() * 0.8, ry: rand() * 6.28, rz: rand() * 0.8,
+  }))
+
+  return rows([...mat, ...blocks])
+})
+
+// 2. Bake the tumble: 360 physics frames = 12 beats on the fixed
+//    30-frames-per-beat grid. The "events" group view (3rd arg) collects the
+//    per-frame update rows and every block↔mat / block↔block collision.
+define("sim", "events", (rand, table) =>
+  physics(table("base")).simulate({ steps: 360, gravity: -9.81 })
+)
+
+// 3. Dense per-frame cache for playback — the full 12-beat drop, looped.
+define("scene", (rand, table) => table("events").rasterize(12))
+
+// 4. Every first touch is a row — count each block's landings on the mat.
+define("landings", (rand, table) =>
+  table("events")
+    .filter(r => r.type === "collision" && String(r.other).startsWith("mat"))
+    .groupBy("id")
+    .count()
+)
+`,
+  },
+  {
     name: "CO2 (Mauna Loa)",
     code: `// Mauna Loa CO2 — monthly atmospheric measurements by NOAA/Scripps, 1958–2026.
 // The seasonal swing (~6 ppm) reflects northern-hemisphere plant growth;

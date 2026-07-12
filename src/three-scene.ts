@@ -32,6 +32,41 @@ function makeGeometry(shape: string, dims: Record<string, unknown>): THREE.Buffe
 
 const PALETTE = [0x4a9eff, 0xff6b6b, 0x51cf66, 0xffd43b, 0xcc5de8, 0xff922b]
 
+// ABC play blocks: a `letter` field on a row stamps that letter on every face
+// via a canvas texture — cream face, rounded accent frame, big letter in the
+// row's own color. Cached per letter+color: playback re-creates objects on
+// every reset/scrub, and the same block should reuse its texture rather than
+// re-rasterizing (and re-uploading) it each time.
+const letterTextures = new Map<string, THREE.CanvasTexture>()
+
+function letterTexture(letter: string, color: number): THREE.CanvasTexture {
+  const key = letter + ':' + color
+  const cached = letterTextures.get(key)
+  if (cached) return cached
+  const size = 256
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const accent = '#' + color.toString(16).padStart(6, '0')
+  ctx.fillStyle = '#f3ead2'
+  ctx.fillRect(0, 0, size, size)
+  ctx.strokeStyle = accent
+  ctx.lineWidth = 14
+  ctx.beginPath()
+  ctx.roundRect(18, 18, size - 36, size - 36, 28)
+  ctx.stroke()
+  ctx.fillStyle = accent
+  ctx.font = 'bold 148px Georgia, "Times New Roman", serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(letter, size / 2, size / 2 + 8)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.anisotropy = 4
+  letterTextures.set(key, tex)
+  return tex
+}
+
 // A live sheet of folding paper: the player owns the vertex buffer, the two
 // meshes (colored front / paper-white back) and the crease lines all render
 // straight out of it. Playback is pure kinematics: each fold step rigidly
@@ -172,13 +207,19 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
         return
       }
       const geo = makeGeometry(shape as string, row)
+      const baseColor = color != null ? color as number : PALETTE[colorIdx % PALETTE.length]
+      const lettered = typeof row.letter === 'string' && row.letter !== ''
+      // A lettered face's paint lives in the texture; the material stays white
+      // so the map's colors come through unmultiplied.
       const mat = new THREE.MeshStandardMaterial({
-        color: color != null ? color as number : PALETTE[colorIdx % PALETTE.length],
-        metalness: 0.35,
-        roughness: 0.4,
+        color: lettered ? 0xffffff : baseColor,
+        map: lettered ? letterTexture(row.letter as string, baseColor) : null,
+        metalness: lettered ? 0.05 : 0.35,
+        roughness: lettered ? 0.7 : 0.4,
       })
       colorIdx++
       const mesh = new THREE.Mesh(geo, mat)
+      mesh.userData.lettered = lettered
       mesh.name = String(id)
       mesh.position.set(px as number, py as number, pz as number)
       mesh.rotation.set(rx as number ?? 0, ry as number ?? 0, rz as number ?? 0)
@@ -197,7 +238,9 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
       if (!mesh) return
       mesh.position.set(px as number, py as number, pz as number)
       mesh.rotation.set(rx as number ?? 0, ry as number ?? 0, rz as number ?? 0)
-      if (color != null) (mesh.material as THREE.MeshStandardMaterial).color.set(color as number)
+      // A lettered block's color is baked into its texture — tinting the white
+      // material with the row's color would stain the whole face.
+      if (color != null && !mesh.userData.lettered) (mesh.material as THREE.MeshStandardMaterial).color.set(color as number)
     },
 
     destroyObject(id: unknown): void {
