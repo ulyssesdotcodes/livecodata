@@ -21,6 +21,7 @@
 
 import { Hydra } from 'hydra-ts'
 import createREGL from 'regl'
+import type { Framebuffer2D } from 'regl'
 import type { HydraFrame } from './hydra.js'
 
 export interface HydraAPI {
@@ -29,6 +30,13 @@ export interface HydraAPI {
   // position (seconds) and render one frame there.
   tick(timeSeconds: number): void
   reset(): void
+  // Face taps: mirror hydra output N (o0..o3) into a small 2D canvas each
+  // tick, so the Three.js scene — a *different* WebGL context, which can't
+  // share GPU textures — can use a live hydra output as a face texture (see
+  // three-scene.ts). Claims are refcounted and readback only runs for
+  // claimed outputs; an out-of-range index returns null.
+  claimFace(index: number): HTMLCanvasElement | null
+  releaseFace(index: number): void
 }
 
 // Shown when the program defines no hydra view, or before its first code row:
@@ -83,6 +91,82 @@ export function initHydra(canvas: HTMLCanvasElement, source: HTMLCanvasElement):
   resize()
   if (canvas.parentElement) new ResizeObserver(resize).observe(canvas.parentElement)
 
+  // --- face taps -------------------------------------------------------------
+  // Each claimed output is blitted (GPU-side downscale) into a small private
+  // FBO, read back, and drawn into a 2D canvas that the 3D scene wraps in a
+  // CanvasTexture. The readback is the unavoidable cost of crossing WebGL
+  // contexts; at FACE_SIZE² it's ~256 KB per claimed output per frame.
+  const FACE_SIZE = 256
+
+  interface FaceTap {
+    refs: number
+    canvas: HTMLCanvasElement
+    ctx2d: CanvasRenderingContext2D
+    fbo: Framebuffer2D
+    pixels: Uint8Array
+    image: ImageData
+  }
+  const faceTaps = new Map<number, FaceTap>()
+
+  interface BlitProps {
+    tex: Framebuffer2D
+    fbo: Framebuffer2D
+  }
+  const blitFace = regl<{ tex: Framebuffer2D }, { position: number[][] }, BlitProps>({
+    vert: `precision mediump float; attribute vec2 position; varying vec2 uv;
+      void main() { uv = 0.5 * (position + 1.0); gl_Position = vec4(position, 0, 1); }`,
+    frag: `precision mediump float; varying vec2 uv; uniform sampler2D tex;
+      void main() { gl_FragColor = texture2D(tex, uv); }`,
+    attributes: { position: [[-4, -4], [4, -4], [0, 4]] },
+    count: 3,
+    uniforms: { tex: regl.prop<BlitProps, 'tex'>('tex') },
+    framebuffer: regl.prop<BlitProps, 'fbo'>('fbo'),
+    depth: { enable: false },
+  })
+
+  function claimFace(index: number): HTMLCanvasElement | null {
+    if (!hydra.outputs[index]) return null
+    let tap = faceTaps.get(index)
+    if (!tap) {
+      const faceCanvas = document.createElement('canvas')
+      faceCanvas.width = faceCanvas.height = FACE_SIZE
+      tap = {
+        refs: 0,
+        canvas: faceCanvas,
+        ctx2d: faceCanvas.getContext('2d')!,
+        fbo: regl.framebuffer({ width: FACE_SIZE, height: FACE_SIZE, depthStencil: false }),
+        pixels: new Uint8Array(FACE_SIZE * FACE_SIZE * 4),
+        image: new ImageData(FACE_SIZE, FACE_SIZE),
+      }
+      faceTaps.set(index, tap)
+    }
+    tap.refs++
+    return tap.canvas
+  }
+
+  // Taps outlive their claims (a playback reset destroys and re-creates every
+  // scene object, releasing and re-claiming its outputs) — only the per-tick
+  // readback stops while unclaimed.
+  function releaseFace(index: number): void {
+    const tap = faceTaps.get(index)
+    if (tap && tap.refs > 0) tap.refs--
+  }
+
+  function updateFaces(): void {
+    for (const [index, tap] of faceTaps) {
+      if (tap.refs <= 0) continue
+      blitFace({ tex: hydra.outputs[index].getCurrent(), fbo: tap.fbo })
+      tap.fbo.use(() => { regl.read({ data: tap.pixels }) })
+      // GL rows come back bottom-up; the canvas wants top-down.
+      const rowBytes = FACE_SIZE * 4
+      for (let y = 0; y < FACE_SIZE; y++) {
+        tap.image.data.set(tap.pixels.subarray((FACE_SIZE - 1 - y) * rowBytes, (FACE_SIZE - y) * rowBytes), y * rowBytes)
+      }
+      tap.ctx2d.putImageData(tap.image, 0, 0)
+    }
+  }
+  // ---------------------------------------------------------------------------
+
   let lastCode: string | null = null
 
   function compile(code: string): void {
@@ -107,6 +191,7 @@ export function initHydra(canvas: HTMLCanvasElement, source: HTMLCanvasElement):
   function tick(timeSeconds: number): void {
     hydra.tick((timeSeconds - lastTimeSeconds) * 1000)
     lastTimeSeconds = timeSeconds
+    updateFaces()
   }
 
   // Start in passthrough so the scene is visible the moment hydra comes up.
@@ -122,5 +207,7 @@ export function initHydra(canvas: HTMLCanvasElement, source: HTMLCanvasElement):
       setSketch(null)
       tick(0)
     },
+    claimFace,
+    releaseFace,
   }
 }

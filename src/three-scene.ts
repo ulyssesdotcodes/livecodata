@@ -8,6 +8,23 @@ export interface SceneAPI {
   reset(): void
 }
 
+// Live hydra outputs as face textures. hydra runs in its own WebGL context,
+// so a GPU texture can't be shared directly — hydra-scene.ts mirrors each
+// claimed output into a small 2D canvas every tick (see its face taps), and
+// this scene wraps that canvas in a CanvasTexture. The bridge is claim/release
+// refcounted on both sides so readback only runs while something shows it.
+export interface HydraFaceBridge {
+  claim(index: number): HTMLCanvasElement | null
+  release(index: number): void
+}
+
+// A `map` field naming a hydra output ("o0".."o3") puts that output on every
+// face; `map0`..`map5` override single faces of a box, in Three.js's box
+// material order: +x, -x, +y (top), -y (bottom), +z (front), -z (back).
+function hydraOutputIndex(v: unknown): number | null {
+  return typeof v === 'string' && /^o\d$/.test(v) ? +v.slice(1) : null
+}
+
 const SHAPE_DEFAULTS: Record<string, Record<string, number>> = {
   box:      { hx: 0.25, hy: 0.25, hz: 0.25 },
   sphere:   { r: 0.3 },
@@ -155,7 +172,7 @@ function disposeOrigami(obj: OrigamiObject): void {
 // The Three.js scene renders to its own canvas, which is *not* shown directly —
 // hydra (see hydra-scene.ts) takes it as a source texture and post-processes it
 // onto the visible canvas. So this module is pure scene + render, no effects.
-export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): SceneAPI {
+export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement, hydraFaces?: HydraFaceBridge): SceneAPI {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
   renderer.setPixelRatio(window.devicePixelRatio)
 
@@ -185,12 +202,52 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
   const origamis = new Map<unknown, OrigamiObject>()
   let colorIdx = 0
 
+  // One CanvasTexture per claimed hydra output, shared by every face that
+  // shows it, refcounted alongside the bridge's own claim count. The source
+  // canvas repaints every hydra tick, so each live texture is re-uploaded
+  // every rendered frame (see animate).
+  const hydraTextures = new Map<number, { tex: THREE.CanvasTexture; refs: number }>()
+
+  function claimHydraTexture(index: number): THREE.CanvasTexture | null {
+    if (!hydraFaces) return null
+    const entry = hydraTextures.get(index)
+    if (entry) {
+      hydraFaces.claim(index)
+      entry.refs++
+      return entry.tex
+    }
+    const source = hydraFaces.claim(index)
+    if (!source) return null
+    const tex = new THREE.CanvasTexture(source)
+    tex.colorSpace = THREE.SRGBColorSpace
+    hydraTextures.set(index, { tex, refs: 1 })
+    return tex
+  }
+
+  function releaseHydraTexture(index: number): void {
+    const entry = hydraTextures.get(index)
+    if (!entry) return
+    hydraFaces?.release(index)
+    if (--entry.refs <= 0) {
+      entry.tex.dispose()
+      hydraTextures.delete(index)
+    }
+  }
+
+  function disposeMesh(mesh: THREE.Mesh): void {
+    mesh.geometry.dispose()
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+    for (const m of new Set(mats)) m.dispose() // shared CanvasTextures are disposed by the refcount below, letter textures by their cache
+    for (const index of (mesh.userData.hydraClaims as number[] | undefined) ?? []) releaseHydraTexture(index)
+  }
+
   function animate(): void {
     for (const o of origamis.values()) {
       o.player.step(o.targets)
       o.posAttr.needsUpdate = true
       o.linePosAttr.needsUpdate = true
     }
+    for (const { tex } of hydraTextures.values()) tex.needsUpdate = true
     renderer.render(scene, camera)
     requestAnimationFrame(animate)
   }
@@ -211,15 +268,55 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
       const lettered = typeof row.letter === 'string' && row.letter !== ''
       // A lettered face's paint lives in the texture; the material stays white
       // so the map's colors come through unmultiplied.
-      const mat = new THREE.MeshStandardMaterial({
+      const makeBase = (): THREE.MeshStandardMaterial => new THREE.MeshStandardMaterial({
         color: lettered ? 0xffffff : baseColor,
         map: lettered ? letterTexture(row.letter as string, baseColor) : null,
         metalness: lettered ? 0.05 : 0.35,
         roughness: lettered ? 0.7 : 0.4,
       })
       colorIdx++
-      const mesh = new THREE.Mesh(geo, mat)
+
+      // Hydra-mapped faces: `map` covers every face, `map0`..`map5` override
+      // single box faces. Basic (unlit) material, so the output's own colors
+      // reach the screen unshaded — a hydra face is a little video screen,
+      // not a lit surface. One material per output per object; faces without
+      // an output fall back to the base (color or letter) material.
+      const claims: number[] = []
+      const hydraMats = new Map<number, THREE.MeshBasicMaterial>()
+      const hydraMat = (index: number): THREE.MeshBasicMaterial | null => {
+        const cached = hydraMats.get(index)
+        if (cached) {
+          const again = claimHydraTexture(index) // one claim per face keeps refcounts exact
+          if (again) claims.push(index)
+          return cached
+        }
+        const tex = claimHydraTexture(index)
+        if (!tex) return null
+        claims.push(index)
+        const m = new THREE.MeshBasicMaterial({ map: tex })
+        hydraMats.set(index, m)
+        return m
+      }
+
+      const mapAll = hydraOutputIndex(row.map)
+      const perFace = [0, 1, 2, 3, 4, 5].map((f) => hydraOutputIndex(row['map' + f]))
+      let material: THREE.Material | THREE.Material[]
+      if (perFace.some((i) => i != null) && geo instanceof THREE.BoxGeometry) {
+        let base: THREE.MeshStandardMaterial | null = null
+        material = perFace.map((i) => {
+          const index = i ?? mapAll
+          const hm = index != null ? hydraMat(index) : null
+          if (hm) return hm
+          if (!base) base = makeBase()
+          return base
+        })
+      } else {
+        material = (mapAll != null ? hydraMat(mapAll) : null) ?? makeBase()
+      }
+
+      const mesh = new THREE.Mesh(geo, material)
       mesh.userData.lettered = lettered
+      mesh.userData.hydraClaims = claims
       mesh.name = String(id)
       mesh.position.set(px as number, py as number, pz as number)
       mesh.rotation.set(rx as number ?? 0, ry as number ?? 0, rz as number ?? 0)
@@ -239,8 +336,12 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
       mesh.position.set(px as number, py as number, pz as number)
       mesh.rotation.set(rx as number ?? 0, ry as number ?? 0, rz as number ?? 0)
       // A lettered block's color is baked into its texture — tinting the white
-      // material with the row's color would stain the whole face.
-      if (color != null && !mesh.userData.lettered) (mesh.material as THREE.MeshStandardMaterial).color.set(color as number)
+      // material with the row's color would stain the whole face — and a
+      // hydra-faced object (single or per-face materials) has no row color at all.
+      const m = mesh.material
+      if (color != null && !mesh.userData.lettered && !Array.isArray(m) && (m as THREE.MeshStandardMaterial).isMeshStandardMaterial) {
+        (m as THREE.MeshStandardMaterial).color.set(color as number)
+      }
     },
 
     destroyObject(id: unknown): void {
@@ -254,16 +355,14 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
       const mesh = objects.get(id)
       if (!mesh) return
       scene.remove(mesh)
-      mesh.geometry.dispose()
-      ;(mesh.material as THREE.MeshStandardMaterial).dispose()
+      disposeMesh(mesh)
       objects.delete(id)
     },
 
     reset(): void {
       for (const mesh of objects.values()) {
         scene.remove(mesh)
-        mesh.geometry.dispose()
-        ;(mesh.material as THREE.MeshStandardMaterial).dispose()
+        disposeMesh(mesh)
       }
       objects.clear()
       for (const origami of origamis.values()) {

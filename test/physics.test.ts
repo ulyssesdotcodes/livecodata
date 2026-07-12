@@ -146,6 +146,9 @@ test('ABC Blocks sample: blocks carry letters, fall, and bounce off the mat', ()
   assert.equal(blocks.length, 8, 'eight blocks')
   assert.ok(mats.every((r) => r.motion === 'static' && (r.restitution as number) > 0.5), 'mat is static and springy')
   assert.ok(blocks.every((r) => typeof r.letter === 'string' && (r.letter as string).length === 1), 'each block carries a letter')
+  assert.ok(mats.every((r) => r.map === 'o2'), 'the playmat plays hydra output o2')
+  assert.ok(blocks.every((r) => r.map0 === 'o1' && r.map5 === 'o1' && r.map2 === undefined),
+    'block sides play o1 while the top keeps its letter')
 
   const events = views.get('events')!
   assert.ok(

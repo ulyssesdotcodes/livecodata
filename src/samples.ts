@@ -402,7 +402,7 @@ define("hydra", (rand, table) =>
 // Wooden alphabet blocks rain onto a bouncy foam playmat and clatter to rest.
 // Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 //
-// Two things this sample shows:
+// Three things this sample shows:
 //   - a \`letter\` field on a box row stamps that letter on every face of the
 //     block (a canvas texture: cream face, the row's color as the frame and
 //     the letter itself) — any extra field like this rides through physics
@@ -410,6 +410,12 @@ define("hydra", (rand, table) =>
 //   - bounciness is \`restitution\`. Jolt combines the two touching bodies'
 //     values by MAX, so a springy mat (0.65) makes everything that lands on
 //     it bounce, whatever the block's own restitution says.
+//   - a \`map\` field naming a hydra output ("o0".."o3") plays that output
+//     LIVE on the object's faces; \`map0\`..\`map5\` override single box faces
+//     (+x, −x, top, bottom, +z, −z). Here the blocks' sides and bottom show
+//     o1 (the top keeps its letter) while the playmat plays o2 — two
+//     different sketches, both driven by the "hydra" view below, ticking on
+//     the same playback clock as the physics.
 
 // 1. The scene: a 4×4 grid of foam tiles (static, springy) and eight blocks
 //    dropped from a staggered stack of heights with random tumbles. rand is
@@ -421,7 +427,7 @@ define("base", (rand) => {
   for (let ix = 0; ix < 4; ix++) {
     for (let iz = 0; iz < 4; iz++) {
       mat.push({
-        id: "mat" + ix + iz, type: "create", shape: "box",
+        id: "mat" + ix + iz, type: "create", shape: "box", map: "o2",
         color: tileColors[(ix + iz * 3) % 4],
         motion: "static", restitution: 0.65, friction: 0.7,
         px: (ix - 1.5) * 1.12, py: -1.35, pz: (iz - 1.5) * 1.12,
@@ -433,6 +439,9 @@ define("base", (rand) => {
   const letterColors = [0xe74c3c, 0x2f7fe0, 0x2eaf5b, 0xd97f00, 0xa54ee0, 0xc0392b, 0x1f8f8f, 0xd4437f]
   const blocks = "ABCDEFGH".split("").map((letter, i) => ({
     id: "block" + letter, type: "create", shape: "box", letter,
+    // hydra output o1 on the sides and bottom; map2 (the top) is left unset,
+    // so that face falls back to the letter texture.
+    map0: "o1", map1: "o1", map3: "o1", map4: "o1", map5: "o1",
     color: letterColors[i],
     motion: "dynamic", friction: 0.5, restitution: 0.25,
     hx: 0.2, hy: 0.2, hz: 0.2,
@@ -462,6 +471,17 @@ define("landings", (rand, table) =>
     .groupBy("id")
     .count()
 )
+
+// 5. The sketches behind the faces. One hydra program renders three outputs:
+//    o1 (the blocks' sides) a slow kaleidoscope, o2 (the playmat) drifting
+//    colored noise, and o0 — what you SEE — the rendered 3D scene (s0)
+//    passed straight through. The face textures cross over from hydra to
+//    the 3D scene each tick, so o1/o2 animate on the blocks in the render
+//    that then flows back INTO hydra as s0.
+define("hydra", () => rows([
+  { beat: 1, event: "setCode",
+    code: "osc(6, 0.08, 1.4).kaleid(4).out(o1); noise(2.5, 0.12).colorama(0.4).out(o2); src(s0).out(o0)" },
+]))
 `,
   },
   {

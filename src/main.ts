@@ -723,7 +723,15 @@ const mounts = mountApp(document.getElementById('app') as HTMLElement, {
   roomChip,
   playback: playbackCtl,
 })
-const sceneAPI = initThree(mounts.threeCanvas, mounts.canvasPane)
+// The face bridge lets scene rows show hydra outputs on mesh faces (`map`
+// columns — see three-scene.ts). It closes over hydraAPI, which is created
+// just after initThree (hydra needs three's canvas as its s0 source); no
+// claim can happen before then, since claims come from createObject calls
+// during playback.
+const sceneAPI = initThree(mounts.threeCanvas, mounts.canvasPane, {
+  claim: (index) => hydraAPI?.claimFace(index) ?? null,
+  release: (index) => hydraAPI?.releaseFace(index),
+})
 const hydraAPI = initHydra(mounts.hydraCanvas, mounts.threeCanvas)
 const playbackController = createPlaybackController(sceneAPI, hydraAPI, playbackOptions)
 setPlaybackCtl(playbackController)
