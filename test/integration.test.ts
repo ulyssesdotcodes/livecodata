@@ -47,12 +47,12 @@ define("joined", () => table("cities").join(rows([{ id: "a", note: "hit" }]), "i
   assert.ok(tables.has('base'), 'flashed frame traces to the base object')
 })
 
-test('Origami Square Base sample: the five-crease squash stands the T exactly', () => {
+test('Origami Crane sample: squash to the square base, petal to the bird base', () => {
   // The sample folds the triangle, then squashes it around its middle: the
   // centre valleys, the two mountains to the doubled edge's midpoint, and
   // the spine unfolding flat — one mechanism, keyframed along its exact
   // rigid path. Run the sample and check the standing T.
-  const sample = SAMPLES.find((s) => s.name === 'Origami Square Base')!
+  const sample = SAMPLES.find((s) => s.name === 'Origami Crane')!
   const { views } = createRuntime({
     editableRows: (_name, _schema, seedRows) => seedRows ?? [],
   }).run(sample.code, { seed: 1 })
@@ -61,16 +61,17 @@ test('Origami Square Base sample: the five-crease squash stands the T exactly', 
   const create = events.rows.find((r) => r.type === 'create')!
   assert.equal(create.shape, 'origami')
   const program = create.program as FoldProgram
-  assert.deepEqual(program.groups, ['diag', 'mtn', 's1', 'diag~0.5-1', 'mtn2', 'diag~0-0.5'])
-  // The two mountain folds are non-flat — the two expected warnings.
-  assert.equal(program.warnings.length, 2, program.warnings.join('; '))
-  assert.ok(program.warnings.every((w) => w.includes('mtn')))
+  assert.deepEqual(program.groups,
+    ['diag', 's1', 'hv', 'diag~0.5-1', 's2', 'diag~0-0.5', 'kite', 'kite2', 'kite3', 'kite4', 'petal'])
+  // The halving valley is a non-flat 90° fold — the one expected warning.
+  assert.equal(program.warnings.length, 1, program.warnings.join('; '))
+  assert.ok(program.warnings[0].includes('hv'))
 
   // Take the fractions at the end of the squash off the baked keyframes and
   // check the T: the spine (right half of the triangle's long edge) lies
   // flat ON the table pointing up-right, the mountain ridge stands mid-air,
   // the centre line's end stays on the fold line — and nothing stretches.
-  const updates = events.rows.filter((r) => r.type === 'update' && typeof r.mtn === 'number')
+  const updates = events.rows.filter((r) => r.type === 'update' && typeof r.hv === 'number')
   const kfFracsAt = (beat: number): Record<string, number> => {
     const fr: Record<string, number> = {}
     for (const g of program.groups) {
@@ -82,7 +83,7 @@ test('Origami Square Base sample: the five-crease squash stands the T exactly', 
     }
     return fr
   }
-  const fracs = kfFracsAt(Infinity)
+  const fracs = kfFracsAt(14.5) // the finished square base, before the petal
   const player = createFoldPlayer(program)
   player.step(fracs)
 
@@ -140,6 +141,22 @@ test('Origami Square Base sample: the five-crease squash stands the T exactly', 
     assert.ok(zHi - zLo < 0.05, `square base is flat (z extent ${(zHi - zLo).toFixed(4)})`)
   }
 
+  // THE BIRD BASE (the petal fold, beats 14.5–16): all four points gather
+  // √2−1 past the closed corner, the side corners tuck onto the centre line
+  // at the hinge, and the packet lies flat again.
+  {
+    player.step(kfFracsAt(Infinity))
+    for (const [probe, corner] of [
+      [[0.9, 0.97], [1, 1]], [[0.9, -0.8], [1, -1]], [[-0.9, -0.97], [-1, -1]], [[-0.85, 0.9], [-1, 1]],
+    ] as [Vec2, Vec2][]) {
+      assert.ok(near(cornerPos(probe, corner), [Math.SQRT2 - 1, 1 - Math.SQRT2, 0], 0.02),
+        `bird-base point ${corner} at ${cornerPos(probe, corner)}`)
+    }
+    assert.ok(near(cornerPos([-0.9, 0.2], [-1, 0]), [-(1 - Math.SQRT1_2), 1 - Math.SQRT1_2, 0], 0.02),
+      `side corner (-1,0) tucks to the hinge, at ${cornerPos([-0.9, 0.2], [-1, 0])}`)
+    player.step(fracs)
+  }
+
   // Mid-way (the first standing pocket, beat 6): the tip on the table
   // beside the corner, the kite's ridge standing over the median.
   {
@@ -173,7 +190,7 @@ test('Origami Square Base sample: the five-crease squash stands the T exactly', 
     }
     return worst
   }
-  for (const beat of [2, 4.5, 5, 5.5, 6, 7, 7.5, 8, 8.5, 9, 10, 10.5, 11.5, 12.5, 13, 13.5, 14, 15]) {
+  for (const beat of [2, 4.5, 5, 5.5, 6, 7, 7.5, 8, 8.5, 9, 10, 10.5, 11.5, 12.5, 13, 13.5, 14, 16]) {
     player.step(kfFracsAt(beat))
     assert.ok(stretchNow() < 0.03, `beat ${beat}: stretch ${stretchNow().toFixed(4)}`)
   }

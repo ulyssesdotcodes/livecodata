@@ -468,3 +468,101 @@ test('origami sequence bakes fold steps into all-group keyframes', () => {
   assert.equal(at(5).a, 0.4, 'ramps back down to the partial target')
   assert.equal(typeof at(5).ease, 'function', 'named ease resolved onto the keyframe')
 })
+
+test('the petal fold: kites + lift through the assembled square base land the bird base exactly', () => {
+  // The collapse skeleton whose TRACKED model ends as the assembled square
+  // base (s1/s2 reflections driven negative along the squash path), then the
+  // petal: mountains from the open corner to s1@√2−1 / s2@√2−1 and the
+  // valley between those two points, all through every layer they own.
+  const T = '0.4142135624'
+  const { program } = compileFoldProgram([
+    { step: 'diag', op: 'reflect', p1: 'bottom@0', p2: 'top@1', move: 'bottom@1', dir: -1, at: 1, dur: 2, to: 1 },
+    { step: 's1', op: 'reflect', p1: 'right@0.5', p2: 'diag@0.5', move: 'right@1', dir: 1, at: 4, dur: 0.5, to: -0.18 },
+    { step: 'hv', op: 'fold', deg: 90, p1: 'top@0', p2: 'diag@0.5', move: 'right@0.75', dir: 1, at: 4, dur: 0.5, to: 0.248 },
+    { step: 'diag', p1: 'diag@0.5', p2: 'diag@1', at: 4, dur: 2, to: 0 },
+    { step: 's2', op: 'reflect', p1: 'left@0.5', p2: 'diag@0.5', move: 'left@0', dir: 1, at: 9.5, dur: 0.25, to: -0.125 },
+    { step: 'diag', p1: 'diag@0', p2: 'diag@0.5', at: 9.5, dur: 0.25, to: 0.825 },
+    { step: 'kite', op: 'fold', deg: 180, p1: 'top@0', p2: `s2@${T}`, move: 'left@0.75', dir: 1, at: 14.5, dur: 1.5, to: 1 },
+    { step: 'kite2', op: 'fold', deg: 180, p1: 'top@0', p2: `s1@${T}`, move: 'top@0.25', dir: 1, at: 14.5, dur: 1.5, to: 1 },
+    { step: 'kite3', op: 'fold', deg: 180, p1: 'top@0', p2: `s2@${T}`, move: 'bottom@0.75', dir: 1, at: 14.5, dur: 1.5, to: 1 },
+    { step: 'kite4', op: 'fold', deg: 180, p1: 'top@0', p2: `s1@${T}`, move: 'right@0.25', dir: 1, at: 14.5, dur: 1.5, to: 1 },
+    { step: 'petal', op: 'fold', deg: 180, p1: `s2@${T}`, p2: `s1@${T}`, move: 'top@0', dir: 1, at: 14.5, dur: 1.5, to: 1 },
+  ])
+  const player = createFoldPlayer(program)
+  const BIRD = {
+    diag: 1, 'diag~0.5-1': -1, 'diag~0-0.5': -1, s1: -1, hv: 0, s2: -1,
+    kite: 1, kite2: 1, kite3: 1, kite4: 1, petal: 1,
+  }
+  player.step(BIRD)
+
+  const copiesOf = (p: Vec2): number[][] => {
+    const out: number[][] = []
+    program.faces.forEach((f, fi) => {
+      let base = 0
+      for (let i = 0; i < fi; i++) base += (program.faces[i].poly.length - 2) * 3
+      for (let i = 1; i + 1 < f.poly.length; i++) {
+        const tri = [f.poly[0], f.poly[i], f.poly[i + 1]]
+        for (let k = 0; k < 3; k++) {
+          if (Math.hypot(tri[k][0] - p[0], tri[k][1] - p[1]) < 1e-7) {
+            const o = (base + (i - 1) * 3 + k) * 3
+            out.push([player.positions[o], player.positions[o + 1], player.positions[o + 2]])
+          }
+        }
+      }
+    })
+    return out
+  }
+  const near2 = (a: number[], x: number, y: number, eps: number): boolean =>
+    Math.hypot(a[0] - x, a[1] - y) < eps
+
+  // All four paper corners gather at the bird base's top point, √2−1 past
+  // the closed corner along the axis.
+  for (const c of [[1, 1], [-1, -1], [1, -1], [-1, 1]] as Vec2[]) {
+    for (const w of copiesOf(c)) {
+      assert.ok(near2(w, Math.SQRT2 - 1, 1 - Math.SQRT2, 0.02), `corner ${c} at ${w}`)
+    }
+  }
+  // The side corners tuck onto the centre line at the valley's height.
+  for (const c of [[-1, 0], [0, 1], [1, 0], [0, -1]] as Vec2[]) {
+    for (const w of copiesOf(c)) {
+      assert.ok(near2(w, -(1 - Math.SQRT1_2), 1 - Math.SQRT1_2, 0.02), `side corner ${c} at ${w}`)
+    }
+  }
+  // The paper centre stays the closed corner, and the packet is flat.
+  for (const w of copiesOf([0, 0])) assert.ok(near2(w, 0, 0, 0.02), `centre at ${w}`)
+  let zLo = Infinity
+  let zHi = -Infinity
+  for (let i = 2; i < player.positions.length; i += 3) {
+    zLo = Math.min(zLo, player.positions[i])
+    zHi = Math.max(zHi, player.positions[i])
+  }
+  assert.ok(zHi - zLo < 0.05, `bird base is flat (z extent ${(zHi - zLo).toFixed(4)})`)
+
+  // The end pose closes exactly; mid-lift the paper flexes (the petal fold
+  // is not rigid-foldable) but boundedly, and both ends are tight.
+  const flatRef = (() => {
+    player.step({})
+    return Float32Array.from(player.positions)
+  })()
+  const stretchNow = (): number => {
+    let worst = 0
+    for (let i = 0; i + 8 < flatRef.length; i += 9) {
+      for (const [a, b] of [[0, 3], [3, 6], [6, 0]]) {
+        const rest = Math.hypot(
+          flatRef[i + a] - flatRef[i + b], flatRef[i + a + 1] - flatRef[i + b + 1], flatRef[i + a + 2] - flatRef[i + b + 2])
+        const now = Math.hypot(
+          player.positions[i + a] - player.positions[i + b],
+          player.positions[i + a + 1] - player.positions[i + b + 1],
+          player.positions[i + a + 2] - player.positions[i + b + 2])
+        worst = Math.max(worst, Math.abs(now - rest))
+      }
+    }
+    return worst
+  }
+  player.step(BIRD)
+  assert.ok(stretchNow() < 0.005, `bird base closes exactly (stretch ${stretchNow().toFixed(5)})`)
+  for (const p of [0.25, 0.5, 0.75]) {
+    player.step({ ...BIRD, kite: p, kite2: p, kite3: p, kite4: p, petal: p })
+    assert.ok(stretchNow() < 0.3, `mid-petal flex bounded at p=${p} (${stretchNow().toFixed(3)})`)
+  }
+})
