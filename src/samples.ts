@@ -47,9 +47,12 @@ define("scene", (rand, table) => table("events").rasterize(8))
 // runs: the paper is cut along the fold line, the chosen flaps swing over,
 // and a layer solver works out how the paper stacks (seeded from the step
 // before, so the folding stays coherent). Playback shows those exact
-// states; between them the flaps hinge rigidly about the fold line, and
-// every face shares its vertices with its neighbours — the paper can
-// never tear. Press "Run" (or Cmd/Ctrl-Enter), then hit Play.
+// states. Between them, simple folds hinge rigidly about the fold line;
+// reverse folds and other layered moves play a physically relaxed motion
+// baked at compile time — pockets billow open and press flat the way real
+// paper moves — always landing exactly on the solved state. Every face
+// shares its vertices with its neighbours, so the paper can never tear.
+// Press "Run" (or Cmd/Ctrl-Enter), then hit Play.
 //
 // The table ("steps" in the table panel):
 //   step   a name for the fold (errors point at it)
