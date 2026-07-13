@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  initialState, foldStep, lineThrough, animatedPositions, FoldError,
+  initialState, foldStep, lineThrough, animatedPositions, compileFoldTable, FoldError,
   type FoldOutcome, type FoldSpec, type FoldState, type Line, type Vec2,
 } from '../src/fold-engine.js'
 
@@ -143,4 +143,20 @@ test('the 16-fold crane sequence solves exactly, step by step', () => {
   for (const s of st.sheet) {
     assert.ok(s[0] > -1e-6 && s[0] < 1 + 1e-6 && s[1] > -1e-6 && s[1] < 1 + 1e-6)
   }
+})
+
+test('editable-table rows: blank cells ("" and NaN) mean unset, not zero', () => {
+  // the table panel materializes every schema column, so untouched cells
+  // arrive as empty strings / NaN — they must fall back to defaults
+  const program = compileFoldTable([{
+    step: 'diag', p1: '0,0', p2: '1,1', move: '0.9,0.1',
+    kind: '', pick: NaN, at: '', dur: '', to: '',
+  }])
+  assert.equal(program.steps.length, 1)
+  assert.equal(program.steps[0].t0, 1)     // at defaulted, not Number('') = 0
+  assert.equal(program.steps[0].t1, 1.75)  // dur defaulted
+  assert.equal(program.steps[0].to, 1)     // to defaulted, not 0 (no swing)
+  // blank step names get positional defaults; blank p1 errors by name
+  assert.throws(() => compileFoldTable([{ step: '', p1: '', p2: '1,1', move: '0.9,0.1' }]),
+    (e: Error) => e instanceof FoldError && e.message.includes('"fold1"'))
 })
