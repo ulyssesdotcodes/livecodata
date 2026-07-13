@@ -976,10 +976,12 @@ export type DSLSurface = Easings & {
   table(name: string): Table
   math(fn: (t: number) => number): MathBuilder
   rows(arr: Row[] | null | undefined): Table
-  // Copies of `rows`, one per cycle through `values` — cursor i's field
-  // is values[i % values.length], so a shorter values array wraps around
-  // (and a longer one leaves rows unused past the end of `rows`).
-  rotate(rows: Row[] | null | undefined, fieldName: string, values: unknown[]): Table
+  // One row per entry in `values` (so the output length matches `values`),
+  // cycling through `rows` as it goes: output row i is { ...rows[i %
+  // rows.length], ...values[i] }. `rows` is the short array rotated through
+  // (a repeating base/pattern); `values` is the longer array of overrides
+  // merged on top.
+  rotate(rows: Row[] | null | undefined, values: Row[] | null | undefined): Table
   csv(text: string): Table
   data(url: string): Table
   json(data: Row[] | string | unknown): Table
@@ -1045,10 +1047,10 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     table: (name: string) => ctx!.resolve(name),
     math: (fn: (t: number) => number) => new MathBuilder(fn, ctx!),
     rows: (arr: Row[] | null | undefined) => new Table((arr ?? []).map((r) => ({ ...r })), ctx),
-    rotate: (rows: Row[] | null | undefined, fieldName: string, values: unknown[]): Table => {
+    rotate: (rows: Row[] | null | undefined, values: Row[] | null | undefined): Table => {
       const src = rows ?? []
       return new Table(
-        values.length ? src.map((r, i) => ({ ...r, [fieldName]: values[i % values.length] })) : src.map((r) => ({ ...r })),
+        (values ?? []).map((v, i) => (src.length ? { ...src[i % src.length], ...v } : { ...v })),
         ctx,
       )
     },
