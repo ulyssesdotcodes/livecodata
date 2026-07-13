@@ -54,25 +54,39 @@ export function hydraRows(rows: Row[] | null | undefined): Row[] {
 // Place each row on the frame grid (from its 1-indexed `beat`; rows without one
 // sit at beat 1 / frame 0) and sort ascending, so sampling is a frame comparison
 // (mirrors rasterize/effects). The computed frame is stored on `index`, the
-// field hydraFrameAt samples against.
+// field hydraFrameAt samples against. An optional 0-indexed `loop` column next
+// to `beat` places a row in a later pass of the loop (multi-loop sequences):
+// rows sort by (loop, frame), so the sketch evolves across passes and sampling
+// folds every earlier pass in full.
 export function buildHydraIndex(rows: Row[] | null | undefined): Row[] {
   return hydraRows(rows)
-    .map((row) => ({ ...row, index: beatToFrame((row.beat as number | undefined) ?? 1) }))
-    .sort((a, b) => (a.index as number) - (b.index as number))
+    .map((row) => ({
+      ...row,
+      index: beatToFrame((row.beat as number | undefined) ?? 1),
+      loop: typeof row.loop === 'number' ? Math.max(0, Math.floor(row.loop)) : 0,
+    }))
+    .sort((a, b) => ((a.loop as number) - (b.loop as number)) || ((a.index as number) - (b.index as number)))
 }
 
-// The active sketch at frame `f`: the latest setCode event's `code` at/before
-// f, plus the latest setVariable value of each named variable at/before f
+// How many passes of the loop the sketch spans — the largest `loop` + 1.
+export function hydraLoops(index: Row[]): number {
+  return index.reduce((m, r) => Math.max(m, (r.loop as number | undefined) ?? 0), 0) + 1
+}
+
+// The active sketch at frame `f` of loop pass `loop`: every event from earlier
+// passes in full, plus this pass's events at/before f — the latest setCode
+// event's `code` and the latest setVariable value of each named variable
 // (later events override earlier ones, so a row can change just one variable
 // while the sketch stays put). Returns null until a setCode event is reached —
 // playback then falls back to showing the raw scene.
-export function hydraFrameAt(index: Row[], f: number): HydraFrame | null {
+export function hydraFrameAt(index: Row[], f: number, loop = 0): HydraFrame | null {
   const frame = Math.floor(f)
   if (frame < 0) return null
   let code: string | null = null
   const vars: Record<string, unknown> = {}
   for (const row of index) {
-    if ((row.index as number) > frame) break
+    const l = (row.loop as number | undefined) ?? 0
+    if (l > loop || (l === loop && (row.index as number) > frame)) break
     if (row.event === 'setCode' && typeof row.code === 'string') code = row.code
     else if (row.event === 'setVariable' && typeof row.name === 'string') vars[row.name] = row.value
   }

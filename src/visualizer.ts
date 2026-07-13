@@ -17,19 +17,32 @@
 // Visualizer, so origami work doesn't touch this seam.
 
 import { buildFrameIndex, sampleFrame } from './rasterize.js'
-import { buildHydraIndex, hydraFrameAt } from './hydra.js'
+import { buildHydraIndex, hydraFrameAt, hydraLoops } from './hydra.js'
 import { resolveBindings, type EvalCtx } from './dsl.js'
 import { FPS } from './constants.js'
 import type { Row } from './lineage.js'
 import type { SceneAPI } from './three-scene.js'
 import type { HydraAPI } from './hydra-scene.js'
 
+// Absolute wall-clock instants (ms) each content kind's multi-loop sequence
+// counts passes from — per kind, the `at` stamp of the newest apply that
+// changed it (see playback.ts's loopEpochsFromApplies). Shared by every
+// replica in a room, which is what puts them all on the same pass.
+export interface LoopEpochs {
+  scene?: number
+  timeline?: number
+  hydra?: number
+}
+
 // The row sets a cooked program feeds the visualizers — a subset of replay.ts's
 // CookedResult (which is structurally assignable), so each visualizer picks its
 // own slice and the engine forwards the whole object without knowing the names.
+// `loopEpochs` rides along the same way: each visualizer keeps its own kind's
+// stamp (the engine keeps the timeline's).
 export interface CookedVisualRows {
   sceneRows: Row[]
   hydraRows: Row[]
+  loopEpochs?: LoopEpochs
 }
 
 export interface VisualizerFrame {
@@ -39,6 +52,12 @@ export interface VisualizerFrame {
   // Streaming context at the rounded source frame (midi() bindings resolve
   // against it), or null when no stream is live.
   ctx: EvalCtx | null
+  // How many wall-aligned loops have completed since an absolute instant (ms)
+  // — supplied by the engine, which owns time. A visualizer whose rows span
+  // several passes of the loop (a `loop` column next to `beat`) picks the pass
+  // to show as passAt(its loop epoch) modulo its own pass count; the content
+  // half (pass count, per-pass span) stays in the visualizer's index.
+  passAt: (epochMs: number) => number
 }
 
 export interface Visualizer {
@@ -66,6 +85,10 @@ export interface Visualizer {
 export function createSceneVisualizer(sceneAPI: SceneAPI): Visualizer {
   let frameIndex = buildFrameIndex([])
   let alive = new Set<unknown>()
+  // The shared apply stamp scene pass-counting is based on — 0 (the Unix
+  // epoch) until stamped, the same arbitrary-but-shared reference the no-tap
+  // phase anchor uses.
+  let epoch = 0
 
   function clear(): void {
     sceneAPI.reset()
@@ -75,11 +98,21 @@ export function createSceneVisualizer(sceneAPI: SceneAPI): Visualizer {
   return {
     load(cooked): void {
       frameIndex = buildFrameIndex(cooked.sceneRows ?? [])
+      if (typeof cooked.loopEpochs?.scene === 'number') epoch = cooked.loopEpochs.scene
     },
-    contentFrames: () => frameIndex.maxFrame,
+    // Per-pass span, not the cache's total extent: a multi-loop cache still
+    // wraps the playhead every loop, with the pass picked by the loop count
+    // (loopFrames == maxFrame when there's no loop column).
+    contentFrames: () => frameIndex.loopFrames,
     hasContent: () => frameIndex.map.size > 0,
-    applyFrame({ srcFrameF, ctx }): Row[] {
-      const baked = sampleFrame(frameIndex, srcFrameF)
+    applyFrame({ srcFrameF, ctx, passAt }): Row[] {
+      // A multi-loop cache is one extended frame grid (loops * loopFrames):
+      // offset into the pass the wall-aligned loop count selects, cycling
+      // through the sequence. Single-loop caches sample exactly as before.
+      const frameF = frameIndex.loops > 1
+        ? (passAt(epoch) % frameIndex.loops) * frameIndex.loopFrames + srcFrameF
+        : srcFrameF
+      const baked = sampleFrame(frameIndex, frameF)
       const states = ctx ? baked.map((s) => resolveBindings(s, ctx)) : baked
       const present = new Set<unknown>()
       for (const s of states) {
@@ -110,15 +143,20 @@ export function createSceneVisualizer(sceneAPI: SceneAPI): Visualizer {
 // source position, so pausing/scrubbing the timeline pauses/scrubs the sketch.
 export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
   let index: Row[] = buildHydraIndex([])
+  let loops = 1
+  let epoch = 0
 
   return {
     load(cooked): void {
       index = buildHydraIndex(cooked.hydraRows ?? [])
+      loops = hydraLoops(index)
+      if (typeof cooked.loopEpochs?.hydra === 'number') epoch = cooked.loopEpochs.hydra
     },
     contentFrames: () => 0,
     hasContent: () => index.length > 0,
-    applyFrame({ srcFrameF, ctx }): Row[] {
-      const sketch = hydraFrameAt(index, Math.floor(srcFrameF))
+    applyFrame({ srcFrameF, ctx, passAt }): Row[] {
+      const pass = loops > 1 ? passAt(epoch) % loops : 0
+      const sketch = hydraFrameAt(index, Math.floor(srcFrameF), pass)
       hydraAPI.setSketch(sketch && ctx ? { ...sketch, vars: resolveBindings(sketch.vars, ctx) } : sketch)
       hydraAPI.tick(srcFrameF / FPS)
       return []

@@ -23,6 +23,7 @@ import { createMidiInput, type MidiInput } from './midi.js'
 import { createTapLog } from './tap-log.js'
 import { connectMultiplayer } from './multiplayer.js'
 import type { MultiplayerConnection, MultiplayerStatus } from './multiplayer.js'
+import { loopEpochsFromApplies } from './playback.js'
 import type { PlaybackAPI, PlaybackOptions } from './playback.js'
 import type { Row } from './lineage.js'
 import type { PeerPresence } from './ui/table-panel.js'
@@ -341,11 +342,40 @@ function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   return display
 }
 
+// Signature of one cooked output, to detect which of scene/timeline/hydra a
+// run actually changed. Functions on rows (easings, streaming bindings) hash
+// by their source text — every cook builds fresh closures, so identity would
+// always differ while the content is the same.
+function cookedSig(rows: Row[]): string {
+  return JSON.stringify(rows, (_k, v: unknown) => (typeof v === 'function' ? String(v) : v))
+}
+
+const lastCookedSigs = { scene: '', timeline: '', hydra: '' }
+
+// Which cooked outputs differ from what's currently showing (and re-baseline
+// the signatures for the next diff) — the determination stamped onto the apply
+// pulse so the whole room resets the same multi-loop sequences.
+function diffCooked({ sceneRows, timelineRows, hydraRows }: CookedData): { scene: boolean; timeline: boolean; hydra: boolean } {
+  const sigs = { scene: cookedSig(sceneRows), timeline: cookedSig(timelineRows), hydra: cookedSig(hydraRows) }
+  const changed = {
+    scene: sigs.scene !== lastCookedSigs.scene,
+    timeline: sigs.timeline !== lastCookedSigs.timeline,
+    hydra: sigs.hydra !== lastCookedSigs.hydra,
+  }
+  Object.assign(lastCookedSigs, sigs)
+  return changed
+}
+
+// Render a cooked program and hand its rows to playback. The loop epochs ride
+// along from the activity table's apply stamps (loopEpochsFromApplies) — the
+// author's absolute clock, NOT this replica's — so every client in the room,
+// including one that joins later and replays the same events, lands on the
+// same pass of a multi-loop sequence.
 function applyCooked(cooked: CookedData): void {
   lastViews = cooked.views
   tablePanel.setTables(tablesForDisplay(cooked.views))
   tablePanel.setGraphs(cooked.graphs)
-  playback.load(cooked)
+  playback.load({ ...cooked, loopEpochs: loopEpochsFromApplies(editableStore.get(ACTIVITY_TABLE)?.events ?? []) })
 }
 
 // A tap changed the tempo: refresh the "taps" table and re-anchor playback to
@@ -386,6 +416,14 @@ interface EvaluateOptions {
   // else's pulse, so echoing our own would round-trip forever between
   // replicas.
   broadcast?: boolean
+  // Drop the cooked result (write nothing, render nothing) if the store's
+  // program changed while the cook was in flight. The cook awaits a worker
+  // (whose first run also boots jolt's WASM), so a fresh client joining a room
+  // can have the room's snapshot merge in mid-cook — and firstRun's
+  // speculative cook of the default program must NOT then write that default
+  // over the room's program (its post-merge event would win the fold on every
+  // replica). The merge's own apply reaction renders the room program instead.
+  obsoleteIfProgramChanged?: boolean
 }
 
 // True while a cook — or a store operation we're about to react to ourselves
@@ -411,7 +449,7 @@ function quietly<T>(fn: () => T): T {
 // Apply a program: cook it against the current (head) table state, record a run,
 // render, and (unless told otherwise) persist. This is the *only* thing that
 // applies pending table edits — inline edits just accumulate until an apply.
-async function evaluate(code: string, { setError, persist = true, seed = randomSeed(), broadcast = true }: EvaluateOptions = {}): Promise<void> {
+async function evaluate(code: string, { setError, persist = true, seed = randomSeed(), broadcast = true, obsoleteIfProgramChanged = false }: EvaluateOptions = {}): Promise<void> {
   const pending = extractDataUrls(code).filter((u) => !dataCache.has(u))
   if (pending.length) {
     await Promise.all(pending.map(async (url) => {
@@ -440,6 +478,10 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
       setError?.((err as Error).message)
       return
     }
+    if (obsoleteIfProgramChanged) {
+      const current = editableStore.get('code')?.rows[0]?.code
+      if (typeof current === 'string' && current !== code) return
+    }
     setError?.(null)
     liveCode = code
     liveSeed = seed
@@ -453,8 +495,18 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
     // Apply bookmark — the unit the session bar scrubs.
     setCodeRow(code, seed)
     editableStore.recordRun()
-    if (broadcast) editableStore.record(ACTIVITY_TABLE, 'apply')
     sessionBar.setLog({ length: sessionLength() })
+    // Stamp the apply pulse with which cooked outputs this run changed and the
+    // absolute instant it happened, BEFORE applyCooked — the loop epochs it
+    // folds (loopEpochsFromApplies) must already include this apply, so this
+    // replica re-bases from the very stamp its peers will. The reactive
+    // evaluate (broadcast:false) records nothing: the author's merged stamp is
+    // already in the fold.
+    const changed = diffCooked(cooked)
+    if (broadcast) {
+      const changedKinds = Object.keys(changed).filter((k) => changed[k as keyof typeof changed])
+      editableStore.record(ACTIVITY_TABLE, 'apply', { changed: changedKinds, at: Date.now() })
+    }
     applyCooked(cooked)
     if (persist) persistSession()
   } finally {
@@ -632,6 +684,9 @@ async function scrubSession(pos: number): Promise<void> {
     cooking--
   }
   editor.setError(null)
+  // Re-baseline the changed-detection at what's now showing, so the next Run's
+  // apply pulse reports its diff against the scrubbed view the user sees.
+  diffCooked(cooked)
   applyCooked(cooked)
 }
 
@@ -846,7 +901,10 @@ function firstRun(): void {
     // append a new run.
     scrubSession(sessionLength() - 1)
   } else {
-    evaluate(editor.getCode(), { setError: editor.setError, persist: false })
+    // Speculative: nothing here yet, show the default program. If a room
+    // snapshot merges in while this first cook boots the worker, yield to it
+    // (see obsoleteIfProgramChanged) instead of clobbering the room.
+    evaluate(editor.getCode(), { setError: editor.setError, persist: false, obsoleteIfProgramChanged: true })
   }
   sessionBar.setLog({ length: sessionLength() })
   refreshSelector()

@@ -396,9 +396,10 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
 
     createTable(name: string): void {
       if (tables.has(name)) return
-      // New tables start with a "beat" column — the convention every other table
-      // here keys time by (1-indexed beats).
-      append({ kind: 'create', table: name, columns: [{ name: 'beat', type: 'number' }] })
+      // New tables start with "beat" and "loop" columns — the convention every
+      // other table here keys time by: a 1-indexed beat within the loop, and
+      // which 0-indexed pass of the loop for multi-loop sequences.
+      append({ kind: 'create', table: name, columns: [{ name: 'beat', type: 'number' }, { name: 'loop', type: 'number' }] })
     },
 
     removeTable(name: string): void {
