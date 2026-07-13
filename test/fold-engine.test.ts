@@ -1,9 +1,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  initialState, foldStep, lineThrough, animatedPositions, compileFoldTable, FoldError,
+  initialState, foldStep, lineThrough, animatedPositions, compileFoldTable,
+  foldTablePositions, FoldError,
   type FoldOutcome, type FoldSpec, type FoldState, type Line, type Vec2,
 } from '../src/fold-engine.js'
+import { M } from '../src/vendor/flatfolder/math.js'
+import { X } from '../src/vendor/flatfolder/conversion.js'
+import { COMP } from '../src/vendor/linefolder/compute.js'
 
 const near = (a: number, b: number, tol = 1e-9): boolean => Math.abs(a - b) < tol
 
@@ -168,4 +172,131 @@ test('editable-table rows: blank cells ("" and NaN) mean unset, not zero', () =>
   assert.equal(zeroed.steps[0].t0, 1)
   assert.equal(zeroed.steps[0].t1, 1.75)
   assert.equal(zeroed.steps[0].to, 1)
+})
+
+test('swing direction follows the target stacking (both picks of a fold)', () => {
+  const st = initialState()
+  const outs = [0, 1].map((pick) => foldStep(st, {
+    line: lineThrough([0, 0], [1, 1]), move: [[0.9, 0.1]], pick,
+  }))
+  // the two valid states put the flap on opposite sides — and the swing
+  // must go out on the side the flap lands on
+  for (const out of outs) {
+    const mover = out.anim.moving.findIndex(Boolean)
+    const still = out.anim.moving.findIndex((m) => !m)
+    const endsOnTop = out.state.layers[mover] > out.state.layers[still]
+    const vi = out.state.sheet.findIndex((p) => near(p[0], 1) && near(p[1], 0))
+    const midZ = animatedPositions(out, 0.5)[vi][2]
+    assert.equal(Math.sign(midZ), endsOnTop ? 1 : -1, 'flap swings on its landing side')
+  }
+})
+
+test('independent flaps in one step swing to the sides they land on', () => {
+  // the crane's wings fold both sheets in one step: the front wing lands
+  // on top of the body, the back wing underneath — they must mirror
+  let st = initialState()
+  for (const spec of CRANE) st = foldStep(st, spec as FoldSpec).state
+  const out = foldStep(st, {
+    line: [[-0.7071067811865475, 0.7071067811865475], 0.1],
+    move: [[0.858, 0.377], [0.377, 0.858]],
+  })
+  const senses = new Set(out.anim.dirs.filter((_, fi) => out.anim.moving[fi]))
+  assert.deepEqual([...senses].sort(), [-1, 1], 'the two wings get opposite senses')
+  const mid = animatedPositions(out, 0.5)
+  const zs = mid.map((p) => p[2]).filter((z) => Math.abs(z) > 1e-6)
+  assert.ok(zs.some((z) => z > 0) && zs.some((z) => z < 0), 'wings mirror in ±z')
+})
+
+test('a moving face straddling the fold line stays rigid mid-swing', () => {
+  // fold the left third over, then fold a line through the overhanging
+  // flap with both sides moving: the re-merged face spans the line and
+  // must still swing as one rigid piece (regression: |h|-based z broke it)
+  let st = initialState()
+  st = foldStep(st, { line: lineThrough([1 / 3, 0], [1 / 3, 1]), move: [[0.1, 0.5]] }).state
+  const out = foldStep(st, { line: lineThrough([0.55, 0], [0.55, 1]), move: [[0.45, 0.5], [0.05, 0.5]] })
+  const d3 = (a: number[], b: number[]): number =>
+    Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])
+  for (const t of [0.25, 0.5, 0.75]) {
+    const P = animatedPositions(out, t)
+    for (const F of out.state.FV) {
+      for (let j = 0; j < F.length; ++j) {
+        const a = F[j], b = F[(j + 1) % F.length]
+        const rest = Math.hypot(
+          out.anim.Vfrom[a][0] - out.anim.Vfrom[b][0],
+          out.anim.Vfrom[a][1] - out.anim.Vfrom[b][1])
+        assert.ok(near(d3(P[a], P[b]), rest, 1e-9), `edge rigid at t=${t}`)
+      }
+    }
+  }
+})
+
+test('layer indices match flat-folder\'s own per-cell stacking (crane)', () => {
+  let st = initialState()
+  for (const spec of CRANE) st = foldStep(st, spec as FoldSpec).state
+  const [FOLD, CELL] = COMP.V_FV_2_FOLD_CELL(st.V, st.FV)
+  const { Ff } = FOLD
+  const CD = X.CF_edges_2_CD(CELL.CF, st.FO.map(([f1, f2, o]) =>
+    M.encode(((Ff[f2] ? 1 : -1) * o >= 0) ? [f1, f2] : [f2, f1])))
+  let cells = 0
+  for (const S of CD) {
+    if (!S || S.length < 2) continue
+    cells++
+    for (let i = 1; i < S.length; ++i) {
+      assert.ok(st.layers[S[i]] > st.layers[S[i - 1]],
+        'bigger layer index = higher in the stack, everywhere')
+    }
+  }
+  assert.ok(cells > 10, 'the folded crane has real multi-layer cells')
+})
+
+test('nudges are continuous across every step boundary (crane)', () => {
+  // each step's layersFrom must be the previous state's stacking carried
+  // onto the new face set: look the parent face up by sheet centroid
+  // (unique in sheet space, so this is ply-exact)
+  let st = initialState()
+  const inPoly = (pt: Vec2, poly: Vec2[]): boolean => {
+    let inside = false
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const [xi, yi] = poly[i]
+      const [xj, yj] = poly[j]
+      if ((yi > pt[1]) !== (yj > pt[1]) &&
+          pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi) inside = !inside
+    }
+    return inside
+  }
+  for (const spec of CRANE) {
+    const out = foldStep(st, spec as FoldSpec)
+    for (let fi = 0; fi < out.state.FV.length; ++fi) {
+      const F = out.state.FV[fi]
+      const c: Vec2 = [0, 0]
+      for (const vi of F) { c[0] += out.state.sheet[vi][0] / F.length; c[1] += out.state.sheet[vi][1] / F.length }
+      const parent = st.FV.findIndex((G) => inPoly(c, G.map((vi) => st.sheet[vi])))
+      assert.ok(parent >= 0, 'every face has a parent ply')
+      assert.equal(out.anim.layersFrom[fi], st.layers[parent], 'pre-swing nudge = parent ply nudge')
+    }
+    st = out.state
+  }
+})
+
+test('program zOff eases from the previous stacking to the final one', () => {
+  const program = compileFoldTable([
+    { step: 'a', p1: '0,0', p2: '1,1', move: '0.9,0.1' },
+    { step: 'b', p1: '0.5,0.5', p2: '0,1', move: '0.05,0.05' },
+  ])
+  const mid = program.maxLayer / 2
+  const atStart = foldTablePositions(program, 1)      // step b at t=0
+  const atEnd = foldTablePositions(program, 2)        // step b landed
+  const stepB = program.steps[1]
+  for (let fi = 0; fi < stepB.FV.length; ++fi) {
+    assert.ok(near(atStart.zOff[fi], program.gap * (stepB.layersFrom[fi] - mid)))
+    assert.ok(near(atEnd.zOff[fi], program.gap * (stepB.layers[fi] - mid)))
+  }
+  // mid-swing the moving flap is out of plane, all of it on one side
+  const midway = foldTablePositions(program, 1.5)
+  const movingZ = midway.pos
+    .filter((_, vi) => stepB.FV.some((F, fi) => stepB.moving[fi] && F.includes(vi)))
+    .map((p) => p[2])
+  const outOfPlane = movingZ.filter((z) => Math.abs(z) > 1e-6)
+  assert.ok(outOfPlane.length > 0)
+  assert.equal(new Set(outOfPlane.map(Math.sign)).size, 1)
 })
