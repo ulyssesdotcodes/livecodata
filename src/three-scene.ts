@@ -1,4 +1,8 @@
 import * as THREE from 'three'
+import { FontLoader, type Font } from 'three/addons/loaders/FontLoader.js'
+import { TextGeometry } from 'three/addons/geometries/TextGeometry.js'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import helvetiker from 'three/examples/fonts/helvetiker_regular.typeface.json'
 import { foldTablePositions, type FoldTableProgram } from './fold-engine.js'
 import { SHAPE_DEFAULTS } from './shapes.js'
 
@@ -50,74 +54,79 @@ function makeGeometry(shape: string, dims: Record<string, unknown>): THREE.Buffe
 const PALETTE = [0x4a9eff, 0xff6b6b, 0x51cf66, 0xffd43b, 0xcc5de8, 0xff922b]
 
 // ── Text ────────────────────────────────────────────────────────────────────
-// A `shape: "text"` object renders its `text` string onto an offscreen canvas
-// and maps that onto a flat plane, so it needs no font asset (the browser's
-// own fonts draw it) and rides the same px/py/pz + rx/ry/rz transform as every
-// other object. `size` is the text's world-space HEIGHT (per line); the plane's
-// width follows the rendered aspect ratio. Newlines split into stacked lines.
+// A `shape: "text"` object is real extruded 3D geometry (three.js TextGeometry),
+// so it catches the scene lights and has depth like every other mesh, and rides
+// the same px/py/pz + rx/ry/rz transform. The font (helvetiker) is bundled and
+// parsed synchronously — no asset fetch — so an object builds the instant its
+// create row is seen, exactly like a box or sphere. `size` is the world-space
+// cap height (per line); newlines split into stacked, centered lines. Only the
+// helvetiker glyph set (Latin + common punctuation) renders; an unknown glyph is
+// skipped. `color` is a plain material color, updated live like any other mesh.
 
-export interface TextParams { text: string; color: number; size: number; font: string }
+export interface TextParams { text: string; size: number; color: number }
 
-const TEXT_DEFAULTS = { color: 0xffffff, size: 0.5, font: 'sans-serif' }
+const TEXT_DEFAULTS = { size: 0.5, color: 0xffffff }
 
-// The subset of a row that determines a text object's appearance, merged with
-// defaults — used to build the texture and, on later frames, to detect an
-// appearance change (new string, color, size, or font) that means the canvas
-// texture and plane geometry must be rebuilt rather than just repositioned.
+// The subset of a row that determines a text object, merged with defaults. Only
+// `text` and `size` shape the (glyph) GEOMETRY; `color` is carried for the
+// initial material but, like every other mesh, recolors without a rebuild.
 export function textParams(row: Record<string, unknown>): TextParams {
   return {
     text: row.text == null ? '' : String(row.text),
-    color: row.color != null ? (row.color as number) : TEXT_DEFAULTS.color,
     size: typeof row.size === 'number' ? (row.size as number) : TEXT_DEFAULTS.size,
-    font: row.font != null ? String(row.font) : TEXT_DEFAULTS.font,
+    color: row.color != null ? (row.color as number) : TEXT_DEFAULTS.color,
   }
 }
 
-// Whether an update row's text appearance has drifted from what a text object
-// was last built with — a re-run (or keyframe) that changes the string, color,
-// size or font needs the canvas redrawn and the plane resized, not just moved.
-export function textChanged(prev: TextParams, row: Record<string, unknown>): boolean {
+// Whether an update row's string or size has drifted from what a text object's
+// geometry was last built with — those (and only those) mean the glyph geometry
+// must be regenerated; a color change is a cheap material swap, handled like any
+// other mesh and deliberately excluded here.
+export function textGeometryChanged(prev: TextParams, row: Record<string, unknown>): boolean {
   const p = textParams(row)
-  return p.text !== prev.text || p.color !== prev.color || p.size !== prev.size || p.font !== prev.font
-}
-
-function colorToCss(c: number): string {
-  return '#' + ((c >>> 0) & 0xffffff).toString(16).padStart(6, '0')
-}
-
-// Draw the (possibly multi-line) text onto `canvas`, sizing the bitmap to fit,
-// and return its width/height aspect ratio so the plane can match it.
-function drawTextCanvas(canvas: HTMLCanvasElement, params: TextParams): number {
-  const FONT_PX = 128
-  const PAD = FONT_PX * 0.25
-  const LINE_H = FONT_PX * 1.25
-  const ctx = canvas.getContext('2d')!
-  const fontStr = `bold ${FONT_PX}px ${params.font}`
-  const lines = params.text.length ? params.text.split('\n') : [' ']
-
-  ctx.font = fontStr
-  const textW = Math.max(1, ...lines.map((l) => ctx.measureText(l).width))
-  const w = Math.ceil(textW + PAD * 2)
-  const h = Math.ceil(LINE_H * lines.length + PAD * 2)
-  // Resizing the canvas clears it and resets the 2D context, so restyle after.
-  canvas.width = w
-  canvas.height = h
-  ctx.clearRect(0, 0, w, h)
-  ctx.font = fontStr
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillStyle = colorToCss(params.color)
-  lines.forEach((l, i) => ctx.fillText(l, w / 2, PAD + LINE_H * (i + 0.5)))
-  return w / h
+  return p.text !== prev.text || p.size !== prev.size
 }
 
 interface TextObject {
   mesh: THREE.Mesh
-  geometry: THREE.PlaneGeometry
-  material: THREE.MeshBasicMaterial
-  texture: THREE.CanvasTexture
-  canvas: HTMLCanvasElement
+  geometry: THREE.BufferGeometry
+  material: THREE.MeshStandardMaterial
   params: TextParams
+}
+
+// The bundled font is parsed once, lazily, on the first text object — parsing is
+// synchronous (FontLoader.parse), so it stays off the module-load path (and out
+// of tests that only exercise the pure helpers above).
+let _font: Font | null = null
+function getFont(): Font {
+  if (!_font) _font = new FontLoader().parse(helvetiker as unknown as Parameters<FontLoader['parse']>[0])
+  return _font
+}
+
+// Build (multi-line) extruded text geometry centered on the origin, so the
+// mesh's position/rotation place its CENTER — consistent with the other shapes.
+function makeTextGeometry(params: TextParams): THREE.BufferGeometry {
+  const lines = params.text.split('\n')
+  const font = getFont()
+  const lineH = params.size * 1.4
+  const parts: THREE.BufferGeometry[] = []
+  lines.forEach((line, i) => {
+    if (!line.length) return
+    const g = new TextGeometry(line, {
+      font, size: params.size, depth: params.size * 0.15, curveSegments: 6,
+      bevelEnabled: true, bevelThickness: params.size * 0.02, bevelSize: params.size * 0.015, bevelSegments: 2,
+    })
+    // A line of only unknown glyphs yields no geometry — skip it rather than
+    // feeding an attribute-less geometry into the merge.
+    if (!g.getAttribute('position')) { g.dispose(); return }
+    g.translate(0, -i * lineH, 0)
+    parts.push(g)
+  })
+  if (!parts.length) return new THREE.BufferGeometry()
+  const merged = parts.length === 1 ? parts[0] : mergeGeometries(parts, false)!
+  if (parts.length > 1) parts.forEach((g) => g.dispose())
+  merged.center()
+  return merged
 }
 
 function applyTextTransform(mesh: THREE.Mesh, row: Record<string, unknown>): void {
@@ -128,28 +137,19 @@ function applyTextTransform(mesh: THREE.Mesh, row: Record<string, unknown>): voi
 
 function makeText(row: Record<string, unknown>): TextObject {
   const params = textParams(row)
-  const canvas = document.createElement('canvas')
-  const aspect = drawTextCanvas(canvas, params)
-  const texture = new THREE.CanvasTexture(canvas)
-  texture.colorSpace = THREE.SRGBColorSpace
-  texture.anisotropy = 4
-  const geometry = new THREE.PlaneGeometry(params.size * aspect, params.size)
-  // The color lives in the texture, so the material stays untinted white; a
-  // double-sided transparent plane reads the same from either face.
-  const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
+  const geometry = makeTextGeometry(params)
+  const material = new THREE.MeshStandardMaterial({ color: params.color, metalness: 0.3, roughness: 0.4 })
   const mesh = new THREE.Mesh(geometry, material)
   mesh.name = String(row.id)
   applyTextTransform(mesh, row)
-  return { mesh, geometry, material, texture, canvas, params }
+  return { mesh, geometry, material, params }
 }
 
-// Redraw the canvas and resize the plane to match — called when textChanged().
-function rebuildText(obj: TextObject, row: Record<string, unknown>): void {
+// Regenerate the glyph geometry — called only when textGeometryChanged().
+function rebuildTextGeometry(obj: TextObject, row: Record<string, unknown>): void {
   const params = textParams(row)
-  const aspect = drawTextCanvas(obj.canvas, params)
-  obj.texture.needsUpdate = true
   obj.geometry.dispose()
-  obj.geometry = new THREE.PlaneGeometry(params.size * aspect, params.size)
+  obj.geometry = makeTextGeometry(params)
   obj.mesh.geometry = obj.geometry
   obj.params = params
 }
@@ -157,7 +157,6 @@ function rebuildText(obj: TextObject, row: Record<string, unknown>): void {
 function disposeText(obj: TextObject): void {
   obj.geometry.dispose()
   obj.material.dispose()
-  obj.texture.dispose()
 }
 
 // A live sheet of folding paper: the compiled fold-table program holds, for
@@ -377,7 +376,8 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
       const text = texts.get(id)
       if (text) {
         applyTextTransform(text.mesh, row)
-        if (textChanged(text.params, row)) rebuildText(text, row)
+        if (color != null) text.material.color.set(color as number)
+        if (textGeometryChanged(text.params, row)) rebuildTextGeometry(text, row)
         return
       }
       const mesh = objects.get(id)
