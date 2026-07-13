@@ -249,3 +249,36 @@ once replaced, and should be deleted. The table schema is designed fresh; Option
 - Uint16-style index limits and per-face triangulation live in our renderer, not
   the core — keep face polygons intact in the engine and triangulate only at
   render time.
+
+---
+
+## 8. Spike results (2026-07-13, this branch)
+
+Vendored the core (`src/vendor/flatfolder/` @ d500048, `src/vendor/linefolder/compute.js`
+@ 14d027e, both MIT, import paths adjusted only) and replayed line-folder's
+`examples/crane.fold` (17 recorded folds) headless in Node:
+
+- **16 of 17 steps replay exactly**: folded geometry matches the recording
+  (up to the old recorder's per-frame renormalization, recovered as a tracked
+  similarity transform), the recorded layer order is found among my enumerated
+  states, and the animation axis invariant (every moving/static shared vertex
+  lies on the fold line) holds at every step. Whole replay runs in seconds.
+- Fold-table rows extracted in a stable unit-square frame:
+  `line [u,d] + sheet-space move markers + kind + pick`, with kind ∈
+  {Pureland, Inside Reverse} and pick ∈ {0, 1} throughout — the disambiguation
+  surface is tiny in practice.
+- **Step 17 of the recording is invalid under the current solver**: its stored
+  faceOrders violate a taco-tortilla constraint on the recorded geometry itself
+  (verified by feeding the recorded orders into `SOLVER.initial_assignment`),
+  and 358 of 1344 order variables aren't covered by the stored orders — the
+  example predates current constraint code. Not an engine bug; the crane
+  sample's final fold must be authored fresh.
+- Recorder-vs-current version skew also explains the per-frame normalization;
+  the new engine keeps one stable world frame and never renormalizes.
+
+Engine mechanics validated: `split_FOLD_on_line` carries sheet coordinates
+through splits; `get_groups` + sheet-space markers select single plies
+unambiguously (a sheet point names exactly one face); `filter_clicked_and_reflect`
+run twice with identical maps carries both folded and sheet coords;
+carry-over `faceOrders → BA0` seeding keeps per-step enumeration tiny
+(≤ 33 states on the crane).
