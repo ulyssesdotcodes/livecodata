@@ -931,6 +931,29 @@ export const EASINGS = {
 
 export type Easings = typeof EASINGS
 
+// ── Scene primitives ───────────────────────────────────────────────────────
+// Sugar for the verbose "create" row you'd otherwise hand-write for a 3D scene
+// object. box()/sphere()/cylinder()/cone()/torus()/text() each return a Table
+// holding one { type: "create", shape } row, defaulted to beat 1 at the origin
+// with no rotation, so only the fields you care about need setting. `id`
+// defaults to the shape name — give distinct ids for multiple objects. Being
+// Tables, they chain and concat like everything else:
+//   box({ id: "a", px: -1, color: 0x4a9eff })
+//     .concat(sphere({ id: "b", px: 1, r: 0.4 }))
+//     .rasterize(8)
+// Size fields follow the row schema shared with the renderer/physics: box uses
+// hx/hy/hz (half-extents), sphere/torus use r, cylinder/cone use r + h (half-
+// height), text uses text + size. Sizes left unset fall back to the shape's
+// defaults in the renderer. Any renderer field (color, rx/ry/rz, …) can be set
+// via props.
+function sceneObject(shape: string, props: Row, ctx: DSLContext | null): Table {
+  return new Table([{
+    id: shape, type: 'create', beat: 1, shape,
+    px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0,
+    ...props,
+  }], ctx)
+}
+
 function parseCSV(text: string): Row[] {
   const lines = String(text).trim().split(/\r?\n/).filter((l) => l.length)
   if (!lines.length) return []
@@ -969,6 +992,20 @@ export type DSLSurface = Easings & {
   // (default origin), fov the vertical field of view in degrees (lower = a
   // longer lens). Concat it into your events stream, then rasterize.
   camera(keyframes: Row[] | null | undefined): Table
+  // Scene-primitive builders: each returns a Table with one create row for a
+  // 3D object (beat 1, at the origin, no rotation), so only the fields you set
+  // matter. `id` defaults to the shape name. Concat them into a scene and
+  // rasterize. Sizes: box→hx/hy/hz, sphere/torus→r, cylinder/cone→r+h,
+  // text→text+size; unset sizes use the renderer's shape defaults.
+  box(props?: Row): Table
+  sphere(props?: Row): Table
+  cylinder(props?: Row): Table
+  cone(props?: Row): Table
+  torus(props?: Row): Table
+  text(props?: Row): Table
+  // The generic form behind box()/sphere()/… — build a create row for any
+  // shape string, including future shapes without a named helper.
+  object(shape: string, props?: Row): Table
   physics(source: Table | Row[]): PhysicsBuilder
   // Folding paper: origami() is a bare sheet. Chain .steps(table) to fold it
   // by instructions — each row a fold/reflection along a line through two
@@ -1048,6 +1085,16 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       }),
       ctx,
     ),
+    // Scene primitives — one create row apiece, defaulted to beat 1 at the
+    // origin (see sceneObject). object() is the generic; the named helpers are
+    // sugar so autocomplete surfaces the available shapes.
+    object: (shape: string, props: Row = {}) => sceneObject(shape, props, ctx),
+    box: (props: Row = {}) => sceneObject('box', props, ctx),
+    sphere: (props: Row = {}) => sceneObject('sphere', props, ctx),
+    cylinder: (props: Row = {}) => sceneObject('cylinder', props, ctx),
+    cone: (props: Row = {}) => sceneObject('cone', props, ctx),
+    torus: (props: Row = {}) => sceneObject('torus', props, ctx),
+    text: (props: Row = {}) => sceneObject('text', props, ctx),
     origami: makeOrigami(ctx),
     editable: (name: string, schema: Record<string, ColumnType>, seedRows?: Row[]): Table => {
       const rows = (ctx?.editableRows?.(name, schema, seedRows) ?? []).map((r) => ({ ...r }))

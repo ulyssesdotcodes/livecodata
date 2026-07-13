@@ -90,6 +90,41 @@ define("scene", (rand, table) => table("events").rasterize(16))
 `,
   },
   {
+    name: "Primitives",
+    code: `// livecodata — building 3D objects the easy way
+// box/sphere/cylinder/cone/torus/text each build a ready-made "create" row for
+// a scene object: beat 1, at the origin, no rotation — you set only the fields
+// you care about. They return Tables, so concat them into a scene and
+// rasterize. Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
+
+// 1. A few primitives, laid out along x. Each helper's \`id\` defaults to its
+//    shape name, so give distinct ids when you have more than one of a kind.
+//    Sizes follow the shared schema: box → hx/hy/hz (half-extents),
+//    sphere/torus → r, cylinder/cone → r + h (half-height); leave a size out
+//    and the renderer's default for that shape is used.
+define("things", () =>
+  box({ id: "b", px: -2.4, color: 0x4a9eff })
+    .concat(sphere({ id: "s", px: -1.2, r: 0.4, color: 0xff6b6b }))
+    .concat(cylinder({ id: "y", px: 0, r: 0.3, h: 0.5, color: 0x51cf66 }))
+    .concat(cone({ id: "c", px: 1.2, r: 0.35, h: 0.5, color: 0xffd43b }))
+    .concat(torus({ id: "t", px: 2.4, r: 0.35, color: 0xcc5de8 }))
+)
+
+// 2. object(shape, props) is the generic behind the named helpers — handy for a
+//    label. Here a line of 3D text floats above the row of shapes.
+define("label", () =>
+  text({ id: "caption", py: 1.4, size: 0.4, text: "primitives", color: 0xffffff })
+)
+
+// 3. Concat everything and bake an 8-beat cache. The scene is static here —
+//    add "update" rows (or animate ry) to make it move, exactly like the
+//    Text and Camera Move samples do.
+define("scene", (rand, table) =>
+  table("things").concat(table("label")).rasterize(8)
+)
+`,
+  },
+  {
     name: "Camera Move",
     code: `// livecodata — moving the camera from the DSL
 // The camera is just another scene object: \`camera([...])\` emits one keyframe

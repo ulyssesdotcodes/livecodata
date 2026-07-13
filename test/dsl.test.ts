@@ -257,6 +257,50 @@ test('camera defaults a missing beat to 1 and returns empty for no keyframes', (
   assert.equal(camera([{ pz: 8 }]).rows[0].beat, 1)
 })
 
+test('box builds a defaulted create row, props overriding defaults', () => {
+  const { box } = createDSL(null)
+  assert.deepEqual(box({ id: 'a', px: -1, color: 0x4a9eff }).rows[0], {
+    id: 'a', type: 'create', beat: 1, shape: 'box',
+    px: -1, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, color: 0x4a9eff,
+  })
+})
+
+test('primitive id defaults to the shape name; extra props pass through', () => {
+  const { sphere } = createDSL(null)
+  const r = sphere({ r: 0.5, beat: 3 }).rows[0]
+  assert.equal(r.id, 'sphere')
+  assert.equal(r.shape, 'sphere')
+  assert.equal(r.type, 'create')
+  assert.equal(r.beat, 3)
+  assert.equal(r.r, 0.5)
+})
+
+test('every named primitive carries its shape and a "create" type', () => {
+  const dsl = createDSL(null)
+  for (const shape of ['box', 'sphere', 'cylinder', 'cone', 'torus', 'text'] as const) {
+    const row = (dsl[shape] as (p?: Row) => Table)().rows[0]
+    assert.equal(row.shape, shape)
+    assert.equal(row.type, 'create')
+    assert.equal(row.id, shape)
+  }
+})
+
+test('primitives concat into one scene table in order', () => {
+  const { box, cone, text } = createDSL(null)
+  const scene = box({ id: 'b' }).concat(cone({ id: 'c' })).concat(text({ id: 't', text: 'hi' }))
+  assert.deepEqual(scene.rows.map((r) => r.shape), ['box', 'cone', 'text'])
+  assert.equal(scene.rows[2].text, 'hi')
+})
+
+test('object(shape, props) is the generic primitive builder', () => {
+  const { object } = createDSL(null)
+  const r = object('torus', { id: 'ring', r: 0.6 }).rows[0]
+  assert.equal(r.shape, 'torus')
+  assert.equal(r.id, 'ring')
+  assert.equal(r.r, 0.6)
+  assert.equal(r.type, 'create')
+})
+
 test('rotate cycles values through a field, wrapping around', () => {
   const { rotate } = createDSL(null)
   const rows = [{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]
