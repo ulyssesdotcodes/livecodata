@@ -119,9 +119,9 @@ export function buildSliderIndex(rows: Row[] | null | undefined): SliderIndex {
 }
 
 // The active value of a slider at `frame`: the most recent move at-or-before it.
-// With recorded moves but none yet at-or-before this frame, wrap to the last
-// recorded value (looped automation holds across the loop boundary). With no
-// recording at all, `fallback` (the slider's default).
+// Before the first recorded move of the loop, jump to that first value (so the
+// slider starts each loop where its automation begins, rather than carrying the
+// loop-end value over). With no recording at all, `fallback` (the default).
 export function sampleSliderAt(index: SliderIndex, id: string, frame: number, fallback: number): number {
   const list = index.get(id)
   if (!list || !list.length) return fallback
@@ -130,7 +130,7 @@ export function sampleSliderAt(index: SliderIndex, id: string, frame: number, fa
     if (s.frame > frame) break
     value = s.value
   }
-  return value ?? list[list.length - 1].value
+  return value ?? list[0].value
 }
 
 // ── The fold: event log → current table ─────────────────────────────────────
