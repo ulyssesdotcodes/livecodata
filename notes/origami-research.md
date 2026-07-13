@@ -312,3 +312,34 @@ strain 15.6 % on one pocket edge mid-reverse-fold (the paper must bow —
 reverse folds have no rigid path), endpoint error ~1e-4 before blending.
 The collapse and neck folds visually reproduce the old hand-tuned
 choreography's pocket-opening quality, from table rows alone.
+
+---
+
+## 10. Soft motion, take 2 (2026-07-13): what worked and what didn't
+
+Iterated with per-step screenshot strips. Findings:
+
+- **Shallow folds (≤ ~20 faces) relax beautifully** — the square-base
+  collapse's pockets billow open and press flat; this is where the
+  compliant solver earns its keep.
+- **Deep-stack reverse folds (neck/tail/head, 44–60 faces, 8+ overlapped
+  plies) resist relaxation.** Five attempts, all read as crumpling:
+  uniform stiffness (whole body blossoms open), differentiated stiffness
+  (stiff ratios make the ODE stiff — explicit relaxation under-converges;
+  strain 15% → 107% at ratio 8), local pinning of everything away from the
+  action (over-constrains, tears at the free/pinned boundary),
+  choreographed targets (pocket flanks open sin(πt) then press — best of
+  the five, point visibly sweeps through, body still splays), pocket
+  scoping via the solved layer overlaps (differently messy).
+- **Shipping rule: soft bake only for completing non-Pureland steps with
+  ≤ SOFT_MAX_FACES (20); everything else keeps the rigid swing.** Clean
+  everywhere, paper-like where the solver is competent, compile 0.85 s.
+- **`kind: "crease"` rows** (cut all plies along a line, fold nothing, no
+  timeline slot) are in — note that pre-creasing a fold's own line is
+  redundant (every fold already cuts all plies along its line); crease
+  rows matter for bend lines elsewhere.
+- **The remaining path to soft deep reverses** is the analytic route, not
+  tuning: a symmetric inside reverse fold is a 1-DOF rigid mechanism
+  (flat-foldable degree-4 vertices) — parameterize by the spine angle,
+  flanks and reverse creases follow in closed form. Moderate work,
+  deterministic, no solver.

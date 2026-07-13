@@ -366,3 +366,22 @@ test('held folds (to < 1) keep the rigid swing — the pose stays exact', () => 
     }
   }
 })
+
+test('crease rows: cut every ply, fold nothing, take no timeline slot', () => {
+  const rows = [
+    { step: 'diag', p1: '0,0', p2: '1,1', move: '0.9,0.1' },
+    { step: 'pre', p1: '0,0.5', p2: '1,0.5', kind: 'crease' },
+    { step: 'book', p1: '0.25,0', p2: '0.25,1', move: '0.05,0.05' },
+  ]
+  const program = compileFoldTable(rows)
+  const plain = compileFoldTable(rows.filter((r) => r.kind !== 'crease'))
+  // two folding steps on the timeline; the crease takes no slot
+  assert.equal(program.steps.length, 2)
+  assert.equal(program.steps[1].t0, 2, 'crease rows do not shift the schedule')
+  assert.ok(program.steps[1].FV.length > plain.steps[1].FV.length,
+    'the pre-crease subdivided the sheet')
+  // geometry unchanged by the crease itself: state after step 1 is still
+  // the folded triangle, flat
+  const { pos } = foldTablePositions(program, 1)
+  for (const p of pos) assert.ok(Math.abs(p[2]) < 1e-9)
+})

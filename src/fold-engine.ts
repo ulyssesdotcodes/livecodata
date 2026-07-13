@@ -164,6 +164,25 @@ export const initialState = (corners?: Vec2[]): FoldState => {
 
 const MAX_STATES = 100000n
 
+// A crease without a fold: cut every ply along the line, keep the
+// geometry exactly as it is. This is origami pre-creasing — it gives the
+// paper hinge lines that later folds (and the soft solver) bend along.
+export const creaseStep = (st: FoldState, line: Line): FoldState => {
+  ensureCon()
+  const [FVd, Vd, Sd, , F_map] = COMP.split_FOLD_on_line(
+    { FV: st.FV, V: st.V, Vf: st.sheet, eps: st.eps }, line)
+  const [FOLDn, CELLn] = COMP.V_FV_2_FOLD_CELL(Vd, FVd)
+  const FO = COMP.map_order(CELLn.BI, F_map, st.FO) as FaceOrder[]
+  const layers: number[] = FVd.map(() => 0)
+  for (let parent = 0; parent < F_map.length; ++parent) {
+    for (const piece of F_map[parent]) layers[piece] = st.layers[parent]
+  }
+  return {
+    V: Vd as Vec2[], FV: FVd, FO, Ff: FOLDn.Ff,
+    sheet: Sd as Vec2[], layers, eps: FOLDn.eps,
+  }
+}
+
 export const foldStep = (st: FoldState, spec: FoldSpec): FoldOutcome => {
   ensureCon()
   const line = spec.line
@@ -367,6 +386,7 @@ export interface FoldTableRowSpec {
   at: number
   dur: number
   to: number   // terminal swing fraction: 1 = flat, 0.5 = held at 90°
+  crease: boolean  // kind "crease": cut only, nothing folds, no timeline slot
 }
 
 export interface FoldProgramStep {
@@ -441,8 +461,12 @@ const posAt = (r: Record<string, unknown>, key: string): number | undefined => {
   return n !== undefined && n > 0 ? n : undefined
 }
 
+const isCrease = (r: Record<string, unknown>): boolean =>
+  (strAt(r, 'kind') ?? '').toLowerCase() === 'crease'
+
 export const parseFoldRows = (rows: Record<string, unknown>[]): FoldTableRowSpec[] => {
   const specs: FoldTableRowSpec[] = []
+  let foldCount = 0
   rows.forEach((r, i) => {
     if (r == null) return
     const name = strAt(r, 'step') ?? `fold${i + 1}`
@@ -454,23 +478,32 @@ export const parseFoldRows = (rows: Record<string, unknown>[]): FoldTableRowSpec
     const p1 = parsePoint(p1raw, 'p1', name)
     const p2 = parsePoint(p2raw, 'p2', name)
     const moveRaw = strAt(r, 'move')
-    if (moveRaw === undefined) throw new FoldError(`step "${name}": needs move ("x,y" sheet points, ";"-separated)`)
-    const move = moveRaw.split(';').map((m) => parsePoint(m, 'move', name))
+    if (moveRaw === undefined && !isCrease(r)) {
+      throw new FoldError(`step "${name}": needs move ("x,y" sheet points, ";"-separated)`)
+    }
+    const move = (moveRaw ?? '').split(';').filter((m) => m.trim() !== '')
+      .map((m) => parsePoint(m, 'move', name))
     let kind: string | undefined
+    let crease = false
     const kindRaw = strAt(r, 'kind')
     if (kindRaw !== undefined) {
-      kind = KINDS.includes(kindRaw) ? kindRaw : KIND_ALIASES[kindRaw.toLowerCase()]
-      if (kind === undefined) {
-        throw new FoldError(`step "${name}": unknown kind "${kindRaw}" (try simple, reverse, sink, …)`)
+      if (kindRaw.toLowerCase() === 'crease') {
+        crease = true
+      } else {
+        kind = KINDS.includes(kindRaw) ? kindRaw : KIND_ALIASES[kindRaw.toLowerCase()]
+        if (kind === undefined) {
+          throw new FoldError(`step "${name}": unknown kind "${kindRaw}" (try simple, reverse, sink, crease, …)`)
+        }
       }
     }
-    const at = posAt(r, 'at') ?? specs.length + 1
+    if (!crease) foldCount += 1
+    const at = posAt(r, 'at') ?? foldCount
     const dur = posAt(r, 'dur') ?? 0.75
     const to = Math.min(1, posAt(r, 'to') ?? 1)
     specs.push({
       name, line: lineThrough(p1, p2), move,
       kind, pick: numAt(r, 'pick'),
-      at, dur, to,
+      at, dur, to, crease,
     })
   })
   return specs
@@ -488,6 +521,15 @@ export const compileFoldTable = (
   const initial = { FV: st.FV.map((F) => [...F]), V: st.V.map(toDisplay) }
   const steps: FoldProgramStep[] = []
   for (const spec of specs) {
+    if (spec.crease) {
+      try {
+        st = creaseStep(st, spec.line)
+      } catch (e) {
+        if (e instanceof FoldError) throw new FoldError(`step "${spec.name}": ${e.message}`)
+        throw e
+      }
+      continue
+    }
     let out: FoldOutcome
     try {
       out = foldStep(st, spec)
@@ -509,9 +551,12 @@ export const compileFoldTable = (
       layersFrom: out.anim.layersFrom,
       dirs: out.anim.dirs,
       // simple folds keep the crisp rigid hinge; so do held folds
-      // (to < 1) — their whole point is the displayed pose, which must be
-      // the exact mirrored geometry, not a solver mid-frame
-      soft: out.type === 'Pureland' || spec.to < 1 ? undefined : bakeStep(out, scale),
+      // (to < 1) — their whole point is the displayed pose — and folds
+      // through deep layer stacks, where relaxation reads as crumpling
+      // rather than paper (the collapse's shallow pockets are where the
+      // soft motion shines)
+      soft: out.type === 'Pureland' || spec.to < 1 || out.state.FV.length > SOFT_MAX_FACES
+        ? undefined : bakeStep(out, scale),
     })
     st = out.state
   }
@@ -547,13 +592,27 @@ const STACK_DEPTH = 0.05
 // the crease targets ramp to the end state's angles. Positions come out
 // in the display frame, flattened [frame][vertex][xyz].
 const SOFT_FRAMES = 16
+const SOFT_MAX_FACES = 20
 
 const bakeStep = (out: FoldOutcome, scale: number): { frames: number; pos: number[] } => {
   const { FV, sheet } = out.state
   const { Vfrom, moving, line, dirs, EV, angleFrom, angleTo } = out.anim
   const [EF] = X.EV_FV_2_EF_FE(EV, FV)
+  // the pocket: the plies the moving point passes between are exactly the
+  // static faces that overlap a mover in the solved stack — only THEIR
+  // pressed creases open to let the point through, the rest of the model
+  // stays pressed (a folder opens one pocket, not the whole bird)
+  const pocket = FV.map(() => false)
+  for (const [f, g] of out.state.FO) {
+    if (moving[f] !== moving[g]) pocket[moving[f] ? g : f] = true
+  }
+  const flank = EV.map((_, ei) => {
+    if (Math.abs(angleTo[ei] - angleFrom[ei]) > 1e-9) return false
+    if (Math.abs(angleFrom[ei]) < 1e-9) return false
+    return EF[ei].some((fi: number) => pocket[fi])
+  })
   const mesh = buildSoftMesh(FV, sheet, EV, EF, angleFrom, angleTo,
-    pickPinned(FV, sheet, moving))
+    pickPinned(FV, sheet, moving), flank)
   const seed = new Float64Array(sheet.length * 3)
   const [u, d] = line
   const theta = Math.PI * 0.05
@@ -573,7 +632,7 @@ const bakeStep = (out: FoldOutcome, scale: number): { frames: number; pos: numbe
       seed[vi * 3 + 2] = sense[vi] * h * Math.sin(theta)
     }
   })
-  const baked = bakeSoftMotion(mesh, seed, { frames: SOFT_FRAMES, iterations: 800 })
+  const baked = bakeSoftMotion(mesh, seed, { frames: SOFT_FRAMES })
   const pos: number[] = []
   for (const frame of baked) {
     for (let vi = 0; vi < sheet.length; ++vi) {

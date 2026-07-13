@@ -20,6 +20,9 @@ export interface SoftHinge {
   k: number
   from: number               // dihedral target at t=0
   to: number                 // dihedral target at t=1
+  // 'flank': a pressed crease bordering the action — it transiently opens
+  // mid-swing (the pocket) and presses shut again
+  role: 'normal' | 'flank'
 }
 
 export interface SoftMesh {
@@ -31,8 +34,13 @@ export interface SoftMesh {
 }
 
 const AXIAL_K = 60           // per unit rest length (stiff paper: strain reads as bend, not stretch)
-const CREASE_K = 3           // crease angular stiffness, per unit hinge length
-const FACET_K = 3            // triangulation-diagonal angular stiffness
+const CREASE_K = 3           // base angular stiffness, per unit hinge length
+// paper bends AT creases: a crease whose angle this fold changes is soft
+// (it is being worked); a pressed fold that keeps its angle holds hard;
+// paper that has never been creased resists bending in between
+const K_CHANGING = 1
+const K_PRESSED = 2
+const K_UNCREASED = 1
 const MIN_L0 = 0.02          // sliver edges get stiffness as if this long
 const MAX_STEP = 0.02        // per-iteration displacement clamp
 
@@ -49,6 +57,7 @@ export const buildSoftMesh = (
   angleFrom: number[],       // target dihedral per EV edge at t=0
   angleTo: number[],         // per EV edge at t=1
   pinned: boolean[],
+  flank?: boolean[],         // per EV edge: pressed crease that should open
 ): SoftMesh => {
   const n = sheet.length
   const edges: SoftEdge[] = []
@@ -93,7 +102,8 @@ export const buildSoftMesh = (
     for (let j = 2; j + 1 < F.length; ++j) {
       hinges.push({
         a: F[0], b: F[j], c: F[j - 1], d: F[j + 1],
-        k: FACET_K * restLen(F[0], F[j]), from: 0, to: 0,
+        k: CREASE_K * K_UNCREASED * restLen(F[0], F[j]), from: 0, to: 0,
+        role: 'normal',
       })
     }
   }
@@ -112,13 +122,17 @@ export const buildSoftMesh = (
       return false
     }
     if (!traversesAB(FV[f1])) { const t = f1; f1 = f2; f2 = t }
+    const changing = Math.abs(angleTo[ei] - angleFrom[ei]) > 1e-9
+    const pressed = !changing && Math.abs(angleFrom[ei]) > 1e-9
+    const weight = changing ? K_CHANGING : pressed ? K_PRESSED : K_UNCREASED
     hinges.push({
       a, b,
       c: oppositeIn(FV[f1], a, b),
       d: oppositeIn(FV[f2], a, b),
-      k: CREASE_K * restLen(a, b),
+      k: CREASE_K * weight * restLen(a, b),
       from: angleFrom[ei],
       to: angleTo[ei],
+      role: (pressed && flank !== undefined && flank[ei]) ? 'flank' : 'normal',
     })
   })
   // explicit-integration stability: dt bounded by the stiffest spring —
@@ -231,7 +245,7 @@ export const relax = (
 
 export interface BakeOptions {
   frames?: number            // baked keyframes across the swing (default 24)
-  iterations?: number        // relaxation budget per keyframe (default 300)
+  time?: number              // simulated relaxation time per keyframe
 }
 
 // Bake the motion from the start state to the end state: crease targets
@@ -242,21 +256,32 @@ export const bakeSoftMotion = (
   mesh: SoftMesh, seedPos: Float64Array, opts: BakeOptions = {},
 ): Float64Array[] => {
   const frames = opts.frames ?? 24
-  const iterations = opts.iterations ?? 300
+  // a TIME budget, not an iteration count: stiffer meshes get smaller dt,
+  // so fixed iterations would silently under-converge them
+  const iterations = Math.min(6000, Math.ceil((opts.time ?? 10) / mesh.dt))
   const pos = Float64Array.from(seedPos)
   const vel = new Float64Array(mesh.n * 3)
   const out: Float64Array[] = []
+  // the folder's choreography: pocket flanks OPEN over the first third,
+  // the working creases swing through the middle, everything presses
+  // flat at the end — sin(πs) shapes the transient open-and-close
+  const FLANK_OPEN = Math.PI * 0.45
   for (let f = 0; f <= frames; ++f) {
     const s = f / frames
-    relax(mesh, pos, vel, (h) => h.from + (h.to - h.from) * s, iterations)
+    relax(mesh, pos, vel, (h) => {
+      if (h.role === 'flank') {
+        const open = Math.sin(Math.PI * s) * FLANK_OPEN
+        return h.from > 0 ? h.from - open : h.from + open
+      }
+      return h.from + (h.to - h.from) * s
+    }, iterations)
     out.push(Float64Array.from(pos))
   }
   return out
 }
 
-// Pin the largest static face: it anchors position and orientation while
-// the rest of the paper (including "static" flanks that must flex through
-// a reverse fold) stays free.
+// Pin the largest face far from the action: it anchors position and
+// orientation while everything that must flex stays free.
 export const pickPinned = (
   FV: number[][], sheet: Vec2[], moving: boolean[],
 ): boolean[] => {
