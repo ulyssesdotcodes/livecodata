@@ -46,7 +46,10 @@ export const SOLVER = {    // STATE SOLVER
             for (const type of CON.types) {
                 const TF = SOLVER.unpack_cons(C, type, f1, f2, FC, CF, CC);
                 for (const F of TF) {
-                    const I = SOLVER.infer(type, F, BI, BA);
+                    // local deviation from upstream: `let` — line 61 reassigns I
+                    // on a conflicting already-assigned variable, which esbuild
+                    // (correctly) rejects on a const
+                    let I = SOLVER.infer(type, F, BI, BA);
                     if (I == CON.state.conflict) {
                         for (const j of B) { BA[j] = 0; }
                         return [];

@@ -266,3 +266,191 @@ export const animatedPositions = (
     return [p[0] + (hh - h) * u[0], p[1] + (hh - h) * u[1], z]
   })
 }
+
+// ── Fold table → render program ─────────────────────────────────────────────
+// A fold table is the authoring surface: one row per fold. p1/p2 give the
+// fold line (two points, unit-square world frame), move the sheet-space
+// marker(s) of the flap(s) to fold, kind/pick disambiguate among the valid
+// layer orders, at/dur schedule the swing on the beat timeline. Compiling
+// runs the engine row by row and bakes everything a renderer needs into a
+// plain-data program: per step the faces, pre-swing coordinates, fold line,
+// moving flags and final layer indices (centered and scaled for display).
+
+export interface FoldTableRowSpec {
+  name: string
+  line: Line
+  move: Vec2[]
+  kind?: string
+  pick?: number
+  at: number
+  dur: number
+  to: number   // terminal swing fraction: 1 = flat, 0.5 = held at 90°
+}
+
+export interface FoldProgramStep {
+  name: string
+  type: string
+  t0: number
+  t1: number
+  to: number
+  FV: number[][]
+  Vfrom: Vec2[]      // display frame
+  line: Line         // display frame
+  moving: boolean[]
+  layers: number[]
+}
+
+export interface FoldTableProgram {
+  kind: 'fold-table'
+  size: number
+  initial: { FV: number[][]; V: Vec2[] }
+  steps: FoldProgramStep[]
+  end: number        // beat when the last swing lands
+}
+
+const KIND_ALIASES: Record<string, string> = {
+  simple: 'Pureland', pureland: 'Pureland',
+  reverse: 'Inside Reverse', inside: 'Inside Reverse',
+  'inside reverse': 'Inside Reverse', outside: 'Outside Reverse',
+  'outside reverse': 'Outside Reverse', 'mixed reverse': 'Mixed Reverse',
+  'open sink': 'Open Sink', 'closed sink': 'Closed Sink',
+  'mixed sink': 'Mixed Sink', sink: 'Open Sink', complex: 'Complex',
+}
+
+const parsePoint = (v: unknown, what: string, name: string): Vec2 => {
+  const parts = String(v).split(',').map((s) => Number(s.trim()))
+  if (parts.length !== 2 || parts.some((x) => !Number.isFinite(x))) {
+    throw new FoldError(`step "${name}": ${what} must be "x,y", got ${JSON.stringify(v)}`)
+  }
+  return parts as Vec2
+}
+
+export const parseFoldRows = (rows: Record<string, unknown>[]): FoldTableRowSpec[] => {
+  const specs: FoldTableRowSpec[] = []
+  rows.forEach((r, i) => {
+    if (r == null) return
+    const name = r.step != null ? String(r.step) : `fold${i + 1}`
+    if (r.p1 == null || r.p2 == null) {
+      throw new FoldError(`step "${name}": needs p1 and p2 ("x,y") for its fold line`)
+    }
+    const p1 = parsePoint(r.p1, 'p1', name)
+    const p2 = parsePoint(r.p2, 'p2', name)
+    if (r.move == null) throw new FoldError(`step "${name}": needs move ("x,y" sheet points, ";"-separated)`)
+    const move = String(r.move).split(';').map((m) => parsePoint(m, 'move', name))
+    let kind: string | undefined
+    if (r.kind != null) {
+      const raw = String(r.kind)
+      kind = KINDS.includes(raw) ? raw : KIND_ALIASES[raw.toLowerCase()]
+      if (kind === undefined) {
+        throw new FoldError(`step "${name}": unknown kind "${raw}" (try simple, reverse, sink, …)`)
+      }
+    }
+    const at = r.at != null ? Number(r.at) : specs.length + 1
+    const dur = r.dur != null ? Math.max(Number(r.dur), 1e-3) : 0.75
+    const to = r.to != null ? Math.min(1, Math.max(0, Number(r.to))) : 1
+    specs.push({
+      name, line: lineThrough(p1, p2), move,
+      kind, pick: r.pick != null ? Number(r.pick) : undefined,
+      at, dur, to,
+    })
+  })
+  return specs
+}
+
+export const compileFoldTable = (
+  rows: Record<string, unknown>[], opts: { size?: number } = {},
+): FoldTableProgram => {
+  const size = opts.size ?? 1
+  const scale = 2 * size
+  const toDisplay = (p: Vec2): Vec2 => [(p[0] - 0.5) * scale, (p[1] - 0.5) * scale]
+  const lineToDisplay = ([u, d]: Line): Line => [u, (d - (u[0] + u[1]) * 0.5) * scale]
+  const specs = parseFoldRows(rows)
+  let st = initialState()
+  const initial = { FV: st.FV.map((F) => [...F]), V: st.V.map(toDisplay) }
+  const steps: FoldProgramStep[] = []
+  for (const spec of specs) {
+    let out: FoldOutcome
+    try {
+      out = foldStep(st, spec)
+    } catch (e) {
+      if (e instanceof FoldError) throw new FoldError(`step "${spec.name}": ${e.message}`)
+      throw e
+    }
+    steps.push({
+      name: spec.name,
+      type: out.type,
+      t0: spec.at,
+      t1: spec.at + spec.dur,
+      to: spec.to,
+      FV: out.state.FV.map((F) => [...F]),
+      Vfrom: out.anim.Vfrom.map(toDisplay),
+      line: lineToDisplay(out.anim.line),
+      moving: out.anim.moving,
+      layers: out.state.layers,
+    })
+    st = out.state
+  }
+  for (let i = 1; i < steps.length; ++i) {
+    if (steps[i].t0 < steps[i - 1].t1 - 1e-9) {
+      throw new FoldError(`step "${steps[i].name}": starts at beat ${steps[i].t0} before step "${steps[i - 1].name}" lands at ${steps[i - 1].t1} — folds happen one at a time`)
+    }
+  }
+  for (let i = 0; i < steps.length - 1; ++i) {
+    if (steps[i].to < 1) {
+      throw new FoldError(`step "${steps[i].name}": only the last step may stop short of flat (to < 1)`)
+    }
+  }
+  return {
+    kind: 'fold-table', size, initial, steps,
+    end: steps.length > 0 ? steps[steps.length - 1].t1 : 1,
+  }
+}
+
+// Fold-progress value → per-vertex [x, y, z] positions plus the face set to
+// draw. fold = k + t means step k+1 is mid-swing at fraction t; whole
+// numbers are the exact flat states. Every renderer (three.js, tests)
+// consumes this one function.
+export const foldTablePositions = (
+  program: FoldTableProgram, fold: number,
+): { FV: number[][]; pos: [number, number, number][]; moving: boolean[]; layers: number[] } => {
+  const N = program.steps.length
+  if (N === 0 || fold <= 0) {
+    return {
+      FV: program.initial.FV,
+      pos: program.initial.V.map((p) => [p[0], p[1], 0]),
+      moving: program.initial.FV.map(() => false),
+      layers: program.initial.FV.map(() => 0),
+    }
+  }
+  const k = Math.min(Math.floor(fold), N - 1)
+  const t = Math.min(1, Math.max(0, fold - k))
+  const step = program.steps[k]
+  const [u, d] = step.line
+  const theta = Math.PI * t
+  const cos = Math.cos(theta)
+  const sin = Math.sin(theta)
+  const isMoving: boolean[] = step.Vfrom.map(() => false)
+  for (let fi = 0; fi < step.FV.length; ++fi) {
+    if (!step.moving[fi]) continue
+    for (const vi of step.FV[fi]) isMoving[vi] = true
+  }
+  const pos: [number, number, number][] = step.Vfrom.map((p, vi) => {
+    const h = p[0] * u[0] + p[1] * u[1] - d
+    if (!isMoving[vi] || Math.abs(h) < 1e-12) return [p[0], p[1], 0]
+    const hh = h * cos
+    return [p[0] + (hh - h) * u[0], p[1] + (hh - h) * u[1], -h * sin]
+  })
+  return { FV: step.FV, pos, moving: step.moving, layers: step.layers }
+}
+
+// The fold value a beat-timed schedule reaches at a given beat — steps swing
+// during [t0, t1] and hold in between.
+export const foldValueAt = (program: FoldTableProgram, beat: number): number => {
+  let v = 0
+  for (let i = 0; i < program.steps.length; ++i) {
+    const { t0, t1, to } = program.steps[i]
+    if (beat <= t0) break
+    v = i + to * Math.min(1, (beat - t0) / (t1 - t0))
+  }
+  return v
+}
