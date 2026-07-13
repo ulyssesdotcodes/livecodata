@@ -55,7 +55,7 @@ test('sliderDefs keeps one def per id, last row wins', () => {
   assert.equal(defs.find((d) => d.id === 'a')!.max, 5)
 })
 
-// ── Index + sampling (most recent at-or-before; wrap-hold across the loop) ────
+// ── Index + sampling (most recent at-or-before; jump to first value at loop top) ─
 
 test('sampleSliderAt returns the most recent value at-or-before the frame', () => {
   // brightness set to 1 at frame 60, dropped to 0 at frame 120.
@@ -70,13 +70,18 @@ test('sampleSliderAt returns the most recent value at-or-before the frame', () =
   assert.equal(sampleSliderAt(idx, 'brightness', 999, 0.5), 0, 'holds the last move')
 })
 
-test('sampleSliderAt wraps to the last recorded value before the first move (loop continuity)', () => {
-  // A single set at frame 90 should read as a constant everywhere in the loop.
-  const rows: Row[] = [{ type: 'slider', id: 'x', value: 0.7, beat: b(90) }]
+test('before the first move, sampleSliderAt jumps to the first recorded value (loop start)', () => {
+  // First move value 1 at frame 60, then 0 at frame 120. At the top of the loop
+  // (frames before 60) the slider should sit at the FIRST value, not carry over
+  // the loop-end value (0).
+  const rows: Row[] = [
+    { type: 'slider', id: 'x', value: 1, beat: b(60) },
+    { type: 'slider', id: 'x', value: 0, beat: b(120) },
+  ]
   const idx = buildSliderIndex(rows)
-  assert.equal(sampleSliderAt(idx, 'x', 0, 0.2), 0.7, 'before the move: holds over from the loop end')
-  assert.equal(sampleSliderAt(idx, 'x', 90, 0.2), 0.7)
-  assert.equal(sampleSliderAt(idx, 'x', 200, 0.2), 0.7)
+  assert.equal(sampleSliderAt(idx, 'x', 0, 0.2), 1, 'loop top: jumps to the first value')
+  assert.equal(sampleSliderAt(idx, 'x', 59, 0.2), 1, 'still the first value just before it')
+  assert.equal(sampleSliderAt(idx, 'x', 60, 0.2), 1, 'at the first move')
 })
 
 test('sampleSliderAt returns the fallback when a slider has no recording', () => {
@@ -143,7 +148,7 @@ test('createSliderInput stamps moves at the source position and samples them', (
   assert.equal(input.ctxAt(60).slider!('x'), 0.8, 'first move')
   assert.equal(input.ctxAt(119).slider!('x'), 0.8, 'held')
   assert.equal(input.ctxAt(120).slider!('x'), 0.2, 'second move')
-  assert.equal(input.ctxAt(0).slider!('x'), 0.2, 'before the first move: wraps to the last value')
+  assert.equal(input.ctxAt(0).slider!('x'), 0.8, 'before the first move: jumps to the first value')
   assert.deepEqual(input.valuesAt(60), { x: 0.8 }, 'valuesAt maps every defined id')
 })
 
