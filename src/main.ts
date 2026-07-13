@@ -228,25 +228,11 @@ const sliderStore: SliderStore = {
 
 let sliderInput: SliderInput | null = null
 
-// The absolute instant slider passes are counted from — the newest apply stamp
-// (the author's clock, folded identically by every replica, same as the content
-// loop epochs; see loopEpochsFromApplies). Counting from the latest Run means a
-// slider's pass aligns with the content sequences and resets to 0 on each Run,
-// and — being a shared stamp — every peer agrees on which pass a move landed in.
-function sliderEpoch(): number {
-  let at = 0
-  for (const e of editableStore.get(ACTIVITY_TABLE)?.events ?? []) {
-    if (e.kind === 'apply' && typeof e.at === 'number') at = Math.max(at, e.at as number)
-  }
-  return at
-}
-
 function ensureSliderInput(): SliderInput {
   if (!sliderInput) {
     sliderInput = createSliderInput({
       store: sliderStore,
       getIndex: () => playback.currentSourceBeats(),
-      getPass: () => playback.passesSince(sliderEpoch()),
     })
   }
   return sliderInput
