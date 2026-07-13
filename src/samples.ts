@@ -311,16 +311,19 @@ define("hydra", (rand, table) =>
 // after field()/lit()/idx() — e.g. field("v").add(1).gt(2)); hover a "view" name
 // to preview its table; your caret selects that view's tab on the right.
 
-// 1. Build a 3-story pyramid of cards plus a falling ball.
+// 1. Build a 3-story pyramid of cards plus a ball held above it.
 //    Story k has (n − k) leaning-card tent pairs and (n − k − 1) horizontal
 //    bridge cards between them. Card positions are derived analytically from the
-//    lean angle so each card's lowest rotated corner rests on its support surface.
+//    lean angle so each card's lowest rotated corner rests on its support
+//    surface — the pyramid starts at rest, no settling wobble. The ball's
+//    \`dropAt: 2\` holds it motionless in the air for the first 2 seconds of
+//    sim time, then releases it into ordinary free fall.
 define("base", () => {
   const lean = 0.25                    // radians from vertical (~14°)
   const H = 0.35, W = 0.22, T = 0.005  // card half-height, half-width, half-thickness
   const sl = Math.sin(lean), cl = Math.cos(lean)
   const dx    = H * sl                 // card-center x offset from tent apex
-  const cyOff = W * sl + H * cl       // support-surface to card-center (no corner overlap)
+  const cyOff = T * sl + H * cl       // support-surface to card-center (no corner overlap)
   const S     = 0.50                   // spacing between adjacent tent apices
   const n     = 3                      // tents on the ground floor (try 4 for ~27 cards)
 
@@ -330,7 +333,7 @@ define("base", () => {
   for (let k = 0; k < n; k++) {
     const numTents = n - k
     const cardCY   = supportY + cyOff
-    const topY     = supportY + W * sl + 2 * H * cl  // tent apex y
+    const topY     = supportY + T * sl + 2 * H * cl  // tent apex y
     const bHx      = S / 2 + 0.03                    // bridge half-span
 
     // Leaning card pairs — two cards per tent, tops meeting at the apex
@@ -372,7 +375,7 @@ define("base", () => {
     { id: "floor", type: "create", shape: "box", color: 0x1a2e1a,
       motion: "static", px: 0, py: -1.2, pz: 0, hx: 4, hy: 0.2, hz: 4 },
     { id: "ball",  type: "create", shape: "sphere", color: 0xf39c12,
-      motion: "dynamic", restitution: 0.2, r: 0.12,
+      motion: "dynamic", restitution: 0.2, r: 0.12, dropAt: 2,
       px: 0.05, py: 2.0, pz: 0 },
     ...cards,
   ])
