@@ -213,7 +213,7 @@ define("scene", () =>
 //    amount and "brightness" the output level.
 define("hydra", () => rows([
   { beat: 1, event: "setCode", code:
-    "src(s0).modulate(noise(3), (props) => props.sliders.warp)" +
+    "src(s0).modulate(osc(30), (props) => props.sliders.warp)" +
     ".brightness((props) => props.sliders.brightness - 0.5).out(o0)" },
 ]))
 
