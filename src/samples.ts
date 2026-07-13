@@ -137,9 +137,9 @@ define("hydra", () => rows([
   {
     name: "Hydra Sketch",
     code: `// livecodata — a video-synth sketch with hydra (hydra-ts, a port of ojack's hydra)
-// A generative hydra sketch — no 3D scene involved (see "House of Cards" for
-// hydra post-processing a rendered scene via src(s0)). Press "Run" (or
-// Cmd/Ctrl-Enter), then hit Play.
+// A generative hydra sketch — no 3D scene involved (src(s0) can equally post-
+// process a rendered scene, sourcing whatever the 3D view draws). Press "Run"
+// (or Cmd/Ctrl-Enter), then hit Play.
 
 // A hydra table is a stream of EVENTS, each placed on the loop by its \`beat\`
 // (1-indexed: beat 1 is the top of the loop). Two kinds:
@@ -409,47 +409,7 @@ define("ball_height", (rand, table) =>
     .graph("height")
 )
 
-// 5. Post-processing is a hydra sketch (hydra-ts). A hydra table is a stream
-//    of setCode/setVariable EVENTS (see "Hydra Sketch" for the plain case):
-//    s0 is the rendered 3D scene; o0 is the output, so src(s0)...out()
-//    post-processes the scene. The most-recent setCode wins, and each
-//    variable holds its most-recent setVariable value until a later one
-//    changes it — referenced as (props) => props.amount rather than the bare
-//    name, so every collision's new value takes effect immediately, without
-//    recompiling the sketch (a recompile would restart its oscillator phase,
-//    visible as a stutter on every landing).
-//    Every row sits on a \`beat\` — the base sketch at beat 1, and each
-//    collision-driven \`amount\` bump at the beat its landing baked to (physics
-//    and hydra share the one beat grid, so the bumps line up with the crash).
-//    This is the two-TABLE case: the base sketch lives in the EDITABLE
-//    "hydra sketch" table (seeded below, its own tab — click its code cell to
-//    open the sketch in this editor, tweak, Ctrl-Enter to apply, and the edit
-//    lands in the table's event log at "hydra sketch·events") while "hydra"
-//    is a code-GENERATED view layering the collision-driven \`amount\` events
-//    on top — data-driven from "sim" (filter the sibling, not "events", or
-//    we'd cycle). Reach for two tables like this only when you need computed
-//    events layered on the user-authored ones; otherwise a single editable
-//    table named "hydra" (see "Hydra Sketch") is all you need.
-define("hydra", (rand, table) =>
-  editable("hydra sketch", { beat: "number", event: "string", code: "code", name: "string", value: "number" }, [
-    { beat: 1, event: "setCode",
-      code: "src(s0).modulate(osc(2.5, 0.1), (props) => props.amount).out(o0)" },
-    { beat: 1, event: "setVariable", name: "amount", value: 0.12 },
-  ]).concat(
-    // Declarative, diffable form: filter(Expr) + emit(template). Values are Expr
-    // nodes (field("beat").add(0.5)) so the engine can hash this view and reuse
-    // it — editing here never re-bakes the physics in "sim". Each landing kicks
-    // \`amount\` up, then half a beat later a row settles it back down.
-    table("sim")
-      .filter(field("type").eq("collision").and(field("other").eq("floor")))
-      .emit([
-        { beat: field("beat"), event: "setVariable", name: "amount", value: 0.6 },
-        { beat: field("beat").add(0.5), event: "setVariable", name: "amount", value: 0.12 },
-      ])
-  )
-)
-
-// 6. Beat-synced looping (optional). Tap the Tap button under the scene a few
+// 5. Beat-synced looping (optional). Tap the Tap button under the scene a few
 //    times to set the tempo; the timeline's wall-clock length then follows it —
 //    tap faster and the whole loop plays faster. "Loop" (next to Play) is on by
 //    default. beats(16) loops every 16 beats; { fit: 12 } stretches this 12-beat
