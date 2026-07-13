@@ -521,35 +521,39 @@ function TablePanelView(props: PanelProps) {
   return (
     <>
       <div class="table-pane-header">
-        <div class="table-tabs">
-          <For each={names()}>{(n) => <Tab name={n} />}</For>
+        <div class="table-pane-header-row table-pane-header-titles">
+          <div class="table-tabs">
+            <For each={names()}>{(n) => <Tab name={n} />}</For>
+          </div>
+          {/* Mobile substitute for the tab strip — a native <select> is far
+              easier to use with a thumb than a wrapping row of small buttons. */}
+          <select class="table-tab-select" onChange={(e) => setCurrent(e.currentTarget.value)}>
+            <For each={names()}>
+              {(n) => <option value={n} selected={n === current()}>{n}</option>}
+            </For>
+          </select>
         </div>
-        {/* Mobile substitute for the tab strip — a native <select> is far
-            easier to use with a thumb than a wrapping row of small buttons. */}
-        <select class="table-tab-select" onChange={(e) => setCurrent(e.currentTarget.value)}>
-          <For each={names()}>
-            {(n) => <option value={n} selected={n === current()}>{n}</option>}
-          </For>
-        </select>
-        <button
-          class="table-tab-add"
-          title="Add a new editable table"
-          onClick={() => {
-            const name = nextTableName(untrack(views), store)
-            store.createTable(name)
-            setCurrent(name)
-            bump()
-          }}
-        >
-          + table
-        </button>
-        <input
-          class="table-filter"
-          type="text"
-          placeholder="filter…"
-          onInput={(e) => setFilter(e.currentTarget.value.toLowerCase())}
-        />
-        <span class="table-count">{countText()}</span>
+        <div class="table-pane-header-row table-pane-header-controls">
+          <button
+            class="table-tab-add"
+            title="Add a new editable table"
+            onClick={() => {
+              const name = nextTableName(untrack(views), store)
+              store.createTable(name)
+              setCurrent(name)
+              bump()
+            }}
+          >
+            + table
+          </button>
+          <input
+            class="table-filter"
+            type="text"
+            placeholder="filter…"
+            onInput={(e) => setFilter(e.currentTarget.value.toLowerCase())}
+          />
+          <span class="table-count">{countText()}</span>
+        </div>
       </div>
       <div class="tab-content">
         <Show when={chart()}>

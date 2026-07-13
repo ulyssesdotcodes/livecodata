@@ -498,12 +498,18 @@ html, body {
 
 .table-pane-header {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
+  gap: 6px;
   padding: 7px 10px;
   background: #0f3460;
   border-bottom: 1px solid #1a1a2e;
   flex-shrink: 0;
+}
+
+.table-pane-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .table-pane-title {
