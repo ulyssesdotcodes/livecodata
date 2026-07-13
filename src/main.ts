@@ -251,11 +251,16 @@ const sliderPanel = createSliderPanel({
   onRelease: () => {},
 })
 
-// Push the program's slider definitions (its "sliders" view) to both the overlay
-// and the streaming input, on every cook. Empty when the program defines none —
-// the overlay hides and the input goes dormant.
+// Push the slider definitions (the "sliders" table) to both the overlay and the
+// streaming input, on every cook. Prefer the cooked view — a program that
+// computes it or declares it with editable("sliders", …) — but fall back to the
+// editable store so a "sliders" table created by hand in the table panel (which
+// the program never references, so the cook doesn't surface it as a view) still
+// drives the sliders. Empty when neither exists — the overlay hides and the
+// input goes dormant.
 function updateSliderDefs(views: Map<string, Table>): void {
-  const defs = sliderDefs(views.get('sliders')?.rows ?? [])
+  const rows = views.get('sliders')?.rows ?? editableStore.get('sliders')?.rows ?? []
+  const defs = sliderDefs(rows)
   sliderPanel.setDefs(defs)
   if (defs.length) ensureSliderInput().setDefs(defs)
   else sliderInput?.setDefs(defs)

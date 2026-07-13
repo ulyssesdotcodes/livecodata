@@ -5,6 +5,7 @@ import {
   currentSliderRows, createSliderInput,
 } from '../src/sliders.js'
 import { frameToBeat } from '../src/constants.js'
+import { createEditableTableStore } from '../src/editable-tables.js'
 import type { Row } from '../src/lineage.js'
 import type { StampedEvent } from '../src/event-log.js'
 import type { SliderStore } from '../src/sliders.js'
@@ -42,6 +43,25 @@ test('sliderDef parses id/min/max/default and clamps the default into range', ()
 test('sliderDef takes an explicit step and defaults to a fine continuous one', () => {
   assert.equal(sliderDef({ id: 'n', min: 0, max: 10, step: 1 })!.step, 1, 'explicit integer step')
   assert.equal(sliderDef({ id: 'f', min: 0, max: 1 })!.step, 0.001, 'fine default, not quantized to 1')
+})
+
+test('a hand-created "sliders" table (table panel, no code) yields slider defs', () => {
+  // Reproduces "+ table" in the panel: a table named "sliders" that the program
+  // never references, so the cook never surfaces it as a view. main.ts falls
+  // back to editableStore.get("sliders").rows — this checks that path parses.
+  const store = createEditableTableStore()
+  store.createTable('sliders') // seeded with a "beat" column
+  store.addColumn('sliders', 'id', 'string')
+  store.addColumn('sliders', 'min', 'number')
+  store.addColumn('sliders', 'max', 'number')
+  store.addRow('sliders')
+  store.setCell('sliders', 0, 'id', 'brightness')
+  store.setCell('sliders', 0, 'min', 0)
+  store.setCell('sliders', 0, 'max', 1)
+
+  const defs = sliderDefs(store.get('sliders')!.rows)
+  assert.equal(defs.length, 1)
+  assert.deepEqual(defs[0], { id: 'brightness', min: 0, max: 1, default: 0, step: 0.001 })
 })
 
 test('sliderDefs keeps one def per id, last row wins', () => {
