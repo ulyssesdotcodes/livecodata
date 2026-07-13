@@ -18,7 +18,7 @@ import { createCookClient } from './cook-client.js'
 import { randomSeed, localSource } from './event-log.js'
 import { createPresenceChannel, userColor, lastCellEdits } from './presence.js'
 import { Table } from './dsl.js'
-import { createEditableTableStore, type ColumnType } from './editable-tables.js'
+import { createEditableTableStore, DISABLED_COL, type ColumnType } from './editable-tables.js'
 import { createMidiInput, type MidiInput } from './midi.js'
 import { createSliderInput, sliderDefs, type SliderInput, type SliderStore } from './sliders.js'
 import { createSliderPanel } from './ui/slider-panel.js'
@@ -259,7 +259,10 @@ const sliderPanel = createSliderPanel({
 // drives the sliders. Empty when neither exists — the overlay hides and the
 // input goes dormant.
 function updateSliderDefs(views: Map<string, Table>): void {
-  const rows = views.get('sliders')?.rows ?? editableStore.get('sliders')?.rows ?? []
+  // The cooked view (if any) already reflects ensure()'s filtering; the raw
+  // fallback (a table-panel-only "sliders" table) needs it applied here too,
+  // so a row disabled via its own `disabled` column doesn't drive a live slider.
+  const rows = views.get('sliders')?.rows ?? (editableStore.get('sliders')?.rows ?? []).filter((r) => r[DISABLED_COL] !== true)
   const defs = sliderDefs(rows)
   sliderPanel.setDefs(defs)
   if (defs.length) ensureSliderInput().setDefs(defs)
@@ -326,7 +329,9 @@ const cookClient = createCookClient(new Worker(new URL('cook-worker.js', import.
 async function cookInWorker(code: string, seed: number, seeds?: Record<string, Row[]>): Promise<{ cooked: CookedData; declaredNames: string[] }> {
   const editables = editableStore.listNames().map((name) => ({
     name,
-    rows: editableStore.get(name)?.rows ?? [],
+    // Match ensure()'s own filtering: a row whose own `disabled` column is
+    // true stays in the table but is omitted from what the program sees.
+    rows: (editableStore.get(name)?.rows ?? []).filter((r) => r[DISABLED_COL] !== true),
   }))
   const { cooked, declared } = await cookClient.cook({ code, seed, dataCache, tapRows: tapRows(), editables, seeds })
   for (const d of declared) editableStore.ensure(d.name, d.schema, d.seedRows)

@@ -31,8 +31,11 @@ export const SAMPLES: Sample[] = [
 //    it: open the "path" tab, click a cell to change a coordinate, or hit "+
 //    row" to add a keyframe, then press Run again to see the sphere follow the
 //    new path. (Every edit is recorded as an event too — see the "path·events" tab.)
+//    "disabled" is just an ordinary boolean column, not a special mechanism —
+//    check a row's box to mute that keyframe (the sphere skips it) without
+//    deleting the row; uncheck to bring it back.
 define("path", () =>
-  editable("path", { beat: "number", px: "number", py: "number", pz: "number" })
+  editable("path", { beat: "number", px: "number", py: "number", pz: "number", disabled: "boolean" })
 )
 
 // 2. Turn the path's keyframes into a moving sphere: the first row (sorted by
@@ -191,6 +194,9 @@ define("scene", (rand, table) =>
 //   at,dur when the swing starts, and how long it takes, in beats
 //   to     how far to swing: 1 lands flat (default). Only the last row
 //          may stop short — the wings hold at 0.5, half-raised
+//   disabled  an ordinary boolean column: check a step's box to skip that
+//          fold entirely (as if the row weren't there) without deleting
+//          it — handy for previewing an earlier stage of the fold.
 //
 // A row that asks the impossible — a fold that cannot lie flat, a marker
 // off the paper, a kind the geometry does not allow — fails with an error
@@ -199,6 +205,7 @@ define("scene", (rand, table) =>
 define("steps", () => editable("steps", {
   step: "string", p1: "string", p2: "string", move: "string",
   kind: "string", pick: "number", at: "number", dur: "number", to: "number",
+  disabled: "boolean",
 }))
 
 // Feed the fold table to a sheet of paper, colored side DOWN (backColor)
@@ -227,6 +234,8 @@ define("hydra", () => rows([
 //     pressed crane; 0.35 barely lifts them.
 //   - Delete the "head" row: everything else still folds — steps only
 //     depend on the geometry before them, not on names.
+//   - Or check "head"'s \`disabled\` box instead of deleting it: same effect
+//     on the fold, but the step is still there (unchecked) to bring back.
 //   - Nudge a p1/p2 a little: small nudges re-solve fine; ask something
 //     impossible and the error names the offending step instead of
 //     folding wrong.
@@ -301,7 +310,11 @@ define("hydra", () => rows([
 // too. (Every edit is an event too — see the "hydra·events" tab.) A second,
 // code-generated table only becomes useful once you need to LAYER computed
 // events on top of these — see "House of Cards" for that.
-editable("hydra", { beat: "number", event: "string", code: "code", name: "string", value: "number" })
+//
+// "disabled" is just an ordinary boolean column: check a row's box to mute
+// that event — the sketch skips it, as if the row weren't there — without
+// losing it; uncheck to bring it back.
+editable("hydra", { beat: "number", event: "string", code: "code", name: "string", value: "number", disabled: "boolean" })
 `,
     tables: {
       hydra: [
@@ -340,7 +353,7 @@ define("scene", (rand, table) => table("events").rasterize(16))
 //    rows in the SAME editable table — "two-part" just means two of them, each
 //    the most-recent code at its point in the loop. Their rows are seeded into
 //    the "hydra" tab on the right; the code here declares the schema only.
-editable("hydra", { beat: "number", event: "string", code: "code", name: "string", value: "number" })
+editable("hydra", { beat: "number", event: "string", code: "code", name: "string", value: "number", disabled: "boolean" })
 `,
     tables: {
       hydra: [
@@ -362,8 +375,10 @@ editable("hydra", { beat: "number", event: "string", code: "code", name: "string
 //    visual. It's an editable() table, seeded on the right with the schema
 //    declared here — so open the "sliders" tab in the panel and add a row,
 //    rename an id, or change a min/max, then Run to apply. (It could just as
-//    well be a computed view: define("sliders", () => rows([...])).)
-editable("sliders", { id: "string", min: "number", max: "number", default: "number" })
+//    well be a computed view: define("sliders", () => rows([...])).) Check a
+//    row's \`disabled\` box to pull that control off the screen without losing
+//    its settings — uncheck to bring it back.
+editable("sliders", { id: "string", min: "number", max: "number", default: "number", disabled: "boolean" })
 
 // 2. slider(id) is the sibling of midi(note): a live per-frame value you bind
 //    into any field. Here the sphere's height follows the "height" slider —
@@ -416,7 +431,7 @@ define("hydra", () => rows([
 //    see \`hydra\`, below, for why the transform, not this table, is what
 //    playback actually reads. Its two setCode rows are seeded into the "hydra
 //    sketch" tab on the right; the code here declares the schema only.
-editable("hydra sketch", { beat: "number", event: "string", code: "code", name: "string", value: "number" })
+editable("hydra sketch", { beat: "number", event: "string", code: "code", name: "string", value: "number", disabled: "boolean" })
 
 // 2. \`.pairBy(field, value, fn)\` finds the rows where row[field] === value and
 //    cycles through them pairwise: match k is \`second\`, paired with match

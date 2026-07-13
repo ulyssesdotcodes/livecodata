@@ -27,7 +27,7 @@ import {
 } from '../table-panel.js'
 import { listenGlobal, focusInput } from './dom.js'
 import type { Table } from '../dsl.js'
-import type { EditableTableStore, ColumnType, EditableColumn } from '../editable-tables.js'
+import { DISABLED_COL, type EditableTableStore, type ColumnType, type EditableColumn } from '../editable-tables.js'
 
 export { EVENTS_SUFFIX }
 export type { TablePanel, TablePanelOptions, PeerPresence }
@@ -689,7 +689,13 @@ function TablePanelView(props: PanelProps) {
                       {(i) => (
                         <tr
                           hidden={!edRowVisible(i)}
-                          classList={{ 'row-source': !!lineageSet()?.has(i) }}
+                          classList={{
+                            'row-source': !!lineageSet()?.has(i),
+                            // A boolean column literally named "disabled" is the
+                            // row's own mute switch (see DISABLED_COL) — dim it
+                            // straight from its own data, no separate state.
+                            'row-disabled': ed().data.rows[i]?.[DISABLED_COL] === true,
+                          }}
                         >
                           <td class="row-actions">
                             <button

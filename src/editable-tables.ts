@@ -85,6 +85,19 @@ export interface EditableTableData {
   events: Row[]
 }
 
+// A row's own boolean `disabled` field — an ordinary column, not separate
+// provenance — is the line-mute switch: check it via "+ column" (boolean
+// type) and it disappears from what the program sees (ensure()'s return)
+// while staying in the table, still shown and editable, for switching back.
+// No dedicated event/meta plumbing: it's just data, so it rides every
+// existing mechanism (conform on schema change, survive a re-seed as any
+// other untouched cell would, round-trip through serialize/load) for free.
+export const DISABLED_COL = 'disabled'
+
+function visibleRows(t: TableState): Row[] {
+  return t.rows.filter((r) => r[DISABLED_COL] !== true)
+}
+
 function defaultFor(type: ColumnType): unknown {
   switch (type) {
     case 'number': return 0
@@ -547,13 +560,13 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       // that run).
       if (replay) {
         const t = replay.get(name)
-        if (t) return t.rows
+        if (t) return visibleRows(t)
         return (seedRows ?? []).map((r) => conformRow(r, wantCols))
       }
       const existing = tables.get(name)
       if (!existing) {
         append({ kind: 'create', table: name, columns: wantCols, rows: seedRows, declared: true })
-        return tables.get(name)!.rows
+        return visibleRows(tables.get(name)!)
       }
       if (JSON.stringify(existing.declared) !== JSON.stringify(wantCols)) {
         append({ kind: 'declare-schema', table: name, columns: wantCols })
@@ -566,7 +579,9 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       if (t.codeCreated && seedRows !== undefined && JSON.stringify(seedRows) !== JSON.stringify(t.lastSeed)) {
         append({ kind: 'seed-rows', table: name, rows: seedRows })
       }
-      return tables.get(name)!.rows
+      // A user-disabled row is omitted here — as if that line were commented
+      // out — but stays in the table itself (see get()) for re-enabling later.
+      return visibleRows(tables.get(name)!)
     },
 
     retainDeclared(keep: Iterable<string>): string[] {

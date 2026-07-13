@@ -860,6 +860,15 @@ html, body {
   color: #e94560;
 }
 
+/* A row whose own boolean "disabled" column is checked stays fully
+   visible/editable but reads as "commented out" — the program no longer
+   sees it (see editable-tables.ts's DISABLED_COL/ensure()). Excludes the
+   actions cell so its duplicate/delete buttons stay legible. */
+.events-table tbody tr.row-disabled td:not(.row-actions) {
+  opacity: 0.45;
+  font-style: italic;
+}
+
 /* Lives inside a column's settings popover, not the header itself — a full-
    width menu row rather than the small icon button row/other actions use. */
 .col-del-btn {
