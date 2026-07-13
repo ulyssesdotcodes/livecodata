@@ -251,11 +251,16 @@ const sliderPanel = createSliderPanel({
   onRelease: () => {},
 })
 
-// Push the program's slider definitions (its "sliders" view) to both the overlay
-// and the streaming input, on every cook. Empty when the program defines none —
-// the overlay hides and the input goes dormant.
+// Push the slider definitions (the "sliders" table) to both the overlay and the
+// streaming input, on every cook. Prefer the cooked view — a program that
+// computes it or declares it with editable("sliders", …) — but fall back to the
+// editable store so a "sliders" table created by hand in the table panel (which
+// the program never references, so the cook doesn't surface it as a view) still
+// drives the sliders. Empty when neither exists — the overlay hides and the
+// input goes dormant.
 function updateSliderDefs(views: Map<string, Table>): void {
-  const defs = sliderDefs(views.get('sliders')?.rows ?? [])
+  const rows = views.get('sliders')?.rows ?? editableStore.get('sliders')?.rows ?? []
+  const defs = sliderDefs(rows)
   sliderPanel.setDefs(defs)
   if (defs.length) ensureSliderInput().setDefs(defs)
   else sliderInput?.setDefs(defs)
@@ -396,15 +401,19 @@ function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
     if (!display.has('midi' + EVENTS_SUFFIX)) display.set('midi' + EVENTS_SUFFIX, new Table(midiInput.eventRows()))
   }
   // The folded slider automation ("slider") and its raw log ("slider·events"),
-  // once a program defines sliders — sibling of the midi pair above. Set before
-  // the generic store loop so it shows the folded view here instead of the raw
-  // "slider" log table the store would otherwise surface. ("sliders" itself is
-  // the program's own definitions view, shown like any other view.)
-  if (sliderInput && sliderInput.defs().length) {
-    if (!display.has('slider')) display.set('slider', new Table(sliderInput.rows()))
-    if (!display.has('slider' + EVENTS_SUFFIX)) display.set('slider' + EVENTS_SUFFIX, new Table(sliderInput.eventRows()))
+  // but only once something has actually been recorded — an empty pair just
+  // clutters the panel (and can't be deleted, being synthetic). The "slider"
+  // store log table is suppressed below so it never leaks as a raw tab; these
+  // are its only surface, and they come and go with the recorded automation.
+  // ("sliders" itself is the definitions table, shown like any other view.)
+  if (sliderInput && sliderInput.rows().length) {
+    display.set('slider', new Table(sliderInput.rows()))
+    display.set('slider' + EVENTS_SUFFIX, new Table(sliderInput.eventRows()))
   }
   for (const name of editableStore.listNames()) {
+    // The "slider" log table is the backing store for recorded automation, an
+    // implementation detail — it's surfaced (folded) above, or not at all.
+    if (name === 'slider') continue
     const key = editableStore.isLog(name) ? name : name + EVENTS_SUFFIX
     if (display.has(key)) continue
     display.set(key, new Table((editableStore.get(name)?.events ?? []).map((r) => ({ ...r }))))
