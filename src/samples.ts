@@ -138,9 +138,9 @@ define("hydra", () => rows([
   {
     name: "Hydra Sketch",
     code: `// livecodata — a video-synth sketch with hydra (hydra-ts, a port of ojack's hydra)
-// A generative hydra sketch — no 3D scene involved (see "House of Cards" for
-// hydra post-processing a rendered scene via src(s0)). Press "Run" (or
-// Cmd/Ctrl-Enter), then hit Play.
+// A generative hydra sketch — no 3D scene involved (src(s0) can equally post-
+// process a rendered scene, sourcing whatever the 3D view draws). Press "Run"
+// (or Cmd/Ctrl-Enter), then hit Play.
 
 // A hydra table is a stream of EVENTS, each placed on the loop by its \`beat\`
 // (1-indexed: beat 1 is the top of the loop). Two kinds:
@@ -312,16 +312,19 @@ define("hydra", (rand, table) =>
 // after field()/lit()/idx() — e.g. field("v").add(1).gt(2)); hover a "view" name
 // to preview its table; your caret selects that view's tab on the right.
 
-// 1. Build a 3-story pyramid of cards plus a falling ball.
+// 1. Build a 3-story pyramid of cards plus a ball held above it.
 //    Story k has (n − k) leaning-card tent pairs and (n − k − 1) horizontal
 //    bridge cards between them. Card positions are derived analytically from the
-//    lean angle so each card's lowest rotated corner rests on its support surface.
+//    lean angle so each card's lowest rotated corner rests on its support
+//    surface — the pyramid starts at rest, no settling wobble. The ball's
+//    \`dropAt: 2\` holds it motionless in the air for the first 2 seconds of
+//    sim time, then releases it into ordinary free fall.
 define("base", () => {
   const lean = 0.25                    // radians from vertical (~14°)
-  const H = 0.35, W = 0.22, T = 0.04  // card half-height, half-width, half-thickness
+  const H = 0.35, W = 0.22, T = 0.005  // card half-height, half-width, half-thickness
   const sl = Math.sin(lean), cl = Math.cos(lean)
   const dx    = H * sl                 // card-center x offset from tent apex
-  const cyOff = W * sl + H * cl       // support-surface to card-center (no corner overlap)
+  const cyOff = T * sl + H * cl       // support-surface to card-center (no corner overlap)
   const S     = 0.50                   // spacing between adjacent tent apices
   const n     = 3                      // tents on the ground floor (try 4 for ~27 cards)
 
@@ -331,7 +334,7 @@ define("base", () => {
   for (let k = 0; k < n; k++) {
     const numTents = n - k
     const cardCY   = supportY + cyOff
-    const topY     = supportY + W * sl + 2 * H * cl  // tent apex y
+    const topY     = supportY + T * sl + 2 * H * cl  // tent apex y
     const bHx      = S / 2 + 0.03                    // bridge half-span
 
     // Leaning card pairs — two cards per tent, tops meeting at the apex
@@ -339,10 +342,10 @@ define("base", () => {
       const tx = -(numTents - 1) * S / 2 + i * S     // apex x
       cards.push(
         { id: "s" + k + "t" + i + "a", type: "create", shape: "box", color: 0xfdf6e3,
-          motion: "dynamic", friction: 0.8, restitution: 0,
+          motion: "dynamic", friction: 0.3, restitution: 0,
           px: tx - dx, py: cardCY, pz: 0, hx: T, hy: H, hz: W, rz: -lean },
         { id: "s" + k + "t" + i + "b", type: "create", shape: "box", color: 0xfdf6e3,
-          motion: "dynamic", friction: 0.8, restitution: 0,
+          motion: "dynamic", friction: 0.3, restitution: 0,
           px: tx + dx, py: cardCY, pz: 0, hx: T, hy: H, hz: W, rz:  lean },
       )
     }
@@ -352,7 +355,7 @@ define("base", () => {
       const bx = -(numTents - 1) * S / 2 + (i + 0.5) * S
       cards.push(
         { id: "s" + k + "b" + i, type: "create", shape: "box", color: 0xe74c3c,
-          motion: "dynamic", friction: 0.8, restitution: 0,
+          motion: "dynamic", friction: 0.3, restitution: 0,
           px: bx, py: topY + T, pz: 0, hx: bHx, hy: T, hz: W },
       )
     }
@@ -361,7 +364,7 @@ define("base", () => {
     if (k === n - 1) {
       cards.push(
         { id: "crown", type: "create", shape: "box", color: 0xe74c3c,
-          motion: "dynamic", friction: 0.8, restitution: 0,
+          motion: "dynamic", friction: 0.3, restitution: 0,
           px: 0, py: topY + T, pz: 0, hx: bHx, hy: T, hz: W },
       )
     }
@@ -373,7 +376,7 @@ define("base", () => {
     { id: "floor", type: "create", shape: "box", color: 0x1a2e1a,
       motion: "static", px: 0, py: -1.2, pz: 0, hx: 4, hy: 0.2, hz: 4 },
     { id: "ball",  type: "create", shape: "sphere", color: 0xf39c12,
-      motion: "dynamic", restitution: 0.2, r: 0.12,
+      motion: "dynamic", restitution: 0.2, r: 0.12, dropAt: 2,
       px: 0.05, py: 2.0, pz: 0 },
     ...cards,
   ])
@@ -410,47 +413,7 @@ define("ball_height", (rand, table) =>
     .graph("height")
 )
 
-// 5. Post-processing is a hydra sketch (hydra-ts). A hydra table is a stream
-//    of setCode/setVariable EVENTS (see "Hydra Sketch" for the plain case):
-//    s0 is the rendered 3D scene; o0 is the output, so src(s0)...out()
-//    post-processes the scene. The most-recent setCode wins, and each
-//    variable holds its most-recent setVariable value until a later one
-//    changes it — referenced as (props) => props.amount rather than the bare
-//    name, so every collision's new value takes effect immediately, without
-//    recompiling the sketch (a recompile would restart its oscillator phase,
-//    visible as a stutter on every landing).
-//    Every row sits on a \`beat\` — the base sketch at beat 1, and each
-//    collision-driven \`amount\` bump at the beat its landing baked to (physics
-//    and hydra share the one beat grid, so the bumps line up with the crash).
-//    This is the two-TABLE case: the base sketch lives in the EDITABLE
-//    "hydra sketch" table (seeded below, its own tab — click its code cell to
-//    open the sketch in this editor, tweak, Ctrl-Enter to apply, and the edit
-//    lands in the table's event log at "hydra sketch·events") while "hydra"
-//    is a code-GENERATED view layering the collision-driven \`amount\` events
-//    on top — data-driven from "sim" (filter the sibling, not "events", or
-//    we'd cycle). Reach for two tables like this only when you need computed
-//    events layered on the user-authored ones; otherwise a single editable
-//    table named "hydra" (see "Hydra Sketch") is all you need.
-define("hydra", (rand, table) =>
-  editable("hydra sketch", { beat: "number", event: "string", code: "code", name: "string", value: "number" }, [
-    { beat: 1, event: "setCode",
-      code: "src(s0).modulate(osc(2.5, 0.1), (props) => props.amount).out(o0)" },
-    { beat: 1, event: "setVariable", name: "amount", value: 0.12 },
-  ]).concat(
-    // Declarative, diffable form: filter(Expr) + emit(template). Values are Expr
-    // nodes (field("beat").add(0.5)) so the engine can hash this view and reuse
-    // it — editing here never re-bakes the physics in "sim". Each landing kicks
-    // \`amount\` up, then half a beat later a row settles it back down.
-    table("sim")
-      .filter(field("type").eq("collision").and(field("other").eq("floor")))
-      .emit([
-        { beat: field("beat"), event: "setVariable", name: "amount", value: 0.6 },
-        { beat: field("beat").add(0.5), event: "setVariable", name: "amount", value: 0.12 },
-      ])
-  )
-)
-
-// 6. Beat-synced looping (optional). Tap the Tap button under the scene a few
+// 5. Beat-synced looping (optional). Tap the Tap button under the scene a few
 //    times to set the tempo; the timeline's wall-clock length then follows it —
 //    tap faster and the whole loop plays faster. "Loop" (next to Play) is on by
 //    default. beats(16) loops every 16 beats; { fit: 12 } stretches this 12-beat

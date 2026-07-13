@@ -24,6 +24,19 @@ test('a dynamic body falls under gravity', () => {
   assert.ok((last.py as number) < (first.py as number) - 1, `ball fell: ${(first.py as number).toFixed(2)} -> ${(last.py as number).toFixed(2)}`)
 })
 
+test('dropAt holds a dynamic body motionless, then releases it into free fall', () => {
+  // fps 30, steps 60: one update row per frame, dropAt 1s -> released at frame 30.
+  const out = simulateScene(Jolt, [
+    { id: 'ball', type: 'create', shape: 'sphere', motion: 'dynamic', dropAt: 1, px: 0, py: 5, pz: 0 },
+  ], { steps: 60, gravity: -9.81, fps: 30 })
+
+  const updates = rowsById(out, 'ball').filter((r) => r.type === 'update')
+  assert.equal(updates.length, 60, 'one update row per stepped frame, held rows included')
+
+  for (const r of updates.slice(0, 30)) assert.equal(r.py, 5, `stays put while held: ${r.py}`)
+  assert.ok((updates[59].py as number) < 4, `fell after release: ${(updates[59].py as number).toFixed(2)}`)
+})
+
 test('static bodies are preserved but never emit update rows', () => {
   const out = simulateScene(Jolt, [
     { id: 'floor', type: 'create', shape: 'box', motion: 'static', px: 0, py: -1, pz: 0, hx: 5, hy: 0.5, hz: 5 },
