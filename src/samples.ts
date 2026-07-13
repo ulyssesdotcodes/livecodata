@@ -181,6 +181,41 @@ editable("hydra", { beat: "number", event: "string", code: "code", name: "string
 `,
   },
   {
+    name: "Square + Hydra",
+    code: `// livecodata — a flat square spun by three.js, echoed by a two-part hydra sketch
+// The square is the plainest possible 3D object: a "box" squashed thin on one
+// axis. This example is really about the hydra half — a sketch that changes
+// itself partway through the loop, not just a variable (see "Hydra Sketch" for
+// that simpler, single-part case). Press "Run" (or Cmd/Ctrl-Enter), then Play.
+
+// 1. One square, spinning a full turn over the 16-beat loop. Two keyframes are
+//    enough: ry: 0 at beat 1, ry: 2π at beat 17 (one past the loop's end) — since
+//    2π and 0 are the same angle, the spin wraps with no jump when it repeats.
+//    A small fixed tilt (rx) keeps the face in view as it turns edge-on to the
+//    camera, rather than vanishing to a line.
+define("events", () => rows([
+  { id: "square", type: "create", beat: 1, shape: "box", color: 0x4a9eff,
+    px: 0, py: 0, pz: 0, hx: 0.6, hy: 0.6, hz: 0.05, rx: 0.3, ry: 0, rz: 0 },
+  { id: "square", type: "update", beat: 17, ry: Math.PI * 2 },
+]))
+
+define("scene", (rand, table) => table("events").rasterize(16))
+
+// 2. A two-part hydra sketch, on the same 16-beat grid as the square's spin
+//    above: the first half echoes the rendered scene (src(s0)) with a feedback
+//    trail; the second half drops the square entirely for a plain generative
+//    pattern, then the loop wraps back to part one. Both are ordinary setCode
+//    rows in the SAME editable table — "two-part" just means two of them, each
+//    the most-recent code at its point in the loop.
+editable("hydra", { beat: "number", event: "string", code: "code", name: "string", value: "number" }, [
+  { beat: 1, event: "setCode",
+    code: "src(s0).blend(src(o0).scale(0.97), 0.15).out(o0)" },
+  { beat: 9, event: "setCode",
+    code: "osc(8, 0.1, 1.2).kaleid(4).color(0.2, 0.6, 1).out(o0)" },
+])
+`,
+  },
+  {
     name: "Sliders",
     code: `// livecodata — on-screen sliders (the twin of MIDI)
 // Sliders are labelled controls drawn over the visual. Press "Run", then Play,
