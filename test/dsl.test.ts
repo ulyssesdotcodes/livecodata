@@ -212,3 +212,19 @@ test('grid lays out a centred cols×rows lattice', () => {
   assert.deepEqual(g.rows[0], { i: 0, col: 0, row: 0, px: -0.5, py: 0, pz: -0.5 })
   assert.deepEqual(g.rows[3], { i: 3, col: 1, row: 1, px: 0.5, py: 0, pz: 0.5 })
 })
+
+test('rotate cycles values through a field, wrapping around', () => {
+  const { rotate } = createDSL(null)
+  const rows = [{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]
+  const out = rotate(rows, 'color', ['red', 'green', 'blue'])
+  assert.deepEqual(out.rows, [
+    { id: 0, color: 'red' }, { id: 1, color: 'green' }, { id: 2, color: 'blue' },
+    { id: 3, color: 'red' }, { id: 4, color: 'green' },
+  ])
+})
+
+test('rotate leaves rows unchanged when values is empty', () => {
+  const { rotate } = createDSL(null)
+  const rows = [{ id: 0 }, { id: 1 }]
+  assert.deepEqual(rotate(rows, 'color', []).rows, rows)
+})

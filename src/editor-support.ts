@@ -21,6 +21,7 @@ export const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
   table:      { sig: 'table(name)',                  detail: 'resolve view',     info: 'Resolve a named view at top-level (no dependency tracking). Returns the cooked Table for that view.' },
   math:       { sig: 'math(beat => value)',          detail: 'sample function',  info: 'Sample a numeric function of elapsed beats. Chain .range(beats) to emit rows of { beat, value }.' },
   rows:       { sig: 'rows([{...}, ...])',           detail: 'wrap array',       info: 'Wrap a literal array of plain objects into a Table.' },
+  rotate:     { sig: 'rotate(rows, field, values)',  detail: 'cycle field values', info: 'Copy `rows` into a new Table, setting `field` on row i to values[i % values.length] — cycling through `values` as it rotates through the rows.' },
   data:       { sig: 'data(url)',                     detail: 'fetch dataset',    info: 'Load a pre-fetched CSV file by URL into a Table. Files in /data/ are served statically; the runtime fetches them before cooking.' },
   csv:        { sig: 'csv(string)',                  detail: 'parse CSV',        info: 'Parse a CSV string (header row + data rows) into a Table.' },
   json:       { sig: 'json(array | string)',         detail: 'parse JSON',       info: 'Wrap a JS array or parse a JSON string into a Table.' },
