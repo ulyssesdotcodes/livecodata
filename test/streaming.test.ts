@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  Table, field, midi, isBinding, isStreamingNode, resolveBindings, hashOf, type Expr,
+  Table, field, midi, slider, isBinding, isStreamingNode, resolveBindings, hashOf, type Expr,
 } from '../src/dsl.js'
 import { rasterizeRows } from '../src/rasterize.js'
 import { buildMidiIndex, sampleMidiAt, midiRow, decodeMidi } from '../src/midi.js'
@@ -31,6 +31,29 @@ test('setField(midi) leaves a per-frame binding; resolveBindings reads the ctx',
   const resolved = resolveBindings(row, { midi: () => 0.7 })
   assert.equal(resolved.amount, 0.7)
   assert.notEqual(resolved, row, 'a fresh row is returned when something resolves')
+})
+
+// ── slider(): the sibling streaming source ──────────────────────────────────
+
+test('isStreamingNode is true for any expression containing slider()', () => {
+  assert.equal(isStreamingNode(nodeOf(slider('height'))), true)
+  assert.equal(isStreamingNode(nodeOf(slider('height').mul(2))), true)
+  assert.equal(isStreamingNode(nodeOf(field('base').add(slider('x')))), true)
+})
+
+test('setField(slider) leaves a per-frame binding; resolveBindings reads ctx.slider', () => {
+  const row = t([{ id: 'a' }]).setField('py', slider('height')).rows[0]
+  assert.ok(isBinding(row.py), 'a streaming slider value is deferred')
+  const resolved = resolveBindings(row, { slider: () => 0.4 })
+  assert.equal(resolved.py, 0.4)
+})
+
+test('slider bindings are diffable: same id hashes equal, different id differs', () => {
+  const a = t([{ id: 'x' }]).setField('v', slider('height'))
+  const b2 = t([{ id: 'x' }]).setField('v', slider('height'))
+  const c = t([{ id: 'x' }]).setField('v', slider('warp'))
+  assert.equal(hashOf(a), hashOf(b2))
+  assert.notEqual(hashOf(a), hashOf(c))
 })
 
 test('setField with a constant Expr bakes immediately (no binding)', () => {
