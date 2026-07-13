@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { createFoldPlayer, type FoldProgram, type FoldPlayer } from './origami.js'
+import { foldTablePositions, type FoldTableProgram } from './fold-engine.js'
 import { SHAPE_DEFAULTS } from './shapes.js'
 
 export interface SceneAPI {
@@ -28,19 +28,20 @@ function makeGeometry(shape: string, dims: Record<string, unknown>): THREE.Buffe
 
 const PALETTE = [0x4a9eff, 0xff6b6b, 0x51cf66, 0xffd43b, 0xcc5de8, 0xff922b]
 
-// A live sheet of folding paper: the player owns the vertex buffer, the two
-// meshes (colored front / paper-white back) and the crease lines all render
-// straight out of it. Playback is pure kinematics: each fold step rigidly
-// rotates the faces it moves about its fold line by (step angle × the row's
-// fold fraction), so the only independently moving pieces are faces created
-// by a previous fold and a pose is a pure function of the fractions. Faces
-// are positioned independently, so the geometry is per-face (non-indexed).
+// A live sheet of folding paper: the compiled fold-table program holds, for
+// every step, the face set, pre-swing coordinates, fold line, moving flags
+// and layer indices. One numeric field drives playback: `fold` = how many
+// folds have landed, fractional = the next flap mid-swing about its fold
+// line (a rigid compound hinge — shared vertices, no tearing). Faces render
+// as a per-face triangle soup so each face can be nudged along z by its
+// layer index; edges render as line segments from the same positions.
 interface OrigamiObject {
   root: THREE.Group
-  player: FoldPlayer
+  program: FoldTableProgram
+  fold: number
+  shown: number
   posAttr: THREE.BufferAttribute
   linePosAttr: THREE.BufferAttribute
-  targets: Record<string, number>
   front: THREE.MeshStandardMaterial
   back: THREE.MeshStandardMaterial
   line: THREE.LineBasicMaterial
@@ -50,11 +51,69 @@ interface OrigamiObject {
 
 const PAPER_BACK = 0xf4efe2
 
-function makeOrigami(row: Record<string, unknown>): OrigamiObject {
-  const program = row.program as FoldProgram
-  const player = createFoldPlayer(program)
+// total thickness of the whole layer stack, relative to the paper size —
+// each layer gets an equal slice, so deep models stay visually thin
+const STACK_DEPTH = 0.05
 
-  const posAttr = new THREE.BufferAttribute(player.positions, 3)
+function layerGap(program: FoldTableProgram): number {
+  let maxLayer = 1
+  for (const step of program.steps) {
+    for (const l of step.layers) maxLayer = Math.max(maxLayer, l)
+  }
+  return (STACK_DEPTH * program.size) / maxLayer
+}
+
+function fillOrigami(obj: OrigamiObject): void {
+  const { program } = obj
+  const { FV, pos, layers } = foldTablePositions(program, obj.fold)
+  const gap = layerGap(program)
+  const mid = (Math.max(...layers) + 1) / 2
+  const P = obj.posAttr.array as Float32Array
+  let n = 0
+  for (let fi = 0; fi < FV.length; ++fi) {
+    const F = FV[fi]
+    const z = gap * (layers[fi] - mid)
+    for (let j = 1; j + 1 < F.length; ++j) {
+      for (const vi of [F[0], F[j], F[j + 1]]) {
+        const v = pos[vi]
+        P[n++] = v[0]; P[n++] = v[1]; P[n++] = v[2] + z
+      }
+    }
+  }
+  obj.geometry.setDrawRange(0, n / 3)
+  obj.posAttr.needsUpdate = true
+  const L = obj.linePosAttr.array as Float32Array
+  let m = 0
+  const seen = new Set<string>()
+  for (let fi = 0; fi < FV.length; ++fi) {
+    const F = FV[fi]
+    const z = gap * (layers[fi] - mid)
+    let i = F.length - 1
+    for (let j = 0; j < F.length; ++j) {
+      const a = F[i], b = F[j]
+      i = j
+      const key = a < b ? `${a},${b}` : `${b},${a}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      L[m++] = pos[a][0]; L[m++] = pos[a][1]; L[m++] = pos[a][2] + z
+      L[m++] = pos[b][0]; L[m++] = pos[b][1]; L[m++] = pos[b][2] + z
+    }
+  }
+  obj.lineGeometry.setDrawRange(0, m / 3)
+  obj.linePosAttr.needsUpdate = true
+  obj.shown = obj.fold
+}
+
+function makeOrigami(row: Record<string, unknown>): OrigamiObject {
+  const program = row.program as FoldTableProgram
+  let maxTris = Math.max(1, program.initial.FV.reduce((s, F) => s + F.length - 2, 0))
+  let maxEdges = Math.max(1, program.initial.FV.reduce((s, F) => s + F.length, 0))
+  for (const step of program.steps) {
+    maxTris = Math.max(maxTris, step.FV.reduce((s, F) => s + F.length - 2, 0))
+    maxEdges = Math.max(maxEdges, step.FV.reduce((s, F) => s + F.length, 0))
+  }
+
+  const posAttr = new THREE.BufferAttribute(new Float32Array(maxTris * 9), 3)
   posAttr.setUsage(THREE.DynamicDrawUsage)
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', posAttr)
@@ -74,7 +133,7 @@ function makeOrigami(row: Record<string, unknown>): OrigamiObject {
   const front = new THREE.MeshStandardMaterial({ ...common, color, side: THREE.FrontSide })
   const back = new THREE.MeshStandardMaterial({ ...common, color: PAPER_BACK, side: THREE.BackSide })
 
-  const linePosAttr = new THREE.BufferAttribute(player.linePositions, 3)
+  const linePosAttr = new THREE.BufferAttribute(new Float32Array(maxEdges * 6), 3)
   linePosAttr.setUsage(THREE.DynamicDrawUsage)
   const lineGeometry = new THREE.BufferGeometry()
   lineGeometry.setAttribute('position', linePosAttr)
@@ -85,13 +144,12 @@ function makeOrigami(row: Record<string, unknown>): OrigamiObject {
   root.add(new THREE.Mesh(geometry, back))
   root.add(new THREE.LineSegments(lineGeometry, line))
 
-  const targets: Record<string, number> = {}
-  for (const g of program.groups) targets[g] = 0
-
   const obj: OrigamiObject = {
-    root, player, posAttr, linePosAttr, targets, front, back, line, geometry, lineGeometry,
+    root, program, fold: 0, shown: -1,
+    posAttr, linePosAttr, front, back, line, geometry, lineGeometry,
   }
   applyOrigamiRow(obj, row)
+  fillOrigami(obj)
   return obj
 }
 
@@ -100,9 +158,7 @@ function applyOrigamiRow(obj: OrigamiObject, row: Record<string, unknown>): void
   obj.root.position.set((px as number) ?? 0, (py as number) ?? 0, (pz as number) ?? 0)
   obj.root.rotation.set((rx as number) ?? 0, (ry as number) ?? 0, (rz as number) ?? 0)
   if (color != null) obj.front.color.set(color as number)
-  for (const g of Object.keys(obj.targets)) {
-    if (typeof row[g] === 'number') obj.targets[g] = row[g] as number
-  }
+  if (typeof row.fold === 'number') obj.fold = row.fold
 }
 
 function disposeOrigami(obj: OrigamiObject): void {
@@ -148,9 +204,7 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
 
   function animate(): void {
     for (const o of origamis.values()) {
-      o.player.step(o.targets)
-      o.posAttr.needsUpdate = true
-      o.linePosAttr.needsUpdate = true
+      if (o.shown !== o.fold) fillOrigami(o)
     }
     renderer.render(scene, camera)
     requestAnimationFrame(animate)
