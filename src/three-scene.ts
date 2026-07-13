@@ -6,6 +6,9 @@ export interface SceneAPI {
   updateObject(row: Record<string, unknown>): void
   destroyObject(id: unknown): void
   reset(): void
+  // The scene camera, exposed for tooling (screenshot harnesses, debug
+  // orbits). The app itself never moves it.
+  readonly camera: THREE.PerspectiveCamera
 }
 
 const SHAPE_DEFAULTS: Record<string, Record<string, number>> = {
@@ -162,6 +165,7 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
   requestAnimationFrame(animate)
 
   return {
+    camera,
     createObject(row: Record<string, unknown>): void {
       const { id, shape, px, py, pz, rx, ry, rz, color } = row
       if (objects.has(id) || origamis.has(id)) return
