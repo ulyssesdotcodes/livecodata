@@ -689,9 +689,17 @@ function TablePanelView(props: PanelProps) {
                       {(i) => (
                         <tr
                           hidden={!edRowVisible(i)}
-                          classList={{ 'row-source': !!lineageSet()?.has(i) }}
+                          classList={{ 'row-source': !!lineageSet()?.has(i), 'row-disabled': !!ed().data.disabled[i] }}
                         >
                           <td class="row-actions">
+                            <button
+                              class="row-toggle-btn"
+                              title={ed().data.disabled[i] ? 'Enable row' : 'Disable row'}
+                              aria-label={ed().data.disabled[i] ? 'Enable row' : 'Disable row'}
+                              onClick={() => { store.setRowDisabled(ed().name, i, !ed().data.disabled[i]); bump() }}
+                            >
+                              {ed().data.disabled[i] ? '☐' : '☑'}
+                            </button>
                             <button
                               class="row-dup-btn"
                               title="Duplicate row"

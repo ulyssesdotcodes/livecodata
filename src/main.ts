@@ -259,7 +259,12 @@ const sliderPanel = createSliderPanel({
 // drives the sliders. Empty when neither exists — the overlay hides and the
 // input goes dormant.
 function updateSliderDefs(views: Map<string, Table>): void {
-  const rows = views.get('sliders')?.rows ?? editableStore.get('sliders')?.rows ?? []
+  const viewRows = views.get('sliders')?.rows
+  // The cooked view (if any) already reflects ensure()'s filtering; the raw
+  // fallback (a table-panel-only "sliders" table) needs it applied here too,
+  // so a disabled row doesn't drive a live slider.
+  const table = viewRows ? undefined : editableStore.get('sliders')
+  const rows = viewRows ?? (table ? table.rows.filter((_r, i) => !table.disabled[i]) : [])
   const defs = sliderDefs(rows)
   sliderPanel.setDefs(defs)
   if (defs.length) ensureSliderInput().setDefs(defs)
@@ -324,10 +329,12 @@ function onMidi(): void {
 const cookClient = createCookClient(new Worker(new URL('cook-worker.js', import.meta.url), { type: 'module' }))
 
 async function cookInWorker(code: string, seed: number, seeds?: Record<string, Row[]>): Promise<{ cooked: CookedData; declaredNames: string[] }> {
-  const editables = editableStore.listNames().map((name) => ({
-    name,
-    rows: editableStore.get(name)?.rows ?? [],
-  }))
+  const editables = editableStore.listNames().map((name) => {
+    const t = editableStore.get(name)
+    // Match ensure()'s own filtering: a row the user disabled via the table
+    // panel stays in the table but is omitted from what the program sees.
+    return { name, rows: t ? t.rows.filter((_r, i) => !t.disabled[i]) : [] }
+  })
   const { cooked, declared } = await cookClient.cook({ code, seed, dataCache, tapRows: tapRows(), editables, seeds })
   for (const d of declared) editableStore.ensure(d.name, d.schema, d.seedRows)
   return { cooked, declaredNames: declared.map((d) => d.name) }
