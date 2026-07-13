@@ -325,32 +325,53 @@ const parsePoint = (v: unknown, what: string, name: string): Vec2 => {
   return parts as Vec2
 }
 
+// Editable tables materialize every schema column, so unset cells arrive
+// as "" (string columns) or non-numbers — treat those as absent, never as
+// values (Number("") is 0, which would silently zero a fold's timing).
+const strAt = (r: Record<string, unknown>, key: string): string | undefined => {
+  const v = r[key]
+  if (v == null) return undefined
+  const s = String(v).trim()
+  return s === '' ? undefined : s
+}
+const numAt = (r: Record<string, unknown>, key: string): number | undefined => {
+  const v = r[key]
+  if (v == null || (typeof v === 'string' && v.trim() === '')) return undefined
+  const n = Number(v)
+  return Number.isFinite(n) ? n : undefined
+}
+
 export const parseFoldRows = (rows: Record<string, unknown>[]): FoldTableRowSpec[] => {
   const specs: FoldTableRowSpec[] = []
   rows.forEach((r, i) => {
     if (r == null) return
-    const name = r.step != null ? String(r.step) : `fold${i + 1}`
-    if (r.p1 == null || r.p2 == null) {
+    const name = strAt(r, 'step') ?? `fold${i + 1}`
+    const p1raw = strAt(r, 'p1')
+    const p2raw = strAt(r, 'p2')
+    if (p1raw === undefined || p2raw === undefined) {
       throw new FoldError(`step "${name}": needs p1 and p2 ("x,y") for its fold line`)
     }
-    const p1 = parsePoint(r.p1, 'p1', name)
-    const p2 = parsePoint(r.p2, 'p2', name)
-    if (r.move == null) throw new FoldError(`step "${name}": needs move ("x,y" sheet points, ";"-separated)`)
-    const move = String(r.move).split(';').map((m) => parsePoint(m, 'move', name))
+    const p1 = parsePoint(p1raw, 'p1', name)
+    const p2 = parsePoint(p2raw, 'p2', name)
+    const moveRaw = strAt(r, 'move')
+    if (moveRaw === undefined) throw new FoldError(`step "${name}": needs move ("x,y" sheet points, ";"-separated)`)
+    const move = moveRaw.split(';').map((m) => parsePoint(m, 'move', name))
     let kind: string | undefined
-    if (r.kind != null) {
-      const raw = String(r.kind)
-      kind = KINDS.includes(raw) ? raw : KIND_ALIASES[raw.toLowerCase()]
+    const kindRaw = strAt(r, 'kind')
+    if (kindRaw !== undefined) {
+      kind = KINDS.includes(kindRaw) ? kindRaw : KIND_ALIASES[kindRaw.toLowerCase()]
       if (kind === undefined) {
-        throw new FoldError(`step "${name}": unknown kind "${raw}" (try simple, reverse, sink, …)`)
+        throw new FoldError(`step "${name}": unknown kind "${kindRaw}" (try simple, reverse, sink, …)`)
       }
     }
-    const at = r.at != null ? Number(r.at) : specs.length + 1
-    const dur = r.dur != null ? Math.max(Number(r.dur), 1e-3) : 0.75
-    const to = r.to != null ? Math.min(1, Math.max(0, Number(r.to))) : 1
+    const at = numAt(r, 'at') ?? specs.length + 1
+    const durRaw = numAt(r, 'dur')
+    const dur = durRaw !== undefined ? Math.max(durRaw, 1e-3) : 0.75
+    const toRaw = numAt(r, 'to')
+    const to = toRaw !== undefined ? Math.min(1, Math.max(0, toRaw)) : 1
     specs.push({
       name, line: lineThrough(p1, p2), move,
-      kind, pick: r.pick != null ? Number(r.pick) : undefined,
+      kind, pick: numAt(r, 'pick'),
       at, dur, to,
     })
   })
