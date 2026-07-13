@@ -12,10 +12,20 @@ export interface SceneAPI {
   readonly camera: THREE.PerspectiveCamera
 }
 
-function makeGeometry(shape: string, dims: Record<string, unknown>): THREE.BufferGeometry {
+// The subset of a row's fields that determine geometry size, merged with the
+// shape's defaults — used both to build the geometry and, on later frames, to
+// detect a size change that means the geometry must be rebuilt.
+function geometryDims(shape: string, dims: Record<string, unknown>): { hx: number; hy: number; hz: number; r: number; h: number } {
   const d = { ...(SHAPE_DEFAULTS[shape] ?? SHAPE_DEFAULTS.box), ...dims }
-  const hx = d.hx as number, hy = d.hy as number, hz = d.hz as number
-  const r  = d.r  as number, h  = d.h  as number
+  return { hx: d.hx as number, hy: d.hy as number, hz: d.hz as number, r: d.r as number, h: d.h as number }
+}
+
+function sameDims(a: { hx: number; hy: number; hz: number; r: number; h: number }, b: { hx: number; hy: number; hz: number; r: number; h: number }): boolean {
+  return a.hx === b.hx && a.hy === b.hy && a.hz === b.hz && a.r === b.r && a.h === b.h
+}
+
+function makeGeometry(shape: string, dims: Record<string, unknown>): THREE.BufferGeometry {
+  const { hx, hy, hz, r, h } = geometryDims(shape, dims)
   switch (shape) {
     case 'sphere':   return new THREE.SphereGeometry(r, 32, 32)
     case 'cylinder': return new THREE.CylinderGeometry(r, r, h * 2, 32)
@@ -233,6 +243,8 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
       mesh.name = String(id)
       mesh.position.set(px as number, py as number, pz as number)
       mesh.rotation.set(rx as number ?? 0, ry as number ?? 0, rz as number ?? 0)
+      mesh.userData.shape = shape
+      mesh.userData.dims = geometryDims(shape as string, row)
       scene.add(mesh)
       objects.set(id, mesh)
     },
@@ -249,6 +261,14 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
       mesh.position.set(px as number, py as number, pz as number)
       mesh.rotation.set(rx as number ?? 0, ry as number ?? 0, rz as number ?? 0)
       if (color != null) (mesh.material as THREE.MeshStandardMaterial).color.set(color as number)
+      const shape = (row.shape as string | undefined) ?? (mesh.userData.shape as string)
+      const dims = geometryDims(shape, row)
+      if (shape !== mesh.userData.shape || !sameDims(dims, mesh.userData.dims)) {
+        mesh.geometry.dispose()
+        mesh.geometry = makeGeometry(shape, row)
+        mesh.userData.shape = shape
+        mesh.userData.dims = dims
+      }
     },
 
     destroyObject(id: unknown): void {
