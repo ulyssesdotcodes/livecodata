@@ -142,3 +142,116 @@ test('hydraFrameAt without a loop argument behaves as pass 0 (single-loop unchan
   ])
   assert.equal(hydraFrameAt(index, 99)!.code, 'a')
 })
+
+// --- meta-programming events: replace / append / layer -----------------------
+
+test('isHydraRow / hydraRows recognise the meta-programming events', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'replace', find: 'a', value: 'b' },
+    { beat: 1, event: 'append', code: '.rotate(0.1)' },
+    { beat: 1, event: 'layer', code: 'noise(3).out(o0)', value: 0.5 },
+    { beat: 1, event: 'nonsense' },
+  ]
+  assert.equal(isHydraRow(rows[0]), true)
+  assert.equal(isHydraRow(rows[1]), true)
+  assert.equal(isHydraRow(rows[2]), true)
+  assert.equal(isHydraRow(rows[3]), false)
+  assert.equal(hydraRows(rows).length, 3)
+})
+
+test('replace swaps every occurrence of the literal string in the current code', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'setCode', code: 'osc(10).modulate(osc(10)).out(o0)' },
+    { beat: b(4), event: 'replace', find: 'osc', value: 'noise' },
+  ]
+  const idx = buildHydraIndex(rows)
+  assert.equal(hydraFrameAt(idx, 0)!.code, 'osc(10).modulate(osc(10)).out(o0)')
+  assert.equal(hydraFrameAt(idx, 4)!.code, 'noise(10).modulate(noise(10)).out(o0)')
+})
+
+test('replace before any setCode is a no-op (nothing to transform yet)', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'replace', find: 'a', value: 'b' },
+    { beat: b(2), event: 'setCode', code: 'osc(a).out(o0)' },
+  ])
+  // The replace at beat 1 saw no code; the beat-2 code arrives untouched.
+  assert.equal(hydraFrameAt(idx, 0), null)
+  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(a).out(o0)')
+})
+
+test('replace coerces a non-string replacement and ignores an empty find', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'osc(FREQ).out(o0)' },
+    { beat: b(2), event: 'replace', find: 'FREQ', value: 12 },
+    { beat: b(3), event: 'replace', find: '', value: 'x' },
+  ])
+  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(12).out(o0)')
+  assert.equal(hydraFrameAt(idx, 3)!.code, 'osc(12).out(o0)', 'empty find changes nothing')
+})
+
+test('append extends the chain with a fragment, before the .out()', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
+    { beat: b(2), event: 'append', code: '.rotate(0.1)' },
+    { beat: b(3), event: 'append', code: '.kaleid(4)' },
+  ])
+  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).rotate(0.1).out(o0)')
+  assert.equal(hydraFrameAt(idx, 3)!.code, 'osc(10).rotate(0.1).kaleid(4).out(o0)')
+})
+
+test('append tolerates a missing .out() and trims/ignores blank fragments', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'osc(10)' },
+    { beat: b(2), event: 'append', code: '  .rotate(0.1)  ' },
+    { beat: b(3), event: 'append', code: '   ' },
+  ])
+  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).rotate(0.1).out(o0)')
+  assert.equal(hydraFrameAt(idx, 3)!.code, 'osc(10).rotate(0.1).out(o0)', 'blank fragment is a no-op')
+})
+
+test('layer blends another sketch over the current one with a constant lerp', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'src(s0).out(o0)' },
+    { beat: b(2), event: 'layer', code: 'noise(3).colorama(0.5).out(o0)', value: 0.3 },
+  ])
+  assert.equal(
+    hydraFrameAt(idx, 2)!.code,
+    'src(s0).blend(noise(3).colorama(0.5), 0.3).out(o0)',
+  )
+})
+
+test('layer amount can be a live expression evaluated with props each frame', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
+    { beat: b(2), event: 'layer', code: 'noise(3).out(o0)', value: 'props.mix' },
+    { beat: b(3), event: 'layer', code: 'voronoi().out(o0)', value: '({time}) => Math.sin(time)' },
+  ])
+  assert.equal(
+    hydraFrameAt(idx, 2)!.code,
+    'osc(10).blend(noise(3), (props) => (props.mix)).out(o0)',
+  )
+  // An amount that's already a function is used verbatim, not double-wrapped.
+  assert.equal(
+    hydraFrameAt(idx, 3)!.code,
+    'osc(10).blend(noise(3), (props) => (props.mix)).blend(voronoi(), (({time}) => Math.sin(time))).out(o0)',
+  )
+})
+
+test('layer defaults to an even 0.5 mix when no amount is given', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
+    { beat: b(2), event: 'layer', code: 'noise(3).out(o0)' },
+  ])
+  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).blend(noise(3), 0.5).out(o0)')
+})
+
+test('meta events compose in beat order and fold across loop passes', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, loop: 0, event: 'setCode', code: 'osc(10).out(o0)' },
+    { beat: b(4), loop: 0, event: 'append', code: '.rotate(0.1)' },
+    { beat: b(2), loop: 1, event: 'replace', find: '10', value: '20' },
+  ])
+  // Pass 1 folds pass 0 in full (append included), then applies its own replace.
+  assert.equal(hydraFrameAt(idx, 0, 1)!.code, 'osc(10).rotate(0.1).out(o0)')
+  assert.equal(hydraFrameAt(idx, 2, 1)!.code, 'osc(20).rotate(0.1).out(o0)')
+})

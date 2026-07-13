@@ -465,6 +465,53 @@ define("hydra", (rand, table) =>
     },
   },
   {
+    name: "Hydra Meta",
+    code: `// livecodata — a hydra sketch that rewrites ITSELF as the loop plays
+// See "Hydra Sketch" first for setCode/setVariable. On top of those, a hydra
+// table has three META-PROGRAMMING events — each transforms the code built up
+// so far instead of replacing it, so the whole program edits itself on the
+// beat. Press "Run" (or Cmd/Ctrl-Enter), then Play, and watch the sketch grow.
+//
+//   - replace : swap every occurrence of a literal string (\`find\`) for
+//               \`value\` in the current sketch — no regex, just a substring
+//               swap. Here it retunes the oscillator's frequency mid-loop.
+//   - append  : tack a \`.method(...)\` fragment (\`code\`, starting with a dot)
+//               onto the end of the chain, before its .out(). Here it grows a
+//               kaleidoscope, then a rotation, one link per measure.
+//   - layer   : blend another whole sketch (\`code\`) over the current one by a
+//               lerp \`value\` — a constant, or a live expression in \`props\`
+//               (e.g. "props.mix", or hydra's own "props.time"). Here a noise
+//               field fades in over the last quarter of the loop.
+//
+// The events fold in beat order onto one running sketch: sampling at any beat
+// replays every earlier transform, so the code you see on screen is always the
+// sum of the rows up to that point. Everything below is seeded into the "hydra"
+// tab on the right — edit a \`find\`/\`value\`/\`code\` cell, drag a beat, or "+ row"
+// another transform, all without touching this code. This declares the schema.
+editable("hydra", {
+  beat: "number", event: "string", code: "code",
+  name: "string", value: "string", find: "string",
+})
+`,
+    tables: {
+      hydra: [
+        // A plain oscillator to start — the sketch every transform below edits.
+        { beat: 1, event: "setCode", code: "osc(20, 0.1, 1.2).out(o0)" },
+        // beat 5: retune it in place — swap the frequency literal 20 → 60.
+        { beat: 5, event: "replace", find: "20", value: "60" },
+        // beat 9: grow the chain — a five-fold kaleidoscope, before .out().
+        { beat: 9, event: "append", code: ".kaleid(5)" },
+        // beat 13: keep growing — a slow rotation on top of the kaleidoscope.
+        { beat: 13, event: "append", code: ".rotate((props) => props.time * 0.1)" },
+        // beat 13: fade a noise field in over the tail of the loop. The lerp is
+        // a live expression on props.mix, ramped by the two setVariable rows.
+        { beat: 13, event: "layer", code: "noise(4, 0.2).colorama(0.4).out(o0)", value: "props.mix" },
+        { beat: 13, event: "setVariable", name: "mix", value: 0 },
+        { beat: 16, event: "setVariable", name: "mix", value: 0.6 },
+      ],
+    },
+  },
+  {
     name: "House of Cards",
     code: `// livecodata — House of Cards
 // A triangular pyramid of playing cards collapses when a ball drops on it.

@@ -5,6 +5,8 @@ import { getLineage } from '../src/lineage.js'
 import { foldTablePositions, type FoldTableProgram } from '../src/fold-engine.js'
 import { conformRow, schemaColumns, type ColumnType } from '../src/editable-tables.js'
 import { SAMPLES } from '../src/samples.js'
+import { buildHydraIndex, hydraFrameAt } from '../src/hydra.js'
+import { frameToBeat } from '../src/constants.js'
 
 test('new verbs cook end-to-end (grid/derive/groupBy/csv/join/triggerEach + lineage)', () => {
   const code = `
@@ -95,4 +97,33 @@ test('Origami Crane sample: 17 exact fold steps, wings held half-raised', () => 
   assert.ok(withFold.length > 0, 'scene frames carry fold')
   const last = withFold[withFold.length - 1]
   assert.equal(last.fold, 16.5)
+})
+
+test('Hydra Meta sample: replace/append/layer rewrite the sketch across the loop', () => {
+  const sample = SAMPLES.find((s) => s.name === 'Hydra Meta')!
+  const { views } = createRuntime({
+    editableRows: (name: string, schema: Record<string, ColumnType>, seed?: Record<string, unknown>[]) =>
+      (seed ?? sample.tables?.[name] ?? []).map((r) => conformRow(r, schemaColumns(schema))),
+  }).run(sample.code, { seed: 1 })
+
+  const index = buildHydraIndex(views.get('hydra')!.rows)
+  const at = (beat: number) => hydraFrameAt(index, Math.round((beat - 1) * 30))!
+
+  // beat 1: the bare oscillator.
+  assert.equal(at(1).code, 'osc(20, 0.1, 1.2).out(o0)')
+  // beat 5: replace retuned 20 → 60 in place.
+  assert.equal(at(5).code, 'osc(60, 0.1, 1.2).out(o0)')
+  // beat 9: append grew the chain with a kaleidoscope.
+  assert.equal(at(9).code, 'osc(60, 0.1, 1.2).kaleid(5).out(o0)')
+  // beat 16: a second append (rotation), then a props-driven layer over noise.
+  assert.equal(
+    at(16).code,
+    'osc(60, 0.1, 1.2).kaleid(5).rotate((props) => props.time * 0.1)'
+      + '.blend(noise(4, 0.2).colorama(0.4), (props) => (props.mix)).out(o0)',
+  )
+  // the layer's mix is live table data, ramped by the two setVariable rows.
+  assert.equal(at(13).vars.mix, 0)
+  assert.equal(at(16).vars.mix, 0.6)
+  // frameToBeat is the inverse used above — a light sanity tie to constants.
+  assert.equal(Math.round(frameToBeat(0)), 1)
 })
