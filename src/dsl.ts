@@ -29,7 +29,7 @@
 import { rasterizeRows } from './rasterize.js'
 import { withLineage, carry, unionLineage, getLineage, type Row } from './lineage.js'
 import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS } from './constants.js'
-import { compileFolds, type FoldProgram, type CompiledFold } from './origami.js'
+import { compileFoldTable, foldValueAt, type FoldTableProgram } from './fold-engine.js'
 import type { ColumnType } from './editable-tables.js'
 import { beatSecondsFromTaps } from './tap-log.js'
 
@@ -776,59 +776,32 @@ class PhysicsBuilder {
 }
 
 // ── Origami ───────────────────────────────────────────────────────────────────
-// A sheet of paper folded by a TABLE OF CREASES: every row gives one crease
-// as two point references (p1/p2 — "edge@t" on the original square, "name@t"
-// along an earlier row, or raw "x,y"), the pieces it moves (move — sample
-// points inside them), its turning sense (sign ±1) and signed angle (deg),
-// and its timing. steps() compiles the rows (see origami.ts — references
-// are resolved and the sheet is cut along the segments, nothing is
-// inferred from a folded model); spawn() emits
-// the scene's create row (shape: "origami", with the compiled program riding
-// along as data); fold state is just numeric fields named after the steps —
-// 0 = before that fold, 1 = folded — so a fold schedule is ordinary update
-// keyframes and the baker interpolates them like any transform. sequence()
-// turns the rows' at/dur timings (or explicit steps { fold, at, dur, to,
-// ease }) into those keyframes, handling overlapping folds by baking every
-// group's envelope value at every breakpoint.
-
-interface FoldStep {
-  group: string
-  t0: number
-  t1: number
-  to: number
-  ease: ((t: number) => number) | null
-  start: number
-}
+// A sheet of paper folded by a TABLE OF FOLD STEPS: every row is one fold.
+// p1/p2 give the fold line as two points drawn on the CURRENT folded model
+// (unit square [0,1]², the sheet before any fold); move gives sheet-space
+// marker point(s) ("x,y", ";"-separated, coordinates on the UNFOLDED sheet)
+// naming the flap(s) that swing; kind/pick choose among the valid layer
+// orders when the fold is ambiguous (e.g. kind: "reverse" for an inside
+// reverse fold); at/dur schedule the swing on the beat timeline. Each row
+// is solved exactly: faces are cut along the line, the flaps reflect, and
+// the layer order is computed — a row that cannot fold flat is an error
+// naming the step, not a silently dead fold. Playback drives one numeric
+// field, `fold`: k means the first k folds have landed, fractional values
+// swing the next flap through 3D about its fold line.
 
 export class OrigamiBuilder {
   private _size: number
   private _ctx: DSLContext | null
   private _id: unknown = 'paper'
   private _rows: Row[] = []
-  private _compiled: CompiledFold | null = null
+  private _compiled: FoldTableProgram | null = null
 
   constructor(size: number, ctx: DSLContext | null) {
     this._size = size
     this._ctx = ctx
   }
 
-  // One table = the whole folding, as a static crease list. Each row with a
-  // line is a crease: `p1`/`p2` its segment — each point "edge@t" (a
-  // fraction along an edge of the ORIGINAL square: bottom/top/left/right),
-  // "name@t" (a fraction along an earlier row's segment), or raw "x,y" —
-  // so every point is built from the sheet's boundary and the folds before
-  // it, the way origami constructions work. `move` gives sample points
-  // ("x,y", ";"-separated) inside the pieces the fold rotates (only pieces
-  // touching the crease — the rest rides along through the hinge tree); a
-  // row with a line but NO move is a construction line, referenceable but
-  // never folded. `sign` is the crease's turning sense for positive
-  // fractions (flipping it = swapping p1/p2; stacked layers often need
-  // opposite senses), `deg` the full signed angle (±180 = flat), and timing
-  // (`at`, `dur`, `to` — 1 folded, 0 open, −1 folded the other way; dur 0 =
-  // geometry only). Rows sharing a `step` name extend one fold across
-  // several layers; a row with no line re-drives an earlier fold
-  // (keyframes). The timings become the default steps for sequence(), so as
-  // the timeline advances the paper folds step by step.
+  // One table = the whole folding, one row per fold, applied in order.
   steps(steps: Table | Row[]): OrigamiBuilder {
     const next = new OrigamiBuilder(this._size, this._ctx)
     next._id = this._id
@@ -836,107 +809,66 @@ export class OrigamiBuilder {
     return next
   }
 
-  private _compile(): CompiledFold {
+  program(): FoldTableProgram {
     if (!this._compiled) {
-      this._compiled = compileFolds(this._rows, { size: this._size })
-      for (const w of this._compiled.program.warnings) console.warn(`origami: ${w}`)
+      this._compiled = compileFoldTable(this._rows, { size: this._size })
     }
     return this._compiled
   }
 
-  program(): FoldProgram {
-    return this._compile().program
-  }
-
-  groups(): string[] {
-    return this._compile().program.groups
-  }
-
-  // The create row: compiled program + all fold groups at 0 (flat sheet).
-  // Extra props (id, color, px/py/pz, rx/ry/rz, beat, …) merge over defaults.
+  // The create row: compiled program + fold at 0 (flat sheet). Extra props
+  // (id, color, px/py/pz, rx/ry/rz, beat, …) merge over defaults.
   spawn(props: Row = {}): Table {
-    const program = this._compile().program
+    const program = this.program()
     this._id = props.id ?? this._id
-    const zeros: Row = {}
-    for (const g of program.groups) zeros[g] = 0
     return new Table([{
       id: this._id, type: 'create', beat: 1, shape: 'origami',
       px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, color: 0xd94f2a,
-      ...zeros, program, ...props,
+      fold: 0, program, ...props,
     }], this._ctx)
   }
 
-  // Fold schedule → update keyframes. Steps: { fold, at, dur?, to?, ease? }
-  // (aliases: group/beat; dur defaults to 1 beat, to defaults to 1 = fully
-  // folded; ease is an easing fn or its name, e.g. "easeInOut"). Steps may
-  // overlap freely — each keyframe carries every scheduled group's value.
-  // With no argument, uses the timings from the steps() rows.
+  // Fold schedule → update keyframes driving `fold`. With no argument, uses
+  // the at/dur timings from the steps() rows (at defaults to the row's
+  // position, dur to 0.75 beats). Override with rows { step?, at, dur? } to
+  // retime, or pass nothing and retime the table instead.
   sequence(steps?: Table | Row[] | null, opts: { id?: unknown } = {}): Table {
     const id = opts.id ?? this._id
-    const rows = steps instanceof Table ? steps.rows : steps ?? (this._compile().schedule as unknown as Row[])
-    const norm: FoldStep[] = rows
-      .filter((r) => r && (r.fold ?? r.group) != null && (r.at ?? r.beat) != null)
-      .map((r) => {
-        const t0 = Number(r.at ?? r.beat)
-        const dur = r.dur != null ? Math.max(Number(r.dur), 1 / FRAMES_PER_BEAT) : 1
-        const easeRaw = r.ease
-        const ease = typeof easeRaw === 'function'
-          ? easeRaw as (t: number) => number
-          : typeof easeRaw === 'string' && easeRaw in EASINGS
-            ? EASINGS[easeRaw as keyof Easings]
-            : null
-        return {
-          group: String(r.fold ?? r.group), t0, t1: t0 + dur,
-          to: r.to != null ? Number(r.to) : 1, ease, start: 0,
+    const program = this.program()
+    let timed = program.steps.map((s) => ({ t0: s.t0, t1: s.t1, to: s.to, name: s.name }))
+    const overrides = steps instanceof Table ? steps.rows : steps
+    if (overrides) {
+      const byName = new Map(timed.map((s) => [s.name, s]))
+      overrides.forEach((r, i) => {
+        const target = r.step != null ? byName.get(String(r.step)) : timed[i]
+        if (!target) return
+        const at = r.at ?? r.beat
+        if (at != null) {
+          const dur = r.dur != null ? Math.max(Number(r.dur), 1 / FRAMES_PER_BEAT) : target.t1 - target.t0
+          target.t0 = Number(at)
+          target.t1 = Number(at) + dur
         }
       })
-      .sort((a, b) => a.t0 - b.t0)
-
-    // Each step ramps from wherever its group's envelope sits at its start.
-    const byGroup = new Map<string, FoldStep[]>()
-    for (const s of norm) {
-      if (!byGroup.has(s.group)) byGroup.set(s.group, [])
-      byGroup.get(s.group)!.push(s)
+      timed = [...timed].sort((a, b) => a.t0 - b.t0)
     }
-    const evalStep = (s: FoldStep, t: number): number => {
-      const p = Math.min(1, Math.max(0, (t - s.t0) / (s.t1 - s.t0)))
-      return s.start + (s.to - s.start) * (s.ease ? s.ease(p) : p)
-    }
-    for (const list of byGroup.values()) {
-      for (let i = 0; i < list.length; i++) {
-        list[i].start = i === 0 ? 0 : evalStep(list[i - 1], list[i].t0)
-      }
-    }
-    const valueAt = (group: string, t: number): number => {
-      const list = byGroup.get(group)!
-      let v = 0
-      for (const s of list) {
-        if (t <= s.t0) break
-        v = evalStep(s, t)
-      }
-      return v
-    }
-
-    // One keyframe per breakpoint, carrying every scheduled group. A segment
-    // that exactly spans a single eased step inherits its ease.
-    const times = [...new Set(norm.flatMap((s) => [s.t0, s.t1]))].sort((a, b) => a - b)
-    const out: Row[] = times.map((t, i) => {
-      const row: Row = { id, type: 'update', beat: t }
-      for (const g of byGroup.keys()) row[g] = valueAt(g, t)
-      const prev = i > 0 ? times[i - 1] : null
-      if (prev !== null) {
-        const eases = norm.filter((s) => s.ease && s.t0 === prev && s.t1 === t).map((s) => s.ease!)
-        if (eases.length && eases.every((e) => e === eases[0])) row.ease = eases[0]
-      }
-      return row
+    const out: Row[] = []
+    timed.forEach((s, k) => {
+      out.push({ id, type: 'update', beat: s.t0, fold: k })
+      out.push({ id, type: 'update', beat: s.t1, fold: k + s.to })
     })
     return new Table(out, this._ctx)
+  }
+
+  // The fold value at a beat under the table's own schedule — handy in tests
+  // and expressions.
+  foldAt(beat: number): number {
+    return foldValueAt(this.program(), beat)
   }
 }
 
 export interface OrigamiFactory {
-  // A bare square sheet spanning [-size, size]² (default size 1) — fold it
-  // with .steps(table).
+  // A bare square sheet (unit square, displayed spanning [-size, size]²,
+  // default size 1) — fold it with .steps(table).
   (opts?: { size?: number }): OrigamiBuilder
 }
 
