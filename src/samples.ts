@@ -439,16 +439,18 @@ editable("hydra sketch", { beat: "number", event: "string", code: "code", name: 
 //    FIRST, so every match gets a partner. fn(first, second) returns the
 //    row(s) that replace \`second\`. With two setCode rows that's exactly two
 //    pairs: (beat 1 → beat 9), and the wraparound (beat 9 → beat 1).
-// 3. \`flicker(n, step)\` is the fn passed to pairBy: it builds \`2*n - 1\` rows
-//    starting at \`second\`'s own beat, \`step\` beats apart, then uses
-//    \`rotate\` to cycle their \`code\` between \`second\` (the incoming scene)
-//    and \`first\` (the outgoing one) — so the new scene flickers in and out
-//    n times before it settles, instead of a hard cut.
+// 3. \`flicker(n, step)\` is the fn passed to pairBy. \`rotate(rows, values)\`
+//    emits one row per \`values\` entry (so \`2*n - 1\` rows here), cycling
+//    through the short \`rows\` pattern and merging each value on top:
+//    output i = { ...rows[i % rows.length], ...values[i] }. Cycling
+//    [second, first] under a run of ascending beats alternates the incoming
+//    and outgoing scene — starting AND ending on \`second\` — so the new
+//    scene flickers in and out n times before it settles, instead of a
+//    hard cut.
 const flicker = (n, step) => (first, second) =>
   rotate(
-    Array.from({ length: 2 * n - 1 }, (_, i) => ({ ...second, beat: second.beat + i * step })),
-    "code",
-    [second.code, first.code],
+    [second, first],
+    Array.from({ length: 2 * n - 1 }, (_, i) => ({ beat: second.beat + i * step })),
   ).rows
 
 define("hydra", (rand, table) =>

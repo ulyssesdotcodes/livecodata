@@ -301,18 +301,24 @@ test('object(shape, props) is the generic primitive builder', () => {
   assert.equal(r.type, 'create')
 })
 
-test('rotate cycles values through a field, wrapping around', () => {
+test('rotate emits one row per value, cycling through rows and merging', () => {
   const { rotate } = createDSL(null)
-  const rows = [{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]
-  const out = rotate(rows, 'color', ['red', 'green', 'blue'])
+  const pattern = [{ shape: 'a' }, { shape: 'b' }]
+  const out = rotate(pattern, [{ beat: 1 }, { beat: 2 }, { beat: 3 }, { beat: 4 }, { beat: 5 }])
   assert.deepEqual(out.rows, [
-    { id: 0, color: 'red' }, { id: 1, color: 'green' }, { id: 2, color: 'blue' },
-    { id: 3, color: 'red' }, { id: 4, color: 'green' },
+    { shape: 'a', beat: 1 }, { shape: 'b', beat: 2 }, { shape: 'a', beat: 3 },
+    { shape: 'b', beat: 4 }, { shape: 'a', beat: 5 },
   ])
 })
 
-test('rotate leaves rows unchanged when values is empty', () => {
+test('rotate lets each value override the cycled row', () => {
   const { rotate } = createDSL(null)
-  const rows = [{ id: 0 }, { id: 1 }]
-  assert.deepEqual(rotate(rows, 'color', []).rows, rows)
+  const out = rotate([{ code: 'x' }, { code: 'y' }], [{ beat: 1 }, { beat: 2, code: 'z' }])
+  assert.deepEqual(out.rows, [{ code: 'x', beat: 1 }, { code: 'z', beat: 2 }])
+})
+
+test('rotate output length follows values, not rows', () => {
+  const { rotate } = createDSL(null)
+  assert.deepEqual(rotate([{ a: 1 }], []).rows, [])
+  assert.deepEqual(rotate([], [{ b: 1 }, { b: 2 }]).rows, [{ b: 1 }, { b: 2 }])
 })
