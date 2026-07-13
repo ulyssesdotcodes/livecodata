@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createRuntime } from '../src/runtime.js'
 import { getLineage } from '../src/lineage.js'
 import { foldTablePositions, type FoldTableProgram } from '../src/fold-engine.js'
+import { conformRow, schemaColumns, type ColumnType } from '../src/editable-tables.js'
 import { SAMPLES } from '../src/samples.js'
 
 test('new verbs cook end-to-end (grid/derive/groupBy/csv/join/triggerEach + lineage)', () => {
@@ -49,8 +50,11 @@ define("joined", () => table("cities").join(rows([{ id: "a", note: "hit" }]), "i
 
 test('Origami Crane sample: 17 exact fold steps, wings held half-raised', () => {
   const sample = SAMPLES.find((s) => s.name === 'Origami Crane')!
+  // materialize seed rows exactly like the app does (cook-service): every
+  // schema column exists on every row, untouched cells get type defaults
   const { views } = createRuntime({
-    editableRows: (_n: string, _s: unknown, seed?: Record<string, unknown>[]) => seed ?? [],
+    editableRows: (_n: string, schema: Record<string, ColumnType>, seed?: Record<string, unknown>[]) =>
+      (seed ?? []).map((r) => conformRow(r, schemaColumns(schema))),
   }).run(sample.code, { seed: 1 })
 
   const events = views.get('events')!

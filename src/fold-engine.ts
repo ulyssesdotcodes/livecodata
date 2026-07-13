@@ -340,6 +340,13 @@ const numAt = (r: Record<string, unknown>, key: string): number | undefined => {
   const n = Number(v)
   return Number.isFinite(n) ? n : undefined
 }
+// number columns default to 0 in the table panel, and 0 is meaningless for
+// these (a fold at beat 0, a zero-length swing, a fold that doesn't move) —
+// so non-positive means unset too
+const posAt = (r: Record<string, unknown>, key: string): number | undefined => {
+  const n = numAt(r, key)
+  return n !== undefined && n > 0 ? n : undefined
+}
 
 export const parseFoldRows = (rows: Record<string, unknown>[]): FoldTableRowSpec[] => {
   const specs: FoldTableRowSpec[] = []
@@ -364,11 +371,9 @@ export const parseFoldRows = (rows: Record<string, unknown>[]): FoldTableRowSpec
         throw new FoldError(`step "${name}": unknown kind "${kindRaw}" (try simple, reverse, sink, …)`)
       }
     }
-    const at = numAt(r, 'at') ?? specs.length + 1
-    const durRaw = numAt(r, 'dur')
-    const dur = durRaw !== undefined ? Math.max(durRaw, 1e-3) : 0.75
-    const toRaw = numAt(r, 'to')
-    const to = toRaw !== undefined ? Math.min(1, Math.max(0, toRaw)) : 1
+    const at = posAt(r, 'at') ?? specs.length + 1
+    const dur = posAt(r, 'dur') ?? 0.75
+    const to = Math.min(1, posAt(r, 'to') ?? 1)
     specs.push({
       name, line: lineThrough(p1, p2), move,
       kind, pick: numAt(r, 'pick'),

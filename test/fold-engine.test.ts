@@ -159,4 +159,13 @@ test('editable-table rows: blank cells ("" and NaN) mean unset, not zero', () =>
   // blank step names get positional defaults; blank p1 errors by name
   assert.throws(() => compileFoldTable([{ step: '', p1: '', p2: '1,1', move: '0.9,0.1' }]),
     (e: Error) => e instanceof FoldError && e.message.includes('"fold1"'))
+  // the table panel defaults number columns to 0 — also unset, never
+  // "swing at beat 0", "zero-length swing" or "don't fold at all"
+  const zeroed = compileFoldTable([{
+    step: 'diag', p1: '0,0', p2: '1,1', move: '0.9,0.1',
+    kind: '', pick: 0, at: 0, dur: 0, to: 0,
+  }])
+  assert.equal(zeroed.steps[0].t0, 1)
+  assert.equal(zeroed.steps[0].t1, 1.75)
+  assert.equal(zeroed.steps[0].to, 1)
 })
