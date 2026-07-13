@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { getVimMode, setVimMode, getMidiEnabled, setMidiEnabled } from '../src/settings.js'
+import { getVimMode, setVimMode, getMidiEnabled, setMidiEnabled, getUsername, setUsername } from '../src/settings.js'
 
 interface FakeStorage {
   getItem(key: string): string | null
@@ -57,4 +57,17 @@ test('getMidiEnabled tolerates a storage that throws, falling back to the defaul
   }
   assert.equal(getMidiEnabled(storage), false)
   assert.doesNotThrow(() => setMidiEnabled(true, storage))
+})
+
+test('getUsername defaults to empty, round-trips, and tolerates a throwing storage', () => {
+  assert.equal(getUsername(fakeStorage()), '')
+  const storage = fakeStorage()
+  setUsername('ada', storage)
+  assert.equal(getUsername(storage), 'ada')
+  const broken = {
+    getItem: (): string | null => { throw new Error('boom') },
+    setItem: (): void => { throw new Error('boom') },
+  }
+  assert.equal(getUsername(broken), '')
+  assert.doesNotThrow(() => setUsername('ada', broken))
 })

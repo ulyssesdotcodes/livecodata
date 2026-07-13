@@ -1,44 +1,29 @@
-// livecodata multiplayer room — Cloudflare Durable Object
+// livecodata multiplayer room — Cloudflare Durable Object adapter
 // ----------------------------------------------------------------------------
 // The Workers/Durable-Objects twin of server/server.ts: one Durable Object
-// instance per room name (see worker/index.ts's idFromName(room)), built on
-// the WebSocket Hibernation API so an idle room costs nothing between
-// messages — the platform can drop the object from memory and still wake it
-// when a message arrives on an attached socket. Room state (the named event
-// logs) therefore lives in this.ctx.storage, not a JS closure — getLogs()
-// lazily reloads it after a wake — and this.ctx.getWebSockets() (not a
-// hand-kept Set) is how hibernation tracks which sockets are still attached.
+// instance per room name (see worker/index.ts's idFromName(room)). All room
+// behavior (merge, relay, peer-join/leave authoring) lives in the shared
+// src/room-core.ts; this file only owns what is platform-specific.
 //
-// The object never *interprets* table/apply events (pure merge-and-relay,
-// like server.ts), but it does author one kind itself: a peer-join/peer-leave
-// event on the "session" log whenever a socket joins or drops, tagged
-// src:"server" and table:"activity" (see editable-tables.ts's record() and
-// main.ts) so peer presence is just more log the client folds, replacing what
-// used to be a dedicated `{type:'peers'}` message. Each socket's client id is
-// attached via serializeAttachment (ws.deserializeAttachment survives
-// hibernation the same way this.ctx.storage does) so a peer-leave on wake
-// still knows who left.
+// Built on the WebSocket Hibernation API so an idle room costs nothing
+// between messages — the platform can drop the object from memory and still
+// wake it when a message arrives on an attached socket. Room state (the named
+// event logs) therefore lives in this.ctx.storage, not a JS closure —
+// getLogs() lazily reloads it after a wake — and this.ctx.getWebSockets()
+// (not a hand-kept Set) is how hibernation tracks which sockets are still
+// attached. Each socket's client id is attached via serializeAttachment
+// (ws.deserializeAttachment survives hibernation the same way this.ctx.storage
+// does) so a peer-leave on wake still knows who left — and the attachment
+// doubles as the "has this socket joined?" gate for event frames.
 //
-// Same wire protocol as the Node server; see src/multiplayer.ts for the
-// client and the message shapes.
+// Same wire protocol as the Node server; see src/protocol.ts for the message
+// shapes and src/multiplayer.ts for the client.
 // ----------------------------------------------------------------------------
 
 import { DurableObject } from 'cloudflare:workers'
-import { mergeEvents, type StampedEvent } from '../src/event-log.js'
-
-// The log peer-connection events ride, and the pseudo-table (see
-// editable-tables.ts's record()) they're tagged with within it.
-const SESSION_LOG = 'session'
-const ACTIVITY_TABLE = 'activity'
-
-interface ClientMessage {
-  type: string
-  room?: string
-  client?: string
-  log?: string
-  events?: StampedEvent[]
-  logs?: Record<string, StampedEvent[]>
-}
+import type { StampedEvent } from '../src/event-log.js'
+import { parseClientMessage, type ServerMessage } from '../src/protocol.js'
+import { handleEvents, handleJoin, handleLeave, type Outbound, type RoomLogs } from '../src/room-core.js'
 
 interface SocketAttachment {
   client: string
@@ -47,18 +32,18 @@ interface SocketAttachment {
 const LOGS_KEY = 'logs'
 
 export class Room extends DurableObject {
-  private logs: Map<string, StampedEvent[]> | null = null
+  private logs: RoomLogs | null = null
 
   // Lazily (re)load from durable storage — needed after a hibernation wake,
   // when this.logs has been reset by a fresh construction of the object.
-  private async getLogs(): Promise<Map<string, StampedEvent[]>> {
+  private async getLogs(): Promise<RoomLogs> {
     if (this.logs) return this.logs
     const stored = (await this.ctx.storage.get<Record<string, StampedEvent[]>>(LOGS_KEY)) ?? {}
     this.logs = new Map(Object.entries(stored))
     return this.logs
   }
 
-  private async saveLogs(logs: Map<string, StampedEvent[]>): Promise<void> {
+  private async saveLogs(logs: RoomLogs): Promise<void> {
     await this.ctx.storage.put(LOGS_KEY, Object.fromEntries(logs))
   }
 
@@ -68,47 +53,27 @@ export class Room extends DurableObject {
     return this.ctx.getWebSockets().filter((ws) => ws.readyState === WebSocket.OPEN)
   }
 
-  private send(ws: WebSocket, msg: Record<string, unknown>): void {
+  private send(ws: WebSocket, msg: ServerMessage): void {
     try { ws.send(JSON.stringify(msg)) } catch { /* socket closing under us */ }
   }
 
-  private broadcast(msg: Record<string, unknown>, except?: WebSocket): void {
+  private broadcast(msg: ServerMessage, except?: WebSocket): void {
     const payload = JSON.stringify(msg)
     for (const ws of this.openSockets()) {
       if (ws !== except) { try { ws.send(payload) } catch { /* ignore */ } }
     }
   }
 
-  // Merge incoming events into the room log; relay what was actually new to
-  // the other sockets. Returns the newly-added events (so callers can tell
-  // whether a storage write is actually needed).
-  private ingest(logs: Map<string, StampedEvent[]>, name: string, incoming: StampedEvent[], from?: WebSocket): StampedEvent[] {
-    const existing = logs.get(name) ?? []
-    const { events, added } = mergeEvents(existing, incoming)
-    if (added.length) {
-      logs.set(name, events)
-      this.broadcast({ type: 'events', log: name, events: added }, from)
+  private deliver(sender: WebSocket, outbound: Outbound[]): void {
+    for (const o of outbound) {
+      if (o.to === 'sender') this.send(sender, o.msg)
+      else this.broadcast(o.msg, sender)
     }
-    return added
   }
 
-  // This room's own Lamport counter for server-authored events, derived from
-  // storage rather than kept in a JS field — a hibernation wake gets a fresh
-  // object instance, so anything not in this.ctx.storage (or a socket
-  // attachment) wouldn't survive it.
-  private nextServerSeq(logs: Map<string, StampedEvent[]>): number {
-    let max = -1
-    for (const events of logs.values()) {
-      for (const e of events) if (e.src === 'server' && e.seq > max) max = e.seq
-    }
-    return max + 1
-  }
-
-  // `except` skips a redundant broadcast to a socket that's about to receive
-  // this same event another way (the join handler's own subsequent `sync`).
-  private async recordServerEvent(logs: Map<string, StampedEvent[]>, kind: string, payload: Record<string, unknown>, except?: WebSocket): Promise<void> {
-    const event: StampedEvent = { seq: this.nextServerSeq(logs), t: Date.now(), kind, src: 'server', ...payload }
-    if (this.ingest(logs, SESSION_LOG, [event], except).length) await this.saveLogs(logs)
+  private joinedClient(ws: WebSocket): string | null {
+    const attachment = ws.deserializeAttachment() as SocketAttachment | null | undefined
+    return attachment?.client ?? null
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -126,46 +91,35 @@ export class Room extends DurableObject {
   }
 
   async webSocketMessage(ws: WebSocket, raw: ArrayBuffer | string): Promise<void> {
-    let msg: ClientMessage
-    try {
-      msg = JSON.parse(typeof raw === 'string' ? raw : new TextDecoder().decode(raw)) as ClientMessage
-    } catch {
-      return
-    }
+    const msg = parseClientMessage(typeof raw === 'string' ? raw : new TextDecoder().decode(raw))
+    if (!msg) return
 
     if (msg.type === 'join') {
-      // Union the joiner's logs first, so peers get anything it authored
-      // offline, then hand it the whole room.
       const logs = await this.getLogs()
-      let changed = false
-      for (const [name, events] of Object.entries(msg.logs ?? {})) {
-        if (Array.isArray(events)) changed = this.ingest(logs, name, events, ws).length > 0 || changed
-      }
-      const clientId = typeof msg.client === 'string' && msg.client ? msg.client : 'anon'
-      ws.serializeAttachment({ client: clientId } satisfies SocketAttachment)
-      // Authored *after* merging the joiner's own logs (which — see main.ts —
-      // always include the "activity" table's create event by this point) so
-      // this peer-join always lands on a table that already exists. Not
-      // broadcast to the joiner itself — the sync below already covers it.
-      await this.recordServerEvent(logs, 'peer-join', { table: ACTIVITY_TABLE, client: clientId }, ws)
-      if (changed) await this.saveLogs(logs)
-      const snapshot: Record<string, StampedEvent[]> = {}
-      for (const [name, events] of logs) snapshot[name] = events
-      this.send(ws, { type: 'sync', logs: snapshot })
+      const result = handleJoin(logs, msg)
+      ws.serializeAttachment({ client: result.clientId } satisfies SocketAttachment)
+      if (result.changed) await this.saveLogs(logs)
+      this.deliver(ws, result.outbound)
       return
     }
 
-    if (msg.type === 'events' && typeof msg.log === 'string' && Array.isArray(msg.events)) {
+    // Events from a socket that never joined are dropped, matching the Node
+    // server's membership gate.
+    if (msg.type === 'events' && this.joinedClient(ws) !== null) {
       const logs = await this.getLogs()
-      if (this.ingest(logs, msg.log, msg.events, ws).length) await this.saveLogs(logs)
+      const result = handleEvents(logs, msg)
+      if (result.changed) await this.saveLogs(logs)
+      this.deliver(ws, result.outbound)
     }
   }
 
   private async recordLeave(ws: WebSocket): Promise<void> {
-    const attachment = ws.deserializeAttachment() as SocketAttachment | null
-    if (attachment?.client) {
+    const clientId = this.joinedClient(ws)
+    if (clientId) {
       const logs = await this.getLogs()
-      await this.recordServerEvent(logs, 'peer-leave', { table: ACTIVITY_TABLE, client: attachment.client })
+      const result = handleLeave(logs, clientId)
+      if (result.changed) await this.saveLogs(logs)
+      this.deliver(ws, result.outbound)
     }
     // The last socket just left: drop the room's log entirely rather than
     // let it sit in durable storage for nobody. Each client already

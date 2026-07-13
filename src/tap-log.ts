@@ -70,3 +70,16 @@ export function createTapLog({ src }: { src?: string } = {}): TapLog {
     },
   }
 }
+
+// Average seconds between consecutive tap-beat presses (each row's `time` is
+// an absolute UTC epoch ms, not time-since-first-tap), or null with fewer than
+// two taps. The one place the taps table turns into a beat length — the DSL's
+// tempo()/beats() and the playback engine's beat clock/BPM display all derive
+// from this, so tempo semantics (e.g. switching to a median interval) change
+// everywhere at once.
+export function beatSecondsFromTaps(rows: Row[] | null | undefined): number | null {
+  if (!rows || rows.length < 2) return null
+  const first = rows[0].time as number
+  const last = rows[rows.length - 1].time as number
+  return (last - first) / (rows.length - 1) / 1000
+}

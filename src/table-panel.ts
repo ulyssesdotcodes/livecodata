@@ -21,7 +21,7 @@
 // directly under their bare name (no separate "·events" tab) and they render
 // through the plain read-only path.
 
-import { resolveSpec, type GraphSpec, type ChartData } from './graph-panel.js'
+import { chartDataFor, numericColumns, resolveSpec, type GraphSpec, type ChartData } from './graph-panel.js'
 import type { Table } from './dsl.js'
 import type { Row } from './lineage.js'
 import type { EditableTableStore, ColumnType, EditableColumn } from './editable-tables.js'
@@ -158,22 +158,13 @@ export function chartFor(
   if (!spec && !name.endsWith(EVENTS_SUFFIX) && name !== 'code' && !editableStore.isLog(name)) {
     const t = views.get(name)
     if (t && t.rows.length) {
-      const numericCols = t.columns.filter(
-        (c) => c !== 'beat' && t.rows.some((r) => typeof r[c] === 'number'),
-      )
+      const numericCols = numericColumns(t.rows, t.columns)
       if (numericCols.length) spec = { table: t, columns: numericCols, viewName: name }
     }
   }
   if (!spec) return null
-  const { rows, cols, xOf, hasIndex } = resolveSpec(spec)
-  if (!cols.length || !rows.length) return null
-  let xMin = Infinity, xMax = -Infinity
-  rows.forEach((row, i) => {
-    const x = xOf(row, i)
-    if (x < xMin) xMin = x
-    if (x > xMax) xMax = x
-  })
-  return { rows, cols, xOf, hasIndex, xMin, xMax, name }
+  const { rows, cols } = resolveSpec(spec)
+  return chartDataFor(rows, spec.table.columns, cols, name)
 }
 
 // Display order only: rows are shown sorted by `beat` (ascending, stable —

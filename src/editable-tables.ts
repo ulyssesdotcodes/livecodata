@@ -144,10 +144,18 @@ function eventRow(e: StampedEvent): Row {
 }
 
 // Rebuild a row to match `columns`, keeping matching data, defaulting the rest.
-function conformRow(row: Row, columns: EditableColumn[]): Row {
+// Exported for the cook worker, which mirrors ensure()'s read-only replay
+// semantics against a rows snapshot (see cook-service.ts).
+export function conformRow(row: Row, columns: EditableColumn[]): Row {
   const next: Row = {}
   for (const c of columns) next[c.name] = c.name in row ? row[c.name] : defaultFor(c.type)
   return next
+}
+
+// An editable() schema in column-list form — the shape create/declare-schema
+// events carry.
+export function schemaColumns(schema: Record<string, ColumnType>): EditableColumn[] {
+  return Object.entries(schema).map(([n, t]) => ({ name: n, type: t }))
 }
 
 // Apply one event to the map of table states. Defensive (events may come from
@@ -374,9 +382,6 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
     refold()
     notify()
   })
-
-  const schemaColumns = (schema: Record<string, ColumnType>): EditableColumn[] =>
-    Object.entries(schema).map(([n, t]) => ({ name: n, type: t }))
 
   return {
     log,

@@ -7,10 +7,9 @@
 import { For, Show } from 'solid-js'
 import { mountComponent } from './dom.js'
 import { formatCell } from '../table-panel.js'
-import { SERIES_COLORS, fmtNum } from '../graph-panel.js'
-import { canDrawSparklines, drawSparklines, sparklineRanges, type SparkRange } from '../preview.js'
+import { SERIES_COLORS, fmtNum, chartDataFor, computeColRanges, numericColumns, type ColRange } from '../graph-panel.js'
+import { canDrawSparklines, drawSparklines } from '../preview.js'
 import type { Table } from '../dsl.js'
-import type { Row } from '../lineage.js'
 
 interface PreviewOptions {
   maxRows?: number
@@ -29,13 +28,10 @@ function TablePreviewCard(props: { table: Table; opts: Required<PreviewOptions> 
   const rowsLabel = `${table.length} row${table.length === 1 ? '' : 's'}`
   const colsLabel = `${allCols.length} col${allCols.length === 1 ? '' : 's'}`
 
-  const hasIndex = allCols.includes('beat')
-  const xOf = (row: Row, i: number): number => (hasIndex ? (row.beat as number) : i)
-  const numCols = allCols.filter(
-    (c) => c !== 'beat' && table.rows.some((r) => typeof r[c] === 'number'),
-  )
-  const drawable = numCols.length > 0 && canDrawSparklines(table.rows, numCols)
-  const colRanges: SparkRange[] = drawable ? sparklineRanges(table.rows, numCols) : []
+  const numCols = numericColumns(table.rows, allCols)
+  const chartData = chartDataFor(table.rows, allCols, numCols, table.name ?? 'table')
+  const drawable = chartData != null && canDrawSparklines(table.rows, numCols)
+  const colRanges: ColRange[] = drawable ? computeColRanges(table.rows, numCols, 0) : []
 
   return (
     <div class="cm-preview">
@@ -43,7 +39,7 @@ function TablePreviewCard(props: { table: Table; opts: Required<PreviewOptions> 
       <Show when={drawable}>
         <canvas
           class="cm-preview-spark"
-          ref={(el) => drawSparklines(el, table.rows, numCols, xOf, hasIndex, playIndex)}
+          ref={(el) => drawSparklines(el, chartData!, colRanges, playIndex)}
         />
         <div class="cm-preview-spark-label">
           <For each={numCols}>

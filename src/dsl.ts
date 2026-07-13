@@ -31,6 +31,7 @@ import { withLineage, carry, unionLineage, getLineage, type Row } from './lineag
 import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS } from './constants.js'
 import { compileFolds, type FoldProgram, type CompiledFold } from './origami.js'
 import type { ColumnType } from './editable-tables.js'
+import { beatSecondsFromTaps } from './tap-log.js'
 
 // ── Expr: a small, serializable, chainable expression over a row ─────────────
 // Each Expr wraps a plain-JSON `node` (no functions), so it serializes for
@@ -246,7 +247,9 @@ function stableStringify(v: unknown): string {
   return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableStringify(o[k])).join(',') + '}'
 }
 
-function fnv1a(s: string): number {
+// FNV-1a string hash — also the runtime's per-view PRNG seed hash, so keep it
+// exported rather than re-implemented per module.
+export function fnv1a(s: string): number {
   let h = 2166136261 >>> 0
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i)
@@ -959,16 +962,6 @@ export const EASINGS = {
 } as const
 
 export type Easings = typeof EASINGS
-
-// Average seconds between consecutive tap-beat presses (each row's `time` is
-// an absolute UTC epoch ms, not time-since-first-tap), or null with fewer than
-// two taps. The one place tempo()/beats() turn the taps table into a beat length.
-function beatSecondsFromTaps(rows: Row[] | null | undefined): number | null {
-  if (!rows || rows.length < 2) return null
-  const first = rows[0].time as number
-  const last = rows[rows.length - 1].time as number
-  return (last - first) / (rows.length - 1) / 1000
-}
 
 function parseCSV(text: string): Row[] {
   const lines = String(text).trim().split(/\r?\n/).filter((l) => l.length)

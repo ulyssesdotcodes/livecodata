@@ -2,6 +2,7 @@ import './style.css'
 import { createSignal } from 'solid-js'
 import { initThree } from './three-scene.js'
 import { initHydra } from './hydra-scene.js'
+import { createSceneVisualizer, createHydraVisualizer } from './visualizer.js'
 import { mountApp } from './ui/app.js'
 import { createEditor, defaultProgram } from './ui/editor.js'
 import { createTablePanel } from './ui/table-panel.js'
@@ -11,11 +12,9 @@ import { createSessionBar } from './ui/session-bar.js'
 import { createSessionSelector } from './ui/session-selector.js'
 import { createRoomChip } from './ui/room-chip.js'
 import { SAMPLES } from './samples.js'
-import { createRuntime } from './runtime.js'
 import { createSessionStore } from './sessions.js'
 import { getVimMode, setVimMode, getMidiEnabled, setMidiEnabled, getUsername, setUsername } from './settings.js'
-import { cookProgram } from './replay.js'
-import { initPhysics } from './physics.js'
+import { createCookClient } from './cook-client.js'
 import { randomSeed, localSource } from './event-log.js'
 import { createPresenceChannel, userColor, lastCellEdits } from './presence.js'
 import { Table } from './dsl.js'
@@ -24,7 +23,6 @@ import { createMidiInput, type MidiInput } from './midi.js'
 import { createTapLog } from './tap-log.js'
 import { connectMultiplayer } from './multiplayer.js'
 import type { MultiplayerConnection, MultiplayerStatus } from './multiplayer.js'
-import type { PhysicsEngineInstance } from './physics.js'
 import type { PlaybackAPI, PlaybackOptions } from './playback.js'
 import type { Row } from './lineage.js'
 import type { PeerPresence } from './ui/table-panel.js'
@@ -249,12 +247,24 @@ function onMidi(): void {
   })
 }
 
-let physicsEngine: PhysicsEngineInstance | null = null
-const runtime = createRuntime({
-  physics: () => physicsEngine,
-  tapRows: () => tapRows(),
-  editableRows: (name, schema, seedRows) => editableStore.ensure(name, schema, seedRows),
-})
+// The cook — DSL evaluation, materialize, physics baking, rasterize — runs in
+// a Web Worker (see cook-worker.ts) so a heavy Apply, local or from a room
+// peer, never blocks this thread's rendering and input. Jolt's WASM loads in
+// the worker too; this thread never touches it. The store stays here: each
+// cook request carries a rows snapshot (read through any active replay view,
+// exactly what ensure() would serve), and editable() declarations come back as
+// data that the real ensure() below turns into store events as always.
+const cookClient = createCookClient(new Worker(new URL('cook-worker.js', import.meta.url), { type: 'module' }))
+
+async function cookInWorker(code: string, seed: number): Promise<CookedData> {
+  const editables = editableStore.listNames().map((name) => ({
+    name,
+    rows: editableStore.get(name)?.rows ?? [],
+  }))
+  const { cooked, declared } = await cookClient.cook({ code, seed, dataCache, tapRows: tapRows(), editables })
+  for (const d of declared) editableStore.ensure(d.name, d.schema, d.seedRows)
+  return cooked
+}
 
 const sessionStore = createSessionStore()
 let currentSessionId = sessionStore.newId()
@@ -331,11 +341,11 @@ function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   return display
 }
 
-function applyCooked({ views, graphs, sceneRows, timelineRows, hydraRows }: CookedData): void {
-  lastViews = views
-  tablePanel.setTables(tablesForDisplay(views))
-  tablePanel.setGraphs(graphs)
-  playback.load(sceneRows, timelineRows, hydraRows)
+function applyCooked(cooked: CookedData): void {
+  lastViews = cooked.views
+  tablePanel.setTables(tablesForDisplay(cooked.views))
+  tablePanel.setGraphs(cooked.graphs)
+  playback.load(cooked)
 }
 
 // A tap changed the tempo: refresh the "taps" table and re-anchor playback to
@@ -381,18 +391,20 @@ interface EvaluateOptions {
 // True while a cook — or a store operation we're about to react to ourselves
 // (recording a run, loading/clearing a session) — is in progress: editable()
 // appends create/schema events during the cook itself, and reacting to those
-// (or to our own bookkeeping writes) would loop or double-cook.
-let cooking = false
+// (or to our own bookkeeping writes) would loop or double-cook. A counter
+// rather than a boolean because cooks now await the worker, so two can
+// overlap — the guard must hold until the last one finishes.
+let cooking = 0
 
 // Run `fn` with the "don't react to my own store changes" guard held, and
 // return its result. Used around session load/clear, which notify like any
 // other edit but are always immediately followed by an explicit re-cook here.
 function quietly<T>(fn: () => T): T {
-  cooking = true
+  cooking++
   try {
     return fn()
   } finally {
-    cooking = false
+    cooking--
   }
 }
 
@@ -415,15 +427,15 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
   }
 
   stopRewind()
-  cooking = true
+  cooking++
   try {
     // Applying / cooking always operates on the live head, never a scrubbed
-    // replay view — return to head first so ensure() reads (and records against)
-    // current table state.
+    // replay view — return to head first so the snapshot reads (and ensure()
+    // records against) current table state.
     editableStore.setReplayView(null)
     let cooked: CookedData
     try {
-      cooked = cookProgram(runtime, code, seed, dataCache)
+      cooked = await cookInWorker(code, seed)
     } catch (err) {
       setError?.((err as Error).message)
       return
@@ -446,7 +458,7 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
     applyCooked(cooked)
     if (persist) persistSession()
   } finally {
-    cooking = false
+    cooking--
   }
 }
 
@@ -589,12 +601,18 @@ function toggleRewind(): void {
 // run, so pressing Run afterward forks forward from head as a new run rather
 // than rewriting history. The newest position is the live head (replay view
 // off), so any edits made since the last Apply stay visible there.
-function scrubSession(pos: number): void {
+// Dragging the session scrubber fires cooks faster than the worker returns
+// them; each result checks it is still the newest request before applying, so
+// a stale run's tables never flash over the one the thumb is resting on.
+let scrubEpoch = 0
+
+async function scrubSession(pos: number): Promise<void> {
   const runs = editableStore.runs()
   if (runs.length === 0) return
   const clamped = Math.max(0, Math.min(pos, runs.length - 1))
   const atLatest = clamped >= runs.length - 1
-  cooking = true
+  const epoch = ++scrubEpoch
+  cooking++
   editableStore.setReplayView(atLatest ? null : runs[clamped])
   let cooked: CookedData
   try {
@@ -602,15 +620,16 @@ function scrubSession(pos: number): void {
     if (!codeRow || typeof codeRow.code !== 'string') return
     const code = codeRow.code
     const seed = typeof codeRow.seed === 'number' ? codeRow.seed : 0
-    cooked = cookProgram(runtime, code, seed, dataCache)
+    cooked = await cookInWorker(code, seed)
+    if (epoch !== scrubEpoch) return
     liveCode = code
     liveSeed = seed
     editor.setCode(code)
   } catch (err) {
-    editor.setError((err as Error).message)
+    if (epoch === scrubEpoch) editor.setError((err as Error).message)
     return
   } finally {
-    cooking = false
+    cooking--
   }
   editor.setError(null)
   applyCooked(cooked)
@@ -725,7 +744,10 @@ const mounts = mountApp(document.getElementById('app') as HTMLElement, {
 })
 const sceneAPI = initThree(mounts.threeCanvas, mounts.canvasPane)
 const hydraAPI = initHydra(mounts.hydraCanvas, mounts.threeCanvas)
-const playbackController = createPlaybackController(sceneAPI, hydraAPI, playbackOptions)
+const playbackController = createPlaybackController(
+  [createSceneVisualizer(sceneAPI), createHydraVisualizer(hydraAPI)],
+  playbackOptions,
+)
 setPlaybackCtl(playbackController)
 playback = playbackController.engine
 
@@ -830,7 +852,6 @@ function firstRun(): void {
   refreshSelector()
 }
 
-initPhysics()
-  .then((engine) => { physicsEngine = engine })
-  .catch((err: unknown) => console.error('physics failed to load:', err))
-  .finally(firstRun)
+// Physics (jolt's WASM) now loads inside the cook worker, which holds the
+// first cook until it settles — nothing to wait for here.
+firstRun()

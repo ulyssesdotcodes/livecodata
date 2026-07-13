@@ -12,11 +12,22 @@ await esbuild.build({
   minify: true,
   outfile: 'public/assets/index.js',
   format: 'esm',
-  // Jolt's emscripten glue has a node-only branch that does
-  // `await import("module")`; keep it external so it isn't resolved at build
-  // time (the browser never reaches that node-detection path).
   external: ['module'],
   plugins: [solidPlugin()],
+})
+
+// The cook worker: its own bundle, loaded by the main bundle via
+// new Worker(new URL('cook-worker.js', import.meta.url)). Jolt (whose
+// emscripten glue has a node-only `await import("module")` branch — kept
+// external so it isn't resolved at build time; the browser never reaches
+// that node-detection path) now lives in here, not in the main bundle.
+await esbuild.build({
+  entryPoints: ['src/cook-worker.ts'],
+  bundle: true,
+  minify: true,
+  outfile: 'public/assets/cook-worker.js',
+  format: 'esm',
+  external: ['module'],
 })
 
 const html = readFileSync('index.html', 'utf8')

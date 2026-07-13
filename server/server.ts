@@ -1,22 +1,17 @@
-// livecodata multiplayer server
+// livecodata multiplayer server — Node adapter
 // ----------------------------------------------------------------------------
-// A room is nothing but named event logs — the same append-only primitive the
-// client folds everything from — plus the sockets currently in it. The server
-// never *interprets* table/apply events (it merges whatever clients bring —
-// dedup by (src, seq), deterministic (seq, src) order via the shared
-// mergeEvents — sends each joiner the union, and relays new events to
-// everyone else), but it does *author* one kind itself: a peer-join/peer-leave
-// event on the "session" log whenever a socket joins or drops, tagged
-// src:"server" and table:"activity" (see editable-tables.ts's record() and
-// main.ts) so peer presence is just more log the client folds, replacing what
-// used to be a dedicated `{type:'peers'}` message. Rooms live in memory;
-// clients re-upload their full logs on every join, so a restarted server
-// heals from whoever connects next.
-//
-// Also serves the built app from public/ so a jam needs exactly one process:
+// All room behavior (merge, relay, peer-join/leave authoring) lives in the
+// transport-agnostic src/room-core.ts, shared with the Cloudflare Durable
+// Object twin (worker/room.ts). This file only owns what is Node-specific:
+// the ws sockets, which room each socket joined, and serving the built app
+// from public/ so a jam needs exactly one process:
 //   npm run build && npm run serve   →   http://host:8787/?room=yourroom
 //
-// See src/multiplayer.ts for the message protocol.
+// Rooms live in memory; clients re-upload their full logs on every join, so a
+// restarted server heals from whoever connects next.
+//
+// See src/protocol.ts for the message shapes and src/multiplayer.ts for the
+// client.
 // ----------------------------------------------------------------------------
 
 import http from 'node:http'
@@ -24,30 +19,15 @@ import { readFile } from 'node:fs/promises'
 import { extname, join, normalize } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { WebSocketServer, WebSocket, type RawData } from 'ws'
-import { mergeEvents, type StampedEvent } from '../src/event-log.js'
-
-// The log peer-connection events ride, and the pseudo-table (see
-// editable-tables.ts's record()) they're tagged with within it.
-const SESSION_LOG = 'session'
-const ACTIVITY_TABLE = 'activity'
+import type { StampedEvent } from '../src/event-log.js'
+import { parseClientMessage, type ServerMessage } from '../src/protocol.js'
+import { handleEvents, handleJoin, handleLeave, type Outbound, type RoomLogs } from '../src/room-core.js'
 
 interface Room {
   name: string
-  logs: Map<string, StampedEvent[]>
+  logs: RoomLogs
   // socket → the client id it joined with (for its eventual peer-leave event).
   clients: Map<WebSocket, string>
-  // This room's own Lamport counter for server-authored events — a separate
-  // "replica" (src: "server") in the same (seq, src) order as everyone else.
-  serverSeq: number
-}
-
-interface ClientMessage {
-  type: string
-  room?: string
-  client?: string
-  log?: string
-  events?: StampedEvent[]
-  logs?: Record<string, StampedEvent[]>
 }
 
 const MIME: Record<string, string> = {
@@ -79,76 +59,45 @@ export function startMultiplayerServer(
   function getRoom(name: string): Room {
     let room = rooms.get(name)
     if (!room) {
-      room = { name, logs: new Map(), clients: new Map(), serverSeq: 0 }
+      room = { name, logs: new Map(), clients: new Map() }
       rooms.set(name, room)
     }
     return room
   }
 
-  function sendTo(ws: WebSocket, msg: Record<string, unknown>): void {
+  function sendTo(ws: WebSocket, msg: ServerMessage): void {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg))
   }
 
-  function broadcast(room: Room, msg: Record<string, unknown>, except?: WebSocket): void {
+  function broadcast(room: Room, msg: ServerMessage, except?: WebSocket): void {
     for (const client of room.clients.keys()) if (client !== except) sendTo(client, msg)
   }
 
-  // Merge incoming events into a room log; relay what was actually new to the
-  // other clients. Returns the newly-added events.
-  function ingest(room: Room, logName: string, incoming: StampedEvent[], from?: WebSocket): StampedEvent[] {
-    const existing = room.logs.get(logName) ?? []
-    const { events, added } = mergeEvents(existing, incoming)
-    if (added.length) {
-      room.logs.set(logName, events)
-      broadcast(room, { type: 'events', log: logName, events: added }, from)
+  function deliver(room: Room, sender: WebSocket, outbound: Outbound[]): void {
+    for (const o of outbound) {
+      if (o.to === 'sender') sendTo(sender, o.msg)
+      else broadcast(room, o.msg, sender)
     }
-    return added
-  }
-
-  // A server-authored event: this room's own (seq, src:"server") stream,
-  // ingested through the exact same merge/broadcast path as a client's —
-  // peer presence is just more log, not a side channel. `except` skips a
-  // redundant broadcast to a socket that's about to receive this same event
-  // another way (the join handler's own subsequent `sync`).
-  function recordServerEvent(room: Room, logName: string, kind: string, payload: Record<string, unknown>, except?: WebSocket): void {
-    const event: StampedEvent = { seq: room.serverSeq++, t: Date.now(), kind, src: 'server', ...payload }
-    ingest(room, logName, [event], except)
   }
 
   function handleMessage(ws: WebSocket, raw: RawData): void {
-    let msg: ClientMessage
-    try {
-      msg = JSON.parse(String(raw)) as ClientMessage
-    } catch {
-      return
-    }
+    const msg = parseClientMessage(raw)
+    if (!msg) return
 
     if (msg.type === 'join' && typeof msg.room === 'string' && msg.room) {
       leave(ws)
       const room = getRoom(msg.room)
-      // Union the joiner's logs first, so peers get anything it authored
-      // offline, then hand it the whole room.
-      for (const [name, events] of Object.entries(msg.logs ?? {})) {
-        if (Array.isArray(events)) ingest(room, name, events, ws)
-      }
-      const clientId = typeof msg.client === 'string' && msg.client ? msg.client : 'anon'
-      room.clients.set(ws, clientId)
+      const result = handleJoin(room.logs, msg)
+      room.clients.set(ws, result.clientId)
       memberships.set(ws, room)
-      // Authored *after* merging the joiner's own logs (which — see main.ts —
-      // always include the "activity" table's create event by this point) so
-      // this peer-join always lands on a table that already exists. Not
-      // broadcast to the joiner itself — the sync below already covers it.
-      recordServerEvent(room, SESSION_LOG, 'peer-join', { table: ACTIVITY_TABLE, client: clientId }, ws)
-      const logs: Record<string, StampedEvent[]> = {}
-      for (const [name, events] of room.logs) logs[name] = events
-      sendTo(ws, { type: 'sync', logs })
+      deliver(room, ws, result.outbound)
       return
     }
 
     const room = memberships.get(ws)
     if (!room) return
-    if (msg.type === 'events' && typeof msg.log === 'string' && Array.isArray(msg.events)) {
-      ingest(room, msg.log, msg.events, ws)
+    if (msg.type === 'events') {
+      deliver(room, ws, handleEvents(room.logs, msg).outbound)
     }
   }
 
@@ -156,9 +105,9 @@ export function startMultiplayerServer(
     const room = memberships.get(ws)
     if (!room) return
     memberships.delete(ws)
-    const clientId = room.clients.get(ws)
+    const clientId = room.clients.get(ws) ?? null
     room.clients.delete(ws)
-    if (clientId) recordServerEvent(room, SESSION_LOG, 'peer-leave', { table: ACTIVITY_TABLE, client: clientId })
+    deliver(room, ws, handleLeave(room.logs, clientId).outbound)
     // The last client just left: drop the room's log entirely rather than
     // let it sit in memory for nobody. Each client already persisted its own
     // copy locally (see main.ts's sessionStore under the room's session id),

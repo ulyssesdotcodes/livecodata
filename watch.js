@@ -21,7 +21,17 @@ const ctx = await esbuild.context({
   plugins: [solidPlugin()],
 })
 
+// The cook worker bundle — see build.js.
+const workerCtx = await esbuild.context({
+  entryPoints: ['src/cook-worker.ts'],
+  bundle: true,
+  outfile: 'public/assets/cook-worker.js',
+  format: 'esm',
+  external: ['module'],
+})
+
 await ctx.watch()
+await workerCtx.watch()
 
 // Serve the built app *and* the multiplayer room socket from the same
 // process (see server/server.ts) — a jam works out of the box in dev, same

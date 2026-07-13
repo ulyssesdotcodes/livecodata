@@ -12,14 +12,10 @@
 // ----------------------------------------------------------------------------
 
 import type { SessionRun } from './editable-tables.js'
+import { defaultStorage, type MinimalStorage } from './storage.js'
 
 const STORAGE_KEY = 'livecodata.sessions'
 const STORAGE_VERSION = 1
-
-interface MinimalStorage {
-  getItem(key: string): string | null
-  setItem(key: string, value: string): void
-}
 
 // A stored session: the whole editable-table store's serialized event log
 // (`events`) plus the list of runs (`runs`) — the "latest event table data + a
@@ -56,7 +52,7 @@ export interface SessionStore {
   remove(id: string): void
 }
 
-export function createSessionStore(storage: MinimalStorage = globalThis.localStorage as MinimalStorage): SessionStore {
+export function createSessionStore(storage: MinimalStorage = defaultStorage()): SessionStore {
   function readAll(): SessionRecord[] {
     try {
       const raw = storage?.getItem(STORAGE_KEY)
