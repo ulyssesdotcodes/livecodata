@@ -4,7 +4,7 @@ import { initThree } from './three-scene.js'
 import { initHydra } from './hydra-scene.js'
 import { createSceneVisualizer, createHydraVisualizer } from './visualizer.js'
 import { mountApp } from './ui/app.js'
-import { createEditor, defaultProgram } from './ui/editor.js'
+import { createEditor, defaultProgram, defaultTables } from './ui/editor.js'
 import { createTablePanel } from './ui/table-panel.js'
 import { EVENTS_SUFFIX } from './table-panel.js'
 import { createPlaybackController, type PlaybackController } from './ui/playback-controls.js'
@@ -323,12 +323,12 @@ function onMidi(): void {
 // data that the real ensure() below turns into store events as always.
 const cookClient = createCookClient(new Worker(new URL('cook-worker.js', import.meta.url), { type: 'module' }))
 
-async function cookInWorker(code: string, seed: number): Promise<{ cooked: CookedData; declaredNames: string[] }> {
+async function cookInWorker(code: string, seed: number, seeds?: Record<string, Row[]>): Promise<{ cooked: CookedData; declaredNames: string[] }> {
   const editables = editableStore.listNames().map((name) => ({
     name,
     rows: editableStore.get(name)?.rows ?? [],
   }))
-  const { cooked, declared } = await cookClient.cook({ code, seed, dataCache, tapRows: tapRows(), editables })
+  const { cooked, declared } = await cookClient.cook({ code, seed, dataCache, tapRows: tapRows(), editables, seeds })
   for (const d of declared) editableStore.ensure(d.name, d.schema, d.seedRows)
   return { cooked, declaredNames: declared.map((d) => d.name) }
 }
@@ -506,6 +506,13 @@ interface EvaluateOptions {
   // over the room's program (its post-merge event would win the fold on every
   // replica). The merge's own apply reaction renders the room program instead.
   obsoleteIfProgramChanged?: boolean
+  // Seed rows for editable tables the store hasn't seen yet, keyed by table
+  // name — passed through to the cook so a program's editable(name, schema)
+  // call can carry its column schema only, with the row data seeded from here
+  // (see openExample: an example's table data lives with the sample, not inline
+  // in the code). Only takes effect on the first cook of a fresh store; once a
+  // table exists its own rows win, so user edits are never overwritten.
+  seeds?: Record<string, Row[]>
 }
 
 // True while a cook — or a store operation we're about to react to ourselves
@@ -531,7 +538,7 @@ function quietly<T>(fn: () => T): T {
 // Apply a program: cook it against the current (head) table state, record a run,
 // render, and (unless told otherwise) persist. This is the *only* thing that
 // applies pending table edits — inline edits just accumulate until an apply.
-async function evaluate(code: string, { setError, persist = true, seed = randomSeed(), broadcast = true, obsoleteIfProgramChanged = false }: EvaluateOptions = {}): Promise<void> {
+async function evaluate(code: string, { setError, persist = true, seed = randomSeed(), broadcast = true, obsoleteIfProgramChanged = false, seeds }: EvaluateOptions = {}): Promise<void> {
   const pending = extractDataUrls(code).filter((u) => !dataCache.has(u))
   if (pending.length) {
     await Promise.all(pending.map(async (url) => {
@@ -556,7 +563,7 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
     let cooked: CookedData
     let declaredNames: string[]
     try {
-      ({ cooked, declaredNames } = await cookInWorker(code, seed))
+      ({ cooked, declaredNames } = await cookInWorker(code, seed, seeds))
     } catch (err) {
       setError?.((err as Error).message)
       return
@@ -813,7 +820,7 @@ function newSession(): void {
   currentSessionId = sessionStore.newId()
   quietly(() => editableStore.clear())
   editor.setCode(defaultProgram)
-  evaluate(defaultProgram, { setError: editor.setError, persist: false })
+  evaluate(defaultProgram, { setError: editor.setError, persist: false, seeds: defaultTables })
   sessionBar.setLog({ length: sessionLength() })
   refreshSelector()
 }
@@ -829,7 +836,10 @@ function openExample(index: number): void {
   currentSessionId = sessionStore.newId()
   quietly(() => editableStore.clear())
   editor.setCode(sample.code)
-  void evaluate(sample.code, { setError: editor.setError, persist: false })
+  // The sample's editable table data (if any) seeds the freshly-cleared store,
+  // so the example's editable(name, schema) calls carry column schemas only —
+  // the row data lives with the sample, and populates the table panel on open.
+  void evaluate(sample.code, { setError: editor.setError, persist: false, seeds: sample.tables })
   sessionBar.setLog({ length: sessionLength() })
   refreshSelector()
 }
@@ -994,7 +1004,7 @@ function firstRun(): void {
     // Speculative: nothing here yet, show the default program. If a room
     // snapshot merges in while this first cook boots the worker, yield to it
     // (see obsoleteIfProgramChanged) instead of clobbering the room.
-    evaluate(editor.getCode(), { setError: editor.setError, persist: false, obsoleteIfProgramChanged: true })
+    evaluate(editor.getCode(), { setError: editor.setError, persist: false, obsoleteIfProgramChanged: true, seeds: defaultTables })
   }
   sessionBar.setLog({ length: sessionLength() })
   refreshSelector()

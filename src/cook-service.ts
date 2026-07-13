@@ -33,6 +33,12 @@ export interface CookRequest {
   // Current rows of every editable table, folded through any active replay
   // view — i.e. exactly what ensure() would serve on the main thread.
   editables: Array<{ name: string; rows: Row[] }>
+  // Seed rows to populate an editable table the store hasn't seen yet, keyed
+  // by table name — used when a program's editable(name, schema) call carries
+  // no inline seedRows of its own. Set when opening an example whose table data
+  // lives alongside the sample (see samples.ts / openExample) rather than as an
+  // array literal in the code; ignored once the table exists in the snapshot.
+  seeds?: Record<string, Row[]>
 }
 
 // An editable() the program declared during the cook; the main thread applies
@@ -54,16 +60,22 @@ export interface CookService {
 export function createCookService({ physics }: { physics?: () => PhysicsEngine | null } = {}): CookService {
   let snapshot = new Map<string, Row[]>()
   let taps: Row[] = []
+  let seeds: Record<string, Row[]> = {}
   let declared: DeclaredEditable[] = []
 
   const runtime = createRuntime({
     physics: physics ?? (() => null),
     tapRows: () => taps,
     editableRows: (name, schema, seedRows) => {
-      declared.push({ name, schema, ...(seedRows !== undefined ? { seedRows } : {}) })
+      // The program's inline seedRows win; otherwise fall back to an
+      // example-provided seed for this table (see CookRequest.seeds). Reporting
+      // the effective seed in `declared` lets the main thread's ensure() create
+      // the table with those rows, exactly as an inline seed would.
+      const seed = seedRows ?? seeds[name]
+      declared.push({ name, schema, ...(seed !== undefined ? { seedRows: seed } : {}) })
       const existing = snapshot.get(name)
       if (existing) return existing
-      return (seedRows ?? []).map((r) => conformRow(r, schemaColumns(schema)))
+      return (seed ?? []).map((r) => conformRow(r, schemaColumns(schema)))
     },
   })
 
@@ -71,6 +83,7 @@ export function createCookService({ physics }: { physics?: () => PhysicsEngine |
     handle(req: CookRequest): CookResponse {
       snapshot = new Map(req.editables.map((e) => [e.name, e.rows]))
       taps = req.tapRows
+      seeds = req.seeds ?? {}
       declared = []
       try {
         const cooked = cookProgram(runtime, req.code, req.seed, new Map(req.dataCache))

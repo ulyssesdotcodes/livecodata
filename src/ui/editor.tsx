@@ -15,13 +15,13 @@ import { keymap } from '@codemirror/view'
 import { Prec, Compartment } from '@codemirror/state'
 import { vim } from '@replit/codemirror-vim'
 import {
-  dslCompletions, dslHover, viewAtPos, defaultProgram,
+  dslCompletions, dslHover, viewAtPos, defaultProgram, defaultTables,
   remoteCursorField, setRemoteCursorsEffect, PROGRAM_CELL, type RemoteCursor,
 } from '../editor-support.js'
 import { buildTablePreview } from './table-preview.js'
 import type { Table } from '../dsl.js'
 
-export { defaultProgram }
+export { defaultProgram, defaultTables }
 export type { RemoteCursor }
 
 // Completion info card, rendered by Solid into a detached node for CodeMirror

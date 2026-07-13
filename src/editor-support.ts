@@ -103,6 +103,10 @@ export const EXPR_METHOD_DOCS: Record<string, DocEntry> = {
 export const DSL_BUILTINS = Object.keys(DSL_BUILTIN_DOCS)
 
 export const defaultProgram = SAMPLES[0].code
+// The default program is the "Editable Table" example, whose row data lives
+// with the sample rather than inline in the code — so a fresh session/first run
+// must seed the store with it, exactly as opening the example does.
+export const defaultTables = SAMPLES[0].tables
 
 export function viewAtPos(text: string, pos: number): string | null {
   const re = /\bdefine\(\s*"([^"]+)"/g

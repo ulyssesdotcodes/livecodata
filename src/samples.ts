@@ -1,6 +1,20 @@
 // Sample programs for the livecodata editor. CSV datasets are served from
 // /data/ and loaded at run time via data(url) — no inline embedding needed.
-export const SAMPLES = [
+//
+// An example may also carry `tables`: seed rows for its editable tables, keyed
+// by table name. These populate the table panel when the example is opened, so
+// the program's editable(name, schema) call declares the column *schema* only —
+// the row data lives here (edit it live in the panel), not as an array literal
+// in the code. (Examples with no editable tables just omit `tables`.)
+import type { Row } from './lineage.js'
+
+export interface Sample {
+  name: string
+  code: string
+  tables?: Record<string, Row[]>
+}
+
+export const SAMPLES: Sample[] = [
   {
     name: "Editable Table",
     code: `// livecodata — a sphere moved by an editable table
@@ -8,19 +22,17 @@ export const SAMPLES = [
 // it's data you edit directly, live, in the table panel on the right.
 // Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 
-// 1. editable(name, schema, seedRows?) declares a user-editable table: rows
-//    are entered/edited in the table panel (its own "path" tab), not
-//    computed — edits persist across runs, unlike a normal view. Each keyframe
-//    sits on a beat (1-indexed: beat 1 is the top of the loop). Try it: open
-//    the "path" tab, click a cell to change a coordinate, or hit "+ row" to
-//    add a keyframe, then press Run again to see the sphere follow the new
-//    path. (Every edit is recorded as an event too — see the "path·events" tab.)
+// 1. editable(name, schema) declares a user-editable table: rows are
+//    entered/edited in the table panel (its own "path" tab), not computed —
+//    edits persist across runs, unlike a normal view. This table starts with
+//    the keyframes seeded on the right; the schema here (just column names +
+//    types) is all the code carries, the row data lives in the table. Each
+//    keyframe sits on a beat (1-indexed: beat 1 is the top of the loop). Try
+//    it: open the "path" tab, click a cell to change a coordinate, or hit "+
+//    row" to add a keyframe, then press Run again to see the sphere follow the
+//    new path. (Every edit is recorded as an event too — see the "path·events" tab.)
 define("path", () =>
-  editable("path", { beat: "number", px: "number", py: "number", pz: "number" }, [
-    { beat: 1, px: -1, py: 0,   pz: 0 },
-    { beat: 3, px: 1,  py: 1,   pz: 0 },
-    { beat: 5, px: 0,  py: 0.3, pz: -1 },
-  ])
+  editable("path", { beat: "number", px: "number", py: "number", pz: "number" })
 )
 
 // 2. Turn the path's keyframes into a moving sphere: the first row (sorted by
@@ -38,6 +50,13 @@ define("events", (rand, table) =>
 //    8 beats long, so the sphere holds its last pose before the loop wraps.
 define("scene", (rand, table) => table("events").rasterize(8))
 `,
+    tables: {
+      path: [
+        { beat: 1, px: -1, py: 0,   pz: 0 },
+        { beat: 3, px: 1,  py: 1,   pz: 0 },
+        { beat: 5, px: 0,  py: 0.3, pz: -1 },
+      ],
+    },
   },
   {
     name: "Origami Crane",
@@ -51,7 +70,9 @@ define("scene", (rand, table) => table("events").rasterize(8))
 // every face shares its vertices with its neighbours — the paper can
 // never tear. Press "Run" (or Cmd/Ctrl-Enter), then hit Play.
 //
-// The table ("steps" in the table panel):
+// The 17 fold steps are seeded into the "steps" table on the right — the code
+// here declares only their column schema; edit the steps live in the panel.
+// Each column:
 //   step   a name for the fold (errors point at it)
 //   p1,p2  two points "x,y" on the fold line, drawn on the CURRENT folded
 //          paper. The frame never moves: it is the unit square [0,1]² the
@@ -75,32 +96,7 @@ define("scene", (rand, table) => table("events").rasterize(8))
 define("steps", () => editable("steps", {
   step: "string", p1: "string", p2: "string", move: "string",
   kind: "string", pick: "number", at: "number", dur: "number", to: "number",
-}, [
-  // in half along the diagonal
-  { step: "diag", p1: "0,0", p2: "1,1", move: "0.667,0.333", at: 1 },
-  // collapse into the square base: four inside reverse folds
-  { step: "collapse1", p1: "0,0.5", p2: "1,0.5", move: "0.333,0.167", kind: "reverse", at: 2 },
-  { step: "collapse2", p1: "0.5,0", p2: "0.5,1", move: "0.833,0.667", kind: "reverse", at: 3 },
-  { step: "collapse3", p1: "0,1", p2: "0.4142135624,0", move: "0.667,0.069036", kind: "reverse", at: 4 },
-  { step: "collapse4", p1: "0,1", p2: "1,0.5857864376", move: "0.930964,0.667", kind: "reverse", at: 5 },
-  // flatten the stray flap, then tuck the side corners in
-  { step: "flatten", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.930964,0.333", at: 6 },
-  { step: "tuck1", p1: "0,1", p2: "0.4142135624,0", move: "0.069036,0.667", kind: "reverse", at: 7 },
-  { step: "tuck2", p1: "0,1", p2: "1,0.5857864376", move: "0.667,0.930964", kind: "reverse", at: 8 },
-  // kite folds onto the centre line, front then (after turning a flap
-  // like a page) back — this thins the points into neck and tail
-  { step: "kite1", p1: "0,1", p2: "0.6681786379,0", move: "0.525373,0.274808", pick: 1, at: 9 },
-  { step: "kite2", p1: "0,1", p2: "1,0.3318213621", move: "0.897812,0.667", at: 10 },
-  { step: "turn", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.333,0.930964", at: 11 },
-  { step: "kite3", p1: "0,1", p2: "1,0.3318213621", move: "0.667,0.897812", pick: 1, at: 12 },
-  { step: "kite4", p1: "0,1", p2: "0.6681786379,0", move: "0.208238,0.583899", pick: 1, at: 13 },
-  // swing the points up: neck, tail, then the head, all reverse folds
-  { step: "neck", p1: "0.1345593806,0", p2: "0.4733251916,1", move: "0.906033,0.694263", kind: "reverse", at: 14 },
-  { step: "tail", p1: "0,0.5266748083", p2: "1,0.8654406193", move: "0.246505,0.203815", kind: "reverse", at: 15 },
-  { step: "head", p1: "0,0.1274716613", p2: "1,0.8431274379", move: "0.096435,0.080352", kind: "reverse", at: 16 },
-  // both wings at once — front sheet and back sheet — held half-raised
-  { step: "wings", p1: "0,0.1414213562", p2: "0.8585786438,1", move: "0.858,0.377;0.377,0.858", at: 17, dur: 1.5, to: 0.5 },
-]))
+}))
 
 // Feed the fold table to a sheet of paper, colored side DOWN (backColor)
 // the way a crane is folded so the finished bird comes out colored. The
@@ -134,6 +130,34 @@ define("hydra", () => rows([
 //   - Slow a step down: give "neck" dur: 3 and watch the reverse fold
 //     swing through.
 `,
+    tables: {
+      steps: [
+        // in half along the diagonal
+        { step: "diag", p1: "0,0", p2: "1,1", move: "0.667,0.333", at: 1 },
+        // collapse into the square base: four inside reverse folds
+        { step: "collapse1", p1: "0,0.5", p2: "1,0.5", move: "0.333,0.167", kind: "reverse", at: 2 },
+        { step: "collapse2", p1: "0.5,0", p2: "0.5,1", move: "0.833,0.667", kind: "reverse", at: 3 },
+        { step: "collapse3", p1: "0,1", p2: "0.4142135624,0", move: "0.667,0.069036", kind: "reverse", at: 4 },
+        { step: "collapse4", p1: "0,1", p2: "1,0.5857864376", move: "0.930964,0.667", kind: "reverse", at: 5 },
+        // flatten the stray flap, then tuck the side corners in
+        { step: "flatten", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.930964,0.333", at: 6 },
+        { step: "tuck1", p1: "0,1", p2: "0.4142135624,0", move: "0.069036,0.667", kind: "reverse", at: 7 },
+        { step: "tuck2", p1: "0,1", p2: "1,0.5857864376", move: "0.667,0.930964", kind: "reverse", at: 8 },
+        // kite folds onto the centre line, front then (after turning a flap
+        // like a page) back — this thins the points into neck and tail
+        { step: "kite1", p1: "0,1", p2: "0.6681786379,0", move: "0.525373,0.274808", pick: 1, at: 9 },
+        { step: "kite2", p1: "0,1", p2: "1,0.3318213621", move: "0.897812,0.667", at: 10 },
+        { step: "turn", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.333,0.930964", at: 11 },
+        { step: "kite3", p1: "0,1", p2: "1,0.3318213621", move: "0.667,0.897812", pick: 1, at: 12 },
+        { step: "kite4", p1: "0,1", p2: "0.6681786379,0", move: "0.208238,0.583899", pick: 1, at: 13 },
+        // swing the points up: neck, tail, then the head, all reverse folds
+        { step: "neck", p1: "0.1345593806,0", p2: "0.4733251916,1", move: "0.906033,0.694263", kind: "reverse", at: 14 },
+        { step: "tail", p1: "0,0.5266748083", p2: "1,0.8654406193", move: "0.246505,0.203815", kind: "reverse", at: 15 },
+        { step: "head", p1: "0,0.1274716613", p2: "1,0.8431274379", move: "0.096435,0.080352", kind: "reverse", at: 16 },
+        // both wings at once — front sheet and back sheet — held half-raised
+        { step: "wings", p1: "0,0.1414213562", p2: "0.8585786438,1", move: "0.858,0.377;0.377,0.858", at: 17, dur: 1.5, to: 0.5 },
+      ],
+    },
   },
   {
     name: "Hydra Sketch",
@@ -163,23 +187,27 @@ define("hydra", () => rows([
 // change the tempo (how long a beat lasts); change "beats" to make the loop
 // longer/shorter.
 //
-// editable(name, schema, seedRows?) makes this table live-editable in the
-// table panel — it's the ONLY table this sketch needs (named "hydra" so
-// playback reads it directly, with no code-generated view in between): click
-// the code cell to open the sketch in this editor; edit a value cell, or "+
-// row" a new setVariable event at a later beat (like the row below, at beat
-// 9) right in the table — no code change needed, and any column you add via
-// "+ column" survives the next Run too. (Every edit is an event too — see the
-// "hydra·events" tab.) A second, code-generated table only becomes useful
-// once you need to LAYER computed events on top of these — see "House of
-// Cards" for that.
-editable("hydra", { beat: "number", event: "string", code: "code", name: "string", value: "number" }, [
-  { beat: 1, event: "setCode",
-    code: "osc((props) => props.freq, 0.1, 1.5).kaleid(5).out(o0)" },
-  { beat: 1, event: "setVariable", name: "freq", value: 3 },
-  { beat: 9, event: "setVariable", name: "freq", value: 12 },
-])
+// editable(name, schema) makes this table live-editable in the table panel —
+// it's the ONLY table this sketch needs (named "hydra" so playback reads it
+// directly, with no code-generated view in between). Its rows are seeded on
+// the right, so the code here carries only the column schema — the events
+// themselves live in the table: click the code cell to open the sketch in this
+// editor; edit a value cell, or "+ row" a new setVariable event at a later beat
+// (like the beat-9 setVariable row already seeded) right in the table — no code
+// change needed, and any column you add via "+ column" survives the next Run
+// too. (Every edit is an event too — see the "hydra·events" tab.) A second,
+// code-generated table only becomes useful once you need to LAYER computed
+// events on top of these — see "House of Cards" for that.
+editable("hydra", { beat: "number", event: "string", code: "code", name: "string", value: "number" })
 `,
+    tables: {
+      hydra: [
+        { beat: 1, event: "setCode",
+          code: "osc((props) => props.freq, 0.1, 1.5).kaleid(5).out(o0)" },
+        { beat: 1, event: "setVariable", name: "freq", value: 3 },
+        { beat: 9, event: "setVariable", name: "freq", value: 12 },
+      ],
+    },
   },
   {
     name: "Square + Hydra",
@@ -207,14 +235,18 @@ define("scene", (rand, table) => table("events").rasterize(16))
 //    trail; the second half drops the square entirely for a plain generative
 //    pattern, then the loop wraps back to part one. Both are ordinary setCode
 //    rows in the SAME editable table — "two-part" just means two of them, each
-//    the most-recent code at its point in the loop.
-editable("hydra", { beat: "number", event: "string", code: "code", name: "string", value: "number" }, [
-  { beat: 1, event: "setCode",
-    code: "src(s0).blend(src(o0).scale(0.97), 0.15).out(o0)" },
-  { beat: 9, event: "setCode",
-    code: "osc(8, 0.1, 1.2).kaleid(4).color(0.2, 0.6, 1).out(o0)" },
-])
+//    the most-recent code at its point in the loop. Their rows are seeded into
+//    the "hydra" tab on the right; the code here declares the schema only.
+editable("hydra", { beat: "number", event: "string", code: "code", name: "string", value: "number" })
 `,
+    tables: {
+      hydra: [
+        { beat: 1, event: "setCode",
+          code: "src(s0).blend(src(o0).scale(0.97), 0.15).out(o0)" },
+        { beat: 9, event: "setCode",
+          code: "osc(8, 0.1, 1.2).kaleid(4).color(0.2, 0.6, 1).out(o0)" },
+      ],
+    },
   },
   {
     name: "Sliders",
@@ -224,14 +256,11 @@ editable("hydra", { beat: "number", event: "string", code: "code", name: "string
 
 // 1. A table named "sliders" DEFINES them: one row per slider, { id, min, max }
 //    (plus an optional \`default\`). Each row becomes a labelled control over the
-//    visual. It's an editable() table, so open the "sliders" tab in the panel
-//    and add a row, rename an id, or change a min/max — then Run to apply. (It
-//    could just as well be a computed view: define("sliders", () => rows([...])).)
-editable("sliders", { id: "string", min: "number", max: "number", default: "number" }, [
-  { id: "brightness", min: 0, max: 1,   default: 0.6 },
-  { id: "warp",       min: 0, max: 1.5, default: 0.3 },
-  { id: "height",     min: -1, max: 1,  default: 0 },
-])
+//    visual. It's an editable() table, seeded on the right with the schema
+//    declared here — so open the "sliders" tab in the panel and add a row,
+//    rename an id, or change a min/max, then Run to apply. (It could just as
+//    well be a computed view: define("sliders", () => rows([...])).)
+editable("sliders", { id: "string", min: "number", max: "number", default: "number" })
 
 // 2. slider(id) is the sibling of midi(note): a live per-frame value you bind
 //    into any field. Here the sphere's height follows the "height" slider —
@@ -261,6 +290,13 @@ define("hydra", () => rows([
 // sync to everyone in a room and persist with the session. The raw moves show
 // in the "slider·events" tab, the folded current take in "slider".
 `,
+    tables: {
+      sliders: [
+        { id: "brightness", min: 0, max: 1,   default: 0.6 },
+        { id: "warp",       min: 0, max: 1.5, default: 0.3 },
+        { id: "height",     min: -1, max: 1,  default: 0 },
+      ],
+    },
   },
   {
     name: "Hydra Sketch Swap",
@@ -275,11 +311,9 @@ define("hydra", () => rows([
 //    is the SAME editable table as "Hydra Sketch", just named "hydra sketch"
 //    (not "hydra") because we're layering a code-generated transform on top —
 //    see \`hydra\`, below, for why the transform, not this table, is what
-//    playback actually reads.
-editable("hydra sketch", { beat: "number", event: "string", code: "code", name: "string", value: "number" }, [
-  { beat: 1, event: "setCode", code: "osc(60, 0.1, 1.5).kaleid(5).out(o0)" },
-  { beat: 9, event: "setCode", code: "noise(3, 0.2).colorama(0.5).out(o0)" },
-])
+//    playback actually reads. Its two setCode rows are seeded into the "hydra
+//    sketch" tab on the right; the code here declares the schema only.
+editable("hydra sketch", { beat: "number", event: "string", code: "code", name: "string", value: "number" })
 
 // 2. \`.pairBy(field, value, fn)\` finds the rows where row[field] === value and
 //    cycles through them pairwise: match k is \`second\`, paired with match
@@ -303,6 +337,12 @@ define("hydra", (rand, table) =>
   table("hydra sketch").pairBy("event", "setCode", flicker(3, 0.1))
 )
 `,
+    tables: {
+      "hydra sketch": [
+        { beat: 1, event: "setCode", code: "osc(60, 0.1, 1.5).kaleid(5).out(o0)" },
+        { beat: 9, event: "setCode", code: "noise(3, 0.2).colorama(0.5).out(o0)" },
+      ],
+    },
   },
   {
     name: "House of Cards",
