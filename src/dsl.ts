@@ -689,6 +689,27 @@ export class Table {
     }, false)
   }
 
+  // Pairs up the rows where row[fieldName] === value, cyclically: match k is
+  // "second" paired with match k-1 as "first" — so match 0 pairs with the
+  // LAST match, wrapping the sequence into a cycle. For each pair, fn(first,
+  // second) returns the row(s) that replace `second` in the output; rows that
+  // don't match (and unpaired rows generally) pass through unchanged.
+  pairBy(fieldName: string, value: unknown, fn: (first: Row, second: Row) => Row | Row[]): Table {
+    return this._xf('pairBy', { field: fieldName, value, fn }, (ins) => {
+      const rows = ins[0]
+      const matchIdx: number[] = []
+      rows.forEach((r, i) => { if (r[fieldName] === value) matchIdx.push(i) })
+      if (!matchIdx.length) return rows.map(recarry)
+      const replacement = new Map<number, Row[]>()
+      matchIdx.forEach((idx, k) => {
+        const prev = rows[matchIdx[(k - 1 + matchIdx.length) % matchIdx.length]]
+        const cur = rows[idx]
+        replacement.set(idx, spread(fn(prev, cur), unionLineage([prev, cur])))
+      })
+      return rows.flatMap((r, i) => replacement.get(i) ?? [recarry(r)])
+    }, true)
+  }
+
   rasterize(maxBeats?: number): Table {
     return this._xf('rasterize', { maxBeats }, (ins) => rasterizeRows(ins[0], maxBeats), false)
   }

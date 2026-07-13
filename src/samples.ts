@@ -485,6 +485,48 @@ editable("hydra", { beat: "number", event: "string", code: "code", name: "string
 `,
   },
   {
+    name: "Hydra Sketch Swap",
+    code: `// livecodata — swapping between two hydra sketches, with a flicker
+// See "Hydra Sketch" first for the setCode/setVariable basics. Here the base
+// table (\`code\`, below) just swaps scenes with a plain setCode at beat 9 (and
+// wraps back at beat 1 when the loop repeats) — the flicker on top of that
+// swap is built with \`rotate\` and a new pairing helper, \`pairBy\`. Press "Run"
+// (or Cmd/Ctrl-Enter), then hit Play.
+
+// 1. The base sketch: two scenes, swapping with a bare setCode at beat 9. This
+//    is the SAME editable table as "Hydra Sketch", just named "hydra sketch"
+//    (not "hydra") because we're layering a code-generated transform on top —
+//    see \`hydra\`, below, for why the transform, not this table, is what
+//    playback actually reads.
+editable("hydra sketch", { beat: "number", event: "string", code: "code", name: "string", value: "number" }, [
+  { beat: 1, event: "setCode", code: "osc(60, 0.1, 1.5).kaleid(5).out(o0)" },
+  { beat: 9, event: "setCode", code: "noise(3, 0.2).colorama(0.5).out(o0)" },
+])
+
+// 2. \`.pairBy(field, value, fn)\` finds the rows where row[field] === value and
+//    cycles through them pairwise: match k is \`second\`, paired with match
+//    k-1 as \`first\` — and the LAST match wraps around to pair with the
+//    FIRST, so every match gets a partner. fn(first, second) returns the
+//    row(s) that replace \`second\`. With two setCode rows that's exactly two
+//    pairs: (beat 1 → beat 9), and the wraparound (beat 9 → beat 1).
+// 3. \`flicker(n, step)\` is the fn passed to pairBy: it builds \`2*n - 1\` rows
+//    starting at \`second\`'s own beat, \`step\` beats apart, then uses
+//    \`rotate\` to cycle their \`code\` between \`second\` (the incoming scene)
+//    and \`first\` (the outgoing one) — so the new scene flickers in and out
+//    n times before it settles, instead of a hard cut.
+const flicker = (n, step) => (first, second) =>
+  rotate(
+    Array.from({ length: 2 * n - 1 }, (_, i) => ({ ...second, beat: second.beat + i * step })),
+    "code",
+    [second.code, first.code],
+  ).rows
+
+define("hydra", (rand, table) =>
+  table("hydra sketch").pairBy("event", "setCode", flicker(3, 0.1))
+)
+`,
+  },
+  {
     name: "House of Cards",
     code: `// livecodata — House of Cards
 // A triangular pyramid of playing cards collapses when a ball drops on it.
