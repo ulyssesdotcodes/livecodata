@@ -69,10 +69,9 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
       'neck', 'tail', 'head', 'wingf', 'wingb'])
   assert.equal(program.warnings.length, 0, program.warnings.join('; '))
 
-  // Take the fractions at the end of the squash off the baked keyframes and
-  // check the T: the spine (right half of the triangle's long edge) lies
-  // flat ON the table pointing up-right, the mountain ridge stands mid-air,
-  // the centre line's end stays on the fold line — and nothing stretches.
+  // The sample snaps to each step's flat folded state on even beats (2 =
+  // triangle … 22 = wings), so every odd beat is a finished, flat fold.
+  // Take fractions off the baked keyframes and check the classic states.
   const updates = events.rows.filter((r) => r.type === 'update' && typeof r.hv === 'number')
   const kfFracsAt = (beat: number): Record<string, number> => {
     const fr: Record<string, number> = {}
@@ -85,7 +84,7 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
     }
     return fr
   }
-  const fracs = kfFracsAt(14.5) // the finished square base, before the petal
+  const fracs = kfFracsAt(7) // the finished square base, before the petal
   const player = createFoldPlayer(program)
   player.step(fracs)
 
@@ -143,12 +142,12 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
     assert.ok(zHi - zLo < 0.05, `square base is flat (z extent ${(zHi - zLo).toFixed(4)})`)
   }
 
-  // THE BIRD BASE (the petals, front then back, beats 14.6–16): the
+  // THE BIRD BASE (the petals, front at beat 8, back at beat 10): the
   // petalled corners land √2−1 past the closed corner, the side corners
   // tuck onto the hinge, the middle flaps' corners — untouched by either
   // petal, exactly as in the paper sequence — stay at the base's point.
   {
-    player.step(kfFracsAt(16.2))
+    player.step(kfFracsAt(11))
     for (const [probe, corner] of [
       [[-0.85, 0.9], [-1, 1]], [[0.9, -0.8], [1, -1]],
     ] as [Vec2, Vec2][]) {
@@ -166,18 +165,6 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
     player.step(fracs)
   }
 
-  // Mid-way (the first standing pocket, beat 6): the squashing flap's tip
-  // sweeps to the table beside the corner while the pocket stands.
-  {
-    player.step(kfFracsAt(6))
-    assert.ok(near(cornerPos([0.9, 0.97], [1, 1]), [-0.994, 1.0, -0.111], 0.02),
-      `standing tip at ${cornerPos([0.9, 0.97], [1, 1])}`)
-    player.step(fracs)
-  }
-
-  // Rigid throughout: sample a few beats of the baked schedule and check no
-  // face edge stretches (the welded mesh turns any mechanism error into
-  // stretch — there must be none).
   const flat = (() => {
     player.step({})
     return Float32Array.from(player.positions)
@@ -197,14 +184,9 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
     }
     return worst
   }
-  for (const beat of [2, 4.5, 5, 5.5, 6, 7, 7.5, 8, 8.5, 9, 10, 10.5, 11.5, 12.5, 13, 13.5, 14, 16]) {
-    player.step(kfFracsAt(beat))
-    assert.ok(stretchNow() < 0.03, `beat ${beat}: stretch ${stretchNow().toFixed(4)}`)
-  }
-
-  // Every fold ends FLAT: the triangle, the square base, each finished
-  // petal, the bird base, and each thinning pass (17 = front pair done,
-  // 18 = the thinned bird base).
+  // Every step snaps to a FLAT, unstrained state: the triangle (3), squash
+  // (5), square base (7), petals (9, 11), thinning (13, 15), neck (17),
+  // tail (19), head (21).
   const zExtent = (): number => {
     let lo = Infinity
     let hi = -Infinity
@@ -214,7 +196,7 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
     }
     return hi - lo
   }
-  for (const beat of [3.5, 14.5, 15.3, 16, 17, 18, 19.55, 20.65, 21.7]) {
+  for (const beat of [3, 5, 7, 9, 11, 13, 15, 17, 19, 21]) {
     player.step(kfFracsAt(beat))
     assert.ok(stretchNow() < 0.01, `beat ${beat}: fold end strained (${stretchNow().toFixed(4)})`)
     assert.ok(zExtent() < 0.05, `beat ${beat}: fold end not flat (z extent ${zExtent().toFixed(4)})`)
@@ -229,7 +211,7 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
   // base's silhouette) lie ON the centre line — the world axis x = −y —
   // after both thinning passes.
   {
-    player.step(kfFracsAt(18))
+    player.step(kfFracsAt(15))
     const worldOfSheet = (pt: Vec2): number[] => {
       let base = 0
       for (const f of program.faces) {
@@ -260,33 +242,32 @@ test('Origami Crane sample: squash to the square base, petal to the bird base', 
       assert.ok(Math.abs(w[0] + w[1]) < 0.02,
         `thinned edge at (${pt}) should sit on the axis, got (${w.map((v) => v.toFixed(3))})`)
     }
-    // After the inside reverse folds (beat 20.65, before the head tucks the
+    // After the inside reverse folds (beat 19, before the head tucks the
     // tip): the points swing up and out, each the reflection of the old tip
     // across its reverse line — the neck steeper (60°) than the tail (30°),
     // so the head end rises higher.
-    player.step(kfFracsAt(20.65))
+    player.step(kfFracsAt(19))
     const neckTip = worldOfSheet([0.985, 0.985])
     assert.ok(Math.hypot(neckTip[0] + 0.547, neckTip[1] - 1.238) < 0.04,
       `neck tip at (${neckTip.map((v) => v.toFixed(3))})`)
     const tailTip = worldOfSheet([-0.985, -0.985])
     assert.ok(Math.hypot(tailTip[0] + 1.238, tailTip[1] - 0.04) < 0.04,
       `tail tip at (${tailTip.map((v) => v.toFixed(3))})`)
-    player.step(kfFracsAt(14.5))
+    player.step(kfFracsAt(7))
   }
 
   const scene = views.get('scene')!
   assert.ok(scene.length > 0, 'rasterized to a frame cache')
 
-  // Strain-solved paths throughout: petals and thinning stay under 0.2 per
-  // rendered frame; the inside reverse folds — pop through the layers, then
-  // press — flex a little more at the press's tightest moment.
+  // Snap mode: each transition lasts a single cache frame, so every baked
+  // frame is (an endpoint of) a flat state and nothing should stretch —
+  // except the wing fold, whose creases don't yet sever the whole flap.
   for (const f of scene.rows) {
     const beat = (f.frame as number) / 30 + 1
-    if (beat <= 14.6) continue
     const fr: Record<string, number> = {}
     for (const g of program.groups) fr[g] = f[g] as number
     player.step(fr)
-    const cap = beat <= 16 ? 0.45 : beat <= 18.5 ? 0.21 : 0.3
+    const cap = beat < 21.9 ? 0.03 : 0.3
     assert.ok(stretchNow() < cap, `frame at beat ${beat.toFixed(2)}: stretch ${stretchNow().toFixed(3)}`)
   }
 })

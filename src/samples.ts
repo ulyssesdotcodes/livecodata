@@ -73,45 +73,37 @@ define("scene", (rand, table) => table("events").rasterize(8))
 // WELDS shared points, so an impossible pose reads as paper strain, never
 // a tear. (Nothing checks fold-through-ability yet — that's planned.)
 //
-// THE SQUARE BASE (beats 1–14.5): fold the triangle (the diagonal written
-// as two steps, "spine" and "still", so the collapse can drive its halves
-// apart), then squash around the middle — "s1" and the halving valley
-// "hv" rise as the pocket while the spine opens — press flat right, the
-// same on the other side ("s2"), press left: the classic base, POINT DOWN.
-//
-// THE PETAL FOLD (beats 14.6–16, instructables crane steps 7 and 8): a
-// valley across the front face between (−0.586,0) and (0,0.586) — √2−1
-// along each top edge, exactly where the bottom edges land if folded to
-// the centre line — and mountains from those points to the bottom corner
-// ("kite"/"kite2"). The flap lifts with its wings flat while the "peel"
-// steps open the front layer's ridge creases with it (they lie on the
-// valley, so the lift unfolds them exactly; the back's stay pressed);
-// near the end the wings SNAP over — the kite mountains flip and press
-// the side corners onto the centre line in one quick pop, the way real
-// paper gives (the petal fold is famously not rigid-foldable, and this
-// snap path is the strain-solved way through). These are SINGLE folds:
-// the back face doesn't move until its own petal, from the back corner,
-// repeats the same lines ("kite3"/"kite4"/"petal2").
-//
-// THINNING THE LEGS (beats 16.5–17.7, crane steps 9–10): fold the bird
-// base's lower edges onto the centre line, front pair then back pair.
-// One fold line per edge, but it pierces FIVE plies, so each fold is a
-// chain of five creases turning at the peel, valley and squash lines —
-// the creases were sliced ply-by-ply off the folded model, and the
-// Kawasaki/Maekawa check passes at every vertex of the chain.
-//
-// NECK AND TAIL (beats 18.6–20.6, crane steps 11–12): INSIDE REVERSE
-// folds swing each thinned point up through its own layers. The point's
-// lengthwise folds — spine/still outer halves, kite and thin outer
-// segments, split at the reverse line — flip sign as it passes: first
-// the POP (the point swings about its own axis line, a nearly free
-// hinge), then the PRESS (the reverse crease folds flat). The neck's
-// reverse line is steeper (60° above the wing line, vs 30° for the
-// tail) so the head end rises higher, as on the real bird. Every fold
-// ends FLAT: square base, each petal, the exact bird base, each
-// thinning pass, each reverse fold — and the flat-fold theorems hold at
-// every vertex, which is what catches a reverse fold done the illegal
-// way (folding outside instead of through).
+// THE SCHEDULE PAGES THROUGH THE DIAGRAMS: the collapse, the petal and
+// the reverse folds are famously not rigid-foldable — real paper flexes
+// through them — so no in-between is animated at all. Each step SNAPS to
+// its finished flat state in one cache frame (the strained instant lands
+// between rendered frames) and holds, one step every two beats:
+//   beat  2  the triangle (the diagonal, in drivable pieces)
+//         4  squash the right half into its pocket, pressed flat
+//         6  squash the left half: the SQUARE BASE, point down
+//         8  the front petal fold (instructables crane step 7): valley
+//            between (−0.586,0)/(0,0.586) — √2−1 along each top edge,
+//            where the bottom edges land folded to the centre line —
+//            kite mountains to the bottom corner, ridge peels opening
+//         10 the back petal repeats the lines from the back corner:
+//            the BIRD BASE
+//         12 thin the front legs — fold the bird base's lower edges onto
+//            the centre line; one line, but it pierces FIVE plies, so
+//            each fold is a chain of five creases sliced ply-by-ply off
+//            the folded model (crane step 9)
+//         14 thin the back pair (step 10): the thinned bird base
+//         16 INSIDE REVERSE the neck up through its own layers — the
+//            point's lengthwise creases (spine half, kite and thin
+//            segments split at the reverse line) flip sign as it passes.
+//            The neck's line is steep (60° above the wing line) so the
+//            head end rises high
+//         18 inside-reverse the tail (30°, sweeping low)
+//         20 one more reverse at the neck's tip: the HEAD
+//         22 the wings fold down a quarter turn: the finished CRANE
+// Every held state is exactly flat (the finished crane is 3D), and the
+// flat-fold theorems (Kawasaki/Maekawa) hold at every vertex of every
+// crease chain — that is what catches a fold done the illegal way, e.g.
+// reversing a point outside instead of through.
 
 define("steps", () => {
   // keyframes shared by every layer of a crease: [at, dur, to]
@@ -132,90 +124,88 @@ define("steps", () => {
     // the triangle fold: the diagonal, in two drivable halves
     // (each written in TWO drivable pieces, split where the neck and tail
     // reverse folds will cross — the outer halves flip then)
-    { step: "spine", p1: "diag@0.5", p2: "0.2928932188,0.2928932188", move: "0.5286,0.3333", sign: 1, deg: 180, at: 1, dur: 2, to: 1 },
-    { step: "spineN", p1: "0.2928932188,0.2928932188", p2: "0.7522961665,0.7522961665", move: "0.5286,0.3333", sign: 1, deg: 180, at: 1, dur: 2, to: 1 },
-    { step: "spineH", p1: "0.7522961665,0.7522961665", p2: "diag@1", move: "0.5286,0.3333", sign: 1, deg: 180, at: 1, dur: 2, to: 1 },
-    { step: "still", p1: "-0.2928932188,-0.2928932188", p2: "diag@0.5", move: "-0.3333,-0.5286", sign: 1, deg: 180, at: 1, dur: 2, to: 1 },
-    { step: "stillN", p1: "diag@0", p2: "-0.2928932188,-0.2928932188", move: "-0.3333,-0.5286", sign: 1, deg: 180, at: 1, dur: 2, to: 1 },
+    { step: "spine", p1: "diag@0.5", p2: "0.2928932188,0.2928932188", move: "0.5286,0.3333", sign: 1, deg: 180, at: 2, dur: 0.0333, to: 1 },
+    { step: "spineN", p1: "0.2928932188,0.2928932188", p2: "0.7522961665,0.7522961665", move: "0.5286,0.3333", sign: 1, deg: 180, at: 2, dur: 0.0333, to: 1 },
+    { step: "spineH", p1: "0.7522961665,0.7522961665", p2: "diag@1", move: "0.5286,0.3333", sign: 1, deg: 180, at: 2, dur: 0.0333, to: 1 },
+    { step: "still", p1: "-0.2928932188,-0.2928932188", p2: "diag@0.5", move: "-0.3333,-0.5286", sign: 1, deg: 180, at: 2, dur: 0.0333, to: 1 },
+    { step: "stillN", p1: "diag@0", p2: "-0.2928932188,-0.2928932188", move: "-0.3333,-0.5286", sign: 1, deg: 180, at: 2, dur: 0.0333, to: 1 },
     // the squash folds, one crease per layer — the petal points sit 2−√2
     // along each median from the centre (vm/hm @ 0.7928… and 0.2071…)
-    { step: "s1", p1: "vm@0.7928932188", p2: "diag@0.5", move: "0.3333,0.5286", sign: 1, deg: 180, at: 4, dur: 0.5, to: -0.18 },
+    { step: "s1", p1: "vm@0.7928932188", p2: "diag@0.5", move: "0.3333,0.5286", sign: 1, deg: 180, at: 4, dur: 0.0333, to: -1 },
     { step: "s1", p1: "hm@0.7928932188", p2: "diag@0.5", move: "0.5286,0.3333", sign: -1 },
-    { step: "hv", p1: "bottom@1", p2: "diag@0.5", move: "0.2929,-0.0976", sign: -1, deg: 90, at: 4, dur: 0.5, to: 0.248 },
-    { step: "s2", p1: "hm@0.2071067812", p2: "diag@0.5", move: "-0.5286,-0.3333", sign: 1, deg: -180, at: 9.5, dur: 0.25, to: -0.125 },
+    { step: "hv", p1: "bottom@1", p2: "diag@0.5", move: "0.2929,-0.0976", sign: -1, deg: 90, at: 4, dur: 0.0333, to: 0 },
+    { step: "s2", p1: "hm@0.2071067812", p2: "diag@0.5", move: "-0.5286,-0.3333", sign: 1, deg: -180, at: 6, dur: 0.0333, to: -1 },
     { step: "s2", p1: "vm@0.2071067812", p2: "diag@0.5", move: "-0.3333,-0.5286", sign: -1 },
     // the petal fold, front: the valley between the squash folds' ends
-    // lifts the flap while the ridge peels open with it; the kite
-    // mountains (corners to those same ends) snap over near the end, in
-    // ONE cache frame, so the pop's strained instant (the famous
-    // non-rigid moment) lands between rendered frames — max rendered
-    // flex 0.16, vs 0.51 when the kites moved in lockstep with the valley
-    { step: "kite", p1: "top@0", p2: "s2@0", move: "-0.8619,0.3333", sign: 1, deg: -180, at: 14.9333, dur: 0.0333, to: 1 },
+    // lifts the flap, the ridge peels open with it, and the kite
+    // mountains (corners to those same ends) press the side corners onto
+    // the centre line — all snapping flat together
+    { step: "kite", p1: "top@0", p2: "s2@0", move: "-0.8619,0.3333", sign: 1, deg: -180, at: 8, dur: 0.0333, to: 1 },
     { step: "kite", p1: "-0.617298121,-0.0760759335", p2: "s2@0", move: "-0.8619,-0.3333", sign: -1 },
-    { step: "kiteN", p1: "bottom@0", p2: "-0.617298121,-0.0760759335", move: "-0.8619,-0.3333", sign: -1, deg: -180, at: 14.9333, dur: 0.0333, to: 1 },
-    { step: "kite2", p1: "0.0760759335,0.617298121", p2: "s1@0", move: "0.3333,0.8619", sign: -1, deg: 180, at: 14.9333, dur: 0.0333, to: 1 },
+    { step: "kiteN", p1: "bottom@0", p2: "-0.617298121,-0.0760759335", move: "-0.8619,-0.3333", sign: -1, deg: -180, at: 8, dur: 0.0333, to: 1 },
+    { step: "kite2", p1: "0.0760759335,0.617298121", p2: "s1@0", move: "0.3333,0.8619", sign: -1, deg: 180, at: 8, dur: 0.0333, to: 1 },
     { step: "kite2", p1: "top@0", p2: "s1@0", move: "-0.3333,0.8619", sign: 1 },
-    { step: "kite2H", p1: "top@1", p2: "0.6765031023,0.8660031976", move: "0.3333,0.8619", sign: -1, deg: 180, at: 14.9333, dur: 0.0333, to: 1 },
-    { step: "kite2N", p1: "0.6765031023,0.8660031976", p2: "0.0760759335,0.617298121", move: "0.3333,0.8619", sign: -1, deg: 180, at: 14.9333, dur: 0.0333, to: 1 },
-    { step: "petal", p1: "s2@0", p2: "s1@0", move: "-0.5286,0.5286", sign: 1, deg: 180, at: 14.6, dur: 0.65, to: 1 },
-    { step: "peelfr", p1: "top@0.5", p2: "s1@0", move: "0.3333,0.8619", sign: 1, deg: 180, at: 4, dur: 0.5, to: -0.18 },
-    { step: "peelfl", p1: "left@0.5", p2: "s2@0", move: "-0.8619,-0.3333", sign: 1, deg: -180, at: 9.5, dur: 0.25, to: -0.125 },
+    { step: "kite2H", p1: "top@1", p2: "0.6765031023,0.8660031976", move: "0.3333,0.8619", sign: -1, deg: 180, at: 8, dur: 0.0333, to: 1 },
+    { step: "kite2N", p1: "0.6765031023,0.8660031976", p2: "0.0760759335,0.617298121", move: "0.3333,0.8619", sign: -1, deg: 180, at: 8, dur: 0.0333, to: 1 },
+    { step: "petal", p1: "s2@0", p2: "s1@0", move: "-0.5286,0.5286", sign: 1, deg: 180, at: 8, dur: 0.0333, to: 1 },
+    { step: "peelfr", p1: "top@0.5", p2: "s1@0", move: "0.3333,0.8619", sign: 1, deg: 180, at: 4, dur: 0.0333, to: -1 },
+    { step: "peelfl", p1: "left@0.5", p2: "s2@0", move: "-0.8619,-0.3333", sign: 1, deg: -180, at: 6, dur: 0.0333, to: -1 },
     // the petal fold, back: the same lines from the back corner
-    { step: "kite3", p1: "-0.076132636,-0.617321608", p2: "vm@0.2071067812", move: "-0.3333,-0.8619", sign: 1, deg: -180, at: 15.7, dur: 0.0333, to: 1 },
+    { step: "kite3", p1: "-0.076132636,-0.617321608", p2: "vm@0.2071067812", move: "-0.3333,-0.8619", sign: 1, deg: -180, at: 10, dur: 0.0333, to: 1 },
     { step: "kite3", p1: "bottom@1", p2: "vm@0.2071067812", move: "0.3333,-0.8619", sign: -1 },
-    { step: "kite3N", p1: "bottom@0", p2: "-0.076132636,-0.617321608", move: "-0.3333,-0.8619", sign: 1, deg: -180, at: 15.7, dur: 0.0333, to: 1 },
-    { step: "kite4", p1: "bottom@1", p2: "hm@0.7928932188", move: "0.8619,-0.3333", sign: -1, deg: 180, at: 15.7, dur: 0.0333, to: 1 },
+    { step: "kite3N", p1: "bottom@0", p2: "-0.076132636,-0.617321608", move: "-0.3333,-0.8619", sign: 1, deg: -180, at: 10, dur: 0.0333, to: 1 },
+    { step: "kite4", p1: "bottom@1", p2: "hm@0.7928932188", move: "0.8619,-0.3333", sign: -1, deg: 180, at: 10, dur: 0.0333, to: 1 },
     { step: "kite4", p1: "0.617321608,0.076132636", p2: "hm@0.7928932188", move: "0.8619,0.3333", sign: 1 },
-    { step: "kite4H", p1: "top@1", p2: "0.8660031976,0.6765031023", move: "0.8619,0.3333", sign: 1, deg: 180, at: 15.7, dur: 0.0333, to: 1 },
-    { step: "kite4N", p1: "0.8660031976,0.6765031023", p2: "0.617321608,0.076132636", move: "0.8619,0.3333", sign: 1, deg: 180, at: 15.7, dur: 0.0333, to: 1 },
-    { step: "petal2", p1: "vm@0.2071067812", p2: "hm@0.7928932188", move: "0.4310,-0.6262;0.6262,-0.4310", sign: -1, deg: 180, at: 15.35, dur: 0.65, to: 1 },
-    { step: "peelbr", p1: "right@0.5", p2: "hm@0.7928932188", move: "0.8619,0.3333", sign: -1, deg: 180, at: 4, dur: 0.5, to: -0.18 },
-    { step: "peelbl", p1: "bottom@0.5", p2: "vm@0.2071067812", move: "-0.3333,-0.8619", sign: -1, deg: -180, at: 9.5, dur: 0.25, to: -0.125 },
+    { step: "kite4H", p1: "top@1", p2: "0.8660031976,0.6765031023", move: "0.8619,0.3333", sign: 1, deg: 180, at: 10, dur: 0.0333, to: 1 },
+    { step: "kite4N", p1: "0.8660031976,0.6765031023", p2: "0.617321608,0.076132636", move: "0.8619,0.3333", sign: 1, deg: 180, at: 10, dur: 0.0333, to: 1 },
+    { step: "petal2", p1: "vm@0.2071067812", p2: "hm@0.7928932188", move: "0.4310,-0.6262;0.6262,-0.4310", sign: -1, deg: 180, at: 10, dur: 0.0333, to: 1 },
+    { step: "peelbr", p1: "right@0.5", p2: "hm@0.7928932188", move: "0.8619,0.3333", sign: -1, deg: 180, at: 4, dur: 0.0333, to: -1 },
+    { step: "peelbl", p1: "bottom@0.5", p2: "vm@0.2071067812", move: "-0.3333,-0.8619", sign: -1, deg: -180, at: 6, dur: 0.0333, to: -1 },
     // thin the legs (crane steps 9-10): fold the bird base's lower edges
     // onto the centre line, front pair then back pair. ONE fold line per
     // edge — but the line pierces five plies, turning at the peel, the
     // petal valley and the squash crease, so each fold is a CHAIN of five
     // creases (sliced ply by ply off the folded model; the extra folded
     // triangles past the valley hide under the wings, as on real paper)
-    { step: "thinfr", p1: "0.4262703879,0.8858851802", p2: "0,0.8011", move: "0.5059,0.8711", sign: 1, deg: 180, at: 16.5, dur: 0.5, to: 1 },
+    { step: "thinfr", p1: "0.4262703879,0.8858851802", p2: "0,0.8011", move: "0.5059,0.8711", sign: 1, deg: 180, at: 12, dur: 0.0333, to: 1 },
     { step: "thinfr", p1: "0,0.8011", p2: "-0.3512,0.7312", move: "-0.1697,0.7367", sign: 1 },
     { step: "thinfr", p1: "-0.1522,0.4335", p2: "-0.3512,0.7312", move: "-0.2268,0.5991", sign: 1 },
     { step: "thinfr", p1: "-0.1522,0.4335", p2: "0,0.3318", move: "-0.0595,0.4076", sign: 1 },
     { step: "thinfr", p1: "0.5135980841,0.6749862398", p2: "0,0.3318", move: "0.4833,0.6909", sign: 1 },
-    { step: "thinfrH", p1: "1,1", p2: "0.5271354908,0.9059472492", move: "0.5059,0.8711", sign: 1, deg: 180, at: 16.5, dur: 0.5, to: 1 },
-    { step: "thinfrN", p1: "0.5271354908,0.9059472492", p2: "0.4262703879,0.8858851802", move: "0.5059,0.8711", sign: 1, deg: 180, at: 16.5, dur: 0.5, to: 1 },
+    { step: "thinfrH", p1: "1,1", p2: "0.5271354908,0.9059472492", move: "0.5059,0.8711", sign: 1, deg: 180, at: 12, dur: 0.0333, to: 1 },
+    { step: "thinfrN", p1: "0.5271354908,0.9059472492", p2: "0.4262703879,0.8858851802", move: "0.5059,0.8711", sign: 1, deg: 180, at: 12, dur: 0.0333, to: 1 },
     { step: "thinfrH", p1: "1,1", p2: "0.5992516924,0.7322199809", move: "0.4833,0.6909", sign: 1 },
     { step: "thinfrN", p1: "0.5992516924,0.7322199809", p2: "0.5135980841,0.6749862398", move: "0.4833,0.6909", sign: 1 },
-    { step: "thinfl", p1: "-0.2562347721,-0.8520650962", p2: "0,-0.8011", move: "-0.4942,-0.93", sign: 1, deg: 180, at: 16.5, dur: 0.5, to: 1 },
+    { step: "thinfl", p1: "-0.2562347721,-0.8520650962", p2: "0,-0.8011", move: "-0.4942,-0.93", sign: 1, deg: 180, at: 12, dur: 0.0333, to: 1 },
     { step: "thinfl", p1: "0,-0.8011", p2: "0.3512,-0.7312", move: "0.1814,-0.7956", sign: 1 },
     { step: "thinfl", p1: "0.1522,-0.4335", p2: "0.3512,-0.7312", move: "0.2766,-0.5657", sign: 1 },
     { step: "thinfl", p1: "0.1522,-0.4335", p2: "0,-0.3318", move: "0.0928,-0.3577", sign: 1 },
     { step: "thinfl", p1: "-0.3694922085,-0.5786946937", p2: "0,-0.3318", move: "-0.5167,-0.641", sign: 1 },
-    { step: "thinflN", p1: "-1,-1", p2: "-0.2562347721,-0.8520650962", move: "-0.4942,-0.93", sign: 1, deg: 180, at: 16.5, dur: 0.5, to: 1 },
+    { step: "thinflN", p1: "-1,-1", p2: "-0.2562347721,-0.8520650962", move: "-0.4942,-0.93", sign: 1, deg: 180, at: 12, dur: 0.0333, to: 1 },
     { step: "thinflN", p1: "-1,-1", p2: "-0.3694922085,-0.5786946937", move: "-0.5167,-0.641", sign: 1 },
-    { step: "thinbr", p1: "0.8858720784,0.4262045167", p2: "0.8011,0", move: "0.93,0.4942", sign: -1, deg: 180, at: 17.2, dur: 0.5, to: 1 },
+    { step: "thinbr", p1: "0.8858720784,0.4262045167", p2: "0.8011,0", move: "0.93,0.4942", sign: -1, deg: 180, at: 14, dur: 0.0333, to: 1 },
     { step: "thinbr", p1: "0.8011,0", p2: "0.7312,-0.3512", move: "0.7956,-0.1814", sign: -1 },
     { step: "thinbr", p1: "0.4335,-0.1522", p2: "0.7312,-0.3512", move: "0.5657,-0.2766", sign: -1 },
     { step: "thinbr", p1: "0.4335,-0.1522", p2: "0.3318,0", move: "0.3577,-0.0928", sign: -1 },
     { step: "thinbr", p1: "0.6749995558,0.5136180123", p2: "0.3318,0", move: "0.641,0.5167", sign: -1 },
-    { step: "thinbrH", p1: "1,1", p2: "0.9059472491,0.5271354908", move: "0.93,0.4942", sign: -1, deg: 180, at: 17.2, dur: 0.5, to: 1 },
-    { step: "thinbrN", p1: "0.9059472491,0.5271354908", p2: "0.8858720784,0.4262045167", move: "0.93,0.4942", sign: -1, deg: 180, at: 17.2, dur: 0.5, to: 1 },
+    { step: "thinbrH", p1: "1,1", p2: "0.9059472491,0.5271354908", move: "0.93,0.4942", sign: -1, deg: 180, at: 14, dur: 0.0333, to: 1 },
+    { step: "thinbrN", p1: "0.9059472491,0.5271354908", p2: "0.8858720784,0.4262045167", move: "0.93,0.4942", sign: -1, deg: 180, at: 14, dur: 0.0333, to: 1 },
     { step: "thinbrH", p1: "1,1", p2: "0.7322199809,0.5992516924", move: "0.641,0.5167", sign: -1 },
     { step: "thinbrN", p1: "0.7322199809,0.5992516924", p2: "0.6749995558,0.5136180123", move: "0.641,0.5167", sign: -1 },
-    { step: "thinbl", p1: "-0.8520669717,-0.2562442014", p2: "-0.8011,0", move: "-0.93,-0.4942", sign: -1, deg: 180, at: 17.2, dur: 0.5, to: 1 },
+    { step: "thinbl", p1: "-0.8520669717,-0.2562442014", p2: "-0.8011,0", move: "-0.93,-0.4942", sign: -1, deg: 180, at: 14, dur: 0.0333, to: 1 },
     { step: "thinbl", p1: "-0.8011,0", p2: "-0.7312,0.3512", move: "-0.7956,0.1814", sign: -1 },
     { step: "thinbl", p1: "-0.4335,0.1522", p2: "-0.7312,0.3512", move: "-0.5657,0.2766", sign: -1 },
     { step: "thinbl", p1: "-0.4335,0.1522", p2: "-0.3318,0", move: "-0.3577,0.0928", sign: -1 },
     { step: "thinbl", p1: "-0.5786871669,-0.3694809441", p2: "-0.3318,0", move: "-0.641,-0.5167", sign: -1 },
-    { step: "thinblN", p1: "-1,-1", p2: "-0.8520669717,-0.2562442014", move: "-0.93,-0.4942", sign: -1, deg: 180, at: 17.2, dur: 0.5, to: 1 },
+    { step: "thinblN", p1: "-1,-1", p2: "-0.8520669717,-0.2562442014", move: "-0.93,-0.4942", sign: -1, deg: 180, at: 14, dur: 0.0333, to: 1 },
     { step: "thinblN", p1: "-1,-1", p2: "-0.5786871669,-0.3694809441", move: "-0.641,-0.5167", sign: -1 },
     // the neck and tail (crane steps 11-12): INSIDE REVERSE FOLDS swing
     // each thinned point up through its own layers. One reverse line per
     // point, sliced through its eight plies (the chain turns at the peel,
     // kite and squash lines); the point's lengthwise folds — the split-off
     // "N" halves of spine/still, the kites, and the thin chains — flip
-    // sign beyond the line, driven by the reversal keyframes below
-    { step: "neck", p1: "0.2928932188,0.2928932188", p2: "0.5135980841,0.6749862398", move: "0.429327,0.46903", sign: -1, deg: 180, at: 18.87, dur: 0.63, to: 1 },
+    // sign beyond the line, driven by the snap keyframes below
+    { step: "neck", p1: "0.2928932188,0.2928932188", p2: "0.5135980841,0.6749862398", move: "0.429327,0.46903", sign: -1, deg: 180, at: 16, dur: 0.0333, to: 1 },
     { step: "neck", p1: "0.0760759335,0.617298121", p2: "0.5135980841,0.6749862398", move: "0.2909,0.67588", sign: 1 },
     { step: "neck", p1: "0.0760759335,0.617298121", p2: "0.4262703879,0.8858851802", move: "0.269417,0.727784", sign: -1 },
     { step: "neck", p1: "top@0.5", p2: "0.4262703879,0.8858851802", move: "0.220903,0.971922", sign: 1 },
@@ -223,7 +213,7 @@ define("steps", () => {
     { step: "neck", p1: "0.617321608,0.076132636", p2: "0.6749995558,0.5136180123", move: "0.675911,0.290976", sign: -1 },
     { step: "neck", p1: "0.617321608,0.076132636", p2: "0.8858720784,0.4262045167", move: "0.727795,0.269449", sign: 1 },
     { step: "neck", p1: "right@0.5", p2: "0.8858720784,0.4262045167", move: "0.971912,0.220865", sign: -1 },
-    { step: "tail", p1: "-0.2928932188,-0.2928932188", p2: "-0.5786871669,-0.3694809441", move: "-0.428044,-0.360186", sign: 1, deg: 180, at: 19.97, dur: 0.63, to: 1 },
+    { step: "tail", p1: "-0.2928932188,-0.2928932188", p2: "-0.5786871669,-0.3694809441", move: "-0.428044,-0.360186", sign: 1, deg: 180, at: 18, dur: 0.0333, to: 1 },
     { step: "tail", p1: "-0.617298121,-0.0760759335", p2: "-0.5786871669,-0.3694809441", move: "-0.627736,-0.226693", sign: -1 },
     { step: "tail", p1: "-0.617298121,-0.0760759335", p2: "-0.8520669717,-0.2562442014", move: "-0.716419,-0.189959", sign: 1 },
     { step: "tail", p1: "left@0.5", p2: "-0.8520669717,-0.2562442014", move: "-0.952014,-0.143121", sign: -1 },
@@ -233,7 +223,7 @@ define("steps", () => {
     { step: "tail", p1: "bottom@0.5", p2: "-0.2562347721,-0.8520650962", move: "-0.143116,-0.952011", sign: 1 },
     // the head (crane step 12): one more inside reverse fold at the neck's
     // tip — the neck's lengthwise halves split AGAIN ("H" steps) and flip
-    { step: "head", p1: "0.5992516924,0.7322199809", p2: "0.7522961665,0.7522961665", move: "0.671852,0.771992", sign: -1, deg: 180, at: 21.07, dur: 0.5, to: 1 },
+    { step: "head", p1: "0.5992516924,0.7322199809", p2: "0.7522961665,0.7522961665", move: "0.671852,0.771992", sign: -1, deg: 180, at: 20, dur: 0.0333, to: 1 },
     { step: "head", p1: "0.5992516924,0.7322199809", p2: "0.6765031023,0.8660031976", move: "0.663779,0.78408", sign: 1 },
     { step: "head", p1: "0.5271354908,0.9059472492", p2: "0.6765031023,0.8660031976", move: "0.609565,0.914928", sign: -1 },
     { step: "head", p1: "0.5271354908,0.9059472492", p2: "0.649695038,1", move: "0.606727,0.929191", sign: 1 },
@@ -243,14 +233,14 @@ define("steps", () => {
     { step: "head", p1: "0.9059472491,0.5271354908", p2: "1,0.649695038", move: "0.929189,0.606755", sign: -1 },
     // the wings fold down (crane step 13), a quarter turn about the
     // shoulder line — each wing is its flap's three plies (panel + wraps)
-    { step: "wingf", p1: "-0.0230091937,0.5953171577", p2: "-0.0999893356,0.7811989335", move: "-0.089216,0.676776", sign: -1, deg: -90, at: 21.8, dur: 0.8, to: 1 },
+    { step: "wingf", p1: "-0.0230091937,0.5953171577", p2: "-0.0999893356,0.7811989335", move: "-0.089216,0.676776", sign: -1, deg: -90, at: 22, dur: 0.0333, to: 1 },
     { step: "wingf", p1: "-0.1000026298,1", p2: "-0.0999918502,0.781198433", move: "-0.129997,0.890598", sign: 1 },
     { step: "wingf", p1: "-0.5183163294,0.2088961692", p2: "-0.595318401,0.0230121952", move: "-0.58453,0.127441", sign: 1 },
     { step: "wingf", p1: "-0.5183163294,0.2088961692", p2: "-0.2088896014,0.5183065042", move: "-0.384815,0.384818", sign: -1 },
     { step: "wingf", p1: "-0.0230079538,0.5953166441", p2: "-0.2088904689,0.518307802", move: "-0.127437,0.584525", sign: 1 },
     { step: "wingf", p1: "-0.7811948794,0.1000097047", p2: "-1,0.1000026109", move: "-0.890598,0.130006", sign: 1 },
     { step: "wingf", p1: "-0.7811954143,0.1000070171", p2: "-0.5953191667,0.023014044", move: "-0.676773,0.089226", sign: -1 },
-    { step: "wingb", p1: "0.0999788624,-0.781201018", p2: "0.0230079208,-0.5953166304", move: "0.089211,-0.676779", sign: 1, deg: -90, at: 21.8, dur: 0.8, to: 1 },
+    { step: "wingb", p1: "0.0999788624,-0.781201018", p2: "0.0230079208,-0.5953166304", move: "0.089211,-0.676779", sign: 1, deg: -90, at: 22, dur: 0.0333, to: 1 },
     { step: "wingb", p1: "0.0999646969,-0.7812038374", p2: "0.1000137004,-1", move: "0.129991,-0.890598", sign: -1 },
     { step: "wingb", p1: "0.2088845058,-0.5182988813", p2: "0.3635786374,-0.3635786374", move: "0.307446,-0.462151", sign: 1 },
     { step: "wingb", p1: "0.2088845058,-0.5182988813", p2: "0.0230069267,-0.5953162187", move: "0.127433,-0.58452", sign: -1 },
@@ -258,55 +248,26 @@ define("steps", () => {
     { step: "wingb", p1: "0.3635649696,-0.3635649696", p2: "0.5183524683,-0.2089203265", move: "0.462165,-0.307465", sign: 1 },
     { step: "wingb", p1: "1,-0.1000033065", p2: "0.7811892358,-0.1000380598", move: "0.890599,-0.130022", sign: -1 },
     { step: "wingb", p1: "0.5953090293,-0.0229895701", p2: "0.7811893536,-0.1000374682", move: "0.676764,-0.089231", sign: 1 },
-    // ── the collapse, keyframed along the squash's solved path ──
-    // squash 1 + press right (the peels are the same physical creases as
-    // s1/s2, so they carry the same keyframes until their petal opens them)
-    ...kf(["s1", "peelfr", "peelbr"], [
-      [4.5, 0.5, -0.39], [5, 0.5, -0.659], [5.5, 0.5, -0.9645],
-      [6.5, 0.5, -0.9945], [7, 0.5, -0.997], [7.5, 0.5, -0.998],
-      [8, 0.5, -0.9985], [8.5, 0.5, -1],
-    ]),
-    ...kf(["hv"], [
-      [4.5, 0.5, 0.498], [5, 0.5, 0.744], [5.5, 0.5, 0.95],
-      [6.5, 0.5, 0.83], [7, 0.5, 0.712], [7.5, 0.5, 0.474],
-      [8, 0.5, 0.238], [8.5, 0.5, 0],
-      [9.5, 0.25, 0.176], [9.75, 0.5, 0.484], [10.25, 0.25, 0.61],
-      [10.5, 0.75, 0.914], [11.25, 0.25, 0.958],
-      [12.5, 0.5, 0.718], [13, 0.5, 0.48], [13.5, 0.5, 0.24], [14, 0.5, 0],
-    ]),
-    ...kf(["spine", "spineN", "spineH"], [
-      [4, 2, 0], [6.5, 0.5, -0.163], [7, 0.5, -0.284],
-      [7.5, 0.5, -0.526], [8, 0.5, -0.763], [8.5, 0.5, -1],
-    ]),
-    // squash 2 + press left
-    ...kf(["s2", "peelfl", "peelbl"], [
-      [9.75, 0.5, -0.375], [10.25, 0.25, -0.5], [10.5, 0.75, -0.875], [11.25, 0.25, -1],
-    ]),
-    ...kf(["still", "stillN"], [
-      [9.5, 0.25, 0.825], [9.75, 0.5, 0.518], [10.25, 0.25, 0.392],
-      [10.5, 0.75, 0.089], [11.25, 0.25, -0.044],
-      [12.5, 0.5, -0.283], [13, 0.5, -0.523], [13.5, 0.5, -0.762], [14, 0.5, -1],
-    ]),
-    // the peels: each petal's lift unfolds its own side's ridges — most of
-    // the way through the lift, the rest in the wing snap
-    ...kf(["peelfr", "peelfl"], [[14.6, 0.3333, -0.62], [14.9333, 0.0333, 0]]),
-    ...kf(["peelbr", "peelbl"], [[15.3667, 0.3333, -0.62], [15.7, 0.0333, 0]]),
-    // the reverse folds, each in two moves on the strain-solved path: the
-    // POP — the point swings through its own layers about the leg's axis
-    // (all its lengthwise folds lie on one world line, a nearly free
-    // hinge: spineN flips −1→1 while the kite/thin halves flip 1→−1) —
-    // then the PRESS, the reverse crease folding flat while the wraps
-    // breathe open and shut
-    ...kf(["spineN", "spineH"], [[18.6, 0.12, 1]]),
+    // ── the snaps that finish each step ── the collapse and the reverse
+    // folds have no rigid path (the paper flexes on the way), so nothing is
+    // animated: each step POPS to its flat diagram state in one cache frame
+    // (the strained instant lands between rendered frames) and holds
+    ...kf(["spine", "spineN", "spineH"], [[4, 0.0333, -1]]),
+    ...kf(["still", "stillN"], [[6, 0.0333, -1]]),
+    // each petal's lift opens its own side's ridge creases
+    ...kf(["peelfr", "peelfl"], [[8, 0.0333, 0]]),
+    ...kf(["peelbr", "peelbl"], [[10, 0.0333, 0]]),
+    // the reverse folds swing each point through its own layers: the
+    // point's lengthwise creases flip sign as it passes (spineN −1→1 while
+    // the kite/thin halves flip 1→−1)
+    ...kf(["spineN", "spineH"], [[16, 0.0333, 1]]),
     ...kf(["kite2N", "kite4N", "thinfrN", "thinbrN", "kite2H", "kite4H", "thinfrH", "thinbrH"],
-      [[18.72, 0.15, -1], [19.12, 0.07, -0.35], [19.19, 0.31, -1]]),
-    ...kf(["stillN"], [[19.7, 0.12, 1]]),
-    ...kf(["kiteN", "kite3N", "thinflN", "thinblN"],
-      [[19.82, 0.15, -1], [19.97, 0.25, -0.72], [20.22, 0.18, -0.88], [20.4, 0.2, -1]]),
-    // the head's reverse: pop the tip through (spineH flips back, then its
-    // wraps), then the head crease presses flat
-    ...kf(["spineH"], [[20.8, 0.12, -1]]),
-    ...kf(["kite2H", "kite4H", "thinfrH", "thinbrH"], [[20.92, 0.15, 1]]),
+      [[16, 0.0333, -1]]),
+    ...kf(["stillN"], [[18, 0.0333, 1]]),
+    ...kf(["kiteN", "kite3N", "thinflN", "thinblN"], [[18, 0.0333, -1]]),
+    // the head's reverse flips the neck point's wraps back once more
+    ...kf(["spineH"], [[20, 0.0333, -1]]),
+    ...kf(["kite2H", "kite4H", "thinfrH", "thinbrH"], [[20, 0.0333, 1]]),
   ])
 })
 
@@ -332,9 +293,9 @@ define("hydra", () => rows([
 ]))
 
 // Things to try, live in the "steps" tab:
-//   - Delete the s1/hv keyframes after the first of each: the squash stops
-//     a quarter of the way in and holds — scrub to study the mechanism.
-//   - Drive "hv" to 0.95 again at beat 17 and the bird base opens its beak.
+//   - Stretch a snap: change a step's dur from 0.0333 to 2 and scrub — the
+//     paper strains through the non-rigid in-between the snap skips.
+//   - Drive "hv" to 0.95 at beat 15 and the bird base opens its beak.
 //   - Slide a crease: nudge the petal's p1/p2 endpoints and the wings no
 //     longer land on the centre line — the paper visibly strains around
 //     the misplaced mechanism, because every other crease is exactly where
