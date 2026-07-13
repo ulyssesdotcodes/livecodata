@@ -55,57 +55,75 @@ test('sliderDefs keeps one def per id, last row wins', () => {
   assert.equal(defs.find((d) => d.id === 'a')!.max, 5)
 })
 
-// ── Index + sampling (most recent at-or-before; wrap-hold across the loop) ────
+// ── Index + sampling (single pass: most recent at-or-before, wrap-hold) ───────
 
-test('sampleSliderAt returns the most recent value at-or-before the frame', () => {
-  // brightness set to 1 at frame 60, dropped to 0 at frame 120.
+test('sampleSliderAt returns the most recent value at-or-before the frame (pass 0)', () => {
+  // brightness set to 1 at frame 60, dropped to 0 at frame 120 — all pass 0.
   const rows: Row[] = [
-    { type: 'slider', id: 'brightness', value: 1, beat: b(60) },
-    { type: 'slider', id: 'brightness', value: 0, beat: b(120) },
+    { type: 'slider', id: 'brightness', value: 1, beat: b(60), loop: 0 },
+    { type: 'slider', id: 'brightness', value: 0, beat: b(120), loop: 0 },
   ]
   const idx = buildSliderIndex(rows)
-  assert.equal(sampleSliderAt(idx, 'brightness', 60, 0.5), 1, 'at the move frame')
-  assert.equal(sampleSliderAt(idx, 'brightness', 119, 0.5), 1, 'still held')
-  assert.equal(sampleSliderAt(idx, 'brightness', 120, 0.5), 0, 'after the second move')
-  assert.equal(sampleSliderAt(idx, 'brightness', 999, 0.5), 0, 'holds the last move')
+  assert.equal(sampleSliderAt(idx, 'brightness', 60, 0, 0.5), 1, 'at the move frame')
+  assert.equal(sampleSliderAt(idx, 'brightness', 119, 0, 0.5), 1, 'still held')
+  assert.equal(sampleSliderAt(idx, 'brightness', 120, 0, 0.5), 0, 'after the second move')
+  assert.equal(sampleSliderAt(idx, 'brightness', 999, 0, 0.5), 0, 'holds the last move')
 })
 
-test('sampleSliderAt wraps to the last recorded value before the first move (loop continuity)', () => {
-  // A single set at frame 90 should read as a constant everywhere in the loop.
-  const rows: Row[] = [{ type: 'slider', id: 'x', value: 0.7, beat: b(90) }]
+test('a single-pass recording repeats every pass (loop 0 wraps to pass 0)', () => {
+  const rows: Row[] = [{ type: 'slider', id: 'x', value: 0.7, beat: b(90), loop: 0 }]
   const idx = buildSliderIndex(rows)
-  assert.equal(sampleSliderAt(idx, 'x', 0, 0.2), 0.7, 'before the move: holds over from the loop end')
-  assert.equal(sampleSliderAt(idx, 'x', 90, 0.2), 0.7)
-  assert.equal(sampleSliderAt(idx, 'x', 200, 0.2), 0.7)
+  // idLoops == 1, so any pass wraps to 0 and reads the same constant.
+  assert.equal(sampleSliderAt(idx, 'x', 0, 0, 0.2), 0.7, 'before the move: holds over from the loop end')
+  assert.equal(sampleSliderAt(idx, 'x', 200, 5, 0.2), 0.7, 'a later pass still reads it — single-pass repeats')
 })
 
 test('sampleSliderAt returns the fallback when a slider has no recording', () => {
   const idx = buildSliderIndex([])
-  assert.equal(sampleSliderAt(idx, 'x', 100, 0.42), 0.42)
+  assert.equal(sampleSliderAt(idx, 'x', 100, 3, 0.42), 0.42)
+})
+
+// ── Multi-loop: a slider's automation can differ per pass ─────────────────────
+
+test('sampleSliderAt samples per pass, cumulative over earlier passes (like hydra)', () => {
+  // Pass 0: x = 0.2 at frame 30. Pass 1: x = 0.9 at frame 30.
+  const rows: Row[] = [
+    { type: 'slider', id: 'x', value: 0.2, beat: b(30), loop: 0 },
+    { type: 'slider', id: 'x', value: 0.9, beat: b(30), loop: 1 },
+  ]
+  const idx = buildSliderIndex(rows)
+  assert.equal(idx.get('x')!.loops, 2, 'spans two passes')
+  // Pass 0 at/after frame 30 → 0.2.
+  assert.equal(sampleSliderAt(idx, 'x', 30, 0, 0), 0.2)
+  // Pass 1 before frame 30 → holds pass 0's value (cumulative).
+  assert.equal(sampleSliderAt(idx, 'x', 0, 1, 0), 0.2, 'pass 1 before its move holds pass 0')
+  // Pass 1 at/after frame 30 → 0.9.
+  assert.equal(sampleSliderAt(idx, 'x', 30, 1, 0), 0.9)
+  // The sequence cycles: pass 2 wraps back to pass 0.
+  assert.equal(sampleSliderAt(idx, 'x', 30, 2, 0), 0.2, 'pass 2 wraps to pass 0')
 })
 
 // ── The fold: event log → current table ──────────────────────────────────────
 
-test('currentSliderRows folds per id, dedupes one row per frame', () => {
+test('currentSliderRows keeps one row per (loop, frame)', () => {
   const events: StampedEvent[] = [
     { seq: 0, t: 0, kind: 'slider', id: 'x', value: 0.1, beat: 2, loop: 0 },
-    { seq: 1, t: 0, kind: 'slider', id: 'x', value: 0.9, beat: 2, loop: 0 }, // same frame → replaces
-    { seq: 2, t: 0, kind: 'slider', id: 'y', value: 0.5, beat: 3, loop: 0 },
+    { seq: 1, t: 0, kind: 'slider', id: 'x', value: 0.9, beat: 2, loop: 0 }, // same (loop,frame) → replaces
+    { seq: 2, t: 0, kind: 'slider', id: 'x', value: 0.5, beat: 2, loop: 1 }, // same frame, diff pass → kept
   ]
   const rows = currentSliderRows(events)
   const x = rows.filter((r) => r.id === 'x')
-  assert.equal(x.length, 1, 'burst at one frame collapses')
-  assert.equal(x[0].value, 0.9, 'last write wins')
-  assert.equal(rows.filter((r) => r.id === 'y').length, 1)
+  assert.equal(x.length, 2, 'one row per (loop, frame)')
+  assert.equal(x.find((r) => r.loop === 0)!.value, 0.9, 'last write wins within a pass')
+  assert.equal(x.find((r) => r.loop === 1)!.value, 0.5)
 })
 
 test('a fresh take (clearId then record) replaces the old one; untouched sliders carry forward', () => {
   let src = 1
-  const input = createSliderInput({ store: fakeStore(), getIndex: () => src })
+  const input = createSliderInput({ store: fakeStore(), getIndex: () => src, getPass: () => 0 })
 
   src = 2; input.set('a', 0.1)
   src = 3; input.set('b', 0.2)
-  // Grab a again: clear its take, then record anew from a new position.
   input.clearId('a')
   src = 1.5; input.set('a', 0.7)
 
@@ -118,38 +136,33 @@ test('a fresh take (clearId then record) replaces the old one; untouched sliders
   assert.equal(bb.length, 1, 'b was never grabbed — it carries forward')
 })
 
-test('without a clear, moves accumulate into one take (deduped per frame)', () => {
-  let src = 2
-  const input = createSliderInput({ store: fakeStore(), getIndex: () => src })
-  input.set('a', 0.1)
-  src = 3; input.set('a', 0.5)
-  const rows = input.rows().filter((r) => r.id === 'a')
-  assert.equal(rows.length, 2, 'distinct frames both kept — no loop-based replacement')
-})
+// ── Live input: records the pass, samples at the current pass ─────────────────
 
-// ── Live input: grab clears the take and records anew ────────────────────────
-
-test('createSliderInput stamps moves at the source position and samples them', () => {
-  let src = 1
-  const input = createSliderInput({ store: fakeStore(), getIndex: () => src })
+test('createSliderInput stamps moves with the current pass and samples per pass', () => {
+  let src = 1, pass = 0
+  const input = createSliderInput({ store: fakeStore(), getIndex: () => src, getPass: () => pass })
   input.setDefs([{ id: 'x', min: 0, max: 1, default: 0.2, step: 0.01 }])
 
   assert.equal(input.ctxAt(60).slider!('x'), 0.2, 'the default before any move')
 
-  src = b(60); input.set('x', 0.8)
-  src = b(120); input.set('x', 0.2)
+  // Record in pass 0, then (holding across a loop) in pass 1.
+  src = b(60); pass = 0; input.set('x', 0.8)
+  src = b(60); pass = 1; input.set('x', 0.3)
 
-  assert.equal(input.rows().length, 2)
-  assert.equal(input.ctxAt(60).slider!('x'), 0.8, 'first move')
-  assert.equal(input.ctxAt(119).slider!('x'), 0.8, 'held')
-  assert.equal(input.ctxAt(120).slider!('x'), 0.2, 'second move')
-  assert.equal(input.ctxAt(0).slider!('x'), 0.2, 'before the first move: wraps to the last value')
-  assert.deepEqual(input.valuesAt(60), { x: 0.8 }, 'valuesAt maps every defined id')
+  const stored = input.rows().filter((r) => r.id === 'x')
+  assert.equal(stored.length, 2, 'one row per pass')
+  assert.deepEqual(stored.map((r) => r.loop).sort(), [0, 1])
+
+  // Sampling follows the current pass.
+  pass = 0; assert.equal(input.ctxAt(60).slider!('x'), 0.8, 'pass 0 take')
+  pass = 1; assert.equal(input.ctxAt(60).slider!('x'), 0.3, 'pass 1 take')
+  pass = 2; assert.equal(input.ctxAt(60).slider!('x'), 0.8, 'wraps back to pass 0')
+  pass = 0; assert.deepEqual(input.valuesAt(60), { x: 0.8 }, 'valuesAt maps every defined id at the current pass')
 })
 
 test('grabbing a slider clears its take so it records anew (clearId)', () => {
   let src = 1
-  const input = createSliderInput({ store: fakeStore(), getIndex: () => src })
+  const input = createSliderInput({ store: fakeStore(), getIndex: () => src, getPass: () => 0 })
   input.setDefs([{ id: 'x', min: 0, max: 1, default: 0, step: 0.01 }])
 
   src = b(60); input.set('x', 0.9)
@@ -170,7 +183,7 @@ test('grabbing a slider clears its take so it records anew (clearId)', () => {
 
 test('clearId only affects the named slider; sliders() covers all defined ids', () => {
   let src = b(60)
-  const input = createSliderInput({ store: fakeStore(), getIndex: () => src })
+  const input = createSliderInput({ store: fakeStore(), getIndex: () => src, getPass: () => 0 })
   input.setDefs([
     { id: 'a', min: 0, max: 1, default: 0.1, step: 0.01 },
     { id: 'b', min: 0, max: 1, default: 0.2, step: 0.01 },
@@ -185,7 +198,7 @@ test('clearId only affects the named slider; sliders() covers all defined ids', 
 })
 
 test('clear() empties the whole fold', () => {
-  const input = createSliderInput({ store: fakeStore(), getIndex: () => 1 })
+  const input = createSliderInput({ store: fakeStore(), getIndex: () => 1, getPass: () => 0 })
   input.set('x', 0.5)
   assert.equal(input.rows().length, 1)
   input.clear()
@@ -196,10 +209,10 @@ test('clear() empties the whole fold', () => {
 // list get the same table (the fold is pure and order-deterministic).
 test('the fold is deterministic over a shared event list (multiplayer/session replay)', () => {
   const events: StampedEvent[] = [
-    { seq: 0, t: 0, kind: 'slider', id: 'x', value: 0.3, beat: b(30) },
-    { seq: 1, t: 0, kind: 'slider', id: 'x', value: 0.7, beat: b(90) },
+    { seq: 0, t: 0, kind: 'slider', id: 'x', value: 0.3, beat: b(30), loop: 0 },
+    { seq: 1, t: 0, kind: 'slider', id: 'x', value: 0.7, beat: b(90), loop: 0 },
     { seq: 2, t: 0, kind: 'clear', id: 'x' },
-    { seq: 3, t: 0, kind: 'slider', id: 'x', value: 0.5, beat: b(60) },
+    { seq: 3, t: 0, kind: 'slider', id: 'x', value: 0.5, beat: b(60), loop: 0 },
   ]
   const a = currentSliderRows(events)
   const b2 = currentSliderRows(events.map((e) => ({ ...e })))

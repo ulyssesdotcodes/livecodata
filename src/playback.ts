@@ -153,6 +153,11 @@ export interface PlaybackAPI {
   // a caller that needs the loop actually running, e.g. the reset button's
   // measure-by-measure rewind. No-op if already playing.
   play(): void
+  // How many wall-aligned loop passes have completed since the absolute instant
+  // `epochMs` — the shared pass count the multi-loop model runs on (see
+  // wallAlignedLoop). Exposed so streaming inputs that place events in passes
+  // (sliders) count passes exactly as the visualizers do, agreeing across peers.
+  passesSince(epochMs: number): number
 }
 
 export interface PlaybackEngine extends PlaybackAPI {
@@ -501,6 +506,7 @@ export function createPlaybackEngine(
     retempo,
     currentSourceBeats,
     play,
+    passesSince,
     toggle,
     setLoop,
     setLoopBeats,
