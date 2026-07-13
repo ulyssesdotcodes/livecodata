@@ -20,6 +20,10 @@ export interface CookInput {
   dataCache: Map<string, string>
   tapRows: Row[]
   editables: Array<{ name: string; rows: Row[] }>
+  // Seed rows for tables the store hasn't seen yet, keyed by table name — see
+  // CookRequest.seeds. Set when opening an example whose editable table data
+  // lives with the sample rather than inline in the program.
+  seeds?: Record<string, Row[]>
 }
 
 export interface CookOutcome {
@@ -53,6 +57,7 @@ export function createCookClient(worker: WorkerLike): CookClient {
         dataCache: [...input.dataCache],
         tapRows: input.tapRows,
         editables: input.editables,
+        ...(input.seeds !== undefined ? { seeds: input.seeds } : {}),
       }
       return new Promise((resolve, reject) => {
         pending.set(req.id, { resolve, reject })
