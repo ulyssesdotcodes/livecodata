@@ -64,7 +64,7 @@ test('lastEditors matches only the exact table/row/col of a peer last edit', () 
 
 // --- tab strip ---------------------------------------------------------------
 
-test('allNames keeps an editable table right before its ·events history tab', () => {
+test('allNames folds an editable table\'s ·events history into its own tab, not a separate one', () => {
   const store = createEditableTableStore()
   store.createTable('notes')
   const views = new Map<string, Table>([
@@ -72,7 +72,7 @@ test('allNames keeps an editable table right before its ·events history tab', (
     [`notes${EVENTS_SUFFIX}`, table([])],
     ['scene', table([])],
   ])
-  assert.deepEqual(allNames(views, store), ['events', 'notes', `notes${EVENTS_SUFFIX}`, 'scene'])
+  assert.deepEqual(allNames(views, store), ['events', 'notes', 'scene'])
 })
 
 test('allNames appends editable tables that have no cooked view', () => {

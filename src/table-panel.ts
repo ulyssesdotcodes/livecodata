@@ -9,17 +9,18 @@
 // event-sourced EditableTableStore — created with the "+ table" button, or
 // declared in the DSL via editable(name, schema)). Editable tables render with
 // inline controls (add/rename/retype column, add/remove row, click-to-edit
-// cells). Every edit appends a change event to
-// the store's log; the interactive tab shows the fold (current state) while a
-// read-only `name·events` tab (injected by main as a plain view) shows the
-// history. Cells of type "code" don't edit inline — clicking one hands the
-// text to the main code editor via onEditCell.
+// cells). Every edit appends a change event to the store's log; an editable
+// table gets a single top-level tab, with two sub-tabs underneath it (see
+// ui/table-panel.tsx) switching between the fold (current state, shown by
+// default) and a read-only view of `name·events` (injected by main as a plain
+// view) for the history. Cells of type "code" don't edit inline — clicking one
+// hands the text to the main code editor via onEditCell.
 //
 // A third kind, log tables (EditableTableStore.isLog — e.g. "activity"'s
 // Apply/peer-join/peer-leave stream), are in the store but never row-editable:
 // they have no fold state worth showing, so main injects their own events
-// directly under their bare name (no separate "·events" tab) and they render
-// through the plain read-only path.
+// directly under their bare name (no separate "·events" tab, and no sub-tabs)
+// and they render through the plain read-only path.
 
 import { chartDataFor, numericColumns, resolveSpec, type GraphSpec, type ChartData } from './graph-panel.js'
 import type { Table } from './dsl.js'
@@ -113,15 +114,19 @@ export function formatEditableCell(type: ColumnType, value: unknown): string {
   return String(value)
 }
 
-// The tab strip's names: every cooked view plus every editable table, with an
-// editable table's interactive tab kept right before its `name·events` history
+// The tab strip's names: every cooked view plus every editable table. An
+// editable table's `name·events` history is folded into its own tab as a
+// sub-tab (see ui/table-panel.tsx) rather than getting a separate top-level
 // tab.
 export function allNames(views: Map<string, Table>, editableStore: EditableTableStore): string[] {
   const names: string[] = []
   for (const n of views.keys()) {
     if (n.endsWith(EVENTS_SUFFIX)) {
       const base = n.slice(0, -EVENTS_SUFFIX.length)
-      if (editableStore.has(base) && !names.includes(base)) names.push(base)
+      if (editableStore.has(base)) {
+        if (!names.includes(base)) names.push(base)
+        continue
+      }
     }
     if (!names.includes(n)) names.push(n)
   }
