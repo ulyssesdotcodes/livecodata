@@ -416,6 +416,14 @@ interface EvaluateOptions {
   // else's pulse, so echoing our own would round-trip forever between
   // replicas.
   broadcast?: boolean
+  // Drop the cooked result (write nothing, render nothing) if the store's
+  // program changed while the cook was in flight. The cook awaits a worker
+  // (whose first run also boots jolt's WASM), so a fresh client joining a room
+  // can have the room's snapshot merge in mid-cook — and firstRun's
+  // speculative cook of the default program must NOT then write that default
+  // over the room's program (its post-merge event would win the fold on every
+  // replica). The merge's own apply reaction renders the room program instead.
+  obsoleteIfProgramChanged?: boolean
 }
 
 // True while a cook — or a store operation we're about to react to ourselves
@@ -441,7 +449,7 @@ function quietly<T>(fn: () => T): T {
 // Apply a program: cook it against the current (head) table state, record a run,
 // render, and (unless told otherwise) persist. This is the *only* thing that
 // applies pending table edits — inline edits just accumulate until an apply.
-async function evaluate(code: string, { setError, persist = true, seed = randomSeed(), broadcast = true }: EvaluateOptions = {}): Promise<void> {
+async function evaluate(code: string, { setError, persist = true, seed = randomSeed(), broadcast = true, obsoleteIfProgramChanged = false }: EvaluateOptions = {}): Promise<void> {
   const pending = extractDataUrls(code).filter((u) => !dataCache.has(u))
   if (pending.length) {
     await Promise.all(pending.map(async (url) => {
@@ -469,6 +477,10 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
     } catch (err) {
       setError?.((err as Error).message)
       return
+    }
+    if (obsoleteIfProgramChanged) {
+      const current = editableStore.get('code')?.rows[0]?.code
+      if (typeof current === 'string' && current !== code) return
     }
     setError?.(null)
     liveCode = code
@@ -889,7 +901,10 @@ function firstRun(): void {
     // append a new run.
     scrubSession(sessionLength() - 1)
   } else {
-    evaluate(editor.getCode(), { setError: editor.setError, persist: false })
+    // Speculative: nothing here yet, show the default program. If a room
+    // snapshot merges in while this first cook boots the worker, yield to it
+    // (see obsoleteIfProgramChanged) instead of clobbering the room.
+    evaluate(editor.getCode(), { setError: editor.setError, persist: false, obsoleteIfProgramChanged: true })
   }
   sessionBar.setLog({ length: sessionLength() })
   refreshSelector()
