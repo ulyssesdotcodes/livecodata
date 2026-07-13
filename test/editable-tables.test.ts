@@ -1,6 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createEditableTableStore } from '../src/editable-tables.js'
+import {
+  createEditableTableStore, schemaColumns, cellValid, invalidColumns,
+  type EditableColumn,
+} from '../src/editable-tables.js'
 
 test('createTable seeds default beat and loop columns', () => {
   const store = createEditableTableStore()
@@ -380,6 +383,64 @@ test('code is a valid column type (defaults to empty string)', () => {
   assert.deepEqual(store.get('h')!.rows, [{ beat: 0, code: '' }])
   store.setCell('h', 0, 'code', 'src(s0).out()')
   assert.equal(store.get('h')!.rows[0].code, 'src(s0).out()')
+})
+
+test('schemaColumns: a string[] spec is enum shorthand; the object form is explicit', () => {
+  const cols = schemaColumns({
+    beat: 'number',
+    event: ['setCode', 'layer'],
+    mode: { type: 'enum', options: ['blend', 'add'] },
+    plain: { type: 'string' },
+  })
+  assert.deepEqual(cols, [
+    { name: 'beat', type: 'number' },
+    { name: 'event', type: 'enum', options: ['setCode', 'layer'] },
+    { name: 'mode', type: 'enum', options: ['blend', 'add'] },
+    { name: 'plain', type: 'string' },
+  ])
+})
+
+test('an enum column defaults a new row to its first option, and rides serialize/load', () => {
+  const store = createEditableTableStore()
+  store.ensure('h', { beat: 'number', event: ['setCode', 'layer'] })
+  store.addRow('h')
+  assert.deepEqual(store.get('h')!.rows, [{ beat: 0, event: 'setCode' }])
+  // options survive the round-trip (they're plain fields on the column events)
+  const store2 = createEditableTableStore()
+  assert.ok(store2.load(store.serialize()))
+  const evCol = store2.get('h')!.columns.find((c) => c.name === 'event')!
+  assert.deepEqual(evCol, { name: 'event', type: 'enum', options: ['setCode', 'layer'] })
+})
+
+test('cellValid: blanks pass; a non-blank value must fit its type; enum must be in options', () => {
+  const num: EditableColumn = { name: 'v', type: 'number' }
+  const en: EditableColumn = { name: 'e', type: 'enum', options: ['a', 'b'] }
+  // blank/unset is always allowed (these event tables are sparse)
+  assert.equal(cellValid('', num), true)
+  assert.equal(cellValid(null, en), true)
+  // numbers
+  assert.equal(cellValid(3, num), true)
+  assert.equal(cellValid('3', num), false)
+  assert.equal(cellValid(NaN, num), false)
+  // enums
+  assert.equal(cellValid('a', en), true)
+  assert.equal(cellValid('c', en), false)
+  // string/code accept any non-blank
+  assert.equal(cellValid('anything', { name: 's', type: 'string' }), true)
+})
+
+test('invalidColumns names the cells that do not fit — empty when the row conforms', () => {
+  const cols = schemaColumns({
+    beat: 'number',
+    event: ['setCode', 'layer'],
+    value: 'number',
+  })
+  assert.deepEqual(invalidColumns({ beat: 1, event: 'layer', value: 5 }, cols), [])
+  // a misspelled enum and text-in-a-number cell are both flagged
+  assert.deepEqual(
+    invalidColumns({ beat: 1, event: 'laayer', value: 'oops' }, cols),
+    ['event', 'value'],
+  )
 })
 
 test('recordRun snapshots every table\'s log index as one Apply bookmark', () => {

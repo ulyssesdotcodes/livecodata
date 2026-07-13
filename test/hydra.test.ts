@@ -147,16 +147,52 @@ test('hydraFrameAt without a loop argument behaves as pass 0 (single-loop unchan
 
 test('isHydraRow / hydraRows recognise the meta-programming events', () => {
   const rows: Row[] = [
+    { beat: 1, event: 'setSource', code: 'osc(20)' },
     { beat: 1, event: 'replace', find: 'a', value: 'b' },
     { beat: 1, event: 'append', code: '.rotate(0.1)' },
-    { beat: 1, event: 'layer', code: 'noise(3).out(o0)', value: 0.5 },
+    { beat: 1, event: 'layer', code: 'noise(3).out(o0)', mode: 'add' },
     { beat: 1, event: 'nonsense' },
   ]
   assert.equal(isHydraRow(rows[0]), true)
   assert.equal(isHydraRow(rows[1]), true)
   assert.equal(isHydraRow(rows[2]), true)
-  assert.equal(isHydraRow(rows[3]), false)
-  assert.equal(hydraRows(rows).length, 3)
+  assert.equal(isHydraRow(rows[3]), true)
+  assert.equal(isHydraRow(rows[4]), false)
+  assert.equal(hydraRows(rows).length, 4)
+})
+
+test('setSource swaps the head generator, keeping the effects after it', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'src(s0).kaleid(5).out(o0)' },
+    { beat: b(2), event: 'setSource', code: 'osc(20, 0.1)' },
+  ])
+  assert.equal(hydraFrameAt(idx, 0)!.code, 'src(s0).kaleid(5).out(o0)')
+  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(20, 0.1).kaleid(5).out(o0)')
+})
+
+test('setSource keeps the head args balanced across nested parens and arrows', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'osc((props) => props.freq, 0.1).modulate(noise(2)).out(o0)' },
+    { beat: b(2), event: 'setSource', code: 'src(s0)' },
+  ])
+  assert.equal(hydraFrameAt(idx, 2)!.code, 'src(s0).modulate(noise(2)).out(o0)')
+})
+
+test('setSource brings the new source’s own leading effects, strips its .out()', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'osc(10).kaleid(4).out(o0)' },
+    { beat: b(2), event: 'setSource', code: 'noise(3).colorama(0.5).out(o0)' },
+  ])
+  assert.equal(hydraFrameAt(idx, 2)!.code, 'noise(3).colorama(0.5).kaleid(4).out(o0)')
+})
+
+test('setSource before any setCode is a no-op', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setSource', code: 'osc(10)' },
+    { beat: b(2), event: 'setCode', code: 'src(s0).out(o0)' },
+  ])
+  assert.equal(hydraFrameAt(idx, 0), null)
+  assert.equal(hydraFrameAt(idx, 2)!.code, 'src(s0).out(o0)')
 })
 
 test('replace swaps every occurrence of the literal string in the current code', () => {
@@ -209,7 +245,7 @@ test('append tolerates a missing .out() and trims/ignores blank fragments', () =
   assert.equal(hydraFrameAt(idx, 3)!.code, 'osc(10).rotate(0.1).out(o0)', 'blank fragment is a no-op')
 })
 
-test('layer blends another sketch over the current one with a constant lerp', () => {
+test('layer defaults to blend mode; a value supplies the crossfade amount', () => {
   const idx = buildHydraIndex([
     { beat: 1, event: 'setCode', code: 'src(s0).out(o0)' },
     { beat: b(2), event: 'layer', code: 'noise(3).colorama(0.5).out(o0)', value: 0.3 },
@@ -220,29 +256,48 @@ test('layer blends another sketch over the current one with a constant lerp', ()
   )
 })
 
+test('layer picks the compositing operator from `mode`', () => {
+  const at = (mode: string, value?: unknown) => {
+    const row: Row = { beat: b(2), event: 'layer', code: 'noise(3).out(o0)', mode }
+    if (value !== undefined) row.value = value
+    return hydraFrameAt(buildHydraIndex([
+      { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
+      row,
+    ]), 2)!.code
+  }
+  // amount-taking modes carry the value; amount-free modes ignore it
+  assert.equal(at('add', 1), 'osc(10).add(noise(3), 1).out(o0)')
+  assert.equal(at('mult', 0.5), 'osc(10).mult(noise(3), 0.5).out(o0)')
+  assert.equal(at('diff', 0.9), 'osc(10).diff(noise(3)).out(o0)')
+  assert.equal(at('layer'), 'osc(10).layer(noise(3)).out(o0)')
+  assert.equal(at('mask'), 'osc(10).mask(noise(3)).out(o0)')
+  // an unknown mode falls back to blend
+  assert.equal(at('bogus', 0.4), 'osc(10).blend(noise(3), 0.4).out(o0)')
+})
+
 test('layer amount can be a live expression evaluated with props each frame', () => {
   const idx = buildHydraIndex([
     { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
-    { beat: b(2), event: 'layer', code: 'noise(3).out(o0)', value: 'props.mix' },
+    { beat: b(2), event: 'layer', code: 'noise(3).out(o0)', mode: 'add', value: 'props.mix' },
     { beat: b(3), event: 'layer', code: 'voronoi().out(o0)', value: '({time}) => Math.sin(time)' },
   ])
   assert.equal(
     hydraFrameAt(idx, 2)!.code,
-    'osc(10).blend(noise(3), (props) => (props.mix)).out(o0)',
+    'osc(10).add(noise(3), (props) => (props.mix)).out(o0)',
   )
   // An amount that's already a function is used verbatim, not double-wrapped.
   assert.equal(
     hydraFrameAt(idx, 3)!.code,
-    'osc(10).blend(noise(3), (props) => (props.mix)).blend(voronoi(), (({time}) => Math.sin(time))).out(o0)',
+    'osc(10).add(noise(3), (props) => (props.mix)).blend(voronoi(), (({time}) => Math.sin(time))).out(o0)',
   )
 })
 
-test('layer defaults to an even 0.5 mix when no amount is given', () => {
+test('layer with no amount omits it, leaning on the operator’s hydra default', () => {
   const idx = buildHydraIndex([
     { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
     { beat: b(2), event: 'layer', code: 'noise(3).out(o0)' },
   ])
-  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).blend(noise(3), 0.5).out(o0)')
+  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).blend(noise(3)).out(o0)')
 })
 
 test('meta events compose in beat order and fold across loop passes', () => {

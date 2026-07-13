@@ -19,7 +19,7 @@
 
 import { createRuntime } from './runtime.js'
 import { cookProgram } from './replay.js'
-import { conformRow, schemaColumns, type ColumnType } from './editable-tables.js'
+import { conformRow, schemaColumns, type Schema } from './editable-tables.js'
 import { packCooked, type PackedCook } from './cook-transfer.js'
 import type { PhysicsEngine } from './dsl.js'
 import type { Row } from './lineage.js'
@@ -45,7 +45,7 @@ export interface CookRequest {
 // these through the store's real ensure().
 export interface DeclaredEditable {
   name: string
-  schema: Record<string, ColumnType>
+  schema: Schema
   seedRows?: Row[]
 }
 

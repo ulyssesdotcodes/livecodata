@@ -468,46 +468,58 @@ define("hydra", (rand, table) =>
     name: "Hydra Meta",
     code: `// livecodata — a hydra sketch that rewrites ITSELF as the loop plays
 // See "Hydra Sketch" first for setCode/setVariable. On top of those, a hydra
-// table has three META-PROGRAMMING events — each transforms the code built up
-// so far instead of replacing it, so the whole program edits itself on the
-// beat. Press "Run" (or Cmd/Ctrl-Enter), then Play, and watch the sketch grow.
+// table has META-PROGRAMMING events — each transforms the code built up so far
+// instead of replacing it, so the whole program edits itself on the beat. Press
+// "Run" (or Cmd/Ctrl-Enter), then Play, and watch the sketch grow.
 //
-//   - replace : swap every occurrence of a literal string (\`find\`) for
-//               \`value\` in the current sketch — no regex, just a substring
-//               swap. Here it retunes the oscillator's frequency mid-loop.
-//   - append  : tack a \`.method(...)\` fragment (\`code\`, starting with a dot)
-//               onto the end of the chain, before its .out(). Here it grows a
-//               kaleidoscope, then a rotation, one link per measure.
-//   - layer   : blend another whole sketch (\`code\`) over the current one by a
-//               lerp \`value\` — a constant, or a live expression in \`props\`
-//               (e.g. "props.mix", or hydra's own "props.time"). Here a noise
-//               field fades in over the last quarter of the loop.
+//   - replace   : swap every occurrence of a literal string (\`find\`) for
+//                 \`value\` in the current sketch — no regex, just a substring
+//                 swap. Here it retunes the oscillator's frequency mid-loop.
+//   - append    : tack a \`.method(...)\` fragment (\`code\`, starting with a dot)
+//                 onto the end of the chain, before its .out(). Here it grows a
+//                 five-fold kaleidoscope.
+//   - setSource : swap the HEAD of the chain — the leading generator — for
+//                 \`code\`, keeping the effects after it. Here osc → noise, and
+//                 the kaleidoscope from the append carries straight over.
+//   - layer     : composite another whole sketch (\`code\`) over the current one
+//                 with the hydra blend operator named by \`mode\` — blend / add /
+//                 mult (which also take an amount \`value\`) or diff / layer /
+//                 mask. Here voronoi is added in over the tail of the loop.
 //
 // The events fold in beat order onto one running sketch: sampling at any beat
-// replays every earlier transform, so the code you see on screen is always the
-// sum of the rows up to that point. Everything below is seeded into the "hydra"
-// tab on the right — edit a \`find\`/\`value\`/\`code\` cell, drag a beat, or "+ row"
-// another transform, all without touching this code. This declares the schema.
+// replays every earlier transform, so the code you see is always the sum of the
+// rows up to that point. Everything below is seeded into the "hydra" tab on the
+// right — edit a cell, drag a beat, or "+ row" another transform, no code change
+// needed. This just declares the schema.
+//
+// Two columns are ENUMS (declared as a string[] of choices): \`event\` and
+// \`mode\` render as dropdowns, so picking a valid one during a set is a click,
+// not a typed guess. And because every column is typed, a cell that doesn't fit
+// — a misspelled event, text where a number belongs — is flagged red (its row
+// too), a quick "this row is wrong" you catch before hitting Run.
 editable("hydra", {
-  beat: "number", event: "string", code: "code",
-  name: "string", value: "string", find: "string",
+  beat: "number",
+  event: ["setCode", "setSource", "append", "replace", "layer", "setVariable"],
+  code: "code",
+  find: "string",
+  name: "string",
+  value: "number",
+  mode: ["blend", "add", "mult", "diff", "layer", "mask"],
 })
 `,
     tables: {
       hydra: [
         // A plain oscillator to start — the sketch every transform below edits.
         { beat: 1, event: "setCode", code: "osc(20, 0.1, 1.2).out(o0)" },
-        // beat 5: retune it in place — swap the frequency literal 20 → 60.
-        { beat: 5, event: "replace", find: "20", value: "60" },
-        // beat 9: grow the chain — a five-fold kaleidoscope, before .out().
-        { beat: 9, event: "append", code: ".kaleid(5)" },
-        // beat 13: keep growing — a slow rotation on top of the kaleidoscope.
-        { beat: 13, event: "append", code: ".rotate((props) => props.time * 0.1)" },
-        // beat 13: fade a noise field in over the tail of the loop. The lerp is
-        // a live expression on props.mix, ramped by the two setVariable rows.
-        { beat: 13, event: "layer", code: "noise(4, 0.2).colorama(0.4).out(o0)", value: "props.mix" },
-        { beat: 13, event: "setVariable", name: "mix", value: 0 },
-        { beat: 16, event: "setVariable", name: "mix", value: 0.6 },
+        // beat 5: retune it in place — swap the frequency literal 20 → 45.
+        { beat: 5, event: "replace", find: "20", value: 45 },
+        // beat 7: grow the chain — a five-fold kaleidoscope, before .out().
+        { beat: 7, event: "append", code: ".kaleid(5)" },
+        // beat 9: swap the source osc → noise; the kaleidoscope stays put.
+        { beat: 9, event: "setSource", code: "noise(2.5, 0.3)" },
+        // beat 13: add a voronoi field in over the current sketch (mode "add",
+        // amount 0.5) — a different compositor than a plain crossfade.
+        { beat: 13, event: "layer", code: "voronoi(10).out(o0)", mode: "add", value: 0.5 },
       ],
     },
   },

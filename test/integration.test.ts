@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createRuntime } from '../src/runtime.js'
 import { getLineage } from '../src/lineage.js'
 import { foldTablePositions, type FoldTableProgram } from '../src/fold-engine.js'
-import { conformRow, schemaColumns, type ColumnType } from '../src/editable-tables.js'
+import { conformRow, schemaColumns, invalidColumns, type ColumnType } from '../src/editable-tables.js'
 import { SAMPLES } from '../src/samples.js'
 import { buildHydraIndex, hydraFrameAt } from '../src/hydra.js'
 import { frameToBeat } from '../src/constants.js'
@@ -99,31 +99,40 @@ test('Origami Crane sample: 17 exact fold steps, wings held half-raised', () => 
   assert.equal(last.fold, 16.5)
 })
 
-test('Hydra Meta sample: replace/append/layer rewrite the sketch across the loop', () => {
+test('Hydra Meta sample: replace/append/setSource/layer rewrite the sketch across the loop', () => {
   const sample = SAMPLES.find((s) => s.name === 'Hydra Meta')!
   const { views } = createRuntime({
-    editableRows: (name: string, schema: Record<string, ColumnType>, seed?: Record<string, unknown>[]) =>
+    editableRows: (name: string, schema, seed?: Record<string, unknown>[]) =>
       (seed ?? sample.tables?.[name] ?? []).map((r) => conformRow(r, schemaColumns(schema))),
   }).run(sample.code, { seed: 1 })
 
-  const index = buildHydraIndex(views.get('hydra')!.rows)
+  // The enum columns declared as string[] materialize as enum columns with
+  // their options, and every seed value fits its type (no invalid rows).
+  const hydra = views.get('hydra')!
+  const cols = schemaColumns({
+    beat: 'number',
+    event: ['setCode', 'setSource', 'append', 'replace', 'layer', 'setVariable'],
+    code: 'code', find: 'string', name: 'string', value: 'number',
+    mode: ['blend', 'add', 'mult', 'diff', 'layer', 'mask'],
+  })
+  assert.equal(cols.find((c) => c.name === 'event')!.type, 'enum')
+  assert.deepEqual(cols.find((c) => c.name === 'mode')!.options,
+    ['blend', 'add', 'mult', 'diff', 'layer', 'mask'])
+  for (const r of hydra.rows) assert.deepEqual(invalidColumns(r, cols), [], 'seed rows conform')
+
+  const index = buildHydraIndex(hydra.rows)
   const at = (beat: number) => hydraFrameAt(index, Math.round((beat - 1) * 30))!
 
   // beat 1: the bare oscillator.
   assert.equal(at(1).code, 'osc(20, 0.1, 1.2).out(o0)')
-  // beat 5: replace retuned 20 → 60 in place.
-  assert.equal(at(5).code, 'osc(60, 0.1, 1.2).out(o0)')
-  // beat 9: append grew the chain with a kaleidoscope.
-  assert.equal(at(9).code, 'osc(60, 0.1, 1.2).kaleid(5).out(o0)')
-  // beat 16: a second append (rotation), then a props-driven layer over noise.
-  assert.equal(
-    at(16).code,
-    'osc(60, 0.1, 1.2).kaleid(5).rotate((props) => props.time * 0.1)'
-      + '.blend(noise(4, 0.2).colorama(0.4), (props) => (props.mix)).out(o0)',
-  )
-  // the layer's mix is live table data, ramped by the two setVariable rows.
-  assert.equal(at(13).vars.mix, 0)
-  assert.equal(at(16).vars.mix, 0.6)
+  // beat 5: replace retuned 20 → 45 in place.
+  assert.equal(at(5).code, 'osc(45, 0.1, 1.2).out(o0)')
+  // beat 7: append grew the chain with a kaleidoscope.
+  assert.equal(at(7).code, 'osc(45, 0.1, 1.2).kaleid(5).out(o0)')
+  // beat 9: setSource swapped osc → noise, the kaleidoscope carried over.
+  assert.equal(at(9).code, 'noise(2.5, 0.3).kaleid(5).out(o0)')
+  // beat 13: an additive layer of voronoi over the current sketch.
+  assert.equal(at(13).code, 'noise(2.5, 0.3).kaleid(5).add(voronoi(10), 0.5).out(o0)')
   // frameToBeat is the inverse used above — a light sanity tie to constants.
   assert.equal(Math.round(frameToBeat(0)), 1)
 })

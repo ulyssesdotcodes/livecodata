@@ -31,21 +31,29 @@
 //                      substring replace — no regex). Retarget a source, retune
 //                      a constant, or swap one generator for another without
 //                      restating the whole sketch.
+//   - "setSource"   : swaps the head of the chain — the leading generator, e.g.
+//                      src(s0) or osc(20) — for `code`, keeping every effect
+//                      after it. Repoint a sketch at a new source (or bring the
+//                      new source's own leading effects with it) without
+//                      restating the chain that follows.
 //   - "append"      : appends `code` — a chain fragment starting with a dot,
 //                      e.g. ".modulate(noise(3), 0.2)" — to the end of the
 //                      current chain, just before its `.out()`. Grows the
 //                      effect chain one link at a time.
-//   - "layer"       : blends `code` (another full sketch) over the current one
-//                      by a lerp amount `value`: the frame becomes
-//                      current.blend(row, value). `value` is a constant, or a
-//                      string expression evaluated fresh every frame with
-//                      `props` in scope (e.g. "props.mix" or
-//                      "Math.sin(props.time)"), so the mix can be driven live
-//                      from a setVariable, a slider, or hydra's own time.
+//   - "layer"       : composites `code` (another full sketch) over the current
+//                      one with a hydra blend operator named by `mode` — one of
+//                      blend / add / mult (which also take an amount) or diff /
+//                      layer / mask (which don't). `mode` defaults to blend (a
+//                      lerp crossfade). For the amount-taking modes, `value` is
+//                      an optional constant, or a string expression evaluated
+//                      fresh every frame with `props` in scope (e.g. "props.mix"
+//                      or "Math.sin(props.time)") so the amount can be driven
+//                      live from a setVariable, a slider, or hydra's own time.
 //
 // Sampling at a frame folds every event seen at/before it in order: setCode/
-// replace/append/layer evolve one running code string, and setVariable folds
-// into the most-recent value of each named variable. So both the sketch and the
+// setSource/append/replace/layer evolve one running code string, and setVariable
+// folds into the most-recent value of each named variable. So both the sketch
+// and the
 // values driving it are plain table data the user can inspect and wire up from
 // the rest of the dataflow (physics, beats, math, …). Because a new variable is
 // just rows carrying a new `name`, not a new table column, adding one doesn't
@@ -66,7 +74,7 @@ export interface HydraFrame {
 
 // The event kinds a hydra table understands: the two sketch/value events plus
 // the meta-programming transforms that rewrite the accumulated code.
-const HYDRA_EVENTS = new Set(['setCode', 'setVariable', 'replace', 'append', 'layer'])
+const HYDRA_EVENTS = new Set(['setCode', 'setVariable', 'setSource', 'replace', 'append', 'layer'])
 
 // A hydra row is any of those events.
 export function isHydraRow(row: Row | null | undefined): boolean {
@@ -108,11 +116,44 @@ function chainOf(code: string): string {
   return code.replace(OUT_TAIL, '')
 }
 
-// Render a lerp amount for a `layer` blend. A finite number (or a numeric
-// string) becomes a literal; any other non-empty string is an expression
-// evaluated per frame with `props` in scope — used verbatim if it's already a
-// function (contains `=>`), else wrapped into `(props) => (…)`. Empty/invalid
-// falls back to an even 0.5 mix.
+// Split a sketch into its head generator call and the rest of the chain. The
+// head is the leading `identifier(...)` (balanced parens — so args with nested
+// calls, decimals, or `(props) => …` arrows split cleanly); the rest is
+// everything after it (the `.method(...)…out()` tail, or empty). Best-effort,
+// for the single-chain sketches these tables hold: a head with no call, or
+// unbalanced parens, yields the whole string as the head and an empty rest.
+function splitHead(code: string): [string, string] {
+  const s = code.trimStart()
+  let i = 0
+  while (i < s.length && /[\w$]/.test(s[i])) i++
+  if (s[i] !== '(') return [s, '']
+  for (let depth = 0; i < s.length; i++) {
+    if (s[i] === '(') depth++
+    else if (s[i] === ')' && --depth === 0) { i++; break }
+  }
+  return [s.slice(0, i), s.slice(i)]
+}
+
+// Hydra's compositing operators a `layer` event can pick via `mode`, mapped to
+// whether each takes an amount (blend/add/mult crossfade or scale; diff/layer/
+// mask don't). The keys double as the enum options offered in the table.
+const BLEND_OPS: Record<string, boolean> = {
+  blend: true, add: true, mult: true, diff: false, layer: false, mask: false,
+}
+export const HYDRA_BLEND_MODES: string[] = Object.keys(BLEND_OPS)
+
+// Whether a `value` cell carries a usable amount (vs. an unset/blank cell), so a
+// `layer` in an amount-taking mode only emits the extra argument when one's set,
+// otherwise leaning on the operator's own hydra default.
+function hasAmount(value: unknown): boolean {
+  return (typeof value === 'number' && Number.isFinite(value))
+    || (typeof value === 'string' && value.trim() !== '')
+}
+
+// Render a `layer` amount. A finite number (or numeric string) becomes a
+// literal; any other string is an expression evaluated per frame with `props`
+// in scope — used verbatim if it's already a function (contains `=>`), else
+// wrapped into `(props) => (…)`.
 function amountExpr(value: unknown): string {
   if (typeof value === 'number' && Number.isFinite(value)) return String(value)
   const s = typeof value === 'string' ? value.trim() : ''
@@ -124,8 +165,8 @@ function amountExpr(value: unknown): string {
 
 // The active sketch at frame `f` of loop pass `loop`: every event from earlier
 // passes in full, plus this pass's events at/before f, folded in order onto one
-// running code string. setCode replaces it; replace/append/layer transform it;
-// setVariable folds into the most-recent value of each named variable (later
+// running code string. setCode replaces it; setSource/append/replace/layer
+// transform it; setVariable folds into the most-recent value of each named variable (later
 // events override earlier ones, so a row can change just one variable while the
 // sketch stays put). Returns null until a setCode event is reached — playback
 // then falls back to showing the raw scene. The meta events are no-ops while
@@ -145,6 +186,12 @@ export function hydraFrameAt(index: Row[], f: number, loop = 0): HydraFrame | nu
       case 'setVariable':
         if (typeof row.name === 'string') vars[row.name] = row.value
         break
+      case 'setSource':
+        // Swap the head generator, keeping every effect (and .out()) after it.
+        if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
+          code = `${chainOf(row.code.trim())}${splitHead(code)[1]}`
+        }
+        break
       case 'replace':
         // Literal substring swap over the whole current sketch.
         if (code != null && typeof row.find === 'string' && row.find !== '') {
@@ -158,9 +205,13 @@ export function hydraFrameAt(index: Row[], f: number, loop = 0): HydraFrame | nu
         }
         break
       case 'layer':
-        // Blend another sketch over the current one by a (possibly live) lerp.
+        // Composite another sketch over the current one with the chosen blend
+        // operator (default blend), adding an amount only for the modes that
+        // take one and only when a `value` is set.
         if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
-          code = `${chainOf(code)}.blend(${chainOf(row.code.trim())}, ${amountExpr(row.value)}).out(o0)`
+          const mode = typeof row.mode === 'string' && row.mode in BLEND_OPS ? row.mode : 'blend'
+          const amt = BLEND_OPS[mode] && hasAmount(row.value) ? `, ${amountExpr(row.value)}` : ''
+          code = `${chainOf(code)}.${mode}(${chainOf(row.code.trim())}${amt}).out(o0)`
         }
         break
     }
