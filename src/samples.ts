@@ -40,6 +40,37 @@ define("scene", (rand, table) => table("events").rasterize(8))
 `,
   },
   {
+    name: "Text",
+    code: `// livecodata — text in the 3D scene
+// A \`shape: "text"\` object draws its \`text\` string onto a flat plane in the
+// three.js scene, so it moves, spins and scales like any other object (no font
+// asset needed — the browser's own fonts render it). Press "Run" (or
+// Cmd/Ctrl-Enter), then hit Play under the scene.
+
+// The text fields, alongside the usual px/py/pz + rx/ry/rz transform:
+//   text   the string to draw (\\n splits into stacked lines)
+//   size   the text HEIGHT per line, in world units (default 0.5)
+//   color  fill color (default white); font is optional (a CSS family name)
+//
+// \`text\` is just a normal column: it rides through rasterize untouched and
+// steps to the newest value, so a later "update" row can swap the string
+// mid-loop the way a color pulse does.
+define("events", () => rows([
+  { id: "title", type: "create", beat: 1, shape: "text", text: "livecodata",
+    color: 0x4a9eff, size: 0.7, px: 0, py: 0.4, pz: 0, rx: 0, ry: 0, rz: 0 },
+  // A second line that gently swings side to side while spinning about y.
+  { id: "sub", type: "create", beat: 1, shape: "text", text: "tables → visuals",
+    color: 0xffd43b, size: 0.35, px: 0, py: -0.5, pz: 0, rx: 0, ry: -0.6, rz: 0 },
+  { id: "sub", type: "update", beat: 9, ry: 0.6 },
+  { id: "sub", type: "update", beat: 17, ry: -0.6 },
+]))
+
+// Bake to a 16-beat loop; the subtitle's ry keyframes ease back and forth as
+// the loop repeats.
+define("scene", (rand, table) => table("events").rasterize(16))
+`,
+  },
+  {
     name: "Origami Crane",
     code: `// livecodata — Origami Crane: a table of fold steps, solved exactly
 // A square of paper folds itself into the traditional crane. Every row of

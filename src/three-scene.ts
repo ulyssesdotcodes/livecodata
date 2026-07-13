@@ -49,6 +49,117 @@ function makeGeometry(shape: string, dims: Record<string, unknown>): THREE.Buffe
 
 const PALETTE = [0x4a9eff, 0xff6b6b, 0x51cf66, 0xffd43b, 0xcc5de8, 0xff922b]
 
+// ── Text ────────────────────────────────────────────────────────────────────
+// A `shape: "text"` object renders its `text` string onto an offscreen canvas
+// and maps that onto a flat plane, so it needs no font asset (the browser's
+// own fonts draw it) and rides the same px/py/pz + rx/ry/rz transform as every
+// other object. `size` is the text's world-space HEIGHT (per line); the plane's
+// width follows the rendered aspect ratio. Newlines split into stacked lines.
+
+export interface TextParams { text: string; color: number; size: number; font: string }
+
+const TEXT_DEFAULTS = { color: 0xffffff, size: 0.5, font: 'sans-serif' }
+
+// The subset of a row that determines a text object's appearance, merged with
+// defaults — used to build the texture and, on later frames, to detect an
+// appearance change (new string, color, size, or font) that means the canvas
+// texture and plane geometry must be rebuilt rather than just repositioned.
+export function textParams(row: Record<string, unknown>): TextParams {
+  return {
+    text: row.text == null ? '' : String(row.text),
+    color: row.color != null ? (row.color as number) : TEXT_DEFAULTS.color,
+    size: typeof row.size === 'number' ? (row.size as number) : TEXT_DEFAULTS.size,
+    font: row.font != null ? String(row.font) : TEXT_DEFAULTS.font,
+  }
+}
+
+// Whether an update row's text appearance has drifted from what a text object
+// was last built with — a re-run (or keyframe) that changes the string, color,
+// size or font needs the canvas redrawn and the plane resized, not just moved.
+export function textChanged(prev: TextParams, row: Record<string, unknown>): boolean {
+  const p = textParams(row)
+  return p.text !== prev.text || p.color !== prev.color || p.size !== prev.size || p.font !== prev.font
+}
+
+function colorToCss(c: number): string {
+  return '#' + ((c >>> 0) & 0xffffff).toString(16).padStart(6, '0')
+}
+
+// Draw the (possibly multi-line) text onto `canvas`, sizing the bitmap to fit,
+// and return its width/height aspect ratio so the plane can match it.
+function drawTextCanvas(canvas: HTMLCanvasElement, params: TextParams): number {
+  const FONT_PX = 128
+  const PAD = FONT_PX * 0.25
+  const LINE_H = FONT_PX * 1.25
+  const ctx = canvas.getContext('2d')!
+  const fontStr = `bold ${FONT_PX}px ${params.font}`
+  const lines = params.text.length ? params.text.split('\n') : [' ']
+
+  ctx.font = fontStr
+  const textW = Math.max(1, ...lines.map((l) => ctx.measureText(l).width))
+  const w = Math.ceil(textW + PAD * 2)
+  const h = Math.ceil(LINE_H * lines.length + PAD * 2)
+  // Resizing the canvas clears it and resets the 2D context, so restyle after.
+  canvas.width = w
+  canvas.height = h
+  ctx.clearRect(0, 0, w, h)
+  ctx.font = fontStr
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = colorToCss(params.color)
+  lines.forEach((l, i) => ctx.fillText(l, w / 2, PAD + LINE_H * (i + 0.5)))
+  return w / h
+}
+
+interface TextObject {
+  mesh: THREE.Mesh
+  geometry: THREE.PlaneGeometry
+  material: THREE.MeshBasicMaterial
+  texture: THREE.CanvasTexture
+  canvas: HTMLCanvasElement
+  params: TextParams
+}
+
+function applyTextTransform(mesh: THREE.Mesh, row: Record<string, unknown>): void {
+  const { px, py, pz, rx, ry, rz } = row
+  mesh.position.set((px as number) ?? 0, (py as number) ?? 0, (pz as number) ?? 0)
+  mesh.rotation.set((rx as number) ?? 0, (ry as number) ?? 0, (rz as number) ?? 0)
+}
+
+function makeText(row: Record<string, unknown>): TextObject {
+  const params = textParams(row)
+  const canvas = document.createElement('canvas')
+  const aspect = drawTextCanvas(canvas, params)
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.anisotropy = 4
+  const geometry = new THREE.PlaneGeometry(params.size * aspect, params.size)
+  // The color lives in the texture, so the material stays untinted white; a
+  // double-sided transparent plane reads the same from either face.
+  const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
+  const mesh = new THREE.Mesh(geometry, material)
+  mesh.name = String(row.id)
+  applyTextTransform(mesh, row)
+  return { mesh, geometry, material, texture, canvas, params }
+}
+
+// Redraw the canvas and resize the plane to match — called when textChanged().
+function rebuildText(obj: TextObject, row: Record<string, unknown>): void {
+  const params = textParams(row)
+  const aspect = drawTextCanvas(obj.canvas, params)
+  obj.texture.needsUpdate = true
+  obj.geometry.dispose()
+  obj.geometry = new THREE.PlaneGeometry(params.size * aspect, params.size)
+  obj.mesh.geometry = obj.geometry
+  obj.params = params
+}
+
+function disposeText(obj: TextObject): void {
+  obj.geometry.dispose()
+  obj.material.dispose()
+  obj.texture.dispose()
+}
+
 // A live sheet of folding paper: the compiled fold-table program holds, for
 // every step, the face set, pre-swing coordinates, fold line, moving flags
 // and layer indices. One numeric field drives playback: `fold` = how many
@@ -210,6 +321,7 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
 
   const objects = new Map<unknown, THREE.Mesh>()
   const origamis = new Map<unknown, OrigamiObject>()
+  const texts = new Map<unknown, TextObject>()
   let colorIdx = 0
 
   function animate(): void {
@@ -225,11 +337,17 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
     camera,
     createObject(row: Record<string, unknown>): void {
       const { id, shape, px, py, pz, rx, ry, rz, color } = row
-      if (objects.has(id) || origamis.has(id)) return
+      if (objects.has(id) || origamis.has(id) || texts.has(id)) return
       if (shape === 'origami' && row.program) {
         const obj = makeOrigami(row)
         scene.add(obj.root)
         origamis.set(id, obj)
+        return
+      }
+      if (shape === 'text') {
+        const obj = makeText(row)
+        scene.add(obj.mesh)
+        texts.set(id, obj)
         return
       }
       const geo = makeGeometry(shape as string, row)
@@ -256,6 +374,12 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
         applyOrigamiRow(origami, row)
         return
       }
+      const text = texts.get(id)
+      if (text) {
+        applyTextTransform(text.mesh, row)
+        if (textChanged(text.params, row)) rebuildText(text, row)
+        return
+      }
       const mesh = objects.get(id)
       if (!mesh) return
       mesh.position.set(px as number, py as number, pz as number)
@@ -279,6 +403,13 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
         origamis.delete(id)
         return
       }
+      const text = texts.get(id)
+      if (text) {
+        scene.remove(text.mesh)
+        disposeText(text)
+        texts.delete(id)
+        return
+      }
       const mesh = objects.get(id)
       if (!mesh) return
       scene.remove(mesh)
@@ -299,6 +430,11 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
         disposeOrigami(origami)
       }
       origamis.clear()
+      for (const text of texts.values()) {
+        scene.remove(text.mesh)
+        disposeText(text)
+      }
+      texts.clear()
       colorIdx = 0
     },
   }

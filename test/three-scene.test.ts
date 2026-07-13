@@ -6,7 +6,7 @@
 // it acts on is computed here.)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { geometryDims, geometryChanged } from '../src/three-scene.js'
+import { geometryDims, geometryChanged, textParams, textChanged } from '../src/three-scene.js'
 
 test('geometryDims merges shape defaults with the row\'s own fields', () => {
   assert.deepEqual(geometryDims('box', {}), { hx: 0.25, hy: 0.25, hz: 0.25, r: undefined, h: undefined })
@@ -37,4 +37,21 @@ test('geometryChanged falls back to the previous shape when a row omits it', () 
   const dims = geometryDims('box', { hx: 0.04, hy: 0.35, hz: 0.22 })
   assert.equal(geometryChanged('box', dims, { hx: 0.04, hy: 0.35, hz: 0.22 }), false)
   assert.equal(geometryChanged('box', dims, { hx: 0.5, hy: 0.35, hz: 0.22 }), true)
+})
+
+test('textParams stringifies text and fills in appearance defaults', () => {
+  assert.deepEqual(textParams({ text: 'hi' }), { text: 'hi', color: 0xffffff, size: 0.5, font: 'sans-serif' })
+  // A missing string is empty (not "undefined"); size stays a number; color/font override.
+  assert.deepEqual(textParams({}), { text: '', color: 0xffffff, size: 0.5, font: 'sans-serif' })
+  assert.deepEqual(textParams({ text: 42, color: 0xff0000, size: 1.2, font: 'serif' }),
+    { text: '42', color: 0xff0000, size: 1.2, font: 'serif' })
+})
+
+test('textChanged is false for a plain reposition and true when appearance drifts', () => {
+  const prev = textParams({ text: 'hi', color: 0xffffff, size: 0.5 })
+  // Only px/py moved — same string, color, size: no texture rebuild needed.
+  assert.equal(textChanged(prev, { text: 'hi', color: 0xffffff, size: 0.5, px: 1, py: 2 }), false)
+  assert.equal(textChanged(prev, { text: 'bye', color: 0xffffff, size: 0.5 }), true)
+  assert.equal(textChanged(prev, { text: 'hi', color: 0xff0000, size: 0.5 }), true)
+  assert.equal(textChanged(prev, { text: 'hi', color: 0xffffff, size: 1.0 }), true)
 })
