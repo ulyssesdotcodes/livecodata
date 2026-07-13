@@ -233,6 +233,30 @@ test('grid lays out a centred cols×rows lattice', () => {
   assert.deepEqual(g.rows[3], { i: 3, col: 1, row: 1, px: 0.5, py: 0, pz: 0.5 })
 })
 
+test('camera builds a create row (defaulted pose) then update keyframes', () => {
+  const { camera } = createDSL(null)
+  const cam = camera([
+    { beat: 1, px: 0, py: 0.5, pz: 5, fov: 60 },
+    { beat: 9, px: 4, fov: 45 },
+  ])
+  // First keyframe: create, seeded with a full default pose (target at origin).
+  assert.deepEqual(cam.rows[0], {
+    id: 'camera', shape: 'camera', type: 'create', beat: 1,
+    px: 0, py: 0.5, pz: 5, tx: 0, ty: 0, tz: 0, fov: 60,
+  })
+  // Later keyframes are updates carrying only the fields they set (px/fov here).
+  assert.deepEqual(cam.rows[1], {
+    id: 'camera', shape: 'camera', type: 'update', beat: 9, px: 4, fov: 45,
+  })
+})
+
+test('camera defaults a missing beat to 1 and returns empty for no keyframes', () => {
+  const { camera } = createDSL(null)
+  assert.equal(camera([]).length, 0)
+  assert.equal(camera(null).length, 0)
+  assert.equal(camera([{ pz: 8 }]).rows[0].beat, 1)
+})
+
 test('rotate cycles values through a field, wrapping around', () => {
   const { rotate } = createDSL(null)
   const rows = [{ id: 0 }, { id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }]

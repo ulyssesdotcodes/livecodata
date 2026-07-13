@@ -71,6 +71,43 @@ define("scene", (rand, table) => table("events").rasterize(16))
 `,
   },
   {
+    name: "Camera Move",
+    code: `// livecodata — moving the camera from the DSL
+// The camera is just another scene object: \`camera([...])\` emits one keyframe
+// per row (id "camera", shape "camera") that rides events → rasterize like
+// anything else, so camera moves interpolate on the beat timeline for free.
+// Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
+
+// 1. A little scene to look at: a 3×3 lattice of cubes on the floor. grid()
+//    gives px/py/pz; each cell becomes a create row for a small box.
+define("cubes", () =>
+  grid(3, 3, { spacing: 0.8 }).map((c, i) => ({
+    id: "c" + i, type: "create", beat: 1, shape: "box",
+    color: 0x4a9eff, hx: 0.2, hy: 0.2, hz: 0.2,
+    px: c.px, py: c.py, pz: c.pz, rx: 0, ry: 0, rz: 0,
+  }))
+)
+
+// 2. camera([...]) — one row per keyframe. px/py/pz are the eye, tx/ty/tz the
+//    look-at target (here always the origin), fov the vertical field of view.
+//    Over the 16-beat loop the eye swings around the lattice and cranes up,
+//    while the fov eases from wide to tight (a subtle dolly-zoom), then returns
+//    to the start pose at beat 17 so the loop repeats seamlessly.
+define("cam", () => camera([
+  { beat: 1,  px: 0,    py: 0.5, pz: 5, tx: 0, ty: 0, tz: 0, fov: 60 },
+  { beat: 5,  px: 4,    py: 1.5, pz: 3, fov: 55 },
+  { beat: 9,  px: 0,    py: 3,   pz: -5, fov: 45 },
+  { beat: 13, px: -4,   py: 1.5, pz: 3, fov: 55 },
+  { beat: 17, px: 0,    py: 0.5, pz: 5, fov: 60 },
+]))
+
+// 3. Merge the camera keyframes with the cubes and bake the 16-beat cache.
+define("scene", (rand, table) =>
+  table("cam").concat(table("cubes")).rasterize(16)
+)
+`,
+  },
+  {
     name: "Origami Crane",
     code: `// livecodata — Origami Crane: a table of fold steps, solved exactly
 // A square of paper folds itself into the traditional crane. Every row of

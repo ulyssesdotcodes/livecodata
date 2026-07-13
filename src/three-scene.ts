@@ -11,8 +11,9 @@ export interface SceneAPI {
   updateObject(row: Record<string, unknown>): void
   destroyObject(id: unknown): void
   reset(): void
-  // The scene camera, exposed for tooling (screenshot harnesses, debug
-  // orbits). The app itself never moves it.
+  // The scene camera. Driven by the DSL when the scene has a `shape: "camera"`
+  // object (see cameraPose); otherwise it holds the default pose. Also exposed
+  // for tooling (screenshot harnesses, debug orbits).
   readonly camera: THREE.PerspectiveCamera
 }
 
@@ -157,6 +158,32 @@ function rebuildTextGeometry(obj: TextObject, row: Record<string, unknown>): voi
 function disposeText(obj: TextObject): void {
   obj.geometry.dispose()
   obj.material.dispose()
+}
+
+// ── Camera ──────────────────────────────────────────────────────────────────
+// A `shape: "camera"` object doesn't add a mesh — it drives the scene camera.
+// px/py/pz place the eye and tx/ty/tz the look-at target (default origin);
+// optional `fov` sets the vertical field of view in degrees (a lower fov reads
+// as a longer lens / dolly-zoom). Because it flows through events → rasterize
+// like any object, camera moves are just keyframes on the beat timeline and
+// interpolate for free. Default pose matches the app's initial camera: eye at
+// (0,0,5) looking at the origin, 60° fov.
+
+export interface CameraPose { px: number; py: number; pz: number; tx: number; ty: number; tz: number; fov: number | null }
+
+export const CAMERA_DEFAULT: CameraPose = { px: 0, py: 0, pz: 5, tx: 0, ty: 0, tz: 0, fov: 60 }
+
+const num = (v: unknown, d: number): number => (typeof v === 'number' ? v : d)
+
+// Resolve a camera row to a concrete pose, falling back to the default eye/
+// target so a partial row (e.g. only pz given) is still well-defined. `fov` is
+// null when the row doesn't set it, so the current fov is left untouched.
+export function cameraPose(row: Record<string, unknown>): CameraPose {
+  return {
+    px: num(row.px, CAMERA_DEFAULT.px), py: num(row.py, CAMERA_DEFAULT.py), pz: num(row.pz, CAMERA_DEFAULT.pz),
+    tx: num(row.tx, CAMERA_DEFAULT.tx), ty: num(row.ty, CAMERA_DEFAULT.ty), tz: num(row.tz, CAMERA_DEFAULT.tz),
+    fov: typeof row.fov === 'number' ? (row.fov as number) : null,
+  }
 }
 
 // A live sheet of folding paper: the compiled fold-table program holds, for
@@ -321,7 +348,30 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
   const objects = new Map<unknown, THREE.Mesh>()
   const origamis = new Map<unknown, OrigamiObject>()
   const texts = new Map<unknown, TextObject>()
+  const cameras = new Set<unknown>()
   let colorIdx = 0
+
+  function applyCamera(row: Record<string, unknown>): void {
+    const p = cameraPose(row)
+    camera.position.set(p.px, p.py, p.pz)
+    camera.up.set(0, 1, 0)
+    camera.lookAt(p.tx, p.ty, p.tz)
+    if (p.fov != null && p.fov !== camera.fov) {
+      camera.fov = p.fov
+      camera.updateProjectionMatrix()
+    }
+  }
+
+  function resetCamera(): void {
+    const d = CAMERA_DEFAULT
+    camera.position.set(d.px, d.py, d.pz)
+    camera.up.set(0, 1, 0)
+    camera.lookAt(d.tx, d.ty, d.tz)
+    if (camera.fov !== d.fov) {
+      camera.fov = d.fov!
+      camera.updateProjectionMatrix()
+    }
+  }
 
   function animate(): void {
     for (const o of origamis.values()) {
@@ -336,7 +386,12 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
     camera,
     createObject(row: Record<string, unknown>): void {
       const { id, shape, px, py, pz, rx, ry, rz, color } = row
-      if (objects.has(id) || origamis.has(id) || texts.has(id)) return
+      if (objects.has(id) || origamis.has(id) || texts.has(id) || cameras.has(id)) return
+      if (shape === 'camera') {
+        applyCamera(row)
+        cameras.add(id)
+        return
+      }
       if (shape === 'origami' && row.program) {
         const obj = makeOrigami(row)
         scene.add(obj.root)
@@ -368,6 +423,10 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
 
     updateObject(row: Record<string, unknown>): void {
       const { id, px, py, pz, rx, ry, rz, color } = row
+      if (cameras.has(id)) {
+        applyCamera(row)
+        return
+      }
       const origami = origamis.get(id)
       if (origami) {
         applyOrigamiRow(origami, row)
@@ -396,6 +455,11 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
     },
 
     destroyObject(id: unknown): void {
+      if (cameras.has(id)) {
+        cameras.delete(id)
+        if (cameras.size === 0) resetCamera()
+        return
+      }
       const origami = origamis.get(id)
       if (origami) {
         scene.remove(origami.root)
@@ -435,6 +499,8 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
         disposeText(text)
       }
       texts.clear()
+      cameras.clear()
+      resetCamera()
       colorIdx = 0
     },
   }

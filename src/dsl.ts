@@ -961,6 +961,14 @@ export type DSLSurface = Easings & {
   data(url: string): Table
   json(data: Row[] | string | unknown): Table
   grid(cols: number, rowsN: number, opts?: { spacing?: number; y?: number }): Table
+  // Camera moves as beat-timed keyframes: one row per keyframe
+  // { beat?, px, py, pz, tx, ty, tz, fov? }. The first becomes the scene's
+  // camera create row, the rest updates — all id "camera", shape "camera" —
+  // so it rides events → rasterize like any object and interpolates between
+  // keyframes for free. px/py/pz place the eye, tx/ty/tz the look-at target
+  // (default origin), fov the vertical field of view in degrees (lower = a
+  // longer lens). Concat it into your events stream, then rasterize.
+  camera(keyframes: Row[] | null | undefined): Table
   physics(source: Table | Row[]): PhysicsBuilder
   // Folding paper: origami() is a bare sheet. Chain .steps(table) to fold it
   // by instructions — each row a fold/reflection along a line through two
@@ -1027,6 +1035,19 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       return new Table(out, ctx)
     },
     physics: (source: Table | Row[]) => new PhysicsBuilder(source, ctx!),
+    // Camera keyframes → the "camera" scene object's create + update events.
+    // The first keyframe seeds a full default pose (eye at 0,0,5 looking at the
+    // origin) so a partial first row is still well-defined; later keyframes need
+    // only the fields they change.
+    camera: (keyframes: Row[] | null | undefined): Table => new Table(
+      (keyframes ?? []).map((k, i) => {
+        const beat = typeof k.beat === 'number' ? k.beat : 1
+        return i === 0
+          ? { px: 0, py: 0, pz: 5, tx: 0, ty: 0, tz: 0, ...k, id: 'camera', shape: 'camera', type: 'create', beat }
+          : { ...k, id: 'camera', shape: 'camera', type: 'update', beat }
+      }),
+      ctx,
+    ),
     origami: makeOrigami(ctx),
     editable: (name: string, schema: Record<string, ColumnType>, seedRows?: Row[]): Table => {
       const rows = (ctx?.editableRows?.(name, schema, seedRows) ?? []).map((r) => ({ ...r }))
