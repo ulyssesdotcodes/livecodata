@@ -282,3 +282,33 @@ unambiguously (a sheet point names exactly one face); `filter_clicked_and_reflec
 run twice with identical maps carries both folded and sheet coords;
 carry-over `faceOrders → BA0` seeding keeps per-step enumeration tiny
 (≤ 33 states on the crane).
+
+---
+
+## 9. Option 3 implemented (2026-07-13, soft in-betweens)
+
+`src/fold-relax.ts`: a ~200-line CPU port of the Origami Simulator force
+model — axial springs on every triangulated edge, discrete-hinge angular
+springs driving each crease's dihedral to a target, kinetic damping
+(velocities zeroed at kinetic-energy peaks), explicit integration with dt
+from the stiffest spring (hinges enter as k/h²). Guards that mattered:
+floor the hinge lever arm (a transiently degenerate triangle otherwise
+kicks the mesh into orbit — one frame hit |x| ≈ 17,000 before the guard)
+and clamp per-iteration displacement.
+
+Integration: `foldStep` now emits the crease network with per-edge
+dihedral targets before/after the fold (from the carried orders with the
+movers' parity mirrored, and from the solved orders; empirically
+calibrated sign: 'V' is negative in the hinge convention — verified by a
+single-hinge micro-test after the first cut had the torque sign backwards
+and exploded). `compileFoldTable` bakes non-Pureland steps: 16 keyframes,
+seeded by the rigid swing at t≈0.05 so each flap breaks symmetry toward
+the side it lands on, largest static face pinned, endpoints eased into the
+exact states (smoothstep over the first/last 15%). Playback samples the
+bake — no physics at runtime.
+
+Numbers on the crane: compile 2.6 s (10 soft steps), peak transient edge
+strain 15.6 % on one pocket edge mid-reverse-fold (the paper must bow —
+reverse folds have no rigid path), endpoint error ~1e-4 before blending.
+The collapse and neck folds visually reproduce the old hand-tuned
+choreography's pocket-opening quality, from table rows alone.
