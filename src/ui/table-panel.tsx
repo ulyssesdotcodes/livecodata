@@ -1,8 +1,12 @@
 // Combined table + graph panel — the humble SolidJS view over the model in
 // ../table-panel.ts. Each tab shows one view; if the view has numeric columns
-// a chart appears at the top (auto-detected or from .graph()). The table
-// autoscrolls to the active row during playback unless the user has manually
-// scrolled since the last time Play was pressed.
+// a chart appears at the top (auto-detected or from .graph()). Editable
+// tables additionally show two sub-tabs below the main tab strip — "Table"
+// (the interactive fold, shown by default) and "Events" (its read-only
+// `name·events` edit history) — so switching between them doesn't require
+// hunting for a separate top-level tab. The table autoscrolls to the active
+// row during playback unless the user has manually scrolled since the last
+// time Play was pressed.
 //
 // All decisions (which tabs exist, which chart to draw, display order, which
 // row is active) come from the model's pure functions; every interaction is
@@ -78,6 +82,10 @@ function TablePanelView(props: PanelProps) {
   const [editingCell, setEditingCell] = createSignal<string | null>(null)
   // Same one-at-a-time pattern for a column header's settings popover.
   const [openColMenu, setOpenColMenu] = createSignal<string | null>(null)
+  // Editable tables show two sub-tabs below the main tab strip: the
+  // interactive fold ("table") and the read-only `name·events` history
+  // ("events"). Resets to "table" whenever the selected tab changes.
+  const [subView, setSubView] = createSignal<'table' | 'events'>('table')
   const [graphCollapsed, setGraphCollapsed] = createSignal(window.matchMedia('(max-width: 767px)').matches)
   const [colRanges, setColRanges] = createSignal<ColRange[] | null>(null)
 
@@ -100,16 +108,27 @@ function TablePanelView(props: PanelProps) {
     setCurrent((cur) => fallbackTab(ns, cur))
   })
 
-  // Editing another table resets transient edit state, like the old rebuild did.
+  // Editing another table resets transient edit state, like the old rebuild did,
+  // and drops back to the "table" sub-tab (never leaves a freshly-selected
+  // table showing its events history by default).
   createEffect(on(current, () => {
     setEditingCell(null)
     setOpenColMenu(null)
+    setSubView('table')
   }, { defer: true }))
+
+  // Whether the current tab is a genuine editable table (has a fold worth
+  // showing) as opposed to a cooked view or a log table.
+  const isEditableTable = createMemo(() => {
+    tick()
+    const name = current()
+    return !!name && store.has(name) && !store.isLog(name)
+  })
 
   const editableData = createMemo(() => {
     tick(); views()
     const name = current()
-    if (!name || !store.has(name) || store.isLog(name)) return null
+    if (!name || !isEditableTable() || subView() === 'events') return null
     const data = store.get(name)
     return data ? { name, data } : null
   })
@@ -117,7 +136,11 @@ function TablePanelView(props: PanelProps) {
   const roTable = createMemo(() => {
     const name = current()
     if (!name || editableData()) return null
-    return views().get(name) ?? null
+    // An editable table's "events" sub-tab reads its history from the
+    // `name·events` view main injects; everything else (cooked views, log
+    // tables) is keyed by its own name.
+    const key = isEditableTable() ? name + EVENTS_SUFFIX : name
+    return views().get(key) ?? null
   })
   const roCols = createMemo(() => roTable()?.columns ?? [])
   const shownRows = createMemo(() => {
@@ -131,7 +154,9 @@ function TablePanelView(props: PanelProps) {
   })
   const lineageSet = () => props.playActive()?.get(current() ?? '')
 
-  const chart = createMemo(() => (editableData() ? null : chartFor(current(), views(), graphs(), store)))
+  const chart = createMemo(() => (
+    editableData() || (isEditableTable() && subView() === 'events') ? null : chartFor(current(), views(), graphs(), store)
+  ))
 
   const roRowText = (i: number) =>
     roCols().map((c) => formatCell(c, shownRows()[i]?.[c])).join(' ').toLowerCase()
@@ -556,6 +581,24 @@ function TablePanelView(props: PanelProps) {
         </div>
       </div>
       <div class="tab-content">
+        <Show when={isEditableTable()}>
+          <div class="table-subtabs">
+            <button
+              class="table-subtab"
+              classList={{ 'subtab-active': subView() === 'table' }}
+              onClick={() => setSubView('table')}
+            >
+              Table
+            </button>
+            <button
+              class="table-subtab"
+              classList={{ 'subtab-active': subView() === 'events' }}
+              onClick={() => setSubView('events')}
+            >
+              Events
+            </button>
+          </div>
+        </Show>
         <Show when={chart()}>
           <div class="tab-graph" classList={{ 'graph-collapsed': graphCollapsed() }}>
             <div class="graph-header">
