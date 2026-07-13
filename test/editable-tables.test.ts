@@ -121,6 +121,113 @@ test('a column added via the table panel survives even after the program stops d
   assert.deepEqual(rows, [{ name: 'ada', extra: 0 }])
 })
 
+test('re-seeding replaces the code rows the user has not touched, and keeps the ones they edited', () => {
+  const store = createEditableTableStore()
+  store.ensure('kf', { beat: 'number', v: 'number' }, [{ beat: 1, v: 10 }, { beat: 2, v: 20 }, { beat: 3, v: 30 }])
+  // The user tweaks the middle row.
+  store.setCell('kf', 1, 'v', 999)
+  assert.deepEqual(store.get('kf')!.rows, [{ beat: 1, v: 10 }, { beat: 2, v: 999 }, { beat: 3, v: 30 }])
+
+  // The program's seed changes (every row) and re-runs: the two untouched rows
+  // follow the new seed, the edited row stays pinned to the user's value.
+  store.ensure('kf', { beat: 'number', v: 'number' }, [{ beat: 1, v: 11 }, { beat: 2, v: 22 }, { beat: 3, v: 33 }])
+  assert.deepEqual(store.get('kf')!.rows, [{ beat: 1, v: 11 }, { beat: 2, v: 999 }, { beat: 3, v: 33 }])
+})
+
+test('re-seeding leaves everything alone when the seed is unchanged (no event, no row churn)', () => {
+  const store = createEditableTableStore()
+  const seed = [{ beat: 1, v: 10 }, { beat: 2, v: 20 }]
+  store.ensure('kf', { beat: 'number', v: 'number' }, seed)
+  store.setCell('kf', 0, 'v', 5)
+  const before = store.get('kf')!.events.length
+
+  // Same seed literal on the next Run: no seed-rows event, edit preserved.
+  store.ensure('kf', { beat: 'number', v: 'number' }, seed)
+  assert.equal(store.get('kf')!.events.length, before, 'an unchanged seed appends nothing')
+  assert.deepEqual(store.get('kf')!.rows, [{ beat: 1, v: 5 }, { beat: 2, v: 20 }])
+})
+
+test('re-seeding keeps user-added rows, and never overwrites/drops them', () => {
+  const store = createEditableTableStore()
+  store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }])
+  store.addRow('kf')
+  store.setCell('kf', 2, 'v', 7) // the user's own row
+  assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [1, 2, 7])
+
+  // Seed shrinks to one row: the surviving code slot re-seeds, the extra
+  // pristine code row drops, the user's added row stays put.
+  store.ensure('kf', { v: 'number' }, [{ v: 100 }])
+  assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [100, 7])
+
+  // Seed grows again: new code rows append after the user's row.
+  store.ensure('kf', { v: 'number' }, [{ v: 100 }, { v: 200 }, { v: 300 }])
+  assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [100, 7, 200, 300])
+})
+
+test('a code row the user deleted is not resurrected by a later re-seed', () => {
+  const store = createEditableTableStore()
+  store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }, { v: 3 }])
+  store.removeRow('kf', 1) // delete the pristine middle code row
+  assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [1, 3])
+
+  // Re-run with a fully changed seed: slot 1 stays gone; the others re-seed.
+  store.ensure('kf', { v: 'number' }, [{ v: 10 }, { v: 20 }, { v: 30 }])
+  assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [10, 30])
+})
+
+test('a table-panel table is never re-seeded by a later editable() seed (the program never owned its rows)', () => {
+  const store = createEditableTableStore()
+  store.createTable('t') // "+ table": beat/loop columns, user-owned
+  store.addRow('t')
+  store.setCell('t', 0, 'beat', 5)
+  // The program now declares the same name with a seed. Its columns reconcile,
+  // but its rows are the user's — the seed must not add or replace anything.
+  store.ensure('t', { beat: 'number', loop: 'number' }, [{ beat: 9, loop: 0 }])
+  assert.deepEqual(store.get('t')!.rows, [{ beat: 5, loop: 0 }])
+})
+
+test('re-seeding survives serialize/load — provenance is rebuilt purely from the event log', () => {
+  const a = createEditableTableStore()
+  a.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }])
+  a.setCell('kf', 0, 'v', 99)
+
+  const b = createEditableTableStore()
+  assert.ok(b.load(a.serialize()))
+  // The reloaded store must apply a re-seed with the same edited/pristine split.
+  b.ensure('kf', { v: 'number' }, [{ v: 10 }, { v: 20 }])
+  assert.deepEqual(b.get('kf')!.rows.map((r) => r.v), [99, 20])
+})
+
+test('retainDeclared prunes a code-created table the program stopped declaring, and only that', () => {
+  const store = createEditableTableStore()
+  store.ensure('code', { code: 'code' }, [{ code: 'x' }]) // the program itself — never pruned
+  store.ensure('a', { v: 'number' }, [{ v: 1 }])          // code-created editable table
+  store.ensure('b', { v: 'number' }, [{ v: 2 }])          // code-created editable table
+  store.createTable('u')                                   // user "+ table"
+  store.record('activity', 'apply')                        // a log stream
+
+  // The program's next Run declares only "a": "b" should stop being editable.
+  const removed = store.retainDeclared(['a'])
+  assert.deepEqual(removed, ['b'])
+  assert.ok(store.has('a'), 'still-declared table stays')
+  assert.ok(!store.has('b'), 'undeclared code table is dropped — no longer editable')
+  assert.ok(store.has('u'), 'a user "+ table" is never pruned')
+  assert.ok(store.has('code'), '"code" is never pruned')
+  assert.ok(store.has('activity'), 'a log stream is never pruned')
+})
+
+test('retainDeclared is a no-op while replaying a past run', () => {
+  const store = createEditableTableStore()
+  store.ensure('code', { code: 'code' }, [{ code: 'x' }])
+  store.ensure('a', { v: 'number' }, [{ v: 1 }])
+  const run = store.recordRun()
+
+  store.setReplayView(run)
+  assert.deepEqual(store.retainDeclared([]), [], 'nothing removed during a scrubbed preview')
+  store.setReplayView(null)
+  assert.ok(store.has('a'), 'the head log is untouched by the replay-time call')
+})
+
 test('re-declaring retypes a purely-declared column in place; a column the user retyped keeps its type', () => {
   const store = createEditableTableStore()
   store.ensure('t', { a: 'string' })
