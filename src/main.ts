@@ -323,14 +323,14 @@ function onMidi(): void {
 // data that the real ensure() below turns into store events as always.
 const cookClient = createCookClient(new Worker(new URL('cook-worker.js', import.meta.url), { type: 'module' }))
 
-async function cookInWorker(code: string, seed: number): Promise<CookedData> {
+async function cookInWorker(code: string, seed: number): Promise<{ cooked: CookedData; declaredNames: string[] }> {
   const editables = editableStore.listNames().map((name) => ({
     name,
     rows: editableStore.get(name)?.rows ?? [],
   }))
   const { cooked, declared } = await cookClient.cook({ code, seed, dataCache, tapRows: tapRows(), editables })
   for (const d of declared) editableStore.ensure(d.name, d.schema, d.seedRows)
-  return cooked
+  return { cooked, declaredNames: declared.map((d) => d.name) }
 }
 
 const sessionStore = createSessionStore()
@@ -554,8 +554,9 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
     // records against) current table state.
     editableStore.setReplayView(null)
     let cooked: CookedData
+    let declaredNames: string[]
     try {
-      cooked = await cookInWorker(code, seed)
+      ({ cooked, declaredNames } = await cookInWorker(code, seed))
     } catch (err) {
       setError?.((err as Error).message)
       return
@@ -567,6 +568,12 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
     setError?.(null)
     liveCode = code
     liveSeed = seed
+
+    // A table the program used to declare with editable() but no longer does
+    // should stop being editable — drop it so a computed view of the same name
+    // (or nothing) takes over. Only in the real apply path: a scrubbed replay
+    // is a read-only preview and retainDeclared no-ops there anyway.
+    editableStore.retainDeclared(declaredNames)
 
     // Write the "code" table row (if the program changed) and record the run —
     // *before* applyCooked renders the table panel below, so its first render
@@ -754,7 +761,7 @@ async function scrubSession(pos: number): Promise<void> {
     if (!codeRow || typeof codeRow.code !== 'string') return
     const code = codeRow.code
     const seed = typeof codeRow.seed === 'number' ? codeRow.seed : 0
-    cooked = await cookInWorker(code, seed)
+    ;({ cooked } = await cookInWorker(code, seed))
     if (epoch !== scrubEpoch) return
     liveCode = code
     liveSeed = seed

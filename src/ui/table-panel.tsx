@@ -75,6 +75,14 @@ function TablePanelView(props: PanelProps) {
   const [tick, setTick] = createSignal(0)
   const bump = () => setTick((t) => t + 1)
 
+  // A Run refreshes `views` from outside the panel and can change the store
+  // underneath it — turning an editable table into a computed view of the same
+  // name, or dropping one the program stopped declaring (see retainDeclared).
+  // Only local edits bump `tick`, so pair every external `views` refresh with a
+  // bump, or the tick-gated store reads (isEditableTable, a tab's editable/×)
+  // would keep showing the pre-Run shape.
+  createEffect(on(views, () => bump(), { defer: true }))
+
   const [filter, setFilter] = createSignal('')
   // Only one cell can be in edit mode at a time (key: `${row}:${col}` of the
   // current table); an outside mousedown cancels it, mirroring the old

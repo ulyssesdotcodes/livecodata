@@ -31,6 +31,15 @@
 // Column type "code" marks cells edited in the main code editor (click the
 // cell) rather than inline.
 //
+// Rows have provenance too (see RowMeta). editable(name, schema, seedRows)
+// seeds a table's rows from code on first sight; on a later Run with a *changed*
+// seed, the rows the user hasn't touched are re-driven to the new seed values
+// (a `seed-rows` event → reseedRows), while any row the user edited or added
+// stays put — the edit log is what tells the two apart. And a table the program
+// created but has *stopped* declaring is pruned (retainDeclared): it stops being
+// editable, yielding to a computed view of the same name, or vanishing. A user's
+// own "+ table" is exempt from both — the program never owned it.
+//
 // A table's *effective* columns are computed, not stored as one blob: each
 // table tracks `userColumns` (a fold over genuine table-panel actions —
 // add/remove/rename/retype a column, or the seed of a table-panel-created
@@ -84,6 +93,28 @@ function defaultFor(type: ColumnType): unknown {
   }
 }
 
+// Per-row provenance, kept parallel to `rows`. It's what lets a code-seeded
+// row be re-driven by the program (bug: "rows created by code should be
+// replaced by code when the code is re-run if they are unchanged") while a row
+// the user has touched stays put:
+//   code  — the row originated from a program seed (editable(…, seedRows)), not
+//           a table-panel "+ row"/duplicate.
+//   dirty — the user has since edited this row (a set-cell/set-row landed on
+//           it) or it's a user-added row: either way the program must NOT
+//           overwrite it on a re-seed.
+//   slot  — for a code row, its index in the seed list it came from, the stable
+//           identity a re-seed aligns new seed values to (and that a remove
+//           tombstones, so a deleted code row isn't resurrected by a later
+//           seed). -1 for user rows.
+interface RowMeta {
+  code: boolean
+  dirty: boolean
+  slot: number
+}
+
+const userMeta = (): RowMeta => ({ code: false, dirty: true, slot: -1 })
+const seedMeta = (slot: number): RowMeta => ({ code: true, dirty: false, slot })
+
 // One table's folded state. `events` accumulates the display form of every
 // event that touched this table (riding along through renames). `columns`
 // isn't stored directly — see effectiveColumns() below — so that a column's
@@ -104,7 +135,24 @@ interface TableState {
   // table"). Replaced wholesale by each declare-schema event.
   declared: EditableColumn[] | null
   rows: Row[]
+  // Parallel to `rows` (same length, same order): each row's provenance.
+  rowMeta: RowMeta[]
   events: Row[]
+  // True once the table was first brought into being by a program editable()
+  // declaration (a `declared` create), as opposed to a table-panel "+ table"
+  // or a record() log stream. Drives two program-owned behaviours: re-seeding
+  // (only a code-created table's rows are re-driven by later seeds) and
+  // retainDeclared (only code-created tables are pruned when the program stops
+  // declaring them — a user's own "+ table" is never auto-removed).
+  codeCreated: boolean
+  // The seed rows the program last handed to editable(name, schema, seedRows),
+  // verbatim — the baseline a later call diffs against to decide whether to
+  // append a `seed-rows` event (so an unchanged seed is silent, like an
+  // unchanged schema). null until a program has seeded the table.
+  lastSeed: Row[] | null
+  // Seed slots (see RowMeta.slot) whose code row the user deleted — tombstoned
+  // so a later re-seed doesn't bring the row back.
+  removedSlots: Set<number>
   // True for a pure event stream created via record() — an Apply pulse,
   // peer-join/leave, … (see EditableTableStore.record). Never has columns or
   // rows of its own, so it isn't a "row-editable table" at all; the table
@@ -158,6 +206,49 @@ export function schemaColumns(schema: Record<string, ColumnType>): EditableColum
   return Object.entries(schema).map(([n, t]) => ({ name: n, type: t }))
 }
 
+// Re-drive a code-created table's rows from a fresh program seed, in place.
+// The rule the whole feature turns on: a code row the user hasn't touched
+// (code && !dirty) takes the new seed's value at its slot; a row the user
+// edited or added (dirty) is left exactly as-is. Alignment is by slot, not
+// position, so user-added rows interleaved among the seed don't drag values
+// out of step, a shrunk seed drops only its own pristine tail, and a slot the
+// user deleted stays deleted (removedSlots) rather than reappearing.
+function reseedRows(t: TableState, seed: Row[]): void {
+  const cols = effectiveColumns(t)
+  const nextRows: Row[] = []
+  const nextMeta: RowMeta[] = []
+  const consumed = new Set<number>()
+  // Walk existing rows in order: keep user/edited rows, refresh pristine code
+  // rows from their slot's new seed value (or drop them if the seed shrank
+  // past that slot).
+  for (let i = 0; i < t.rows.length; i++) {
+    const meta = t.rowMeta[i]
+    if (!meta.code) {
+      nextRows.push(t.rows[i])
+      nextMeta.push(meta)
+      continue
+    }
+    consumed.add(meta.slot)
+    if (meta.dirty) {
+      nextRows.push(t.rows[i])
+      nextMeta.push(meta)
+    } else if (meta.slot < seed.length) {
+      nextRows.push(conformRow(seed[meta.slot], cols))
+      nextMeta.push(seedMeta(meta.slot))
+    }
+    // else: a pristine code row whose slot the shrunk seed no longer covers — dropped.
+  }
+  // Slots the grown seed adds that aren't already present (and weren't
+  // tombstoned by a delete): append as fresh code rows.
+  for (let slot = 0; slot < seed.length; slot++) {
+    if (consumed.has(slot) || t.removedSlots.has(slot)) continue
+    nextRows.push(conformRow(seed[slot], cols))
+    nextMeta.push(seedMeta(slot))
+  }
+  t.rows = nextRows
+  t.rowMeta = nextMeta
+}
+
 // Apply one event to the map of table states. Defensive (events may come from
 // storage): unknown tables / columns / rows are ignored rather than thrown.
 function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
@@ -169,8 +260,17 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
     // `declared`; a table-panel create ("+ table", or record()'s columnless
     // stream) seeds `userColumns` directly — it has no program declaring it.
     const declared = e.declared === true ? columns : null
-    const t: TableState = { userColumns: declared ? [] : columns, removedColumns: new Set(), declared, rows: [], events: [eventRow(e)], log: e.log === true }
-    t.rows = ((e.rows as Row[] | undefined) ?? []).map((r) => conformRow(r, effectiveColumns(t)))
+    const seed = (e.rows as Row[] | undefined) ?? []
+    const t: TableState = {
+      userColumns: declared ? [] : columns, removedColumns: new Set(), declared,
+      rows: [], rowMeta: [], events: [eventRow(e)], log: e.log === true,
+      codeCreated: e.declared === true, lastSeed: e.declared === true ? seed.map((r) => ({ ...r })) : null,
+      removedSlots: new Set(),
+    }
+    t.rows = seed.map((r) => conformRow(r, effectiveColumns(t)))
+    // A declared create's rows are the program's seed (code rows, by slot);
+    // a table-panel create's rows (if any) are the user's own.
+    t.rowMeta = seed.map((_r, i) => (t.codeCreated ? seedMeta(i) : userMeta()))
     tables.set(name, t)
     return
   }
@@ -181,6 +281,15 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
     case 'declare-schema': {
       t.declared = (e.columns as EditableColumn[] ?? []).map((c) => ({ ...c }))
       t.rows = t.rows.map((r) => conformRow(r, effectiveColumns(t)))
+      break
+    }
+    case 'seed-rows': {
+      // The program re-ran editable(name, schema, seedRows) with a changed
+      // seed: re-drive the rows the user hasn't touched (see reseedRows). Only
+      // ever appended for a code-created table (see ensure).
+      const seed = (e.rows as Row[] | undefined) ?? []
+      t.lastSeed = seed.map((r) => ({ ...r }))
+      reseedRows(t, seed)
       break
     }
     case 'add-column': {
@@ -225,27 +334,36 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
       const row: Row = {}
       for (const c of effectiveColumns(t)) row[c.name] = defaultFor(c.type)
       t.rows.push(row)
+      t.rowMeta.push(userMeta())
       break
     }
     case 'remove-row': {
       const i = e.row as number
-      if (i >= 0 && i < t.rows.length) t.rows.splice(i, 1)
+      if (i >= 0 && i < t.rows.length) {
+        // Tombstone a code row's slot so a later re-seed doesn't resurrect it.
+        const meta = t.rowMeta[i]
+        if (meta.code) t.removedSlots.add(meta.slot)
+        t.rows.splice(i, 1)
+        t.rowMeta.splice(i, 1)
+      }
       break
     }
     case 'duplicate-row': {
       const i = e.row as number
       const row = t.rows[i]
-      if (row) t.rows.splice(i + 1, 0, { ...row })
+      // The copy takes on its own (user) identity going forward — never a code
+      // row, so the program won't overwrite or drop it on a re-seed.
+      if (row) { t.rows.splice(i + 1, 0, { ...row }); t.rowMeta.splice(i + 1, 0, userMeta()) }
       break
     }
     case 'set-cell': {
       const row = t.rows[e.row as number]
-      if (row) row[e.col as string] = e.value
+      if (row) { row[e.col as string] = e.value; t.rowMeta[e.row as number].dirty = true }
       break
     }
     case 'set-row': {
       const row = t.rows[e.row as number]
-      if (row) Object.assign(row, e.values as Record<string, unknown>)
+      if (row) { Object.assign(row, e.values as Record<string, unknown>); t.rowMeta[e.row as number].dirty = true }
       break
     }
     case 'rename-table': {
@@ -295,6 +413,13 @@ export interface EditableTableStore {
   // (added when declared, gone when not); a column the user added or
   // edited via the table panel survives regardless of what's declared.
   ensure(name: string, schema: Record<string, ColumnType>, seedRows?: Row[]): Row[]
+  // Drop every code-created editable table whose name isn't in `keep` — the
+  // program stopped declaring it, so it should stop being editable (a computed
+  // view of the same name, or nothing, takes over). Only tables a program
+  // brought into being via editable() are eligible: a user's "+ table", a
+  // record() log stream, and "code" are never touched. Returns the names
+  // removed. A no-op while replaying a past run (reads must not mutate head).
+  retainDeclared(keep: Iterable<string>): string[]
   addColumn(name: string, colName: string, type: ColumnType): void
   removeColumn(name: string, colName: string): void
   setColumnType(name: string, colName: string, type: ColumnType): void
@@ -428,10 +553,33 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       const existing = tables.get(name)
       if (!existing) {
         append({ kind: 'create', table: name, columns: wantCols, rows: seedRows, declared: true })
-      } else if (JSON.stringify(existing.declared) !== JSON.stringify(wantCols)) {
+        return tables.get(name)!.rows
+      }
+      if (JSON.stringify(existing.declared) !== JSON.stringify(wantCols)) {
         append({ kind: 'declare-schema', table: name, columns: wantCols })
       }
+      // Re-drive the code rows when the program's seed changed (and only for a
+      // table the program created — a user's "+ table" keeps whatever it holds).
+      // Unchanged seeds stay silent, exactly like an unchanged schema, so an
+      // ordinary Run of the same code appends nothing.
+      const t = tables.get(name)!
+      if (t.codeCreated && seedRows !== undefined && JSON.stringify(seedRows) !== JSON.stringify(t.lastSeed)) {
+        append({ kind: 'seed-rows', table: name, rows: seedRows })
+      }
       return tables.get(name)!.rows
+    },
+
+    retainDeclared(keep: Iterable<string>): string[] {
+      if (replay) return []
+      const keepSet = new Set(keep)
+      const removed: string[] = []
+      for (const [name, t] of tables) {
+        // "code" is code-created too but is the program itself, never a
+        // program-declared side table — never prune it.
+        if (t.codeCreated && !t.log && name !== 'code' && !keepSet.has(name)) removed.push(name)
+      }
+      for (const name of removed) append({ kind: 'remove-table', table: name })
+      return removed
     },
 
     addColumn(name: string, colName: string, type: ColumnType): void {

@@ -209,3 +209,18 @@ test('editable() seeds rows on first create only', () => {
   const second = rt.run(code, { seed: 2 })
   assert.deepEqual(second.views.get('h')!.rows.map((r) => r.code), ['osc(4).out()'])
 })
+
+test('editable() re-seeds the code rows the user has not edited when the program\'s seed changes', () => {
+  const store = createEditableTableStore()
+  const rt = createRuntime({ editableRows: (name, schema, seedRows) => store.ensure(name, schema, seedRows) })
+  const withSeed = (a: number, b: number) =>
+    `define("k", () => editable("k", { v: "number" }, [{ v: ${a} }, { v: ${b} }]))`
+
+  rt.run(withSeed(1, 2), { seed: 1 })
+  store.setCell('k', 1, 'v', 99) // the user edits the second row
+
+  // The program's seed literal changes and it re-runs: the untouched first row
+  // follows the new seed, the edited second row stays pinned.
+  const out = rt.run(withSeed(11, 22), { seed: 1 })
+  assert.deepEqual(out.views.get('k')!.rows.map((r) => r.v), [11, 99])
+})
