@@ -345,3 +345,24 @@ test('soft baking is deterministic', () => {
   const b = compileFoldTable(rows).steps[1].soft!
   assert.deepEqual(a, b)
 })
+
+test('held folds (to < 1) keep the rigid swing — the pose stays exact', () => {
+  const rows = [
+    { step: 'diag', p1: '0,0', p2: '1,1', move: '0.9,0.1' },
+    { step: 'rev', p1: '0,0.5', p2: '1,0.5', move: '0.333333,0.166667', kind: 'reverse', to: 0.5 },
+  ]
+  const program = compileFoldTable(rows)
+  assert.equal(program.steps[1].soft, undefined)
+  // the held pose is the exact rigid mid-swing: rigid rotation preserves
+  // every edge length
+  const held = foldTablePositions(program, 1.5)
+  const step = program.steps[1]
+  for (const F of step.FV) {
+    for (let j = 0; j < F.length; ++j) {
+      const a = F[j], b = F[(j + 1) % F.length]
+      const rest = Math.hypot(step.Vfrom[a][0] - step.Vfrom[b][0], step.Vfrom[a][1] - step.Vfrom[b][1])
+      const now = Math.hypot(held.pos[a][0] - held.pos[b][0], held.pos[a][1] - held.pos[b][1], held.pos[a][2] - held.pos[b][2])
+      assert.ok(near(now, rest, 1e-9), 'held pose is rigid')
+    }
+  }
+})

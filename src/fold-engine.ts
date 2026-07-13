@@ -508,7 +508,10 @@ export const compileFoldTable = (
       layers: out.state.layers,
       layersFrom: out.anim.layersFrom,
       dirs: out.anim.dirs,
-      soft: out.type === 'Pureland' ? undefined : bakeStep(out, scale),
+      // simple folds keep the crisp rigid hinge; so do held folds
+      // (to < 1) — their whole point is the displayed pose, which must be
+      // the exact mirrored geometry, not a solver mid-frame
+      soft: out.type === 'Pureland' || spec.to < 1 ? undefined : bakeStep(out, scale),
     })
     st = out.state
   }
