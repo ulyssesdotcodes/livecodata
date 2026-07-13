@@ -6,7 +6,7 @@
 // it acts on is computed here.)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { geometryDims, geometryChanged } from '../src/three-scene.js'
+import { geometryDims, geometryChanged, textParams, textGeometryChanged, cameraPose } from '../src/three-scene.js'
 
 test('geometryDims merges shape defaults with the row\'s own fields', () => {
   assert.deepEqual(geometryDims('box', {}), { hx: 0.25, hy: 0.25, hz: 0.25, r: undefined, h: undefined })
@@ -37,4 +37,31 @@ test('geometryChanged falls back to the previous shape when a row omits it', () 
   const dims = geometryDims('box', { hx: 0.04, hy: 0.35, hz: 0.22 })
   assert.equal(geometryChanged('box', dims, { hx: 0.04, hy: 0.35, hz: 0.22 }), false)
   assert.equal(geometryChanged('box', dims, { hx: 0.5, hy: 0.35, hz: 0.22 }), true)
+})
+
+test('textParams stringifies text and fills in defaults', () => {
+  assert.deepEqual(textParams({ text: 'hi' }), { text: 'hi', size: 0.5, color: 0xffffff })
+  // A missing string is empty (not "undefined"); size stays a number; color overrides.
+  assert.deepEqual(textParams({}), { text: '', size: 0.5, color: 0xffffff })
+  assert.deepEqual(textParams({ text: 42, size: 1.2, color: 0xff0000 }), { text: '42', size: 1.2, color: 0xff0000 })
+})
+
+test('textGeometryChanged tracks string/size only — color recolors without a rebuild', () => {
+  const prev = textParams({ text: 'hi', size: 0.5, color: 0xffffff })
+  // Reposition, or a color change: no glyph geometry rebuild needed.
+  assert.equal(textGeometryChanged(prev, { text: 'hi', size: 0.5, px: 1, py: 2 }), false)
+  assert.equal(textGeometryChanged(prev, { text: 'hi', size: 0.5, color: 0xff0000 }), false)
+  // A new string or a new size does need the geometry regenerated.
+  assert.equal(textGeometryChanged(prev, { text: 'bye', size: 0.5 }), true)
+  assert.equal(textGeometryChanged(prev, { text: 'hi', size: 1.0 }), true)
+})
+
+test('cameraPose fills eye/target defaults and leaves fov null when unset', () => {
+  // A partial row (only pz) still yields a well-defined pose; fov null means
+  // "leave the current fov untouched".
+  assert.deepEqual(cameraPose({ pz: 8 }), { px: 0, py: 0, pz: 8, tx: 0, ty: 0, tz: 0, fov: null })
+  assert.deepEqual(cameraPose({ px: 1, py: 2, pz: 3, tx: -1, ty: -2, tz: -3, fov: 45 }),
+    { px: 1, py: 2, pz: 3, tx: -1, ty: -2, tz: -3, fov: 45 })
+  // The empty-row default matches the app's initial camera.
+  assert.deepEqual(cameraPose({}), { px: 0, py: 0, pz: 5, tx: 0, ty: 0, tz: 0, fov: null })
 })

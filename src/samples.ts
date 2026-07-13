@@ -40,6 +40,74 @@ define("scene", (rand, table) => table("events").rasterize(8))
 `,
   },
   {
+    name: "Text",
+    code: `// livecodata — text in the 3D scene
+// A \`shape: "text"\` object is real extruded 3D text (three.js TextGeometry): it
+// has depth, catches the scene's lights, and moves, spins and scales like any
+// other object. The font is bundled, so it appears instantly — no asset to load.
+// Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
+
+// The text fields, alongside the usual px/py/pz + rx/ry/rz transform:
+//   text   the string to draw (\\n splits into stacked, centered lines)
+//   size   the cap height per line, in world units (default 0.5)
+//   color  material color (default white) — recolors live, like any mesh
+//
+// \`text\` is just a normal column: it rides through rasterize untouched and
+// steps to the newest value, so a later "update" row can swap the string
+// mid-loop the way a color pulse does.
+define("events", () => rows([
+  { id: "title", type: "create", beat: 1, shape: "text", text: "livecodata",
+    color: 0x4a9eff, size: 0.7, px: 0, py: 0.4, pz: 0, rx: 0, ry: 0, rz: 0 },
+  // A second line that gently swings side to side while turning about y.
+  { id: "sub", type: "create", beat: 1, shape: "text", text: "tables to visuals",
+    color: 0xffd43b, size: 0.32, px: 0, py: -0.5, pz: 0, rx: 0, ry: -0.6, rz: 0 },
+  { id: "sub", type: "update", beat: 9, ry: 0.6 },
+  { id: "sub", type: "update", beat: 17, ry: -0.6 },
+]))
+
+// Bake to a 16-beat loop; the subtitle's ry keyframes ease back and forth as
+// the loop repeats.
+define("scene", (rand, table) => table("events").rasterize(16))
+`,
+  },
+  {
+    name: "Camera Move",
+    code: `// livecodata — moving the camera from the DSL
+// The camera is just another scene object: \`camera([...])\` emits one keyframe
+// per row (id "camera", shape "camera") that rides events → rasterize like
+// anything else, so camera moves interpolate on the beat timeline for free.
+// Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
+
+// 1. A little scene to look at: a 3×3 lattice of cubes on the floor. grid()
+//    gives px/py/pz; each cell becomes a create row for a small box.
+define("cubes", () =>
+  grid(3, 3, { spacing: 0.8 }).map((c, i) => ({
+    id: "c" + i, type: "create", beat: 1, shape: "box",
+    color: 0x4a9eff, hx: 0.2, hy: 0.2, hz: 0.2,
+    px: c.px, py: c.py, pz: c.pz, rx: 0, ry: 0, rz: 0,
+  }))
+)
+
+// 2. camera([...]) — one row per keyframe. px/py/pz are the eye, tx/ty/tz the
+//    look-at target (here always the origin), fov the vertical field of view.
+//    Over the 16-beat loop the eye swings around the lattice and cranes up,
+//    while the fov eases from wide to tight (a subtle dolly-zoom), then returns
+//    to the start pose at beat 17 so the loop repeats seamlessly.
+define("cam", () => camera([
+  { beat: 1,  px: 0,    py: 0.5, pz: 5, tx: 0, ty: 0, tz: 0, fov: 60 },
+  { beat: 5,  px: 4,    py: 1.5, pz: 3, fov: 55 },
+  { beat: 9,  px: 0,    py: 3,   pz: -5, fov: 45 },
+  { beat: 13, px: -4,   py: 1.5, pz: 3, fov: 55 },
+  { beat: 17, px: 0,    py: 0.5, pz: 5, fov: 60 },
+]))
+
+// 3. Merge the camera keyframes with the cubes and bake the 16-beat cache.
+define("scene", (rand, table) =>
+  table("cam").concat(table("cubes")).rasterize(16)
+)
+`,
+  },
+  {
     name: "Origami Crane",
     code: `// livecodata — Origami Crane: a table of fold steps, solved exactly
 // A square of paper folds itself into the traditional crane. Every row of
