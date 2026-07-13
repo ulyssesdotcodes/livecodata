@@ -52,10 +52,12 @@ export interface FoldAnim {
   // stacking of the pre-fold state carried onto this step's faces (split
   // pieces inherit their parent's layer) — nudges interpolate from these
   layersFrom: number[]
-  // which side the flap swings through: +1 = toward +z (it ends on top of
-  // the paper it folds onto), -1 = behind. Voted from the solved layer
-  // order over every overlapping moving/static face pair.
-  dir: 1 | -1
+  // rotation sense per face (0 for static faces): each connected flap is
+  // one rigid body and gets ONE sense, voted from the solved layer order
+  // over its overlapping moving/static face pairs so it swings out on the
+  // side it lands on. Independent flaps in one step (e.g. both wings) can
+  // swing to opposite sides.
+  dirs: number[]
 }
 
 export interface FoldOutcome {
@@ -245,20 +247,59 @@ export const foldStep = (st: FoldState, spec: FoldSpec): FoldOutcome => {
   for (let f = 0; f < F_map2.length; ++f) {
     for (const f_ of F_map2[f]) layersFrom[f_] = st.layers[f]
   }
-  let votes = 0
-  for (const [f, g] of FO) {
-    if (FM[f] === FM[g]) continue
-    const mover = FM[f] ? f : g
-    const still = FM[f] ? g : f
-    votes += Math.sign(layers[mover] - layers[still])
-  }
-  const dir: 1 | -1 = votes >= 0 ? 1 : -1
+  const dirs = flapDirs(FVy, Vx as Vec2[], FM, line, FO, layers)
   return {
     state: { V: Vy, FV: FVy, FO, Ff, sheet: Sy as Vec2[], layers, eps: FOLDn.eps },
-    anim: { Vfrom: Vx as Vec2[], moving: FM, line, layersFrom, dir },
+    anim: { Vfrom: Vx as Vec2[], moving: FM, line, layersFrom, dirs },
     type: TYPE_LABEL[sel.type],
     nStates: Number(n),
   }
+}
+
+// One rigid rotation sense per connected flap. Faces sharing a vertex are
+// one rigid body; each flap's sense is voted from where its faces land in
+// the solved stacking: a flap that ends on top must swing out toward +z,
+// which for a face starting on side s of the line means sense = s.
+const flapDirs = (
+  FV: number[][], Vfrom: Vec2[], moving: boolean[], line: Line,
+  FO: FaceOrder[], layers: number[],
+): number[] => {
+  const [u, d] = line
+  const n = FV.length
+  // union-find over moving faces sharing any vertex
+  const comp = Array.from({ length: n }, (_, i) => i)
+  const find = (i: number): number => {
+    while (comp[i] !== i) { comp[i] = comp[comp[i]]; i = comp[i] }
+    return i
+  }
+  const byVertex = new Map<number, number>()
+  for (let fi = 0; fi < n; ++fi) {
+    if (!moving[fi]) continue
+    for (const vi of FV[fi]) {
+      const other = byVertex.get(vi)
+      if (other === undefined) byVertex.set(vi, fi)
+      else comp[find(fi)] = find(other)
+    }
+  }
+  const side = (fi: number): number => {
+    let sum = 0
+    for (const vi of FV[fi]) sum += Vfrom[vi][0] * u[0] + Vfrom[vi][1] * u[1] - d
+    return Math.sign(sum)
+  }
+  const votes = new Map<number, number>()
+  for (const [f, g] of FO) {
+    if (moving[f] === moving[g]) continue
+    const mover = moving[f] ? f : g
+    const still = moving[f] ? g : f
+    const c = find(mover)
+    votes.set(c, (votes.get(c) ?? 0) +
+      Math.sign(layers[mover] - layers[still]) * side(mover))
+  }
+  return FV.map((_, fi) => {
+    if (!moving[fi]) return 0
+    const v = votes.get(find(fi)) ?? 0
+    return v >= 0 ? 1 : -1
+  })
 }
 
 // Positions of the animated fold at fraction t ∈ [0, 1]: moving flaps
@@ -267,25 +308,24 @@ export const foldStep = (st: FoldState, spec: FoldSpec): FoldOutcome => {
 export const animatedPositions = (
   outcome: FoldOutcome, t: number,
 ): [number, number, number][] => {
-  const { Vfrom, moving, line, dir } = outcome.anim
+  const { Vfrom, moving, line, dirs } = outcome.anim
   const FV = outcome.state.FV
   const [u, d] = line
   const theta = Math.PI * Math.min(1, Math.max(0, t))
   const cos = Math.cos(theta)
   const sin = Math.sin(theta)
-  const isMoving: boolean[] = Vfrom.map(() => false)
+  const sense: number[] = Vfrom.map(() => 0)
   for (let fi = 0; fi < FV.length; ++fi) {
     if (!moving[fi]) continue
-    for (const vi of FV[fi]) isMoving[vi] = true
+    for (const vi of FV[fi]) sense[vi] = dirs[fi]
   }
   return Vfrom.map((p, vi) => {
     const h = M.dot(p, u) - d
-    if (!isMoving[vi] || Math.abs(h) < 1e-12) return [p[0], p[1], 0]
-    // rotate the signed distance h about the line (axis in the sheet
+    if (sense[vi] === 0 || Math.abs(h) < 1e-12) return [p[0], p[1], 0]
+    // one rigid rotation per flap about the line (axis in the sheet
     // plane), swinging out on the side the flap will land on
     const hh = h * cos
-    const z = dir * Math.abs(h) * sin
-    return [p[0] + (hh - h) * u[0], p[1] + (hh - h) * u[1], z]
+    return [p[0] + (hh - h) * u[0], p[1] + (hh - h) * u[1], sense[vi] * h * sin]
   })
 }
 
@@ -321,7 +361,8 @@ export interface FoldProgramStep {
   moving: boolean[]
   layers: number[]      // stacking after this fold lands
   layersFrom: number[]  // stacking before it, on this step's face set
-  dir: 1 | -1           // swing side (toward +z when the flap ends on top)
+  dirs: number[]        // rotation sense per face (0 = static); each flap
+                        // swings out on the side it lands on
 }
 
 export interface FoldTableProgram {
@@ -442,7 +483,7 @@ export const compileFoldTable = (
       moving: out.anim.moving,
       layers: out.state.layers,
       layersFrom: out.anim.layersFrom,
-      dir: out.anim.dir,
+      dirs: out.anim.dirs,
     })
     st = out.state
   }
@@ -496,16 +537,16 @@ export const foldTablePositions = (
   const theta = Math.PI * t
   const cos = Math.cos(theta)
   const sin = Math.sin(theta)
-  const isMoving: boolean[] = step.Vfrom.map(() => false)
+  const sense: number[] = step.Vfrom.map(() => 0)
   for (let fi = 0; fi < step.FV.length; ++fi) {
     if (!step.moving[fi]) continue
-    for (const vi of step.FV[fi]) isMoving[vi] = true
+    for (const vi of step.FV[fi]) sense[vi] = step.dirs[fi]
   }
   const pos: [number, number, number][] = step.Vfrom.map((p, vi) => {
     const h = p[0] * u[0] + p[1] * u[1] - d
-    if (!isMoving[vi] || Math.abs(h) < 1e-12) return [p[0], p[1], 0]
+    if (sense[vi] === 0 || Math.abs(h) < 1e-12) return [p[0], p[1], 0]
     const hh = h * cos
-    return [p[0] + (hh - h) * u[0], p[1] + (hh - h) * u[1], step.dir * Math.abs(h) * sin]
+    return [p[0] + (hh - h) * u[0], p[1] + (hh - h) * u[1], sense[vi] * h * sin]
   })
   // each face's display height eases from where its paper sat before this
   // fold to where it ends up, so consecutive steps join without a jump
