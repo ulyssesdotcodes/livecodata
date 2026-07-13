@@ -225,15 +225,16 @@ editable("hydra", { beat: "number", event: "string", code: "code", name: "string
 // Sliders are labelled controls drawn over the visual. Press "Run", then Play,
 // then drag a slider on the top-left of the scene.
 
-// 1. A view named "sliders" DEFINES them: one row per slider, { id, min, max }
+// 1. A table named "sliders" DEFINES them: one row per slider, { id, min, max }
 //    (plus an optional \`default\`). Each row becomes a labelled control over the
-//    visual. (This is a normal view — you could compute the rows, or make it an
-//    editable() table to add/rename sliders live in the table panel.)
-define("sliders", () => rows([
+//    visual. It's an editable() table, so open the "sliders" tab in the panel
+//    and add a row, rename an id, or change a min/max — then Run to apply. (It
+//    could just as well be a computed view: define("sliders", () => rows([...])).)
+editable("sliders", { id: "string", min: "number", max: "number", default: "number" }, [
   { id: "brightness", min: 0, max: 1,   default: 0.6 },
   { id: "warp",       min: 0, max: 1.5, default: 0.3 },
   { id: "height",     min: -1, max: 1,  default: 0 },
-]))
+])
 
 // 2. slider(id) is the sibling of midi(note): a live per-frame value you bind
 //    into any field. Here the sphere's height follows the "height" slider —
