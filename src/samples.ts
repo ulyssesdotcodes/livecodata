@@ -317,7 +317,7 @@ define("hydra", (rand, table) =>
 //    lean angle so each card's lowest rotated corner rests on its support surface.
 define("base", () => {
   const lean = 0.25                    // radians from vertical (~14°)
-  const H = 0.35, W = 0.22, T = 0.04  // card half-height, half-width, half-thickness
+  const H = 0.35, W = 0.22, T = 0.005  // card half-height, half-width, half-thickness
   const sl = Math.sin(lean), cl = Math.cos(lean)
   const dx    = H * sl                 // card-center x offset from tent apex
   const cyOff = W * sl + H * cl       // support-surface to card-center (no corner overlap)
@@ -338,10 +338,10 @@ define("base", () => {
       const tx = -(numTents - 1) * S / 2 + i * S     // apex x
       cards.push(
         { id: "s" + k + "t" + i + "a", type: "create", shape: "box", color: 0xfdf6e3,
-          motion: "dynamic", friction: 0.8, restitution: 0,
+          motion: "dynamic", friction: 0.3, restitution: 0,
           px: tx - dx, py: cardCY, pz: 0, hx: T, hy: H, hz: W, rz: -lean },
         { id: "s" + k + "t" + i + "b", type: "create", shape: "box", color: 0xfdf6e3,
-          motion: "dynamic", friction: 0.8, restitution: 0,
+          motion: "dynamic", friction: 0.3, restitution: 0,
           px: tx + dx, py: cardCY, pz: 0, hx: T, hy: H, hz: W, rz:  lean },
       )
     }
@@ -351,7 +351,7 @@ define("base", () => {
       const bx = -(numTents - 1) * S / 2 + (i + 0.5) * S
       cards.push(
         { id: "s" + k + "b" + i, type: "create", shape: "box", color: 0xe74c3c,
-          motion: "dynamic", friction: 0.8, restitution: 0,
+          motion: "dynamic", friction: 0.3, restitution: 0,
           px: bx, py: topY + T, pz: 0, hx: bHx, hy: T, hz: W },
       )
     }
@@ -360,7 +360,7 @@ define("base", () => {
     if (k === n - 1) {
       cards.push(
         { id: "crown", type: "create", shape: "box", color: 0xe74c3c,
-          motion: "dynamic", friction: 0.8, restitution: 0,
+          motion: "dynamic", friction: 0.3, restitution: 0,
           px: 0, py: topY + T, pz: 0, hx: bHx, hy: T, hz: W },
       )
     }
