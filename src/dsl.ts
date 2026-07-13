@@ -55,6 +55,11 @@ export type ExprNode =
   // playhead's source position. Not resolvable at bake time, so any expression
   // containing one is deferred into a per-row binding (see bakeExpr).
   | { k: 'midi'; note: string; channel: number | null }
+  // A live value pulled from the on-screen slider `id` at the *current frame* —
+  // the slider's recorded automation sampled at the playhead's source position
+  // (its live position while the user is dragging it). Streaming exactly like
+  // midi(), so it too defers into a per-frame binding.
+  | { k: 'slider'; id: string }
 
 type ExprInput = Expr | number | string | boolean | null
 
@@ -109,17 +114,26 @@ export const idx = (): Expr => new Expr({ k: 'idx' })
 export const midi = (note: string, channel: number | null = null): Expr =>
   new Expr({ k: 'midi', note: String(note).toLowerCase(), channel })
 
-// Per-frame evaluation context. `midi` samples the streaming MIDI table at the
-// playhead's current source frame (supplied by playback at apply time).
+// A live slider value, e.g. slider("brightness"). Same shape as midi(): usable
+// anywhere an Expr is and chainable — slider("brightness").mul(2).
+export const slider = (id: string): Expr =>
+  new Expr({ k: 'slider', id: String(id) })
+
+// Per-frame evaluation context. `midi` samples the streaming MIDI table and
+// `slider` the streaming slider table, both at the playhead's current source
+// frame (supplied by playback at apply time). `sliders` returns every defined
+// slider's current value keyed by id — handed to hydra sketches as props.sliders.
 export interface EvalCtx {
   midi?: (note: string, channel: number | null) => number
+  slider?: (id: string) => number
+  sliders?: () => Record<string, number>
 }
 
 // True if a node reads from a streaming source (MIDI) and so cannot be resolved
 // at bake time — it must be carried as a binding and evaluated per frame.
 export function isStreamingNode(n: ExprNode): boolean {
   switch (n.k) {
-    case 'midi': return true
+    case 'midi': case 'slider': return true
     case 'field': case 'lit': case 'idx': return false
     case 'not': return isStreamingNode(n.a)
     case 'bin': case 'cmp': case 'logic': return isStreamingNode(n.a) || isStreamingNode(n.b)
@@ -133,6 +147,7 @@ export function evalExpr(n: ExprNode, row: Row, i: number, ctx?: EvalCtx): unkno
     case 'lit': return n.v
     case 'idx': return i
     case 'midi': return ctx?.midi ? ctx.midi(n.note, n.channel) : 0
+    case 'slider': return ctx?.slider ? ctx.slider(n.id) : 0
     case 'bin': {
       const a = evalExpr(n.a, row, i, ctx) as number
       const b = evalExpr(n.b, row, i, ctx) as number
@@ -1009,6 +1024,11 @@ export type DSLSurface = Easings & {
   lit(v: number | string | boolean | null): Expr
   idx(): Expr
   midi(note: string, channel?: number | null): Expr
+  // A live on-screen slider value, e.g. slider("brightness"). Sliders are
+  // declared by defining a view named "sliders" whose rows carry { id, min,
+  // max } (plus an optional `default`); each shows as a labelled control over
+  // the visual and records its automation the way MIDI does.
+  slider(id: string): Expr
   taps(): Table
   tempo(fallback?: number): number
   beats(count: number, opts?: { fallback?: number; fit?: number }): Table
@@ -1052,6 +1072,7 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     lit,
     idx,
     midi,
+    slider,
     // The tap-beat table: one row per wall-time button press ({ beat, time } —
     // ordinal + absolute UTC epoch ms). The source of truth for tempo.
     taps: () => new Table((ctx?.tapRows?.() ?? []).map((r) => ({ ...r })), ctx),

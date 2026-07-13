@@ -20,6 +20,7 @@ import { TablePane, type TablePanelController } from './table-panel.js'
 import { SessionBar, type SessionBarController } from './session-bar.js'
 import { SessionSelector, type SessionSelectorController } from './session-selector.js'
 import { RoomChip, type RoomChipController } from './room-chip.js'
+import { SliderPanel, type SliderPanelController } from './slider-panel.js'
 
 export interface AppProps {
   editor: EditorController
@@ -27,6 +28,7 @@ export interface AppProps {
   sessionBar: SessionBarController
   sessionSelector: SessionSelectorController
   roomChip: RoomChipController
+  sliderPanel: SliderPanelController
   playback: Accessor<PlaybackController | null>
 }
 
@@ -46,6 +48,7 @@ function App(props: AppProps & { mounts: CanvasMounts }) {
       <div id="canvas-pane" ref={(el) => (props.mounts.canvasPane = el)}>
         <canvas id="three-canvas" ref={(el) => (props.mounts.threeCanvas = el)} />
         <canvas id="hydra-canvas" ref={(el) => (props.mounts.hydraCanvas = el)} />
+        <SliderPanel ctl={props.sliderPanel} />
         <div id="playback-controls">
           <Show when={props.playback()}>
             {(p) => <PlaybackControls vs={p().vs} engine={p().engine} tapControl={p().tapControl} />}

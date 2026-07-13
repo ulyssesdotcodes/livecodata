@@ -20,6 +20,9 @@ import { createPresenceChannel, userColor, lastCellEdits } from './presence.js'
 import { Table } from './dsl.js'
 import { createEditableTableStore, type ColumnType } from './editable-tables.js'
 import { createMidiInput, type MidiInput } from './midi.js'
+import { createSliderInput, sliderDefs, type SliderInput, type SliderStore } from './sliders.js'
+import { createSliderPanel } from './ui/slider-panel.js'
+import { beatToFrame } from './constants.js'
 import { createTapLog } from './tap-log.js'
 import { connectMultiplayer } from './multiplayer.js'
 import type { MultiplayerConnection, MultiplayerStatus } from './multiplayer.js'
@@ -207,6 +210,57 @@ function ensureMidiInput(): MidiInput {
 
 if (midiEnabled) ensureMidiInput()
 
+// On-screen sliders: the twin of MIDI, but the "controller" is drawn over the
+// visual (see ui/slider-panel.tsx). Which sliders exist and their min/max come
+// from the program (a view named "sliders", rows { id, min, max, default? }); a
+// slider's value changes ride an event log stamped with the source position, so
+// a recorded move replays every loop and slider("id") bindings resolve against
+// it each frame. Unlike MIDI, that log is the shared editable-table store, not a
+// private one — slider moves are ordinary "slider" store events, so they sync
+// over multiplayer and persist in the session like any other table (this adapter
+// is the whole of that wiring). And unlike MIDI there's no browser permission to
+// request, so the input is created the moment a program defines a slider.
+const sliderStore: SliderStore = {
+  record: (kind, payload) => editableStore.record('slider', kind, payload),
+  events: () => editableStore.log.all().filter((e) => e.table === 'slider'),
+  onChange: (cb) => editableStore.onChange(cb),
+}
+
+let sliderInput: SliderInput | null = null
+
+function ensureSliderInput(): SliderInput {
+  if (!sliderInput) {
+    sliderInput = createSliderInput({
+      store: sliderStore,
+      getIndex: () => playback.currentSourceBeats(),
+    })
+  }
+  return sliderInput
+}
+
+// The slider overlay controller. Its callbacks drive the log: grabbing a slider
+// clears its old take (record anew), each move records a value at the current
+// playhead, and releasing hands the thumb back to the recorded automation.
+// Recording through the store means the generic store onChange handler already
+// refreshes the "slider"/"slider·events" tables and persists the session — no
+// separate refresh needed. Created before mountApp (which renders it); the
+// callbacks only fire on user interaction, well after `playback` lands.
+const sliderPanel = createSliderPanel({
+  onGrab: (id) => ensureSliderInput().clearId(id),
+  onInput: (id, value) => ensureSliderInput().set(id, value),
+  onRelease: () => {},
+})
+
+// Push the program's slider definitions (its "sliders" view) to both the overlay
+// and the streaming input, on every cook. Empty when the program defines none —
+// the overlay hides and the input goes dormant.
+function updateSliderDefs(views: Map<string, Table>): void {
+  const defs = sliderDefs(views.get('sliders')?.rows ?? [])
+  sliderPanel.setDefs(defs)
+  if (defs.length) ensureSliderInput().setDefs(defs)
+  else sliderInput?.setDefs(defs)
+}
+
 // Options for the playback engine created after mount (see mountApp below);
 // the controller lands in this signal, which the app render watches to show
 // the transport controls.
@@ -216,6 +270,12 @@ const playbackOptions: PlaybackOptions = {
     currentPlayIndex = srcBeats
     tablePanel.highlightIndex(srcBeats)
     tablePanel.highlightLineage(active)
+    // Move each slider's thumb to its recorded value at the playhead (skipping
+    // any the user is currently dragging — see SliderPanel), so the loop's
+    // automation is visible on the controls, not just in the visual.
+    if (sliderInput && sliderInput.defs().length) {
+      sliderPanel.showValues(sliderInput.valuesAt(beatToFrame(srcBeats)))
+    }
     lastTick = tick
     if (rewinding) {
       if (tick < rewindBaseline) rewindBaseline = tick
@@ -231,6 +291,7 @@ const playbackOptions: PlaybackOptions = {
   onLoop: () => { loopCount++ },
   tapControl: { tap: recordTap, clear: clearTaps, rows: tapRows, anchor: tapAnchor },
   midiCtxAt: (srcFrame) => (midiEnabled && midiInput ? midiInput.ctxAt(srcFrame) : null),
+  sliderCtxAt: (srcFrame) => (sliderInput && sliderInput.defs().length ? sliderInput.ctxAt(srcFrame) : null),
 }
 
 // A new MIDI event refreshes the "midi"/"midi·events" display tables. The scene
@@ -334,6 +395,15 @@ function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
     if (!display.has('midi')) display.set('midi', new Table(midiInput.rows()))
     if (!display.has('midi' + EVENTS_SUFFIX)) display.set('midi' + EVENTS_SUFFIX, new Table(midiInput.eventRows()))
   }
+  // The folded slider automation ("slider") and its raw log ("slider·events"),
+  // once a program defines sliders — sibling of the midi pair above. Set before
+  // the generic store loop so it shows the folded view here instead of the raw
+  // "slider" log table the store would otherwise surface. ("sliders" itself is
+  // the program's own definitions view, shown like any other view.)
+  if (sliderInput && sliderInput.defs().length) {
+    if (!display.has('slider')) display.set('slider', new Table(sliderInput.rows()))
+    if (!display.has('slider' + EVENTS_SUFFIX)) display.set('slider' + EVENTS_SUFFIX, new Table(sliderInput.eventRows()))
+  }
   for (const name of editableStore.listNames()) {
     const key = editableStore.isLog(name) ? name : name + EVENTS_SUFFIX
     if (display.has(key)) continue
@@ -373,6 +443,9 @@ function diffCooked({ sceneRows, timelineRows, hydraRows }: CookedData): { scene
 // same pass of a multi-loop sequence.
 function applyCooked(cooked: CookedData): void {
   lastViews = cooked.views
+  // Refresh slider defs before load(): load() reconciles the scene and fires
+  // onTick, which reads the slider input for the thumb values.
+  updateSliderDefs(cooked.views)
   tablePanel.setTables(tablesForDisplay(cooked.views))
   tablePanel.setGraphs(cooked.graphs)
   playback.load({ ...cooked, loopEpochs: loopEpochsFromApplies(editableStore.get(ACTIVITY_TABLE)?.events ?? []) })
@@ -795,6 +868,7 @@ const mounts = mountApp(document.getElementById('app') as HTMLElement, {
   sessionBar,
   sessionSelector,
   roomChip,
+  sliderPanel,
   playback: playbackCtl,
 })
 const sceneAPI = initThree(mounts.threeCanvas, mounts.canvasPane)

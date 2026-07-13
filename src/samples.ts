@@ -485,6 +485,51 @@ editable("hydra", { beat: "number", event: "string", code: "code", name: "string
 `,
   },
   {
+    name: "Sliders",
+    code: `// livecodata — on-screen sliders (the twin of MIDI)
+// Sliders are labelled controls drawn over the visual. Press "Run", then Play,
+// then drag a slider on the top-left of the scene.
+
+// 1. A view named "sliders" DEFINES them: one row per slider, { id, min, max }
+//    (plus an optional \`default\`). Each row becomes a labelled control over the
+//    visual. (This is a normal view — you could compute the rows, or make it an
+//    editable() table to add/rename sliders live in the table panel.)
+define("sliders", () => rows([
+  { id: "brightness", min: 0, max: 1,   default: 0.6 },
+  { id: "warp",       min: 0, max: 1.5, default: 0.3 },
+  { id: "height",     min: -1, max: 1,  default: 0 },
+]))
+
+// 2. slider(id) is the sibling of midi(note): a live per-frame value you bind
+//    into any field. Here the sphere's height follows the "height" slider —
+//    drag it and the orb moves; the value is recorded against playback time and
+//    replays every loop (watch the thumb retrace your move). setField leaves a
+//    binding resolved each frame, exactly like setField("amount", midi("c4")).
+define("scene", () =>
+  rows([{ id: "orb", type: "create", beat: 1, shape: "sphere", color: 0xffd43b,
+          px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
+    .setField("py", slider("height"))
+    .rasterize(16))
+
+// 3. In a hydra sketch every slider is also on props.sliders, keyed by id — no
+//    setVariable rows needed. Reference it as a FUNCTION so hydra reads it fresh
+//    each frame: (props) => props.sliders.warp. Here "warp" drives the modulate
+//    amount and "brightness" the output level.
+define("hydra", () => rows([
+  { beat: 1, event: "setCode", code:
+    "src(s0).modulate(noise(3), (props) => props.sliders.warp)" +
+    ".brightness((props) => props.sliders.brightness - 0.5).out(o0)" },
+]))
+
+// Recording & sync: while you're not touching a slider, its recorded automation
+// drives the thumb as the loop plays. The moment you grab one it loses sync —
+// its old take is cleared and it records anew from the playhead (drag while
+// playing to draw a sweep). Slider moves ride the shared session log, so they
+// sync to everyone in a room and persist with the session. The raw moves show
+// in the "slider·events" tab, the folded current take in "slider".
+`,
+  },
+  {
     name: "House of Cards",
     code: `// livecodata — House of Cards
 // A triangular pyramid of playing cards collapses when a ball drops on it.

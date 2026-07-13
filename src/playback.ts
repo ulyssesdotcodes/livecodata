@@ -86,6 +86,10 @@ export interface PlaybackOptions {
   // the live MIDI table, sampled at the playhead's *source* frame — the same
   // content-space coordinate events are recorded in (see currentSourceBeats).
   midiCtxAt?: (srcFrame: number) => EvalCtx | null
+  // The same, for slider() bindings against the live slider table. Its ctx also
+  // carries sliders() — every defined slider's value — which each hydra sketch
+  // reads as `props.sliders` (see visualizer.ts).
+  sliderCtxAt?: (srcFrame: number) => EvalCtx | null
 }
 
 // The engine's clocks and frame scheduler, injectable so tests can drive the
@@ -164,7 +168,7 @@ export interface PlaybackEngine extends PlaybackAPI {
 
 export function createPlaybackEngine(
   visualizers: Visualizer[],
-  { onTick, onPlay, onLoop, tapControl, midiCtxAt, onViewChange, clock }: PlaybackEngineOptions = {},
+  { onTick, onPlay, onLoop, tapControl, midiCtxAt, sliderCtxAt, onViewChange, clock }: PlaybackEngineOptions = {},
 ): PlaybackEngine {
   const now = clock?.now ?? ((): number => performance.now())
   const epochNow = clock?.epochNow ?? ((): number => Date.now())
@@ -244,10 +248,15 @@ export function createPlaybackEngine(
     // each visualizer interpolates between cache frames however it needs to.
     const srcBeat = sourceBeatAt(pos)
     const srcFrameF = (srcBeat - 1) * FRAMES_PER_BEAT
-    // Streaming context: midi() bindings resolve against the live MIDI table at
-    // the source frame — the same content coordinate events are recorded in, so
-    // a recorded sweep tracks the timeline (and the tempo) rather than wall time.
-    const ctx = midiCtxAt ? midiCtxAt(Math.round(srcFrameF)) : null
+    // Streaming context: midi()/slider() bindings resolve against the live MIDI
+    // and slider tables at the source frame — the same content coordinate events
+    // are recorded in, so a recorded sweep tracks the timeline (and the tempo)
+    // rather than wall time. Both sources merge into one ctx handed to every
+    // visualizer (midi supplies midi(), the slider source slider()/sliders()).
+    const srcFrame = Math.round(srcFrameF)
+    const midiCtx = midiCtxAt ? midiCtxAt(srcFrame) : null
+    const sliderCtx = sliderCtxAt ? sliderCtxAt(srcFrame) : null
+    const ctx: EvalCtx | null = midiCtx || sliderCtx ? { ...midiCtx, ...sliderCtx } : null
     const states: Row[] = []
     for (const v of visualizers) states.push(...v.applyFrame({ srcFrameF, ctx, passAt: passesSince }))
     // Graphed/table views key their rows by `beat`, so report the source beat.

@@ -157,7 +157,17 @@ export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
     applyFrame({ srcFrameF, ctx, passAt }): Row[] {
       const pass = loops > 1 ? passAt(epoch) % loops : 0
       const sketch = hydraFrameAt(index, Math.floor(srcFrameF), pass)
-      hydraAPI.setSketch(sketch && ctx ? { ...sketch, vars: resolveBindings(sketch.vars, ctx) } : sketch)
+      // Resolve any midi/slider bindings in the sketch's variables, then expose
+      // every defined slider's current value as `props.sliders` so a sketch can
+      // read `(props) => props.sliders.brightness` directly (a user variable
+      // named "sliders" still wins — explicit setVariable takes precedence).
+      if (sketch) {
+        const vars = ctx ? resolveBindings(sketch.vars, ctx) : sketch.vars
+        const sliders = ctx?.sliders?.()
+        hydraAPI.setSketch(sliders ? { ...sketch, vars: { sliders, ...vars } } : (ctx ? { ...sketch, vars } : sketch))
+      } else {
+        hydraAPI.setSketch(sketch)
+      }
       hydraAPI.tick(srcFrameF / FPS)
       return []
     },
