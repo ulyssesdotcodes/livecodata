@@ -172,6 +172,26 @@ test('crossings detects level crossings with direction', () => {
   ])
 })
 
+test('pairBy pairs matches cyclically, replacing each `second` with fn\'s output', () => {
+  const out = t([
+    { beat: 1, event: 'setCode', code: 'a' },
+    { beat: 5, event: 'setVariable', name: 'freq', value: 3 },
+    { beat: 9, event: 'setCode', code: 'b' },
+  ]).pairBy('event', 'setCode', (first, second) => [
+    { beat: second.beat, from: first.code, to: second.code },
+  ])
+  assert.deepEqual(out.rows, [
+    { beat: 1, from: 'b', to: 'a' },
+    { beat: 5, event: 'setVariable', name: 'freq', value: 3 },
+    { beat: 9, from: 'a', to: 'b' },
+  ])
+})
+
+test('pairBy leaves rows unchanged when nothing matches', () => {
+  const rows = [{ beat: 1, event: 'setVariable' }]
+  assert.deepEqual(t(rows).pairBy('event', 'setCode', () => ({})).rows, rows)
+})
+
 test('triggerEach fans out across objects and unions lineage from trigger + object', () => {
   const wave = new Table([
     withLineage({ value: -1, index: 0 }, [{ table: 'wave', index: 0 }]),
