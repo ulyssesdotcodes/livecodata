@@ -102,12 +102,13 @@ define("steps", () => editable("steps", {
   { step: "wings", p1: "0,0.1414213562", p2: "0.8585786438,1", move: "0.858,0.377;0.377,0.858", at: 17, dur: 1.5, to: 0.5 },
 ]))
 
-// Feed the fold table to a sheet of paper. The fold value is one number:
-// how many folds have landed (fractions = the next flap mid-swing), so
-// scrubbing the timeline scrubs the folding.
+// Feed the fold table to a sheet of paper, colored side DOWN (backColor)
+// the way a crane is folded so the finished bird comes out colored. The
+// fold value is one number: how many folds have landed (fractions = the
+// next flap mid-swing), so scrubbing the timeline scrubs the folding.
 define("events", (rand, table) => {
   const paper = origami().steps(table("steps"))
-  return paper.spawn({ id: "crane", color: 0xd94f2a, pz: 1.2, rz: 2.356 })
+  return paper.spawn({ id: "crane", color: 0xf4efe2, backColor: 0xd94f2a, pz: 1.2, rz: 2.356 })
     .concat(paper.sequence())
 })
 

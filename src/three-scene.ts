@@ -61,28 +61,14 @@ interface OrigamiObject {
 
 const PAPER_BACK = 0xf4efe2
 
-// total thickness of the whole layer stack, relative to the paper size —
-// each layer gets an equal slice, so deep models stay visually thin
-const STACK_DEPTH = 0.05
-
-function layerGap(program: FoldTableProgram): number {
-  let maxLayer = 1
-  for (const step of program.steps) {
-    for (const l of step.layers) maxLayer = Math.max(maxLayer, l)
-  }
-  return (STACK_DEPTH * program.size) / maxLayer
-}
-
 function fillOrigami(obj: OrigamiObject): void {
   const { program } = obj
-  const { FV, pos, layers } = foldTablePositions(program, obj.fold)
-  const gap = layerGap(program)
-  const mid = (Math.max(...layers) + 1) / 2
+  const { FV, pos, zOff } = foldTablePositions(program, obj.fold)
   const P = obj.posAttr.array as Float32Array
   let n = 0
   for (let fi = 0; fi < FV.length; ++fi) {
     const F = FV[fi]
-    const z = gap * (layers[fi] - mid)
+    const z = zOff[fi]
     for (let j = 1; j + 1 < F.length; ++j) {
       for (const vi of [F[0], F[j], F[j + 1]]) {
         const v = pos[vi]
@@ -97,7 +83,7 @@ function fillOrigami(obj: OrigamiObject): void {
   const seen = new Set<string>()
   for (let fi = 0; fi < FV.length; ++fi) {
     const F = FV[fi]
-    const z = gap * (layers[fi] - mid)
+    const z = zOff[fi]
     let i = F.length - 1
     for (let j = 0; j < F.length; ++j) {
       const a = F[i], b = F[j]
@@ -129,9 +115,12 @@ function makeOrigami(row: Record<string, unknown>): OrigamiObject {
   geometry.setAttribute('position', posAttr)
 
   const color = row.color != null ? (row.color as number) : 0xd94f2a
+  const backColor = row.backColor != null ? (row.backColor as number) : PAPER_BACK
   // Two single-sided materials so the paper's front and back read differently
-  // (classic origami: colored face, white back). flatShading derives face
-  // normals in-shader, so no normal attribute needs recomputing per frame.
+  // (classic origami: colored face, white back — set backColor to fold
+  // colored-side-down, the way a crane is folded so it ends up colored).
+  // flatShading derives face normals in-shader, so no normal attribute
+  // needs recomputing per frame.
   const common = {
     metalness: 0.05,
     roughness: 0.85,
@@ -141,7 +130,7 @@ function makeOrigami(row: Record<string, unknown>): OrigamiObject {
     polygonOffsetUnits: 1,
   }
   const front = new THREE.MeshStandardMaterial({ ...common, color, side: THREE.FrontSide })
-  const back = new THREE.MeshStandardMaterial({ ...common, color: PAPER_BACK, side: THREE.BackSide })
+  const back = new THREE.MeshStandardMaterial({ ...common, color: backColor, side: THREE.BackSide })
 
   const linePosAttr = new THREE.BufferAttribute(new Float32Array(maxEdges * 6), 3)
   linePosAttr.setUsage(THREE.DynamicDrawUsage)

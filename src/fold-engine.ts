@@ -49,6 +49,13 @@ export interface FoldAnim {
   Vfrom: Vec2[]         // pre-fold coords (same indexing as state.V)
   moving: boolean[]     // per face
   line: Line
+  // stacking of the pre-fold state carried onto this step's faces (split
+  // pieces inherit their parent's layer) — nudges interpolate from these
+  layersFrom: number[]
+  // which side the flap swings through: +1 = toward +z (it ends on top of
+  // the paper it folds onto), -1 = behind. Voted from the solved layer
+  // order over every overlapping moving/static face pair.
+  dir: 1 | -1
 }
 
 export interface FoldOutcome {
@@ -125,7 +132,9 @@ const linearize = (H: Map<string, number>, n: number): number[] | undefined => {
     const [f1, f2] = M.decode(k)
     if (idx[f1] > idx[f2]) return undefined
   }
-  return idx
+  // topological order puts the TOP face first — invert so bigger layer =
+  // higher in the stack (matches flat-folder's own per-cell display order)
+  return idx.map((i) => n - 1 - i)
 }
 
 export const initialState = (corners?: Vec2[]): FoldState => {
@@ -232,9 +241,21 @@ export const foldStep = (st: FoldState, spec: FoldSpec): FoldOutcome => {
   if (layers === undefined) {
     throw new FoldError('chosen state has cyclic layering; try another kind/pick')
   }
+  const layersFrom: number[] = FVy.map(() => 0)
+  for (let f = 0; f < F_map2.length; ++f) {
+    for (const f_ of F_map2[f]) layersFrom[f_] = st.layers[f]
+  }
+  let votes = 0
+  for (const [f, g] of FO) {
+    if (FM[f] === FM[g]) continue
+    const mover = FM[f] ? f : g
+    const still = FM[f] ? g : f
+    votes += Math.sign(layers[mover] - layers[still])
+  }
+  const dir: 1 | -1 = votes >= 0 ? 1 : -1
   return {
     state: { V: Vy, FV: FVy, FO, Ff, sheet: Sy as Vec2[], layers, eps: FOLDn.eps },
-    anim: { Vfrom: Vx as Vec2[], moving: FM, line },
+    anim: { Vfrom: Vx as Vec2[], moving: FM, line, layersFrom, dir },
     type: TYPE_LABEL[sel.type],
     nStates: Number(n),
   }
@@ -246,7 +267,7 @@ export const foldStep = (st: FoldState, spec: FoldSpec): FoldOutcome => {
 export const animatedPositions = (
   outcome: FoldOutcome, t: number,
 ): [number, number, number][] => {
-  const { Vfrom, moving, line } = outcome.anim
+  const { Vfrom, moving, line, dir } = outcome.anim
   const FV = outcome.state.FV
   const [u, d] = line
   const theta = Math.PI * Math.min(1, Math.max(0, t))
@@ -260,9 +281,10 @@ export const animatedPositions = (
   return Vfrom.map((p, vi) => {
     const h = M.dot(p, u) - d
     if (!isMoving[vi] || Math.abs(h) < 1e-12) return [p[0], p[1], 0]
-    // rotate the signed distance h about the line (axis in the sheet plane)
+    // rotate the signed distance h about the line (axis in the sheet
+    // plane), swinging out on the side the flap will land on
     const hh = h * cos
-    const z = -h * sin
+    const z = dir * Math.abs(h) * sin
     return [p[0] + (hh - h) * u[0], p[1] + (hh - h) * u[1], z]
   })
 }
@@ -297,7 +319,9 @@ export interface FoldProgramStep {
   Vfrom: Vec2[]      // display frame
   line: Line         // display frame
   moving: boolean[]
-  layers: number[]
+  layers: number[]      // stacking after this fold lands
+  layersFrom: number[]  // stacking before it, on this step's face set
+  dir: 1 | -1           // swing side (toward +z when the flap ends on top)
 }
 
 export interface FoldTableProgram {
@@ -306,6 +330,10 @@ export interface FoldTableProgram {
   initial: { FV: number[][]; V: Vec2[] }
   steps: FoldProgramStep[]
   end: number        // beat when the last swing lands
+  // display stacking: layer index * gap = z offset; one gap for the whole
+  // program so the stack never jumps between steps
+  gap: number
+  maxLayer: number
 }
 
 const KIND_ALIASES: Record<string, string> = {
@@ -413,6 +441,8 @@ export const compileFoldTable = (
       line: lineToDisplay(out.anim.line),
       moving: out.anim.moving,
       layers: out.state.layers,
+      layersFrom: out.anim.layersFrom,
+      dir: out.anim.dir,
     })
     st = out.state
   }
@@ -426,11 +456,21 @@ export const compileFoldTable = (
       throw new FoldError(`step "${steps[i].name}": only the last step may stop short of flat (to < 1)`)
     }
   }
+  let maxLayer = 1
+  for (const step of steps) {
+    for (const l of step.layers) maxLayer = Math.max(maxLayer, l)
+  }
   return {
     kind: 'fold-table', size, initial, steps,
     end: steps.length > 0 ? steps[steps.length - 1].t1 : 1,
+    gap: (STACK_DEPTH * size) / maxLayer,
+    maxLayer,
   }
 }
+
+// total thickness of the whole layer stack, relative to the paper size —
+// each layer gets an equal slice, so deep models stay visually thin
+const STACK_DEPTH = 0.05
 
 // Fold-progress value → per-vertex [x, y, z] positions plus the face set to
 // draw. fold = k + t means step k+1 is mid-swing at fraction t; whole
@@ -438,14 +478,15 @@ export const compileFoldTable = (
 // consumes this one function.
 export const foldTablePositions = (
   program: FoldTableProgram, fold: number,
-): { FV: number[][]; pos: [number, number, number][]; moving: boolean[]; layers: number[] } => {
+): { FV: number[][]; pos: [number, number, number][]; moving: boolean[]; zOff: number[] } => {
   const N = program.steps.length
+  const mid = program.maxLayer / 2
   if (N === 0 || fold <= 0) {
     return {
       FV: program.initial.FV,
       pos: program.initial.V.map((p) => [p[0], p[1], 0]),
       moving: program.initial.FV.map(() => false),
-      layers: program.initial.FV.map(() => 0),
+      zOff: program.initial.FV.map(() => program.gap * (0 - mid)),
     }
   }
   const k = Math.min(Math.floor(fold), N - 1)
@@ -464,9 +505,13 @@ export const foldTablePositions = (
     const h = p[0] * u[0] + p[1] * u[1] - d
     if (!isMoving[vi] || Math.abs(h) < 1e-12) return [p[0], p[1], 0]
     const hh = h * cos
-    return [p[0] + (hh - h) * u[0], p[1] + (hh - h) * u[1], -h * sin]
+    return [p[0] + (hh - h) * u[0], p[1] + (hh - h) * u[1], step.dir * Math.abs(h) * sin]
   })
-  return { FV: step.FV, pos, moving: step.moving, layers: step.layers }
+  // each face's display height eases from where its paper sat before this
+  // fold to where it ends up, so consecutive steps join without a jump
+  const zOff = step.FV.map((_, fi) =>
+    program.gap * (step.layersFrom[fi] + (step.layers[fi] - step.layersFrom[fi]) * t - mid))
+  return { FV: step.FV, pos, moving: step.moving, zOff }
 }
 
 // The fold value a beat-timed schedule reaches at a given beat — steps swing
