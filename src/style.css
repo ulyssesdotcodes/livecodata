@@ -841,7 +841,6 @@ html, body {
   white-space: nowrap;
 }
 
-.row-toggle-btn,
 .row-dup-btn,
 .row-del-btn {
   background: transparent;
@@ -853,10 +852,6 @@ html, body {
   padding: 0 4px;
 }
 
-.row-toggle-btn:hover {
-  color: #2a70c0;
-}
-
 .row-dup-btn:hover {
   color: #6fbf73;
 }
@@ -865,9 +860,10 @@ html, body {
   color: #e94560;
 }
 
-/* A disabled row stays fully visible/editable but reads as "commented out" —
-   the program no longer sees it (see editable-tables.ts ensure()). Excludes
-   the actions cell so its toggle/duplicate/delete buttons stay legible. */
+/* A row whose own boolean "disabled" column is checked stays fully
+   visible/editable but reads as "commented out" — the program no longer
+   sees it (see editable-tables.ts's DISABLED_COL/ensure()). Excludes the
+   actions cell so its duplicate/delete buttons stay legible. */
 .events-table tbody tr.row-disabled td:not(.row-actions) {
   opacity: 0.45;
   font-style: italic;

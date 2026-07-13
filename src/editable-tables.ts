@@ -81,18 +81,21 @@ export interface EditableColumn {
 export interface EditableTableData {
   columns: EditableColumn[]
   rows: Row[]
-  // Parallel to `rows`: whether the table panel has toggled that row off (see
-  // RowMeta.disabled). A disabled row still shows here, for editing/re-
-  // enabling — it's ensure()'s return to the program that omits it.
-  disabled: boolean[]
   // The edit history, as display rows for the read-only `name·events` table.
   events: Row[]
 }
 
-// The rows a program sees: every row except one the user has disabled via the
-// table panel — as if that line were commented out, without losing it.
+// A row's own boolean `disabled` field — an ordinary column, not separate
+// provenance — is the line-mute switch: check it via "+ column" (boolean
+// type) and it disappears from what the program sees (ensure()'s return)
+// while staying in the table, still shown and editable, for switching back.
+// No dedicated event/meta plumbing: it's just data, so it rides every
+// existing mechanism (conform on schema change, survive a re-seed as any
+// other untouched cell would, round-trip through serialize/load) for free.
+export const DISABLED_COL = 'disabled'
+
 function visibleRows(t: TableState): Row[] {
-  return t.rows.filter((_r, i) => !t.rowMeta[i].disabled)
+  return t.rows.filter((r) => r[DISABLED_COL] !== true)
 }
 
 function defaultFor(type: ColumnType): unknown {
@@ -116,20 +119,14 @@ function defaultFor(type: ColumnType): unknown {
 //           identity a re-seed aligns new seed values to (and that a remove
 //           tombstones, so a deleted code row isn't resurrected by a later
 //           seed). -1 for user rows.
-//   disabled — the user has toggled this row off via the table panel: it stays
-//           in the table (still visible/editable, still counted for slot
-//           alignment) but ensure() omits it from what the program sees, as if
-//           the line were commented out. A user preference, not data, so it
-//           survives a re-seed of the same row untouched (see reseedRows).
 interface RowMeta {
   code: boolean
   dirty: boolean
   slot: number
-  disabled: boolean
 }
 
-const userMeta = (): RowMeta => ({ code: false, dirty: true, slot: -1, disabled: false })
-const seedMeta = (slot: number): RowMeta => ({ code: true, dirty: false, slot, disabled: false })
+const userMeta = (): RowMeta => ({ code: false, dirty: true, slot: -1 })
+const seedMeta = (slot: number): RowMeta => ({ code: true, dirty: false, slot })
 
 // One table's folded state. `events` accumulates the display form of every
 // event that touched this table (riding along through renames). `columns`
@@ -250,7 +247,7 @@ function reseedRows(t: TableState, seed: Row[]): void {
       nextMeta.push(meta)
     } else if (meta.slot < seed.length) {
       nextRows.push(conformRow(seed[meta.slot], cols))
-      nextMeta.push({ ...seedMeta(meta.slot), disabled: meta.disabled })
+      nextMeta.push(seedMeta(meta.slot))
     }
     // else: a pristine code row whose slot the shrunk seed no longer covers — dropped.
   }
@@ -377,16 +374,6 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
       if (row) { row[e.col as string] = e.value; t.rowMeta[e.row as number].dirty = true }
       break
     }
-    case 'disable-row': {
-      const meta = t.rowMeta[e.row as number]
-      if (meta) meta.disabled = true
-      break
-    }
-    case 'enable-row': {
-      const meta = t.rowMeta[e.row as number]
-      if (meta) meta.disabled = false
-      break
-    }
     case 'set-row': {
       const row = t.rows[e.row as number]
       if (row) { Object.assign(row, e.values as Record<string, unknown>); t.rowMeta[e.row as number].dirty = true }
@@ -454,10 +441,6 @@ export interface EditableTableStore {
   removeRow(name: string, index: number): void
   // Insert a copy of the row at `index` immediately after it.
   duplicateRow(name: string, index: number): void
-  // Toggle whether a row counts toward what the program sees (ensure()'s
-  // return) without deleting it — the row stays in the table, still shown and
-  // editable, so it can be switched back on later.
-  setRowDisabled(name: string, index: number, disabled: boolean): void
   setCell(name: string, index: number, colName: string, value: unknown): void
   // Atomically set several cells of one row in a single event — e.g. a
   // program Run sets `code` and `seed` together, so the pair is always one
@@ -546,9 +529,7 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
 
     get(name: string): EditableTableData | undefined {
       const t = view().get(name)
-      return t
-        ? { columns: effectiveColumns(t), rows: t.rows, disabled: t.rowMeta.map((m) => m.disabled), events: t.events }
-        : undefined
+      return t ? { columns: effectiveColumns(t), rows: t.rows, events: t.events } : undefined
     },
 
     createTable(name: string): void {
@@ -661,12 +642,6 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       const t = tables.get(name)
       if (!t || index < 0 || index >= t.rows.length) return
       append({ kind: 'duplicate-row', table: name, row: index })
-    },
-
-    setRowDisabled(name: string, index: number, disabled: boolean): void {
-      const t = tables.get(name)
-      if (!t || !t.rows[index] || t.rowMeta[index].disabled === disabled) return
-      append({ kind: disabled ? 'disable-row' : 'enable-row', table: name, row: index })
     },
 
     setCell(name: string, index: number, colName: string, value: unknown): void {

@@ -70,55 +70,55 @@ test('addColumn backfills existing rows with a default; removeColumn drops it', 
   assert.deepEqual(store.get('t1')!.rows, [{ loop: 0, label: '' }])
 })
 
-test('setRowDisabled hides a row from ensure() without deleting it', () => {
+test('a boolean column named "disabled" hides a row from ensure() without deleting it', () => {
   const store = createEditableTableStore()
   store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }, { v: 3 }])
-  store.setRowDisabled('kf', 1, true)
+  store.addColumn('kf', 'disabled', 'boolean')
+  store.setCell('kf', 1, 'disabled', true)
 
-  // The table panel still sees every row, flagged…
+  // The table panel still sees every row…
   assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [1, 2, 3])
-  assert.deepEqual(store.get('kf')!.disabled, [false, true, false])
   // …but the program (ensure()'s return) sees the middle row omitted.
-  const rows = store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }, { v: 3 }])
-  assert.deepEqual(rows.map((r) => r.v), [1, 3])
+  assert.deepEqual(
+    store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }, { v: 3 }]).map((r) => r.v),
+    [1, 3],
+  )
 
-  // Re-enabling brings it back for the program without having re-created it.
-  store.setRowDisabled('kf', 1, false)
-  assert.deepEqual(store.get('kf')!.disabled, [false, false, false])
-  const rows2 = store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }, { v: 3 }])
-  assert.deepEqual(rows2.map((r) => r.v), [1, 2, 3])
+  // Unchecking it brings the row back for the program.
+  store.setCell('kf', 1, 'disabled', false)
+  assert.deepEqual(
+    store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }, { v: 3 }]).map((r) => r.v),
+    [1, 2, 3],
+  )
 })
 
-test('setRowDisabled is recorded as an event, and a no-op toggle appends nothing', () => {
-  const store = createEditableTableStore()
-  store.createTable('t1')
-  store.addRow('t1')
-  const before = store.get('t1')!.events.length
-
-  store.setRowDisabled('t1', 0, true)
-  assert.equal(store.get('t1')!.events.at(-1)!.kind, 'disable-row')
-  store.setRowDisabled('t1', 0, true) // already disabled — no-op
-  assert.equal(store.get('t1')!.events.length, before + 1)
-
-  store.setRowDisabled('t1', 0, false)
-  assert.equal(store.get('t1')!.events.at(-1)!.kind, 'enable-row')
-  assert.equal(store.get('t1')!.events.length, before + 2)
-
-  assert.equal(store.get('t1')!.events.length, before + 2, 'nothing appended for an out-of-range row')
-  store.setRowDisabled('t1', 99, true)
-  assert.equal(store.get('t1')!.events.length, before + 2)
-})
-
-test('disabling survives a re-seed of the same (untouched) row — it is a user preference, not data', () => {
+test('adding a "disabled" column defaults every existing row to false (still visible to the program)', () => {
   const store = createEditableTableStore()
   store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }])
-  store.setRowDisabled('kf', 0, true)
+  store.addColumn('kf', 'disabled', 'boolean')
+  assert.deepEqual(store.get('kf')!.rows, [{ v: 1, disabled: false }, { v: 2, disabled: false }])
+  assert.deepEqual(store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }]).map((r) => r.v), [1, 2])
+})
 
-  // Re-seeding refreshes the pristine row's value but must not silently re-enable it.
-  store.ensure('kf', { v: 'number' }, [{ v: 10 }, { v: 20 }])
-  assert.deepEqual(store.get('kf')!.disabled, [true, false])
-  assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [10, 20])
-  assert.deepEqual(store.ensure('kf', { v: 'number' }, [{ v: 10 }, { v: 20 }]).map((r) => r.v), [20])
+test('toggling "disabled" is an ordinary set-cell edit, with no dedicated event kind', () => {
+  const store = createEditableTableStore()
+  store.createTable('t1')
+  store.addColumn('t1', 'disabled', 'boolean')
+  store.addRow('t1')
+  store.setCell('t1', 0, 'disabled', true)
+  assert.equal(store.get('t1')!.events.at(-1)!.kind, 'set-cell')
+})
+
+test('toggling "disabled" dirties the row like any other edit — it stops following later re-seeds', () => {
+  const store = createEditableTableStore()
+  store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }])
+  store.addColumn('kf', 'disabled', 'boolean')
+  store.setCell('kf', 0, 'disabled', true)
+
+  // Same rule as any other cell edit: touching the row claims it from the
+  // program, so a later re-seed leaves its value alone.
+  store.ensure('kf', { v: 'number' }, [{ v: 100 }, { v: 200 }])
+  assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [1, 200])
 })
 
 test('renameColumn moves the value under the new key', () => {

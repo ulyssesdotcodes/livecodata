@@ -18,7 +18,7 @@ import { createCookClient } from './cook-client.js'
 import { randomSeed, localSource } from './event-log.js'
 import { createPresenceChannel, userColor, lastCellEdits } from './presence.js'
 import { Table } from './dsl.js'
-import { createEditableTableStore, type ColumnType } from './editable-tables.js'
+import { createEditableTableStore, DISABLED_COL, type ColumnType } from './editable-tables.js'
 import { createMidiInput, type MidiInput } from './midi.js'
 import { createSliderInput, sliderDefs, type SliderInput, type SliderStore } from './sliders.js'
 import { createSliderPanel } from './ui/slider-panel.js'
@@ -259,12 +259,10 @@ const sliderPanel = createSliderPanel({
 // drives the sliders. Empty when neither exists — the overlay hides and the
 // input goes dormant.
 function updateSliderDefs(views: Map<string, Table>): void {
-  const viewRows = views.get('sliders')?.rows
   // The cooked view (if any) already reflects ensure()'s filtering; the raw
   // fallback (a table-panel-only "sliders" table) needs it applied here too,
-  // so a disabled row doesn't drive a live slider.
-  const table = viewRows ? undefined : editableStore.get('sliders')
-  const rows = viewRows ?? (table ? table.rows.filter((_r, i) => !table.disabled[i]) : [])
+  // so a row disabled via its own `disabled` column doesn't drive a live slider.
+  const rows = views.get('sliders')?.rows ?? (editableStore.get('sliders')?.rows ?? []).filter((r) => r[DISABLED_COL] !== true)
   const defs = sliderDefs(rows)
   sliderPanel.setDefs(defs)
   if (defs.length) ensureSliderInput().setDefs(defs)
@@ -329,12 +327,12 @@ function onMidi(): void {
 const cookClient = createCookClient(new Worker(new URL('cook-worker.js', import.meta.url), { type: 'module' }))
 
 async function cookInWorker(code: string, seed: number, seeds?: Record<string, Row[]>): Promise<{ cooked: CookedData; declaredNames: string[] }> {
-  const editables = editableStore.listNames().map((name) => {
-    const t = editableStore.get(name)
-    // Match ensure()'s own filtering: a row the user disabled via the table
-    // panel stays in the table but is omitted from what the program sees.
-    return { name, rows: t ? t.rows.filter((_r, i) => !t.disabled[i]) : [] }
-  })
+  const editables = editableStore.listNames().map((name) => ({
+    name,
+    // Match ensure()'s own filtering: a row whose own `disabled` column is
+    // true stays in the table but is omitted from what the program sees.
+    rows: (editableStore.get(name)?.rows ?? []).filter((r) => r[DISABLED_COL] !== true),
+  }))
   const { cooked, declared } = await cookClient.cook({ code, seed, dataCache, tapRows: tapRows(), editables, seeds })
   for (const d of declared) editableStore.ensure(d.name, d.schema, d.seedRows)
   return { cooked, declaredNames: declared.map((d) => d.name) }
