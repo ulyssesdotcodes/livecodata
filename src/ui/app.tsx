@@ -30,6 +30,10 @@ export interface AppProps {
   roomChip: RoomChipController
   sliderPanel: SliderPanelController
   playback: Accessor<PlaybackController | null>
+  // The session bar's "Clear" button: wipes the saved run list. The program
+  // text and every editable table's rows are untouched — see main.ts's
+  // clearRuns.
+  onClearRuns: () => void
 }
 
 // The imperative islands the app render creates but does not draw into:
@@ -59,6 +63,13 @@ function App(props: AppProps & { mounts: CanvasMounts }) {
         <EditorPane ctl={props.editor}>
           <SessionSelector ctl={props.sessionSelector}>
             <RoomChip ctl={props.roomChip} />
+            <button
+              class="session-clear"
+              title="Clear the saved run history — the program text is untouched"
+              onClick={() => props.onClearRuns()}
+            >
+              clear
+            </button>
           </SessionSelector>
           <SessionBar ctl={props.sessionBar} />
         </EditorPane>

@@ -84,6 +84,14 @@ export interface SessionRun {
   tables: Record<string, number>
 }
 
+// The event kind a "Clear" click records (see main.ts's clearRuns, ridden on
+// the "activity" pseudo-table like 'apply'/'session-start') to wipe the run
+// list. It's a marker, not a deletion: every table's own history — "code"'s
+// included — is untouched, so deriveRunsFromCode() (the legacy/no-saved-runs
+// fallback) knows to derive nothing from before it rather than resurrecting
+// runs the user just cleared.
+export const CLEAR_RUNS_KIND = 'clear-runs'
+
 export interface EditableColumn {
   name: string
   type: ColumnType
@@ -515,6 +523,9 @@ export interface EditableTableStore {
   setRuns(runs: SessionRun[]): void
   // Reconstruct runs from a legacy session that saved no run list, one per
   // recorded program Run in "code"'s own history (best-effort backward compat).
+  // Stops at the latest CLEAR_RUNS_KIND marker, if any, so a cleared session
+  // that got saved without an explicit (now-empty) run list doesn't derive its
+  // pre-clear runs back into existence.
   deriveRunsFromCode(): void
   // Show the store as it was at `run` — reads (get/has/listNames/ensure) serve
   // that historical fold and ensure() appends nothing, so a scrubbed replay is
@@ -728,12 +739,15 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
     deriveRunsFromCode(): void {
       const code = tables.get('code')
       const all = log.all()
-      runs = (code?.events ?? []).map((e) => {
-        const at = (e.seq as number) + 1
-        const tableIdx: Record<string, number> = {}
-        for (const [name, t] of foldEventsMap(all.slice(0, at))) tableIdx[name] = t.events.length
-        return { at, tables: tableIdx }
-      })
+      const clearedSeq = all.reduce((max, e) => (e.kind === CLEAR_RUNS_KIND ? Math.max(max, e.seq) : max), -1)
+      runs = (code?.events ?? [])
+        .filter((e) => (e.seq as number) > clearedSeq)
+        .map((e) => {
+          const at = (e.seq as number) + 1
+          const tableIdx: Record<string, number> = {}
+          for (const [name, t] of foldEventsMap(all.slice(0, at))) tableIdx[name] = t.events.length
+          return { at, tables: tableIdx }
+        })
     },
 
     setReplayView(run: SessionRun | null): void {
