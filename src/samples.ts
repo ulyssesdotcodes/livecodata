@@ -275,6 +275,57 @@ define("hydra", () => rows([
     },
   },
   {
+    name: "Origami Cicada",
+    code: `// livecodata — Origami Cicada: the traditional model, nine simple folds
+// The classic cicada (semi), folded for nearly two centuries: halve the
+// square, fold both corners up, sweep the tips back out past the edges
+// for wings, fold two head layers down (leaving the stripe), then tuck
+// the sides behind. Every row is one fold, solved exactly when the code
+// runs — same fold-table dialect as the Origami Crane sample (see its
+// header for the column notes). Press "Run", then hit Play.
+
+// \`schemas.steps\` is the canonical fold-table schema — the rows are seeded
+// in the table panel on the right, one fold each.
+define("steps", () => editable("steps", schemas.steps))
+
+// Colored side down, like the crane — the finished bug comes out green.
+define("events", (rand, table) => {
+  const paper = origami().steps(table("steps"))
+  return paper.spawn({ id: "cicada", color: 0xf4efe2, backColor: 0x79b356, pz: 1.2, rz: -0.785 })
+    .concat(paper.sequence())
+})
+
+// Bake to a 12-beat loop — fold, rest a beat, open flat, fold again.
+define("scene", (rand, table) => table("events").rasterize(12))
+
+// Things to try, live in the "steps" tab:
+//   - Nudge wingL/wingR's p1/p2: the wings splay wider or tighter.
+//   - Swap the head rows' move markers ("0.97,0.03" <-> "0.03,0.97") and
+//     the stripe folds in the other order.
+//   - Delete both tuck rows for the wide-bodied cicada variant.
+`,
+    tables: {
+      steps: [
+        // in half along the diagonal: the triangle, point down
+        { step: "half", p1: "0,0", p2: "1,1", move: "0.667,0.333", at: 1 },
+        // both corners up to the top point
+        { step: "cornerL", p1: "0,0.5", p2: "1,0.5", move: "0.1,0.3;0.3,0.1", at: 2 },
+        { step: "cornerR", p1: "0.5,0", p2: "0.5,1", move: "0.6,0.8;0.8,0.6", at: 3 },
+        // wings: sweep each tip back down so they point away from each
+        // other and stick out past the triangle's edges
+        { step: "wingL", p1: "0.159099,0.628769", p2: "0.901561,0.946967", move: "0.03,0.12;0.12,0.03", at: 4 },
+        { step: "wingR", p1: "0.371231,0.840901", p2: "0.053033,0.098439", move: "0.88,0.97;0.97,0.88", at: 5 },
+        // the head: one layer down over the wings, the second stops short —
+        // that little gap is the cicada's stripe
+        { step: "head1", p1: "-0.19,0.59", p2: "0.41,1.19", move: "0.97,0.03", at: 6 },
+        { step: "head2", p1: "-0.24,0.64", p2: "0.36,1.24", move: "0.03,0.97", at: 7 },
+        // narrow the body: fold the side corners behind
+        { step: "tuckL", p1: "0.09,0.59", p2: "0.39,0.29", move: "0.05,0.55", at: 8 },
+        { step: "tuckR", p1: "0.41,0.91", p2: "0.71,0.61", move: "0.45,0.95", at: 9 },
+      ],
+    },
+  },
+  {
     name: "Hydra Sketch",
     code: `// livecodata — a video-synth sketch with hydra (hydra-ts, a port of ojack's hydra)
 // A generative hydra sketch — no 3D scene involved (src(s0) can equally post-

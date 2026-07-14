@@ -136,3 +136,24 @@ test('Hydra Meta sample: replace/append/setSource/layer rewrite the sketch acros
   // frameToBeat is the inverse used above — a light sanity tie to constants.
   assert.equal(Math.round(frameToBeat(0)), 1)
 })
+
+test('Origami Cicada sample: nine simple folds, all exact', () => {
+  const sample = SAMPLES.find((s) => s.name === 'Origami Cicada')!
+  const { views } = createRuntime({
+    editableRows: (name: string, schema: Record<string, ColumnType>, seed?: Record<string, unknown>[]) =>
+      (seed ?? sample.tables?.[name] ?? []).map((r) => conformRow(r, schemaColumns(schema))),
+  }).run(sample.code, { seed: 1 })
+  const events = views.get('events')!
+  const program = events.rows.find((r) => r.type === 'create')!.program as FoldTableProgram
+  assert.equal(program.steps.length, 9)
+  for (const step of program.steps) assert.equal(step.type, 'Pureland')
+  // every landed state is flat, and the finished bug has wings past the
+  // body on both sides
+  for (let k = 0; k <= 9; ++k) {
+    const { pos } = foldTablePositions(program, k)
+    for (const p of pos) assert.ok(Math.abs(p[2]) < 1e-12, `state ${k} flat`)
+  }
+  const done = foldTablePositions(program, 9)
+  const xs = done.pos.map((p) => p[0])
+  assert.ok(Math.max(...xs) - Math.min(...xs) > 0.8, 'wings splay wide')
+})
