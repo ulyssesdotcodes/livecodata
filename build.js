@@ -5,6 +5,7 @@ import { rmSync, mkdirSync, cpSync, readFileSync, writeFileSync } from 'fs'
 rmSync('public', { recursive: true, force: true })
 mkdirSync('public/assets', { recursive: true })
 cpSync('src/data', 'public/data', { recursive: true })
+cpSync('static', 'public', { recursive: true })
 
 await esbuild.build({
   entryPoints: ['src/main.ts'],

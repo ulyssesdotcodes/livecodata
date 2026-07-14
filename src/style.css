@@ -74,12 +74,40 @@ html, body {
 
 /* ── Editor pane ── */
 #editor-pane {
-  flex: 2;
+  flex: 1 1 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   background: #16213e;
   overflow: hidden;
+}
+
+/* ── Editor/table divider ── */
+/* Table pane's height is set inline (px) by pane-divider.tsx; editor-pane
+   just grows/shrinks to fill whatever's left (flex-basis 0 above). Both
+   default to flex:1 1 0, so before JS runs the split is an even 50/50. */
+#pane-divider {
+  flex: 0 0 7px;
+  cursor: row-resize;
+  touch-action: none;
+  background: #0f3460;
+  border-top: 1px solid #1a1a2e;
+  border-bottom: 1px solid #1a1a2e;
+}
+
+#pane-divider:hover,
+#pane-divider:active {
+  background: #1a5090;
+}
+
+/* Editor is collapsed to header height (mobile default) — nothing to
+   resize against, so hide the divider and let the table take the rest. */
+#editor-pane.editor-collapsed + #pane-divider {
+  display: none;
+}
+
+#editor-pane.editor-collapsed ~ #table-pane {
+  flex: 1 1 auto !important;
 }
 
 .editor-header {
@@ -169,6 +197,145 @@ html, body {
   cursor: pointer;
 }
 
+/* ── Docs / reference popover ── */
+/* The ℹ button next to the settings gear opens a scrollable reference panel:
+   the tables the system uses + the DSL function docs (reused from the same
+   dictionaries that feed completion). Fixed-positioned like the settings menu
+   so it isn't clipped by #editor-pane's overflow:hidden. */
+.docs-btn {
+  font-style: normal;
+  font-weight: 700;
+}
+
+.docs-popover {
+  position: fixed;
+  z-index: 30;
+  width: min(440px, calc(100vw - 24px));
+  max-height: min(75vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: #13294b;
+  border: 1px solid #1a5090;
+  border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+.docs-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #0f3460;
+  border-bottom: 1px solid #1a5090;
+  flex-shrink: 0;
+}
+
+.docs-popover-title {
+  color: #8ca0b8;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.docs-close {
+  background: transparent;
+  border: none;
+  color: #8ca0b8;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.docs-close:hover {
+  color: #fff;
+}
+
+.docs-popover-body {
+  overflow-y: auto;
+  padding: 4px 14px 14px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.docs-section {
+  margin-top: 12px;
+}
+
+.docs-h {
+  color: #e94560;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  position: sticky;
+  top: 0;
+  background: #13294b;
+  padding: 6px 0 4px;
+  z-index: 1;
+}
+
+.docs-h4 {
+  color: #7ec8e3;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 12px 0 2px;
+}
+
+.docs-fn-group {
+  margin-top: 4px;
+}
+
+.docs-blurb {
+  color: #8ca0b8;
+  font-size: 11px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.docs-blurb code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: #9be09e;
+}
+
+.docs-list {
+  margin: 0;
+}
+
+.docs-term {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.docs-term code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: #7ec8e3;
+  word-break: break-word;
+}
+
+.docs-detail {
+  color: #607a96;
+  font-size: 10px;
+  font-style: italic;
+}
+
+.docs-def {
+  color: #b8c9db;
+  font-size: 11.5px;
+  line-height: 1.5;
+  margin: 2px 0 0;
+}
+
 /* Collapsed: only the header stays visible; the panel shrinks to fit it. */
 #editor-pane.editor-collapsed {
   flex: 0 0 auto;
@@ -230,6 +397,24 @@ html, body {
 }
 
 .session-new:hover {
+  background: #1a5090;
+  color: #fff;
+  border-color: #1a5090;
+}
+
+.session-clear {
+  background: transparent;
+  border: 1px solid #1a5090;
+  color: #8ca0b8;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.session-clear:hover {
   background: #1a5090;
   color: #fff;
   border-color: #1a5090;
@@ -487,7 +672,7 @@ html, body {
 
 /* ── Combined table + graph pane ── */
 #table-pane {
-  flex: 1;
+  flex: 1 1 0;
   min-height: 0;
   display: flex;
   flex-direction: column;

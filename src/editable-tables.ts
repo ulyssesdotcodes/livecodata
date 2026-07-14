@@ -53,7 +53,7 @@
 // the program declared it comes and goes freely as the declaration changes.
 // ----------------------------------------------------------------------------
 
-import { createEventLog, type EventLog, type StampedEvent } from './event-log.js'
+import { createEventLog, type EventLog, type EventMigration, type StampedEvent } from './event-log.js'
 import type { Row } from './lineage.js'
 
 export type ColumnType = 'number' | 'string' | 'boolean' | 'code' | 'enum'
@@ -83,6 +83,14 @@ export interface SessionRun {
   at: number
   tables: Record<string, number>
 }
+
+// The event kind a "Clear" click records (see main.ts's clearRuns, ridden on
+// the "activity" pseudo-table like 'apply'/'session-start') to wipe the run
+// list. It's a marker, not a deletion: every table's own history — "code"'s
+// included — is untouched, so deriveRunsFromCode() (the legacy/no-saved-runs
+// fallback) knows to derive nothing from before it rather than resurrecting
+// runs the user just cleared.
+export const CLEAR_RUNS_KIND = 'clear-runs'
 
 export interface EditableColumn {
   name: string
@@ -286,6 +294,29 @@ export function schemaColumns(schema: Schema): EditableColumn[] {
     return { name, type: spec as ColumnType }
   })
 }
+
+// ── Serialized-schema migrations ─────────────────────────────────────────────
+// The chain that upgrades an on-disk event log to the current shape (see
+// EventMigration). Append a migration here — never edit or reorder an existing
+// one — whenever the persisted shape of an editable-table event changes, and
+// old sessions keep loading. The fold (applyEvent) only ever sees current-shape
+// events because load() runs these first.
+
+// v1 → v2: a create/declare-schema event's `columns` used to be serialized as
+// the raw editable() schema object ({ name: type }) — a specification produced
+// by running the program — rather than the [{ name, type }] column array the
+// fold reads. Normalize any object-shaped `columns` into the array form; an
+// array (already current) or anything else is left untouched.
+function migrateColumnsToArray(events: StampedEvent[]): StampedEvent[] {
+  return events.map((e) => {
+    if (e.kind !== 'create' && e.kind !== 'declare-schema') return e
+    const cols = e.columns
+    if (!cols || Array.isArray(cols) || typeof cols !== 'object') return e
+    return { ...e, columns: schemaColumns(cols as Schema) }
+  })
+}
+
+const EDITABLE_MIGRATIONS: EventMigration[] = [migrateColumnsToArray]
 
 // Re-drive a code-created table's rows from a fresh program seed, in place.
 // The rule the whole feature turns on: a code row the user hasn't touched
@@ -541,6 +572,9 @@ export interface EditableTableStore {
   setRuns(runs: SessionRun[]): void
   // Reconstruct runs from a legacy session that saved no run list, one per
   // recorded program Run in "code"'s own history (best-effort backward compat).
+  // Stops at the latest CLEAR_RUNS_KIND marker, if any, so a cleared session
+  // that got saved without an explicit (now-empty) run list doesn't derive its
+  // pre-clear runs back into existence.
   deriveRunsFromCode(): void
   // Show the store as it was at `run` — reads (get/has/listNames/ensure) serve
   // that historical fold and ensure() appends nothing, so a scrubbed replay is
@@ -557,7 +591,7 @@ export interface EditableTableStore {
 }
 
 export function createEditableTableStore({ src }: { src?: string } = {}): EditableTableStore {
-  const log = createEventLog({ src })
+  const log = createEventLog({ src, migrations: EDITABLE_MIGRATIONS })
   // The live head fold, kept incrementally: append() applies the new event to
   // this map. Always the full log — replay views are separate (below).
   let tables = new Map<string, TableState>()
@@ -754,12 +788,15 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
     deriveRunsFromCode(): void {
       const code = tables.get('code')
       const all = log.all()
-      runs = (code?.events ?? []).map((e) => {
-        const at = (e.seq as number) + 1
-        const tableIdx: Record<string, number> = {}
-        for (const [name, t] of foldEventsMap(all.slice(0, at))) tableIdx[name] = t.events.length
-        return { at, tables: tableIdx }
-      })
+      const clearedSeq = all.reduce((max, e) => (e.kind === CLEAR_RUNS_KIND ? Math.max(max, e.seq) : max), -1)
+      runs = (code?.events ?? [])
+        .filter((e) => (e.seq as number) > clearedSeq)
+        .map((e) => {
+          const at = (e.seq as number) + 1
+          const tableIdx: Record<string, number> = {}
+          for (const [name, t] of foldEventsMap(all.slice(0, at))) tableIdx[name] = t.events.length
+          return { at, tables: tableIdx }
+        })
     },
 
     setReplayView(run: SessionRun | null): void {

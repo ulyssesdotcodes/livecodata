@@ -40,7 +40,23 @@ interface SerializedEvents {
   events: StampedEvent[]
 }
 
-const SERIAL_VERSION = 1
+// A schema migration: rewrites a whole event list from one serialized version
+// to the next. The on-disk shape of events evolves over time (a payload field
+// changes type, an event kind is split, …); rather than teaching every fold to
+// tolerate every past shape, we upgrade the events once, on load, so the rest
+// of the code only ever sees the current shape.
+//
+// The chain is positional: `migrations[i]` upgrades data written at version
+// `i + 1` into version `i + 2`. So a log with N registered migrations serializes
+// at version N + 1, and loading anything from version 1 forward just runs the
+// tail of the chain. The rule for evolving a schema: append a new migration
+// (never edit or reorder an existing one — old data on disk depends on it) that
+// carries the old shape forward, and old sessions keep working forever.
+export type EventMigration = (events: StampedEvent[]) => StampedEvent[]
+
+// Version 1 is the base: a log with no registered migrations. Each migration
+// adds one to the serialized version (see EventMigration).
+const BASE_VERSION = 1
 
 // ---------------------------------------------------------------------------
 // Replica identity + merge — the pure pieces multiplayer is built from.
@@ -112,7 +128,12 @@ export interface EventLog {
   clear(): void
 }
 
-export function createEventLog({ src = localSource() }: { src?: string } = {}): EventLog {
+export function createEventLog(
+  { src = localSource(), migrations = [] }: { src?: string; migrations?: EventMigration[] } = {},
+): EventLog {
+  // The version this log writes, and the top of the migration chain load()
+  // upgrades toward (see EventMigration).
+  const serialVersion = BASE_VERSION + migrations.length
   let events: StampedEvent[] = []
   let seq = 0
   let start: number | null = null
@@ -164,14 +185,21 @@ export function createEventLog({ src = localSource() }: { src?: string } = {}): 
     },
 
     serialize(): string {
-      return JSON.stringify({ version: SERIAL_VERSION, start, events } satisfies SerializedEvents)
+      return JSON.stringify({ version: serialVersion, start, events } satisfies SerializedEvents)
     },
 
     load(json: string | unknown): boolean {
       try {
         const data = typeof json === 'string' ? JSON.parse(json) as SerializedEvents : json as SerializedEvents
         if (!data || !Array.isArray(data.events)) return false
-        events = data.events.map((e) => ({ ...e }))
+        // Upgrade the events from whatever version they were saved at up to the
+        // current one by running the tail of the migration chain. An absent or
+        // out-of-range version is treated as the base (1); data from a newer
+        // version than this build understands is loaded as-is (best effort).
+        const from = typeof data.version === 'number' && data.version >= BASE_VERSION ? data.version : BASE_VERSION
+        let migrated = data.events.map((e) => ({ ...e }))
+        for (let v = from; v < serialVersion; v++) migrated = migrations[v - BASE_VERSION](migrated)
+        events = migrated
         start = data.start ?? null
         seq = events.reduce((m, e) => Math.max(m, (e.seq ?? -1) + 1), 0)
         notify()

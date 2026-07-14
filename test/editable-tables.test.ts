@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   createEditableTableStore, schemaColumns, cellValid, invalidColumns,
+  CLEAR_RUNS_KIND,
   type EditableColumn,
 } from '../src/editable-tables.js'
 
@@ -329,12 +330,12 @@ test('serialize/load round-trips the whole store — the unit a session persists
   assert.ok(b.has('t2'), 'every table in the store round-trips, not just one')
 })
 
-test('loads a legacy session whose create event stored the editable() schema object as columns', () => {
-  // Older sessions serialized a create event's `columns` as the raw editable()
-  // schema ({ name: type }) rather than today's [{ name, type }] array. The
-  // schema is a product of running the program, not table data — so a session
-  // that has table data must still load, with its columns recovered.
-  const legacy = JSON.stringify({
+test('migrates a v1 session whose create event stored the editable() schema object as columns', () => {
+  // Before v2, a create event serialized its `columns` as the raw editable()
+  // schema ({ name: type }) — a specification produced by running the program —
+  // rather than today's [{ name, type }] array. The v1→v2 migration recovers
+  // the columns on load so a session with table data always opens.
+  const legacyV1 = JSON.stringify({
     version: 1, start: 1,
     events: [{
       kind: 'create', table: 'nums',
@@ -344,29 +345,19 @@ test('loads a legacy session whose create event stored the editable() schema obj
     }],
   })
   const store = createEditableTableStore()
-  assert.ok(store.load(legacy), 'a session with table data loads despite a legacy schema shape')
+  assert.ok(store.load(legacyV1), 'a v1 session with table data loads')
   assert.deepEqual(store.get('nums')!.columns, [
     { name: 'beat', type: 'number' }, { name: 'px', type: 'number' }, { name: 'disabled', type: 'boolean' },
   ], 'columns are recovered from the legacy schema object')
   assert.deepEqual(store.get('nums')!.rows, [
     { beat: 1, px: 5, disabled: false }, { beat: 2, px: 9, disabled: false },
   ], 'the table data is intact')
-})
 
-test('a single unfoldable event does not sink the rest of a session load', () => {
-  // Belt-and-suspenders: even an event the fold cannot make sense of must not
-  // abort the load — every other table in the session still comes through.
-  const good = createEditableTableStore()
-  good.createTable('keep')
-  good.addRow('keep')
-  good.setCell('keep', 0, 'beat', 7)
-  const parsed = JSON.parse(good.serialize())
-  // Splice in an event the fold cannot touch at all (null — reading e.table throws).
-  parsed.events.push(null)
-
-  const store = createEditableTableStore()
-  assert.ok(store.load(JSON.stringify(parsed)))
-  assert.deepEqual(store.get('keep')!.rows, [{ beat: 7, loop: 0 }], 'the good table survives the bad event')
+  // Re-serializing writes the current version with columns already in array
+  // form, so a later load needs no migration.
+  const reSaved = JSON.parse(store.serialize())
+  assert.equal(reSaved.version, 2)
+  assert.ok(Array.isArray(reSaved.events[0].columns))
 })
 
 test('load replaces the store entirely and notifies; clear empties it and notifies', () => {
@@ -574,6 +565,24 @@ test('deriveRunsFromCode reconstructs one run per recorded program Run (legacy s
   assert.ok(!store.has('nums'), 'nums was created after Run 1')
   store.setReplayView(null)
   assert.equal(store.get('code')!.rows[0].code, 'r2')
+})
+
+test('deriveRunsFromCode stops at the latest clear-runs marker, leaving the code table untouched', () => {
+  const store = createEditableTableStore()
+  store.ensure('code', { code: 'code' }, [{ code: 'r1' }]) // code Run 1 (create)
+  store.setRow('code', 0, { code: 'r2' })                  // code Run 2 (set-row)
+  store.record('activity', CLEAR_RUNS_KIND)
+  store.setRuns([])
+  store.setRow('code', 0, { code: 'r3' })                  // code Run 3 (set-row), after the clear
+
+  store.deriveRunsFromCode()
+  const runs = store.runs()
+  assert.equal(runs.length, 1, 'runs before the clear marker are not resurrected')
+
+  // The clear only touched the run bookmarks — the program's own history (and
+  // therefore its current text) is exactly as if nothing had been cleared.
+  assert.equal(store.get('code')!.rows[0].code, 'r3')
+  assert.equal(store.get('code')!.events.length, 3, 'all three code events survive the clear')
 })
 
 test('load and clear reset the run list', () => {

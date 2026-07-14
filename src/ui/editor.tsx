@@ -19,6 +19,7 @@ import {
   remoteCursorField, setRemoteCursorsEffect, PROGRAM_CELL, type RemoteCursor,
 } from '../editor-support.js'
 import { buildTablePreview } from './table-preview.js'
+import { DocsPopover } from './docs-popover.js'
 import type { Table } from '../dsl.js'
 
 export { defaultProgram, defaultTables }
@@ -242,6 +243,7 @@ export function EditorPane(props: { ctl: EditorController; children?: JSX.Elemen
           Back
         </button>
         <button class="run-btn" onClick={() => ctl.run()}>{ctl.runLabel()}</button>
+        <DocsPopover />
         <div class="settings-wrap" ref={settingsWrap}>
           <button
             class="settings-btn"
