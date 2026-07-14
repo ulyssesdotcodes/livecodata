@@ -133,11 +133,17 @@ const tablePanel = createTablePanel(editableStore, {
     // edited tables and record a run — keeping the current seed so tweaking a
     // sketch doesn't re-randomize the scene. (Plain inline edits stay pending
     // until an apply; this one is the apply.)
-    // A hydra event row's `code` cell holds a hydra sketch (or chain
-    // fragment), not DSL — tell the editor so completions/hover run against
-    // the hydra surface instead of the program's.
-    const row = editableStore.get(table)?.rows[rowIndex]
-    const lang = col === 'code' && isHydraRow(row) ? 'hydra' as const : 'dsl' as const
+    // Which language surface the editor should run completions/hover against
+    // for this cell: the code column's declared language wins (editable(name,
+    // { code: { type: "code", language: "hydra" } }) — the only signal that
+    // survives the rows being mapped/renamed into the "hydra" view by code).
+    // Tables declared before language existed fall back to sniffing the row:
+    // a hydra event row's `code` cell is a sketch.
+    const data = editableStore.get(table)
+    const colSpec = data?.columns.find((c) => c.name === col)
+    const declaredLang = colSpec?.type === 'code' ? colSpec.language : undefined
+    const lang = declaredLang
+      ?? (col === 'code' && isHydraRow(data?.rows[rowIndex]) ? 'hydra' as const : 'dsl' as const)
     editor.editCell(`${table}[${rowIndex}].${col}`, value, (text) => {
       editableStore.setCell(table, rowIndex, col, text)
       if (liveCode != null) void evaluate(liveCode, { setError: editor.setError, seed: liveSeed })

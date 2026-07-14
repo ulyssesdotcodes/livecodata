@@ -314,7 +314,7 @@ define("hydra", () => rows([
 // "disabled" is just an ordinary boolean column: check a row's box to mute
 // that event — the sketch skips it, as if the row weren't there — without
 // losing it; uncheck to bring it back.
-editable("hydra", { beat: "number", event: "string", code: "code", name: "string", value: "number", disabled: "boolean" })
+editable("hydra", { beat: "number", event: "string", code: { type: "code", language: "hydra" }, name: "string", value: "number", disabled: "boolean" })
 `,
     tables: {
       hydra: [
@@ -353,7 +353,7 @@ define("scene", (rand, table) => table("events").rasterize(16))
 //    rows in the SAME editable table — "two-part" just means two of them, each
 //    the most-recent code at its point in the loop. Their rows are seeded into
 //    the "hydra" tab on the right; the code here declares the schema only.
-editable("hydra", { beat: "number", event: "string", code: "code", name: "string", value: "number", disabled: "boolean" })
+editable("hydra", { beat: "number", event: "string", code: { type: "code", language: "hydra" }, name: "string", value: "number", disabled: "boolean" })
 `,
     tables: {
       hydra: [
@@ -431,7 +431,7 @@ define("hydra", () => rows([
 //    see \`hydra\`, below, for why the transform, not this table, is what
 //    playback actually reads. Its two setCode rows are seeded into the "hydra
 //    sketch" tab on the right; the code here declares the schema only.
-editable("hydra sketch", { beat: "number", event: "string", code: "code", name: "string", value: "number", disabled: "boolean" })
+editable("hydra sketch", { beat: "number", event: "string", code: { type: "code", language: "hydra" }, name: "string", value: "number", disabled: "boolean" })
 
 // 2. \`.pairBy(field, value, fn)\` finds the rows where row[field] === value and
 //    cycles through them pairwise: match k is \`second\`, paired with match
@@ -500,7 +500,7 @@ define("hydra", (rand, table) =>
 editable("hydra", {
   beat: "number",
   event: ["setCode", "setSource", "append", "replace", "layer", "setVariable"],
-  code: "code",
+  code: { type: "code", language: "hydra" },
   find: "string",
   name: "string",
   value: "number",

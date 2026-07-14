@@ -58,15 +58,23 @@ import type { Row } from './lineage.js'
 
 export type ColumnType = 'number' | 'string' | 'boolean' | 'code' | 'enum'
 
+// What language a 'code' column's cells are written in — it decides which
+// surface the main editor's completions/hover/signature help run against when
+// a cell opens there. Kept in sync with lang-service.ts's EditorLang (the
+// same union, named from the editor's side); add new languages to both.
+export type CodeLanguage = 'dsl' | 'hydra'
+
 // A column's spec as a program passes it to editable(name, schema). A bare
 // ColumnType is the common case; a string array is shorthand for an enum over
-// those values; the object form spells an enum out (or any type) explicitly.
-// Enum columns are code-only — the table panel renders them as a dropdown (and
-// validates against their options), but the "+ column" UI never creates one.
+// those values; the object form spells an enum out (or any type) explicitly —
+// and is how a code column declares its language, e.g.
+// { type: "code", language: "hydra" } (default "dsl"). Enum columns are
+// code-only — the table panel renders them as a dropdown (and validates
+// against their options), but the "+ column" UI never creates one.
 export type ColumnSpec =
   | ColumnType
   | readonly string[]
-  | { type: ColumnType; options?: readonly string[] }
+  | { type: ColumnType; options?: readonly string[]; language?: CodeLanguage }
 export type Schema = Record<string, ColumnSpec>
 
 // A "run": the session bookmark recorded when the user clicks Apply (Ctrl-Enter)
@@ -98,6 +106,9 @@ export interface EditableColumn {
   // For an 'enum' column: the allowed values — the dropdown's choices, and the
   // set a validator checks a cell against. Absent for every other type.
   options?: string[]
+  // For a 'code' column: the language its cells hold (see CodeLanguage).
+  // Absent means the DSL.
+  language?: CodeLanguage
 }
 
 export interface EditableTableData {
@@ -283,13 +294,18 @@ function eventRows(raw: unknown): Row[] {
 // An editable() schema in column-list form — the shape create/declare-schema
 // events carry. Normalizes each ColumnSpec: a bare type stays a type, a string
 // array becomes an enum column with those options, the object form is taken
-// as-is (options copied when present).
+// as-is (options and a code column's language copied when present).
 export function schemaColumns(schema: Schema): EditableColumn[] {
   return Object.entries(schema).map(([name, spec]) => {
     if (Array.isArray(spec)) return { name, type: 'enum', options: [...spec] }
     if (typeof spec === 'object') {
-      const s = spec as { type: ColumnType; options?: readonly string[] }
-      return s.options ? { name, type: s.type, options: [...s.options] } : { name, type: s.type }
+      const s = spec as { type: ColumnType; options?: readonly string[]; language?: CodeLanguage }
+      return {
+        name,
+        type: s.type,
+        ...(s.options ? { options: [...s.options] } : {}),
+        ...(s.language && s.type === 'code' ? { language: s.language } : {}),
+      }
     }
     return { name, type: spec as ColumnType }
   })
@@ -428,8 +444,10 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
       if (owned) owned.name = to
       // A rename of a declared-only column "claims" it under the new name —
       // the old declared name may still reappear (see effectiveColumns), now
-      // as a fresh column, if the program keeps declaring it.
-      else t.userColumns.push({ name: to, type: existing.type })
+      // as a fresh column, if the program keeps declaring it. The claim copies
+      // the whole column, so an enum keeps its options and a code column its
+      // language.
+      else t.userColumns.push({ ...existing, name: to })
       t.rows.forEach((r) => { r[to] = r[col]; delete r[col] })
       t.rows = t.rows.map((r) => conformRow(r, effectiveColumns(t)))
       break

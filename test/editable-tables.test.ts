@@ -431,6 +431,43 @@ test('schemaColumns: a string[] spec is enum shorthand; the object form is expli
   ])
 })
 
+test('schemaColumns: a code column carries its declared language (code columns only)', () => {
+  const cols = schemaColumns({
+    code: { type: 'code', language: 'hydra' },
+    plainCode: 'code',
+    notCode: { type: 'string', language: 'hydra' } as never, // language on a non-code column is dropped
+  })
+  assert.deepEqual(cols, [
+    { name: 'code', type: 'code', language: 'hydra' },
+    { name: 'plainCode', type: 'code' },
+    { name: 'notCode', type: 'string' },
+  ])
+})
+
+test('a code column language rides events, survives serialize/load, and tracks re-declaration', () => {
+  const store = createEditableTableStore()
+  store.ensure('sketches', { beat: 'number', code: { type: 'code', language: 'hydra' } })
+  const col = () => store.get('sketches')!.columns.find((c) => c.name === 'code')!
+  assert.equal(col().language, 'hydra')
+  // round-trip
+  const store2 = createEditableTableStore()
+  assert.ok(store2.load(store.serialize()))
+  assert.equal(store2.get('sketches')!.columns.find((c) => c.name === 'code')!.language, 'hydra')
+  // the program re-declares without a language → the column tracks the schema
+  store.ensure('sketches', { beat: 'number', code: 'code' })
+  assert.equal(col().language, undefined)
+})
+
+test('renaming a declared column claims it whole — enum options and code language survive', () => {
+  const store = createEditableTableStore()
+  store.ensure('h', { event: ['setCode', 'layer'], code: { type: 'code', language: 'hydra' } })
+  store.renameColumn('h', 'event', 'kind')
+  store.renameColumn('h', 'code', 'sketch')
+  const cols = store.get('h')!.columns
+  assert.deepEqual(cols.find((c) => c.name === 'kind'), { name: 'kind', type: 'enum', options: ['setCode', 'layer'] })
+  assert.deepEqual(cols.find((c) => c.name === 'sketch'), { name: 'sketch', type: 'code', language: 'hydra' })
+})
+
 test('an enum column defaults a new row to its first option, and rides serialize/load', () => {
   const store = createEditableTableStore()
   store.ensure('h', { beat: 'number', event: ['setCode', 'layer'] })
