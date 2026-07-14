@@ -330,6 +330,36 @@ test('serialize/load round-trips the whole store — the unit a session persists
   assert.ok(b.has('t2'), 'every table in the store round-trips, not just one')
 })
 
+test('migrates a v1 session whose create event stored the editable() schema object as columns', () => {
+  // Before v2, a create event serialized its `columns` as the raw editable()
+  // schema ({ name: type }) — a specification produced by running the program —
+  // rather than today's [{ name, type }] array. The v1→v2 migration recovers
+  // the columns on load so a session with table data always opens.
+  const legacyV1 = JSON.stringify({
+    version: 1, start: 1,
+    events: [{
+      kind: 'create', table: 'nums',
+      columns: { beat: 'number', px: 'number', disabled: 'boolean' },
+      rows: [{ beat: 1, px: 5, disabled: false }, { beat: 2, px: 9, disabled: false }],
+      declared: true, seq: 0, t: 0, src: 'a',
+    }],
+  })
+  const store = createEditableTableStore()
+  assert.ok(store.load(legacyV1), 'a v1 session with table data loads')
+  assert.deepEqual(store.get('nums')!.columns, [
+    { name: 'beat', type: 'number' }, { name: 'px', type: 'number' }, { name: 'disabled', type: 'boolean' },
+  ], 'columns are recovered from the legacy schema object')
+  assert.deepEqual(store.get('nums')!.rows, [
+    { beat: 1, px: 5, disabled: false }, { beat: 2, px: 9, disabled: false },
+  ], 'the table data is intact')
+
+  // Re-serializing writes the current version with columns already in array
+  // form, so a later load needs no migration.
+  const reSaved = JSON.parse(store.serialize())
+  assert.equal(reSaved.version, 2)
+  assert.ok(Array.isArray(reSaved.events[0].columns))
+})
+
 test('load replaces the store entirely and notifies; clear empties it and notifies', () => {
   const store = createEditableTableStore()
   store.createTable('t1')

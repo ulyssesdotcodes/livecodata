@@ -53,7 +53,7 @@
 // the program declared it comes and goes freely as the declaration changes.
 // ----------------------------------------------------------------------------
 
-import { createEventLog, type EventLog, type StampedEvent } from './event-log.js'
+import { createEventLog, type EventLog, type EventMigration, type StampedEvent } from './event-log.js'
 import type { Row } from './lineage.js'
 
 export type ColumnType = 'number' | 'string' | 'boolean' | 'code' | 'enum'
@@ -273,6 +273,29 @@ export function schemaColumns(schema: Schema): EditableColumn[] {
     return { name, type: spec as ColumnType }
   })
 }
+
+// ── Serialized-schema migrations ─────────────────────────────────────────────
+// The chain that upgrades an on-disk event log to the current shape (see
+// EventMigration). Append a migration here — never edit or reorder an existing
+// one — whenever the persisted shape of an editable-table event changes, and
+// old sessions keep loading. The fold (applyEvent) only ever sees current-shape
+// events because load() runs these first.
+
+// v1 → v2: a create/declare-schema event's `columns` used to be serialized as
+// the raw editable() schema object ({ name: type }) — a specification produced
+// by running the program — rather than the [{ name, type }] column array the
+// fold reads. Normalize any object-shaped `columns` into the array form; an
+// array (already current) or anything else is left untouched.
+function migrateColumnsToArray(events: StampedEvent[]): StampedEvent[] {
+  return events.map((e) => {
+    if (e.kind !== 'create' && e.kind !== 'declare-schema') return e
+    const cols = e.columns
+    if (!cols || Array.isArray(cols) || typeof cols !== 'object') return e
+    return { ...e, columns: schemaColumns(cols as Schema) }
+  })
+}
+
+const EDITABLE_MIGRATIONS: EventMigration[] = [migrateColumnsToArray]
 
 // Re-drive a code-created table's rows from a fresh program seed, in place.
 // The rule the whole feature turns on: a code row the user hasn't touched
@@ -542,7 +565,7 @@ export interface EditableTableStore {
 }
 
 export function createEditableTableStore({ src }: { src?: string } = {}): EditableTableStore {
-  const log = createEventLog({ src })
+  const log = createEventLog({ src, migrations: EDITABLE_MIGRATIONS })
   // The live head fold, kept incrementally: append() applies the new event to
   // this map. Always the full log — replay views are separate (below).
   let tables = new Map<string, TableState>()
