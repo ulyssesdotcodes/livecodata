@@ -212,6 +212,61 @@ test('triggerEach fans out across objects and unions lineage from trigger + obje
   assert.deepEqual(getLineage(out.rows[0]), [{ table: 'wave', index: 1 }, { table: 'objs', index: 0 }])
 })
 
+test('three.rotate emits start + end update keyframes per create row', () => {
+  const { box, three } = createDSL(null)
+  const scene = box({ id: 'a' }).concat(box({ id: 'b', beat: 3 }))
+  const out = three.rotate(scene, { amount: Math.PI, dur: 4 })
+  assert.deepEqual(out.rows, [
+    // 'a': create at beat 1, so ry glides 0 → π over beats 1..5.
+    { id: 'a', type: 'update', beat: 1, ry: 0 },
+    { id: 'a', type: 'update', beat: 5, ry: Math.PI },
+    // 'b': create at beat 3, so beats 3..7.
+    { id: 'b', type: 'update', beat: 3, ry: 0 },
+    { id: 'b', type: 'update', beat: 7, ry: Math.PI },
+  ])
+})
+
+test('three.rotate adds to the object\'s current rotation, honouring axis', () => {
+  const { box, three } = createDSL(null)
+  const scene = box({ id: 'a', rx: 1 })
+  const out = three.rotate(scene, { amount: 2, dur: 2, axis: 'x' })
+  assert.deepEqual(out.rows, [
+    { id: 'a', type: 'update', beat: 1, rx: 1 },
+    { id: 'a', type: 'update', beat: 3, rx: 3 },
+  ])
+})
+
+test('three.scale multiplies scale uniformly, seeding a start keyframe of 1', () => {
+  const { sphere, three } = createDSL(null)
+  const out = three.scale(sphere({ id: 's' }), { amount: 2, dur: 4 })
+  assert.deepEqual(out.rows, [
+    { id: 's', type: 'update', beat: 1, sx: 1, sy: 1, sz: 1 },
+    { id: 's', type: 'update', beat: 5, sx: 2, sy: 2, sz: 2 },
+  ])
+})
+
+test('three.move slides along an axis; ease and at options apply to the end keyframe', () => {
+  const ease = (t: number): number => t
+  const { box, three } = createDSL(null)
+  const out = three.move(box({ id: 'a', pz: 1 }), { amount: 3, dur: 2, axis: 'z', ease, at: 4 })
+  assert.deepEqual(out.rows, [
+    { id: 'a', type: 'update', beat: 4, pz: 1 },
+    { id: 'a', type: 'update', beat: 6, pz: 4, ease },
+  ])
+})
+
+test('three animators only act on create rows, ignoring updates in the base', () => {
+  const { three } = createDSL(null)
+  const mixed = [
+    { id: 'a', type: 'create', beat: 1, ry: 0 },
+    { id: 'a', type: 'update', beat: 2, ry: 5 },
+  ]
+  assert.deepEqual(three.rotate(mixed, { amount: 1, dur: 1 }).rows, [
+    { id: 'a', type: 'update', beat: 1, ry: 0 },
+    { id: 'a', type: 'update', beat: 2, ry: 1 },
+  ])
+})
+
 test('csv parses a header row and coerces numeric cells', () => {
   const { csv } = createDSL(null)
   assert.deepEqual(csv('city,pop\nNYC,8000000\nLA,4000000').rows, [

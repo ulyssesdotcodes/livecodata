@@ -130,10 +130,19 @@ function makeTextGeometry(params: TextParams): THREE.BufferGeometry {
   return merged
 }
 
+// Non-uniform object scale from sx/sy/sz (each defaults to 1). This is the
+// three.js Object3D.scale multiplier, applied on top of the geometry's own
+// dimensions — so a `scale` animation grows/shrinks an object over time without
+// rebuilding its geometry every frame.
+function applyScale(obj: THREE.Object3D, row: Record<string, unknown>): void {
+  obj.scale.set((row.sx as number) ?? 1, (row.sy as number) ?? 1, (row.sz as number) ?? 1)
+}
+
 function applyTextTransform(mesh: THREE.Mesh, row: Record<string, unknown>): void {
   const { px, py, pz, rx, ry, rz } = row
   mesh.position.set((px as number) ?? 0, (py as number) ?? 0, (pz as number) ?? 0)
   mesh.rotation.set((rx as number) ?? 0, (ry as number) ?? 0, (rz as number) ?? 0)
+  applyScale(mesh, row)
 }
 
 function makeText(row: Record<string, unknown>): TextObject {
@@ -304,6 +313,7 @@ function applyOrigamiRow(obj: OrigamiObject, row: Record<string, unknown>): void
   const { px, py, pz, rx, ry, rz, color } = row
   obj.root.position.set((px as number) ?? 0, (py as number) ?? 0, (pz as number) ?? 0)
   obj.root.rotation.set((rx as number) ?? 0, (ry as number) ?? 0, (rz as number) ?? 0)
+  applyScale(obj.root, row)
   if (color != null) obj.front.color.set(color as number)
   if (typeof row.fold === 'number') obj.fold = row.fold
 }
@@ -415,6 +425,7 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
       mesh.name = String(id)
       mesh.position.set(px as number, py as number, pz as number)
       mesh.rotation.set(rx as number ?? 0, ry as number ?? 0, rz as number ?? 0)
+      applyScale(mesh, row)
       mesh.userData.shape = shape
       mesh.userData.dims = geometryDims(shape as string, row)
       scene.add(mesh)
@@ -443,6 +454,7 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
       if (!mesh) return
       mesh.position.set(px as number, py as number, pz as number)
       mesh.rotation.set(rx as number ?? 0, ry as number ?? 0, rz as number ?? 0)
+      applyScale(mesh, row)
       if (color != null) (mesh.material as THREE.MeshStandardMaterial).color.set(color as number)
       const prevShape = mesh.userData.shape as string
       if (geometryChanged(prevShape, mesh.userData.dims, row)) {
