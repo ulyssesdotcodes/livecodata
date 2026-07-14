@@ -475,7 +475,14 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
 // reconstructs the store as it was at an earlier run.
 function foldEventsMap(events: StampedEvent[]): Map<string, TableState> {
   const tables = new Map<string, TableState>()
-  for (const e of events) applyEvent(tables, e)
+  for (const e of events) {
+    // Loading a session's table data must never fail as a whole: migrations
+    // (see EDITABLE_MIGRATIONS) carry known shape changes forward, but a single
+    // unforeseen event — a shape no migration covers yet, a truncated write —
+    // must not sink every other table. Skip it and fold the rest, so the data
+    // always loads and any program error is left to fix in the editor.
+    try { applyEvent(tables, e) } catch { /* drop an unfoldable event */ }
+  }
   return tables
 }
 

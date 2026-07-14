@@ -360,6 +360,21 @@ test('migrates a v1 session whose create event stored the editable() schema obje
   assert.ok(Array.isArray(reSaved.events[0].columns))
 })
 
+test('a single unfoldable event never sinks the load — the table data still comes through', () => {
+  // The load must always land whatever table data it can, so a program error is
+  // left to fix in the editor rather than blocking the session from opening.
+  const good = createEditableTableStore()
+  good.createTable('keep')
+  good.addRow('keep')
+  good.setCell('keep', 0, 'beat', 7)
+  const parsed = JSON.parse(good.serialize())
+  parsed.events.push(null) // reading e.table on this throws inside the fold
+
+  const store = createEditableTableStore()
+  assert.ok(store.load(JSON.stringify(parsed)), 'load succeeds despite the bad event')
+  assert.deepEqual(store.get('keep')!.rows, [{ beat: 7, loop: 0 }], 'the good table survives')
+})
+
 test('load replaces the store entirely and notifies; clear empties it and notifies', () => {
   const store = createEditableTableStore()
   store.createTable('t1')
