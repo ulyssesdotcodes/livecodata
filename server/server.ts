@@ -137,14 +137,7 @@ export function startMultiplayerServer(
     })()
   })
 
-  // permessage-deflate: the wire is JSON text dominated by repeated strings
-  // (program text in code rows and live-code presence, event field names), so
-  // deflate — with cross-message context takeover for clients that allow it —
-  // cuts frames by several ×. Browsers negotiate it automatically; a client
-  // that doesn't offer the extension just gets uncompressed frames. The cost
-  // is a per-connection zlib context (~100s of KB), fine at jam-room scale.
-  // (The Cloudflare backend can't opt in — the platform owns the handshake.)
-  const wss = new WebSocketServer({ server, path: '/ws', perMessageDeflate: true })
+  const wss = new WebSocketServer({ server, path: '/ws' })
   wss.on('connection', (ws) => {
     ws.on('message', (raw) => handleMessage(ws, raw))
     ws.on('close', () => leave(ws))
