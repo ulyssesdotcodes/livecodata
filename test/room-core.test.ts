@@ -35,6 +35,50 @@ test('join seeds an empty room, authors a peer-join, and syncs the union back', 
   assert.deepEqual(Object.keys(syncLogs).sort(), [SESSION_LOG, 'tables'])
 })
 
+test('joining a userless room initializes it to the joiner session, dropping stale logs', () => {
+  // A room left holding stale logs from a past jam that nobody is in now.
+  const logs: RoomLogs = new Map([
+    ['tables', [ev(0, 'old'), ev(1, 'old')]],
+    [SESSION_LOG, [ev(0, 'server', { kind: 'peer-join', src: 'server', table: ACTIVITY_TABLE, client: 'ghost' })]],
+  ])
+
+  // hasPeers=false: the joiner is alone, so its session replaces the leftovers.
+  const result = handleJoin(logs, { type: 'join', client: 'alice', logs: { tables: [ev(0, 'a')] } }, 123, false)
+
+  assert.equal(result.changed, true)
+  // The old 'old'-authored rows are gone; only alice's row remains in tables.
+  assert.deepEqual(logs.get('tables')?.map((e) => e.src), ['a'])
+  // The ghost's peer-join is gone; only alice's fresh peer-join is in session.
+  const session = logs.get(SESSION_LOG) ?? []
+  assert.deepEqual(session.map((e) => e.client), ['alice'])
+  // Nothing to relay — there are no peers — but the sender still gets a sync.
+  assert.ok(result.outbound.every((o) => o.to === 'sender' || o.msg.type !== 'sync'))
+  const last = result.outbound[result.outbound.length - 1]
+  assert.equal(last.to, 'sender')
+  assert.equal(last.msg.type, 'sync')
+})
+
+test('joining a room that already has peers unions the joiner logs in', () => {
+  // Bob is already here (hasPeers=true), so alice's join merges rather than
+  // replacing — both peoples work coexists.
+  const logs: RoomLogs = new Map([['tables', [ev(0, 'bob')]]])
+
+  const result = handleJoin(logs, { type: 'join', client: 'alice', logs: { tables: [ev(1, 'alice')] } }, 123, true)
+
+  assert.equal(result.changed, true)
+  assert.deepEqual(logs.get('tables')?.map((e) => e.src), ['bob', 'alice'])
+  // Alice's new event relays to the existing peers.
+  assert.ok(result.outbound.some((o) => o.to === 'others' && o.msg.type === 'events'))
+})
+
+test('joining a userless empty room just seeds it (nothing to drop)', () => {
+  const logs: RoomLogs = new Map()
+  const result = handleJoin(logs, { type: 'join', client: 'alice', logs: { tables: [ev(0, 'a')] } }, 123, false)
+  assert.equal(result.changed, true)
+  assert.equal(logs.get('tables')?.length, 1)
+  assert.deepEqual((logs.get(SESSION_LOG) ?? []).map((e) => e.client), ['alice'])
+})
+
 test('a missing client id joins as anon', () => {
   const logs: RoomLogs = new Map()
   assert.equal(handleJoin(logs, { type: 'join' }).clientId, 'anon')
