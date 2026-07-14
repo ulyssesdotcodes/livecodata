@@ -6,6 +6,7 @@ import { startMultiplayerServer } from './server/server.js'
 mkdirSync('public/assets', { recursive: true })
 mkdirSync('public/data', { recursive: true })
 cpSync('src/data', 'public/data', { recursive: true })
+cpSync('static', 'public', { recursive: true })
 
 const html = readFileSync('index.html', 'utf8')
   .replace('</head>', '    <link rel="stylesheet" href="./assets/index.css">\n  </head>')
