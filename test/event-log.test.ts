@@ -44,6 +44,40 @@ test('load rejects garbage without throwing', () => {
   assert.equal(log.load(null), false)
 })
 
+test('serialized version is the base plus the number of registered migrations', () => {
+  assert.equal(JSON.parse(createEventLog().serialize()).version, 1)
+  const migrations = [(evs: StampedEvent[]) => evs, (evs: StampedEvent[]) => evs]
+  assert.equal(JSON.parse(createEventLog({ migrations }).serialize()).version, 3)
+})
+
+test('load upgrades old data by running the tail of the migration chain', () => {
+  // v1 → v2 tags each event; v2 → v3 tags again. A log at the current version
+  // (3) runs neither; older data runs only the migrations it is missing.
+  const migrations = [
+    (evs: StampedEvent[]) => evs.map((e) => ({ ...e, via: [...(e.via as string[] ?? []), 'v2'] })),
+    (evs: StampedEvent[]) => evs.map((e) => ({ ...e, via: [...(e.via as string[] ?? []), 'v3'] })),
+  ]
+  const at = (version: number): string[] => {
+    const log = createEventLog({ migrations })
+    log.load(JSON.stringify({ version, start: 0, events: [{ kind: 'x', seq: 0, t: 0 }] }))
+    return log.all()[0].via as string[]
+  }
+  assert.deepEqual(at(1), ['v2', 'v3'], 'v1 data runs both migrations')
+  assert.deepEqual(at(2), ['v3'], 'v2 data runs only the last')
+  assert.deepEqual(at(3), undefined, 'current-version data runs none')
+})
+
+test('a missing version is treated as the base; newer-than-known data loads as-is', () => {
+  const migrations = [(evs: StampedEvent[]) => evs.map((e) => ({ ...e, migrated: true }))]
+  const noVersion = createEventLog({ migrations })
+  noVersion.load(JSON.stringify({ start: 0, events: [{ kind: 'x', seq: 0, t: 0 }] }))
+  assert.equal(noVersion.all()[0].migrated, true, 'absent version migrates from the base')
+
+  const future = createEventLog({ migrations })
+  future.load(JSON.stringify({ version: 99, start: 0, events: [{ kind: 'x', seq: 0, t: 0 }] }))
+  assert.equal(future.all()[0].migrated, undefined, 'data from a newer version is left untouched')
+})
+
 test('onChange fires on append, load, and clear', () => {
   const log = createEventLog()
   let fired = 0
