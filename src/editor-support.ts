@@ -13,7 +13,12 @@ import { isExprDot, isThreeDot, cmCompletionType, completionBoost } from './comp
 import { SAMPLES } from './samples.js'
 import type { Table } from './dsl.js'
 import type { LangClient } from './lang-client.js'
-import type { LangSignatureHelp } from './lang-service.js'
+import type { LangSignatureHelp, EditorLang } from './lang-service.js'
+
+// Which language surface the editor is currently a window onto: the DSL
+// program, or a hydra sketch cell (see editor.tsx's cell-target mode). The
+// view owns the state; sources read it per query.
+export type GetLang = () => EditorLang
 
 export interface DocEntry {
   sig: string
@@ -172,9 +177,11 @@ export function curatedDocFor(text: string, start: number, name: string): DocEnt
   return DSL_BUILTIN_DOCS[name] ?? null
 }
 
-// Completing view names inside table("…") / define("…" quotes.
-export function viewNameCompletions(getViews: (() => Map<string, Table> | undefined) | undefined) {
+// Completing view names inside table("…") / define("…" quotes. DSL-only:
+// those calls don't exist in a hydra sketch.
+export function viewNameCompletions(getViews: (() => Map<string, Table> | undefined) | undefined, getLang: GetLang) {
   return (context: CompletionContext): CompletionResult | null => {
+    if (getLang() !== 'dsl') return null
     if (!context.matchBefore(/\b(?:table|define)\(\s*"[^"]*/)) return null
     const open = context.matchBefore(/"[^"]*/)
     const names = [...(getViews?.() ?? new Map()).keys()]
@@ -233,32 +240,34 @@ export function codeCompletions(
   client: LangClient | null,
   makeInfoNode: InfoNodeFactory,
   makeSymbolCard: SymbolCardFactory,
+  getLang: GetLang,
 ) {
   return async (context: CompletionContext): Promise<CompletionResult | null> => {
     // Strings and comments never complete here — view names inside quotes
     // have their own source (viewNameCompletions).
     const node = syntaxTree(context.state).resolveInner(context.pos, -1)
     if (/String|Comment/.test(node.name)) return null
+    const lang = getLang()
 
     if (client && client.status() === 'ready') {
       const word = context.matchBefore(/[\w$]+/)
       const dot = context.matchBefore(/\.[\w$]*/)
       if (!word && !dot && !context.explicit) return null
       const text = context.state.doc.toString()
-      const res = await client.completions(text, context.pos)
+      const res = await client.completions(text, context.pos, lang)
       if (res && res.entries.length) {
         const from = word ? word.from : context.pos
         return {
           from,
           options: res.entries.map((e): Completion => {
-            const curated = curatedDocFor(text, from, e.name)
+            const curated = lang === 'dsl' ? curatedDocFor(text, from, e.name) : null
             return {
               label: e.name,
               type: cmCompletionType(e.kind),
               ...(curated ? { detail: curated.detail } : {}),
               boost: completionBoost(e.sortText, e.kind, curated !== null),
               info: async () => {
-                const det = await client.details(text, context.pos, e.name)
+                const det = await client.details(text, context.pos, e.name, lang)
                 if (!det && !curated) return null
                 return makeSymbolCard({
                   display: det?.display ?? curated?.sig ?? null,
@@ -273,19 +282,22 @@ export function codeCompletions(
       }
       // No answer (e.g. the parse is too broken mid-edit) — fall through.
     }
-    return heuristicCompletions(context, makeInfoNode)
+    // The heuristic fallback knows only the DSL surface; in a hydra cell
+    // wrong suggestions are worse than none.
+    return lang === 'dsl' ? heuristicCompletions(context, makeInfoNode) : null
   }
 }
 
 // Hovering an identifier shows its complete type from the language service
 // (and the curated DSL prose when it's surface API).
-export function typeHover(client: LangClient, makeSymbolCard: SymbolCardFactory) {
+export function typeHover(client: LangClient, makeSymbolCard: SymbolCardFactory, getLang: GetLang) {
   return hoverTooltip(async (view, pos) => {
     if (client.status() !== 'ready') return null
+    const lang = getLang()
     const text = view.state.doc.toString()
-    const info = await client.quickInfo(text, pos)
+    const info = await client.quickInfo(text, pos, lang)
     if (!info || !info.display) return null
-    const curated = curatedDocFor(text, info.start, text.slice(info.start, info.end))
+    const curated = lang === 'dsl' ? curatedDocFor(text, info.start, text.slice(info.start, info.end)) : null
     return {
       pos: info.start,
       end: info.end,
@@ -307,7 +319,7 @@ export interface SigHelpState {
 
 export type SigCardFactory = (sig: LangSignatureHelp) => { dom: HTMLElement; destroy?: () => void }
 
-export function signatureHelp(client: LangClient, makeSigCard: SigCardFactory): Extension {
+export function signatureHelp(client: LangClient, makeSigCard: SigCardFactory, getLang: GetLang): Extension {
   const setSig = StateEffect.define<SigHelpState | null>()
 
   const field = StateField.define<SigHelpState | null>({
@@ -343,7 +355,7 @@ export function signatureHelp(client: LangClient, makeSigCard: SigCardFactory): 
     const { view } = update
     const text = update.state.doc.toString()
     const head = update.state.selection.main.head
-    void client.signatureHelp(text, head, trigger).then((sig) => {
+    void client.signatureHelp(text, head, trigger, getLang()).then((sig) => {
       if (id !== epoch) return
       const value = sig ? { pos: Math.min(sig.argumentStart, head), sig } : null
       if (value === null && view.state.field(field, false) == null) return // nothing to clear

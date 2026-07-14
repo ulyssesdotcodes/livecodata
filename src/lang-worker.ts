@@ -6,13 +6,17 @@
 // service up, and answers editor queries. A warmup query runs at init so the
 // first real keystroke doesn't pay the checker's lazy-binding cost.
 
-import { createLangService, type LangService, type LangCompletions, type LangSymbolInfo, type LangSignatureHelp, type LangEnv } from './lang-service.js'
+import { createLangService, type LangService, type LangCompletions, type LangSymbolInfo, type LangSignatureHelp, type LangEnv, type EditorLang } from './lang-service.js'
 
-export type LangRequest =
+// `lang` picks which surface the query runs against — the DSL program or a
+// hydra sketch cell (default dsl). One service per language, created lazily:
+// most sessions never open a hydra cell.
+export type LangRequest = { lang?: EditorLang } & (
   | { id: number; kind: 'completions'; text: string; pos: number }
   | { id: number; kind: 'details'; text: string; pos: number; name: string }
   | { id: number; kind: 'quickinfo'; text: string; pos: number }
   | { id: number; kind: 'signature'; text: string; pos: number; triggerChar?: string }
+)
 
 export type LangResult = LangCompletions | LangSymbolInfo | LangSignatureHelp | null
 
@@ -34,15 +38,20 @@ function handle(service: LangService, req: LangRequest): LangResult {
 
 const post = self.postMessage.bind(self) as (msg: unknown) => void
 
-const ready: Promise<LangService | null> = (async () => {
+const ready: Promise<((lang: EditorLang) => LangService) | null> = (async () => {
   const res = await fetch(new URL('lang-env.json', self.location.href))
   if (!res.ok) throw new Error(`lang-env.json: HTTP ${res.status}`)
   const env = (await res.json()) as LangEnv
-  const service = createLangService(env)
-  service.completionsAt('table("x").', 11) // warmup: bind libs + DSL types now
-  return service
+  const services = new Map<EditorLang, LangService>()
+  const serviceFor = (lang: EditorLang): LangService => {
+    let s = services.get(lang)
+    if (!s) { s = createLangService(env, lang); services.set(lang, s) }
+    return s
+  }
+  serviceFor('dsl').completionsAt('table("x").', 11) // warmup: bind libs + DSL types now
+  return serviceFor
 })().then(
-  (service) => { post({ kind: 'ready' } satisfies LangReady); return service },
+  (serviceFor) => { post({ kind: 'ready' } satisfies LangReady); return serviceFor },
   (err: unknown) => {
     console.error('lang worker: init failed:', err)
     post({ kind: 'init-failed', error: err instanceof Error ? err.message : String(err) } satisfies LangReady)
@@ -52,10 +61,10 @@ const ready: Promise<LangService | null> = (async () => {
 
 self.addEventListener('message', (e) => {
   const req = (e as MessageEvent).data as LangRequest
-  void ready.then((service) => {
-    if (!service) { post({ id: req.id, ok: false, error: 'not initialized' } satisfies LangResponse); return }
+  void ready.then((serviceFor) => {
+    if (!serviceFor) { post({ id: req.id, ok: false, error: 'not initialized' } satisfies LangResponse); return }
     try {
-      post({ id: req.id, ok: true, result: handle(service, req) } satisfies LangResponse)
+      post({ id: req.id, ok: true, result: handle(serviceFor(req.lang ?? 'dsl'), req) } satisfies LangResponse)
     } catch (err) {
       post({ id: req.id, ok: false, error: err instanceof Error ? err.message : String(err) } satisfies LangResponse)
     }

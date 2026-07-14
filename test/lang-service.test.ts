@@ -110,6 +110,58 @@ test('no answers inside an unparseable mess still return gracefully', () => {
   assert.equal(qi, null)
 })
 
+// ── the hydra sketch surface (lang: 'hydra') ─────────────────────────────────
+
+const hydraSvc = createLangService(env, 'hydra')
+
+test('hydra: generators, sources, and outputs are globals; the DSL is not', () => {
+  const res = hydraSvc.completionsAt('os', 2)
+  assert.ok(res)
+  const names = res.entries.map((e) => e.name)
+  for (const g of ['osc', 'noise', 'src', 'shape', 'voronoi', 's0', 'o0']) {
+    assert.ok(names.includes(g), `expected hydra global ${g}`)
+  }
+  assert.ok(!names.includes('table'), 'DSL surface must not leak into hydra sketches')
+  assert.ok(!names.includes('field'), 'DSL surface must not leak into hydra sketches')
+})
+
+test('hydra: chains complete the modifier methods', () => {
+  const text = 'osc(10).'
+  const res = hydraSvc.completionsAt(text, text.length)
+  assert.ok(res && res.isMemberCompletion)
+  const names = res.entries.map((e) => e.name)
+  for (const m of ['modulate', 'kaleid', 'rotate', 'color', 'out']) {
+    assert.ok(names.includes(m), `expected chain method ${m}`)
+  }
+  assert.ok(!names.includes('rasterize'), 'Table methods must not appear on a hydra chain')
+})
+
+test('hydra: quickinfo carries the full generated signature and defaults', () => {
+  const text = 'osc(10).modulate(noise(3), 0.2).out(o0)'
+  const onOsc = hydraSvc.quickInfoAt(text, 1)
+  assert.ok(onOsc)
+  assert.match(onOsc.display, /osc\(frequency\?: HydraNum, sync\?: HydraNum, offset\?: HydraNum\): HydraChain/)
+  assert.match(onOsc.docs, /defaults: frequency 60/)
+  const onModulate = hydraSvc.quickInfoAt(text, text.indexOf('modulate') + 1)
+  assert.ok(onModulate)
+  assert.match(onModulate.display, /modulate\(texture: HydraTexture, amount\?: HydraNum\): HydraChain/)
+})
+
+test('hydra: signature help works on generator calls', () => {
+  const text = 'osc('
+  const sh = hydraSvc.signatureHelpAt(text, text.length, '(')
+  assert.ok(sh)
+  const item = sh.signatures[sh.activeSignature]
+  assert.match(item.prefix, /osc\($/)
+  assert.equal(item.params.length, 3)
+  assert.match(item.params[0].label, /frequency/)
+})
+
+test('hydra: the DSL program keeps its own surface (no hydra leak)', () => {
+  const names = namesAt('osc', 3)
+  assert.ok(!names.includes('osc'), 'hydra generators must not leak into the DSL program')
+})
+
 test('cmCompletionType maps TS kinds onto CodeMirror icons', () => {
   assert.equal(cmCompletionType('method'), 'method')
   assert.equal(cmCompletionType('const'), 'variable')

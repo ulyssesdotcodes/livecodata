@@ -2,6 +2,7 @@ import './style.css'
 import { createSignal } from 'solid-js'
 import { initThree } from './three-scene.js'
 import { initHydra } from './hydra-scene.js'
+import { isHydraRow } from './hydra.js'
 import { createSceneVisualizer, createHydraVisualizer } from './visualizer.js'
 import { mountApp } from './ui/app.js'
 import { createEditor, defaultProgram, defaultTables } from './ui/editor.js'
@@ -132,10 +133,15 @@ const tablePanel = createTablePanel(editableStore, {
     // edited tables and record a run — keeping the current seed so tweaking a
     // sketch doesn't re-randomize the scene. (Plain inline edits stay pending
     // until an apply; this one is the apply.)
+    // A hydra event row's `code` cell holds a hydra sketch (or chain
+    // fragment), not DSL — tell the editor so completions/hover run against
+    // the hydra surface instead of the program's.
+    const row = editableStore.get(table)?.rows[rowIndex]
+    const lang = col === 'code' && isHydraRow(row) ? 'hydra' as const : 'dsl' as const
     editor.editCell(`${table}[${rowIndex}].${col}`, value, (text) => {
       editableStore.setCell(table, rowIndex, col, text)
       if (liveCode != null) void evaluate(liveCode, { setError: editor.setError, seed: liveSeed })
-    })
+    }, { lang })
   },
   onCtrlEnter: () => editor.run(),
   onSelectTable: (name) => {

@@ -16,10 +16,15 @@
 
 import ts from 'typescript'
 
+// The kinds of code the editor opens: the main program (DSL) and hydra
+// sketch cells. Each is its own language service program — the two ambient
+// surfaces must never see each other.
+export type EditorLang = 'dsl' | 'hydra'
+
 export interface LangEnv {
   files: Record<string, string>
-  userFile: string
   defaultLib: string
+  langs: Record<EditorLang, { userFile: string; roots: string[] }>
 }
 
 export interface LangCompletionEntry {
@@ -79,7 +84,8 @@ const docsOf = (doc: ts.SymbolDisplayPart[] | undefined, tags: ts.JSDocTagInfo[]
   return [body, tagText].filter(Boolean).join('\n')
 }
 
-export function createLangService(env: LangEnv): LangService {
+export function createLangService(env: LangEnv, lang: EditorLang = 'dsl'): LangService {
+  const { userFile, roots } = env.langs[lang]
   let userText = ''
   let version = 0
 
@@ -94,17 +100,17 @@ export function createLangService(env: LangEnv): LangService {
   }
 
   const host: ts.LanguageServiceHost = {
-    getScriptFileNames: () => [env.userFile, '/globals.d.ts'],
-    getScriptVersion: (f) => (f === env.userFile ? String(version) : '1'),
+    getScriptFileNames: () => [userFile, ...roots],
+    getScriptVersion: (f) => (f === userFile ? String(version) : '1'),
     getScriptSnapshot: (f) => {
-      const text = f === env.userFile ? userText : env.files[f]
+      const text = f === userFile ? userText : env.files[f]
       return text === undefined ? undefined : ts.ScriptSnapshot.fromString(text)
     },
     getCurrentDirectory: () => '/',
     getCompilationSettings: () => options,
     getDefaultLibFileName: () => env.defaultLib,
-    fileExists: (f) => f === env.userFile || env.files[f] !== undefined,
-    readFile: (f) => (f === env.userFile ? userText : env.files[f]),
+    fileExists: (f) => f === userFile || env.files[f] !== undefined,
+    readFile: (f) => (f === userFile ? userText : env.files[f]),
     directoryExists: () => true,
     getDirectories: () => [],
   }
@@ -120,7 +126,7 @@ export function createLangService(env: LangEnv): LangService {
   return {
     completionsAt(text, pos) {
       sync(text)
-      const res = ls.getCompletionsAtPosition(env.userFile, pos, {
+      const res = ls.getCompletionsAtPosition(userFile, pos, {
         includeCompletionsForModuleExports: false,
         includeCompletionsForImportStatements: false,
         includeCompletionsWithSnippetText: false,
@@ -137,7 +143,7 @@ export function createLangService(env: LangEnv): LangService {
 
     detailsAt(text, pos, name) {
       sync(text)
-      const d = ls.getCompletionEntryDetails(env.userFile, pos, name, undefined, undefined, undefined, undefined)
+      const d = ls.getCompletionEntryDetails(userFile, pos, name, undefined, undefined, undefined, undefined)
       if (!d) return null
       return {
         display: partsToString(d.displayParts),
@@ -150,7 +156,7 @@ export function createLangService(env: LangEnv): LangService {
 
     quickInfoAt(text, pos) {
       sync(text)
-      const qi = ls.getQuickInfoAtPosition(env.userFile, pos)
+      const qi = ls.getQuickInfoAtPosition(userFile, pos)
       if (!qi) return null
       return {
         display: partsToString(qi.displayParts),
@@ -167,7 +173,7 @@ export function createLangService(env: LangEnv): LangService {
         triggerChar === '(' || triggerChar === ','
           ? { kind: 'characterTyped', triggerCharacter: triggerChar }
           : { kind: 'invoked' }
-      const sh = ls.getSignatureHelpItems(env.userFile, pos, { triggerReason: reason })
+      const sh = ls.getSignatureHelpItems(userFile, pos, { triggerReason: reason })
       if (!sh) return null
       return {
         signatures: sh.items.map((item) => ({

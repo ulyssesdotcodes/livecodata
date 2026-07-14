@@ -8,7 +8,7 @@
 // so tests can drive it with a fake message channel (see cook-client.ts).
 
 import type { LangRequest, LangResponse, LangReady } from './lang-worker.js'
-import type { LangCompletions, LangSymbolInfo, LangSignatureHelp } from './lang-service.js'
+import type { LangCompletions, LangSymbolInfo, LangSignatureHelp, EditorLang } from './lang-service.js'
 
 export interface LangWorkerLike {
   postMessage(msg: unknown): void
@@ -22,12 +22,14 @@ export type LangStatus = 'loading' | 'ready' | 'failed'
 // variants to their common keys).
 type DistributedOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
+// Every query names the language surface it runs against (default 'dsl');
+// hydra sketch cells pass 'hydra'.
 export interface LangClient {
   status(): LangStatus
-  completions(text: string, pos: number): Promise<LangCompletions | null>
-  details(text: string, pos: number, name: string): Promise<LangSymbolInfo | null>
-  quickInfo(text: string, pos: number): Promise<LangSymbolInfo | null>
-  signatureHelp(text: string, pos: number, triggerChar?: string): Promise<LangSignatureHelp | null>
+  completions(text: string, pos: number, lang?: EditorLang): Promise<LangCompletions | null>
+  details(text: string, pos: number, name: string, lang?: EditorLang): Promise<LangSymbolInfo | null>
+  quickInfo(text: string, pos: number, lang?: EditorLang): Promise<LangSymbolInfo | null>
+  signatureHelp(text: string, pos: number, triggerChar?: string, lang?: EditorLang): Promise<LangSignatureHelp | null>
 }
 
 export function createLangClient(worker: LangWorkerLike): LangClient {
@@ -69,11 +71,11 @@ export function createLangClient(worker: LangWorkerLike): LangClient {
 
   return {
     status: () => status,
-    completions: (text, pos) => ask<LangCompletions>({ kind: 'completions', text, pos }),
-    details: (text, pos, name) => ask<LangSymbolInfo>({ kind: 'details', text, pos, name }),
-    quickInfo: (text, pos) => ask<LangSymbolInfo>({ kind: 'quickinfo', text, pos }),
-    signatureHelp: (text, pos, triggerChar) => ask<LangSignatureHelp>(
-      triggerChar !== undefined ? { kind: 'signature', text, pos, triggerChar } : { kind: 'signature', text, pos },
+    completions: (text, pos, lang) => ask<LangCompletions>({ kind: 'completions', text, pos, lang }),
+    details: (text, pos, name, lang) => ask<LangSymbolInfo>({ kind: 'details', text, pos, name, lang }),
+    quickInfo: (text, pos, lang) => ask<LangSymbolInfo>({ kind: 'quickinfo', text, pos, lang }),
+    signatureHelp: (text, pos, triggerChar, lang) => ask<LangSignatureHelp>(
+      triggerChar !== undefined ? { kind: 'signature', text, pos, triggerChar, lang } : { kind: 'signature', text, pos, lang },
     ),
   }
 }

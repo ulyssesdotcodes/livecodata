@@ -22,7 +22,7 @@ import {
   type RemoteCursor, type SymbolCardData, type SigCardFactory,
 } from '../editor-support.js'
 import { createLangClient, type LangClient } from '../lang-client.js'
-import type { LangSignatureHelp } from '../lang-service.js'
+import type { LangSignatureHelp, EditorLang } from '../lang-service.js'
 import { buildTablePreview } from './table-preview.js'
 import { DocsPopover } from './docs-popover.js'
 import type { Table } from '../dsl.js'
@@ -129,8 +129,10 @@ export interface EditorAPI {
   // Point the editor at a single table cell (e.g. hydra[0].code): the program
   // text is stashed, the cell's text loads, and Run/Ctrl-Enter calls onCommit
   // with the current text instead of running the program. The "Back" button
-  // (or an external setCode) returns to the program.
-  editCell(label: string, code: string, onCommit: (text: string) => void): void
+  // (or an external setCode) returns to the program. `lang` picks which
+  // surface completions/hover run against — 'hydra' for hydra sketch cells,
+  // default 'dsl'.
+  editCell(label: string, code: string, onCommit: (text: string) => void, opts?: { lang?: EditorLang }): void
   // Multiplayer presence: draw collaborators' carets (only cursors for the
   // cell currently open here — the caller filters; see main.ts).
   setRemoteCursors(cursors: RemoteCursor[]): void
@@ -163,10 +165,11 @@ export function createEditor(
 
   // When set, the editor is a window onto one table cell rather than the
   // program: Run commits the text back to the cell (an event append upstream).
-  let cellTarget: { label: string; onCommit: (text: string) => void } | null = null
+  let cellTarget: { label: string; lang: EditorLang; onCommit: (text: string) => void } | null = null
   let stashedProgram = ''
 
   const cellLabel = (): string => cellTarget ? cellTarget.label : PROGRAM_CELL
+  const cellLang = (): EditorLang => cellTarget ? cellTarget.lang : 'dsl'
 
   function run(): void {
     const text = view.state.doc.toString()
@@ -187,9 +190,9 @@ export function createEditor(
     if (restoreProgram) setDoc(stashedProgram)
   }
 
-  function editCell(label: string, code: string, onCommit: (text: string) => void): void {
+  function editCell(label: string, code: string, onCommit: (text: string) => void, { lang = 'dsl' }: { lang?: EditorLang } = {}): void {
     if (!cellTarget) stashedProgram = view.state.doc.toString()
-    cellTarget = { label, onCommit }
+    cellTarget = { label, lang, onCommit }
     setTitle(label)
     setRunLabel('Apply')
     setBackVisible(true)
@@ -201,7 +204,7 @@ export function createEditor(
 
   let lastCaretView: string | null = null
 
-  const lang = getLangClient()
+  const langService = getLangClient()
 
   // Created detached; <EditorPane>'s host div appends view.dom (CodeMirror
   // re-measures itself on attachment).
@@ -214,9 +217,9 @@ export function createEditor(
       // local-variable sources would duplicate what the language service
       // returns) — completion sources are registered explicitly below.
       new LanguageSupport(javascriptLanguage),
-      javascriptLanguage.data.of({ autocomplete: viewNameCompletions(getViews) }),
-      javascriptLanguage.data.of({ autocomplete: codeCompletions(lang, makeInfoNode, makeSymbolCard) }),
-      ...(lang ? [typeHover(lang, makeSymbolCard), signatureHelp(lang, makeSigCard)] : []),
+      javascriptLanguage.data.of({ autocomplete: viewNameCompletions(getViews, cellLang) }),
+      javascriptLanguage.data.of({ autocomplete: codeCompletions(langService, makeInfoNode, makeSymbolCard, cellLang) }),
+      ...(langService ? [typeHover(langService, makeSymbolCard, cellLang), signatureHelp(langService, makeSigCard, cellLang)] : []),
       EditorView.updateListener.of((u) => {
         if (!(u.selectionSet || u.docChanged)) return
         onCursor?.(cellLabel(), u.state.selection.main.head)
