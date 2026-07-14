@@ -343,6 +343,38 @@ export interface RetimeSpec {
   scale?: number
 }
 
+// Options shared by the .three.* scene animators. `amount` is how far to go
+// (radians for rotate, world units for move, a multiplier for scale); `dur` how
+// many beats the move takes; `axis` picks x/y/z (rotate/move); `ease` shapes the
+// segment arriving at the target; `at` overrides the start beat (default: each
+// create row's own beat).
+export interface ThreeAnimOpts {
+  amount?: number
+  dur?: number
+  axis?: 'x' | 'y' | 'z'
+  ease?: (t: number) => number
+  at?: number
+}
+
+// The .three accessor on a scene table: transform animations that read the
+// table's `create` rows and append the update keyframes carrying each object's
+// transform. Every method returns a Table (the base rows plus the new
+// keyframes), so they chain — box().three.rotate().three.scale().rasterize(8).
+export interface ThreeChain {
+  // Spin each object by `amount` radians about `axis` (default a full turn about
+  // y) over `dur` beats — adds to the object's current rotation.
+  rotate(opts?: ThreeAnimOpts): Table
+  // Grow/shrink each object by the `amount` factor (default 2×) over `dur` beats
+  // — multiplies the object's current scale uniformly on all axes (sx/sy/sz).
+  scale(opts?: ThreeAnimOpts): Table
+  // Slide each object by `amount` along `axis` (default 1 unit along x) over
+  // `dur` beats — adds to the object's current position.
+  move(opts?: ThreeAnimOpts): Table
+}
+
+const TAU = Math.PI * 2
+const numOr = (v: unknown, d: number): number => (typeof v === 'number' ? v : d)
+
 export interface DSLContext {
   defineLazy(name: string, fn: ViewFn, group?: string): void
   defineConst(name: string, table: Table): void
@@ -756,6 +788,65 @@ export class Table {
     return this.retime({ offset: beats })
   }
 
+  // ── three: animate scene objects over time ──────────────────────────────────
+  // Read this table's `create` rows and, for every object, append the update
+  // keyframes that carry its transform from its current value to one `amount`
+  // away over `dur` beats. rasterize eases every numeric field between the
+  // keyframes that carry it, so each animator writes a START keyframe (the
+  // object's current value) and an END keyframe `dur` beats later — rotate/move
+  // ADD `amount`, scale MULTIPLIES. The base rows pass through unchanged, so the
+  // result is renderable as-is and the animators chain:
+  //   box({ id: "a" })
+  //     .three.rotate({ amount: Math.PI, dur: 8 })
+  //     .three.scale({ amount: 1.5, dur: 8, ease: easeInOut })
+  //     .rasterize(8)
+  get three(): ThreeChain {
+    return {
+      rotate: (opts: ThreeAnimOpts = {}): Table => {
+        const { amount = TAU, axis = 'y' } = opts
+        const f = `r${axis}`
+        return this._threeAnim('three.rotate', opts, (c) => {
+          const from = numOr(c[f], 0)
+          return { start: { [f]: from }, end: { [f]: from + amount } }
+        })
+      },
+      move: (opts: ThreeAnimOpts = {}): Table => {
+        const { amount = 1, axis = 'x' } = opts
+        const f = `p${axis}`
+        return this._threeAnim('three.move', opts, (c) => {
+          const from = numOr(c[f], 0)
+          return { start: { [f]: from }, end: { [f]: from + amount } }
+        })
+      },
+      scale: (opts: ThreeAnimOpts = {}): Table => {
+        const { amount = 2 } = opts
+        return this._threeAnim('three.scale', opts, (c) => {
+          const sx = numOr(c.sx, 1), sy = numOr(c.sy, 1), sz = numOr(c.sz, 1)
+          return { start: { sx, sy, sz }, end: { sx: sx * amount, sy: sy * amount, sz: sz * amount } }
+        })
+      },
+    }
+  }
+
+  // Shared machinery for the .three.* animators: pass the base rows through, then
+  // per create row append a start + end update keyframe `dur` beats apart, with
+  // fields from `fieldsFor`. `opts` is the (serializable) hash spec; an `ease`
+  // function makes the node seed-sensitive, exactly like map(fn).
+  private _threeAnim(op: string, opts: ThreeAnimOpts, fieldsFor: (create: Row) => { start: Row; end: Row }): Table {
+    const { dur = 4, at, ease } = opts
+    return this._xf(op, opts, (ins) => {
+      const out: Row[] = ins[0].map(recarry)
+      for (const c of ins[0]) {
+        if (c.type !== 'create') continue
+        const startBeat = at ?? (typeof c.beat === 'number' ? (c.beat as number) : 1)
+        const { start, end } = fieldsFor(c)
+        out.push(tag({ id: c.id, type: 'update', beat: startBeat, ...start }, carry(c)))
+        out.push(tag({ id: c.id, type: 'update', beat: startBeat + dur, ...end, ...(ease ? { ease } : {}) }, carry(c)))
+      }
+      return out
+    }, hasFn(opts))
+  }
+
   graph(...columns: (string | string[])[]): this {
     const cols = columns.flat().filter(Boolean) as string[]
     this._ctx?.addGraph({ table: this, columns: cols })
@@ -954,103 +1045,6 @@ function sceneObject(shape: string, props: Row, ctx: DSLContext | null): Table {
   }], ctx)
 }
 
-// ── three: animate scene objects over time ───────────────────────────────────
-// A small toolkit of transform animations for the 3D scene. Each function takes
-// a BASE TABLE holding scene `create` rows (a box(), a grid of objects, a whole
-// concat'd scene) and, for every create row in it, emits the UPDATE keyframes
-// that carry that object's transform from its current value to one `amount`
-// away, over `dur` beats. The result table is just those update rows, so you
-// concat it back onto the scene before rasterizing:
-//
-//   const scene = box({ id: "a" }).concat(sphere({ id: "b", px: 2 }))
-//   scene.concat(three.rotate(scene, { amount: Math.PI, dur: 8 }))
-//        .concat(three.scale(scene, { amount: 1.5, dur: 8, ease: easeInOut }))
-//        .rasterize(8)
-//
-// rasterize eases every numeric field between the keyframes that carry it, so
-// each animation emits a START keyframe (the object's current value) and an END
-// keyframe `dur` beats later — rotate/move ADD `amount` to the current
-// rotation/position, scale MULTIPLIES the current scale (sx/sy/sz, which default
-// to 1). Emitting the start keyframe explicitly means the glide is well-defined
-// even for fields the create row doesn't carry. Options: `amount` (how far),
-// `dur` (over how many beats), `axis` ('x'|'y'|'z', for rotate/move), `ease` (an
-// easing fn shaping the segment arriving at the target), and `at` (override the
-// start beat; defaults to the create row's own beat).
-
-export interface ThreeAnimOpts {
-  amount?: number
-  dur?: number
-  axis?: 'x' | 'y' | 'z'
-  ease?: (t: number) => number
-  at?: number
-}
-
-export interface ThreeSection {
-  // Spin each object by `amount` radians about `axis` (default a full turn about
-  // y) over `dur` beats — adds to the object's current rotation.
-  rotate(base: Table | Row[], opts?: ThreeAnimOpts): Table
-  // Grow/shrink each object by the `amount` factor (default 2×) over `dur` beats
-  // — multiplies the object's current scale uniformly on all axes.
-  scale(base: Table | Row[], opts?: ThreeAnimOpts): Table
-  // Slide each object by `amount` along `axis` (default 1 unit along x) over
-  // `dur` beats — adds to the object's current position.
-  move(base: Table | Row[], opts?: ThreeAnimOpts): Table
-}
-
-const TAU = Math.PI * 2
-
-// For every create row in `base`, emit a start + end update keyframe `dur` beats
-// apart; `fieldsFor(create)` names the transform fields and their start/target
-// values. Only create rows contribute — other rows in `base` are ignored.
-function threeAnimate(
-  base: Table | Row[],
-  dur: number,
-  at: number | undefined,
-  ease: ((t: number) => number) | undefined,
-  fieldsFor: (create: Row) => { start: Row; end: Row },
-  ctx: DSLContext | null,
-): Table {
-  const out: Row[] = []
-  for (const c of rowsOf(base)) {
-    if (c.type !== 'create') continue
-    const startBeat = at ?? (typeof c.beat === 'number' ? (c.beat as number) : 1)
-    const { start, end } = fieldsFor(c)
-    out.push({ id: c.id, type: 'update', beat: startBeat, ...start })
-    out.push({ id: c.id, type: 'update', beat: startBeat + dur, ...end, ...(ease ? { ease } : {}) })
-  }
-  return new Table(out, ctx)
-}
-
-const numOr = (v: unknown, d: number): number => (typeof v === 'number' ? v : d)
-
-function makeThree(ctx: DSLContext | null): ThreeSection {
-  return {
-    rotate(base: Table | Row[], { amount = TAU, dur = 4, axis = 'y', ease, at }: ThreeAnimOpts = {}): Table {
-      const f = `r${axis}`
-      return threeAnimate(base, dur, at, ease, (c) => {
-        const from = numOr(c[f], 0)
-        return { start: { [f]: from }, end: { [f]: from + amount } }
-      }, ctx)
-    },
-    move(base: Table | Row[], { amount = 1, dur = 4, axis = 'x', ease, at }: ThreeAnimOpts = {}): Table {
-      const f = `p${axis}`
-      return threeAnimate(base, dur, at, ease, (c) => {
-        const from = numOr(c[f], 0)
-        return { start: { [f]: from }, end: { [f]: from + amount } }
-      }, ctx)
-    },
-    scale(base: Table | Row[], { amount = 2, dur = 4, ease, at }: ThreeAnimOpts = {}): Table {
-      return threeAnimate(base, dur, at, ease, (c) => {
-        const sx = numOr(c.sx, 1), sy = numOr(c.sy, 1), sz = numOr(c.sz, 1)
-        return {
-          start: { sx, sy, sz },
-          end: { sx: sx * amount, sy: sy * amount, sz: sz * amount },
-        }
-      }, ctx)
-    },
-  }
-}
-
 function parseCSV(text: string): Row[] {
   const lines = String(text).trim().split(/\r?\n/).filter((l) => l.length)
   if (!lines.length) return []
@@ -1105,11 +1099,6 @@ export type DSLSurface = Easings & {
   // The generic form behind box()/sphere()/… — build a create row for any
   // shape string, including future shapes without a named helper.
   object(shape: string, props?: Row): Table
-  // Animate scene objects over time: three.rotate/scale/move take a base table
-  // of `create` rows and return the update keyframes (amount + duration in
-  // beats) that carry each object's transform. Concat the result onto the scene,
-  // then rasterize. See ThreeSection.
-  three: ThreeSection
   physics(source: Table | Row[]): PhysicsBuilder
   // Folding paper: origami() is a bare sheet. Chain .steps(table) to fold it
   // by instructions — each row a fold/reflection along a line through two
@@ -1199,7 +1188,6 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     cone: (props: Row = {}) => sceneObject('cone', props, ctx),
     torus: (props: Row = {}) => sceneObject('torus', props, ctx),
     text: (props: Row = {}) => sceneObject('text', props, ctx),
-    three: makeThree(ctx),
     origami: makeOrigami(ctx),
     editable: (name: string, schema: Schema, seedRows?: Row[]): Table => {
       const rows = (ctx?.editableRows?.(name, schema, seedRows) ?? []).map((r) => ({ ...r }))

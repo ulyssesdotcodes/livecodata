@@ -6,7 +6,7 @@
 
 import { EditorView, hoverTooltip, Decoration, WidgetType, type DecorationSet } from '@codemirror/view'
 import { StateField, StateEffect } from '@codemirror/state'
-import { isExprDot } from './completion.js'
+import { isExprDot, isThreeDot } from './completion.js'
 import { SAMPLES } from './samples.js'
 import type { Table } from './dsl.js'
 
@@ -36,7 +36,6 @@ export const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
   object:     { sig: 'object(shape, { id, … })', detail: 'create any shape', info: 'The generic behind box()/sphere()/… — a create-row Table for any shape string ("box", "sphere", "cylinder", "cone", "torus", "text", or a future shape). Defaults to beat 1 at the origin; id defaults to the shape name. Prefer the named helpers so autocomplete shows the shapes.' },
   physics:    { sig: 'physics(table)',               detail: 'physics scene',    info: 'Load a base scene table into the JoltPhysics engine. Chain .simulate() to run the simulation.' },
   editable:   { sig: 'editable(name, schema, seedRows?)', detail: 'user table', info: 'A user-editable table: rows are edited in the table panel, not computed — every edit is an appended event and the visible table is the fold (see the name·events tab). schema maps column name to "number" | "string" | "boolean" | "code"; code cells open in this editor. seedRows fill the table when first created.' },
-  three:      { sig: 'three.rotate / three.scale / three.move', detail: 'animate scene objects', info: 'Transform animations for the 3D scene. Each takes a base table of `create` rows and returns the UPDATE keyframes that carry every object\'s transform over time — three.rotate(scene, { amount, dur, axis }) spins by `amount` radians, three.scale(scene, { amount, dur }) grows by the `amount` factor, three.move(scene, { amount, dur, axis }) slides by `amount`. `dur` is in beats; `ease` shapes the segment; `at` overrides the start beat (default the create row\'s beat). Concat the result back onto the scene, then .rasterize(). e.g. scene.concat(three.rotate(scene, { amount: Math.PI, dur: 8 })).rasterize(8).' },
   origami:    { sig: 'origami()', detail: 'folding paper', info: 'A sheet of paper folded by a table of fold steps, each solved exactly. Chain .steps(table) — one row per fold: p1/p2 two points "x,y" on the fold line (drawn on the current folded paper, unit-square frame), move sheet-space marker(s) for the flap(s) that swing, kind/pick to choose the move when a fold is ambiguous ("simple", "reverse", "sink", …), at/dur/to its timing. Then .spawn({ id, color, … }) for the scene create row and .sequence() for the beat-timed keyframes. Every row is verified: a fold that cannot lie flat fails with an error naming the step.' },
   field:      { sig: 'field(name)',                   detail: 'expr: read field',  info: 'A chainable expression reading row[name]. Chain .add/.sub/.mul/.div/.mod, .eq/.gt/…, .and/.or/.not, .cond(a,b). Use in filter(expr), map(template), emit(template), derive — these are diffable (no opaque closures).' },
   lit:        { sig: 'lit(value)',                   detail: 'expr: literal',     info: 'A constant expression. Usually you can pass a raw value directly to an Expr method.' },
@@ -85,8 +84,18 @@ export const TABLE_METHOD_DOCS: Record<string, DocEntry> = {
   steps:       { sig: '.steps(table | rows)',                 detail: 'origami fold table', info: 'One table = the whole folding, one row per fold, applied in order. p1/p2: two points "x,y" on the fold line, in the fixed unit-square frame the flat sheet started in. move: sample point(s) on the UNFOLDED sheet (";"-separated), one inside each flap that swings — a sheet point names exactly one ply, so single layers of a stack can be picked out. kind: "simple", "reverse", "sink", … chooses the move when several layer orders are valid; pick indexes among same-kind states. at/dur: when the swing starts and how long it lasts, in beats (defaults: the row\'s position, 0.75). to: how far to swing — 1 lands flat; only the last row may stop short (wings held half-raised).' },
   spawn:       { sig: '.spawn({ id, color, px, … })',         detail: 'origami create row', info: 'The origami sheet\'s scene create row (shape: "origami"), with the compiled fold program riding along and fold at 0 (flat sheet). Props merge over defaults.' },
   sequence:    { sig: '.sequence(steps?)',                    detail: 'origami schedule',  info: 'Bake the fold table\'s at/dur timings into beat-timed update keyframes driving one numeric field, fold: k means the first k folds have landed, fractions swing the next flap about its fold line. Pass rows { step, at, dur? } to retime individual folds.' },
+  three:       { sig: '.three.rotate / .three.scale / .three.move', detail: 'animate scene objects', info: 'Transform animations for the 3D scene. Reads this table\'s `create` rows and appends the UPDATE keyframes carrying each object\'s transform over time; the base rows pass through, so the result is renderable and the animators chain. .three.rotate({ amount, dur, axis }) spins, .three.scale({ amount, dur }) grows, .three.move({ amount, dur, axis }) slides. e.g. box().three.rotate({ amount: Math.PI, dur: 8 }).three.scale({ amount: 1.5, dur: 8 }).rasterize(8).' },
   graph:       { sig: '.graph(...columns)',                   detail: 'draw graph',       info: 'Mark this Table to be drawn on the graph panel. Pass column name(s) to plot.' },
   save:        { sig: '.save(name)',                          detail: 'save as view',     info: 'Sugar for define(name, () => this) — register the current Table as a named view.' },
+}
+
+// Methods on the object returned by a table's `.three` accessor — offered after
+// `.three.` (see dslCompletions). Each returns a Table, so the chain continues
+// with ordinary table methods (including `.three` again).
+export const THREE_METHOD_DOCS: Record<string, DocEntry> = {
+  rotate: { sig: '.three.rotate({ amount, dur, axis, ease, at })', detail: 'spin over time',  info: 'For every `create` row, add `amount` radians to its rotation about `axis` (\'x\'|\'y\'|\'z\', default y; default amount a full turn) over `dur` beats. `ease` shapes the segment; `at` overrides the start beat (default the create row\'s beat).' },
+  scale:  { sig: '.three.scale({ amount, dur, ease, at })',       detail: 'grow over time',   info: 'For every `create` row, multiply its scale (sx/sy/sz, default 1) by the `amount` factor (default 2×) over `dur` beats, uniformly on all axes. `ease` shapes the segment; `at` overrides the start beat.' },
+  move:   { sig: '.three.move({ amount, dur, axis, ease, at })',  detail: 'slide over time',  info: 'For every `create` row, add `amount` world units to its position along `axis` (\'x\'|\'y\'|\'z\', default x; default amount 1) over `dur` beats. `ease` shapes the segment; `at` overrides the start beat.' },
 }
 
 // Methods offered after a dot on an Expr (field("x").add(1).gt(2)…). Every Expr
@@ -147,10 +156,13 @@ export function dslCompletions(getViews: (() => Map<string, Table> | undefined) 
     }
     const dot = context.matchBefore(/\.\w*/)
     if (dot) {
-      // Pick the method set by the chain's root: Expr methods after field()/lit()/
-      // idx() (and their chains), Table methods otherwise.
-      const docs = isExprDot(context.state.doc.toString() as string, dot.from as number)
-        ? EXPR_METHOD_DOCS : TABLE_METHOD_DOCS
+      // Pick the method set by the chain's root: the three animators right after
+      // a `.three` accessor, else Expr methods after field()/lit()/idx() (and
+      // their chains), else Table methods.
+      const text = context.state.doc.toString() as string
+      const docs = isThreeDot(text, dot.from as number) ? THREE_METHOD_DOCS
+        : isExprDot(text, dot.from as number) ? EXPR_METHOD_DOCS
+          : TABLE_METHOD_DOCS
       return {
         from: dot.from + 1,
         options: Object.keys(docs).map((label) => {
