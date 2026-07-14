@@ -118,6 +118,18 @@ test('schemas namespace completes its members with the exact schema on hover', (
   assert.match(qi.display, /language: "hydra"/)
   assert.match(qi.display, /"setCode"/)
   assert.match(qi.docs, /hydra view's event stream/)
+
+  // The bare global carries the surface member's JSDoc too (the generator
+  // copies it onto the generated const — an indexed-access type alone
+  // wouldn't), and every schema member has a docstring.
+  const onGlobal = svc.quickInfoAt(text2, text2.indexOf('schemas') + 1)
+  assert.ok(onGlobal)
+  assert.match(onGlobal.docs, /Canonical schemas/)
+  for (const s of ['sliders', 'path', 'steps'] as const) {
+    const t = `schemas.${s}`
+    const d = svc.quickInfoAt(t, t.length - 1)
+    assert.ok(d && d.docs.length > 0, `expected a docstring on schemas.${s}`)
+  }
 })
 
 test('no answers inside an unparseable mess still return gracefully', () => {

@@ -25,8 +25,9 @@ export const SAMPLES: Sample[] = [
 // 1. editable(name, schema) declares a user-editable table: rows are
 //    entered/edited in the table panel (its own "path" tab), not computed —
 //    edits persist across runs, unlike a normal view. This table starts with
-//    the keyframes seeded on the right; the schema here (just column names +
-//    types) is all the code carries, the row data lives in the table. Each
+//    the keyframes seeded on the right; the schema is all the code carries,
+//    and \`schemas.path\` is the canonical one for beat-timed positions —
+//    hover it to see the columns ({ beat, px, py, pz, disabled }). Each
 //    keyframe sits on a beat (1-indexed: beat 1 is the top of the loop). Try
 //    it: open the "path" tab, click a cell to change a coordinate, or hit "+
 //    row" to add a keyframe, then press Run again to see the sphere follow the
@@ -34,9 +35,7 @@ export const SAMPLES: Sample[] = [
 //    "disabled" is just an ordinary boolean column, not a special mechanism —
 //    check a row's box to mute that keyframe (the sphere skips it) without
 //    deleting the row; uncheck to bring it back.
-define("path", () =>
-  editable("path", { beat: "number", px: "number", py: "number", pz: "number", disabled: "boolean" })
-)
+define("path", () => editable("path", schemas.path))
 
 // 2. Turn the path's keyframes into a moving sphere: the first row (sorted by
 //    beat, in case rows were added out of order) creates it; every later row
@@ -202,11 +201,9 @@ define("scene", (rand, table) =>
 // off the paper, a kind the geometry does not allow — fails with an error
 // naming the step. Nothing folds wrong silently.
 
-define("steps", () => editable("steps", {
-  step: "string", p1: "string", p2: "string", move: "string",
-  kind: "string", pick: "number", at: "number", dur: "number", to: "number",
-  disabled: "boolean",
-}))
+// \`schemas.steps\` is the canonical fold-table schema (the columns above) —
+// hover it in the editor to see them typed out.
+define("steps", () => editable("steps", schemas.steps))
 
 // Feed the fold table to a sheet of paper, colored side DOWN (backColor)
 // the way a crane is folded so the finished bird comes out colored. The
@@ -302,19 +299,22 @@ define("hydra", () => rows([
 // editable(name, schema) makes this table live-editable in the table panel —
 // it's the ONLY table this sketch needs (named "hydra" so playback reads it
 // directly, with no code-generated view in between). Its rows are seeded on
-// the right, so the code here carries only the column schema — the events
-// themselves live in the table: click the code cell to open the sketch in this
-// editor; edit a value cell, or "+ row" a new setVariable event at a later beat
-// (like the beat-9 setVariable row already seeded) right in the table — no code
-// change needed, and any column you add via "+ column" survives the next Run
-// too. (Every edit is an event too — see the "hydra·events" tab.) A second,
-// code-generated table only becomes useful once you need to LAYER computed
-// events on top of these — see "House of Cards" for that.
+// the right, so the code here carries only the schema — and \`schemas.hydra\`
+// is the canonical one (hover it to see the columns): \`event\` and \`mode\`
+// come as dropdowns, and \`code\` cells open in this editor with hydra
+// completions. The events themselves live in the table: click the code cell
+// to open the sketch here; edit a value cell, or "+ row" a new setVariable
+// event at a later beat (like the beat-9 setVariable row already seeded)
+// right in the table — no code change needed, and any column you add via
+// "+ column" survives the next Run too. (Every edit is an event too — see
+// the "hydra·events" tab.) A second, code-generated table only becomes
+// useful once you need to LAYER computed events on top of these — see
+// "House of Cards" for that.
 //
 // "disabled" is just an ordinary boolean column: check a row's box to mute
 // that event — the sketch skips it, as if the row weren't there — without
 // losing it; uncheck to bring it back.
-editable("hydra", { beat: "number", event: "string", code: { type: "code", language: "hydra" }, name: "string", value: "number", disabled: "boolean" })
+editable("hydra", schemas.hydra)
 `,
     tables: {
       hydra: [
@@ -352,8 +352,9 @@ define("scene", (rand, table) => table("events").rasterize(16))
 //    pattern, then the loop wraps back to part one. Both are ordinary setCode
 //    rows in the SAME editable table — "two-part" just means two of them, each
 //    the most-recent code at its point in the loop. Their rows are seeded into
-//    the "hydra" tab on the right; the code here declares the schema only.
-editable("hydra", { beat: "number", event: "string", code: { type: "code", language: "hydra" }, name: "string", value: "number", disabled: "boolean" })
+//    the "hydra" tab on the right; the code declares only the canonical
+//    schema (hover \`schemas.hydra\` to see its columns).
+editable("hydra", schemas.hydra)
 `,
     tables: {
       hydra: [
@@ -373,12 +374,13 @@ editable("hydra", { beat: "number", event: "string", code: { type: "code", langu
 // 1. A table named "sliders" DEFINES them: one row per slider, { id, min, max }
 //    (plus an optional \`default\`). Each row becomes a labelled control over the
 //    visual. It's an editable() table, seeded on the right with the schema
-//    declared here — so open the "sliders" tab in the panel and add a row,
-//    rename an id, or change a min/max, then Run to apply. (It could just as
-//    well be a computed view: define("sliders", () => rows([...])).) Check a
-//    row's \`disabled\` box to pull that control off the screen without losing
-//    its settings — uncheck to bring it back.
-editable("sliders", { id: "string", min: "number", max: "number", default: "number", disabled: "boolean" })
+//    declared here (\`schemas.sliders\`, the canonical slider-table schema —
+//    hover it to see the columns) — so open the "sliders" tab in the panel
+//    and add a row, rename an id, or change a min/max, then Run to apply.
+//    (It could just as well be a computed view: define("sliders", () =>
+//    rows([...])).) Check a row's \`disabled\` box to pull that control off
+//    the screen without losing its settings — uncheck to bring it back.
+editable("sliders", schemas.sliders)
 
 // 2. slider(id) is the sibling of midi(note): a live per-frame value you bind
 //    into any field. Here the sphere's height follows the "height" slider —
@@ -430,8 +432,10 @@ define("hydra", () => rows([
 //    (not "hydra") because we're layering a code-generated transform on top —
 //    see \`hydra\`, below, for why the transform, not this table, is what
 //    playback actually reads. Its two setCode rows are seeded into the "hydra
-//    sketch" tab on the right; the code here declares the schema only.
-editable("hydra sketch", { beat: "number", event: "string", code: { type: "code", language: "hydra" }, name: "string", value: "number", disabled: "boolean" })
+//    sketch" tab on the right; the schema is the canonical \`schemas.hydra\`
+//    even though the table wears a different name — the schema describes the
+//    columns, not the table it's attached to.
+editable("hydra sketch", schemas.hydra)
 
 // 2. \`.pairBy(field, value, fn)\` finds the rows where row[field] === value and
 //    cycles through them pairwise: match k is \`second\`, paired with match
@@ -492,20 +496,13 @@ define("hydra", (rand, table) =>
 // right — edit a cell, drag a beat, or "+ row" another transform, no code change
 // needed. This just declares the schema.
 //
-// Two columns are ENUMS (declared as a string[] of choices): \`event\` and
-// \`mode\` render as dropdowns, so picking a valid one during a set is a click,
-// not a typed guess. And because every column is typed, a cell that doesn't fit
-// — a misspelled event, text where a number belongs — is flagged red (its row
+// \`schemas.hydra\` is the canonical schema for this table — hover it to see
+// the columns. Two of them are ENUMS: \`event\` and \`mode\` render as
+// dropdowns, so picking a valid one during a set is a click, not a typed
+// guess. And because every column is typed, a cell that doesn't fit — a
+// misspelled event, text where a number belongs — is flagged red (its row
 // too), a quick "this row is wrong" you catch before hitting Run.
-editable("hydra", {
-  beat: "number",
-  event: ["setCode", "setSource", "append", "replace", "layer", "setVariable"],
-  code: { type: "code", language: "hydra" },
-  find: "string",
-  name: "string",
-  value: "number",
-  mode: ["blend", "add", "mult", "diff", "layer", "mask"],
-})
+editable("hydra", schemas.hydra)
 `,
     tables: {
       hydra: [

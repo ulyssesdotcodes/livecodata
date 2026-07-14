@@ -1036,9 +1036,17 @@ export type Easings = typeof EASINGS
 // constant, not per-run state; spread one to extend it:
 // editable("hydra", { ...schemas.hydra, layerName: "string" }).
 export const SCHEMAS = deepFreeze({
-  /** The hydra view's event stream (see the hydra samples): setCode/setVariable
-   * carry the sketch and its live inputs; setSource/append/replace/layer are the
-   * meta-programming transforms. `code` cells open in the editor as hydra. */
+  /**
+   * The hydra view's event stream: one row per event, placed on the loop by
+   * `beat` (1-indexed). `event` picks what it does — "setCode" (`code` = the
+   * whole sketch), "setVariable" (`name`/`value` = a live input the sketch
+   * reads as a props function), "setSource"/"append" (`code` = a new chain
+   * head / a ".effect(…)" fragment), "replace" (swap substring `find` for
+   * `value`), "layer" (`code` = another sketch composited via `mode`, amount
+   * `value`). `event` and `mode` are enums (dropdowns in the table panel);
+   * `code` cells open in the editor with hydra completions; check `disabled`
+   * to mute a row without deleting it.
+   */
   hydra: {
     beat: 'number',
     event: ['setCode', 'setSource', 'append', 'replace', 'layer', 'setVariable'],
@@ -1049,15 +1057,27 @@ export const SCHEMAS = deepFreeze({
     mode: ['blend', 'add', 'mult', 'diff', 'layer', 'mask'],
     disabled: 'boolean',
   },
-  /** The "sliders" view's rows: one on-screen slider per row — id labels it,
-   * min/max its range, default its initial value (see slider()). */
+  /**
+   * The "sliders" view: one on-screen control per row — `id` names it (and is
+   * what slider(id) reads), `min`/`max` its range, `default` its initial
+   * value. Check `disabled` to pull the control off screen without losing
+   * its settings.
+   */
   sliders: { id: 'string', min: 'number', max: 'number', default: 'number', disabled: 'boolean' },
-  /** Beat-timed positions: a point on the loop per row — the shape most
-   * editable motion-path tables take. */
+  /**
+   * Beat-timed positions: one keyframe per row — `beat` places it on the loop
+   * (1-indexed), `px`/`py`/`pz` the position. The usual shape for an editable
+   * motion path; check `disabled` to skip a keyframe.
+   */
   path: { beat: 'number', px: 'number', py: 'number', pz: 'number', disabled: 'boolean' },
-  /** An origami fold table, one row per fold (see origami().steps()): p1/p2 the
-   * fold line, move the flap sample point(s), kind/pick disambiguation, and
-   * at/dur/to its timing. */
+  /**
+   * An origami fold table (see origami().steps()): one fold per row — `step`
+   * a label, `p1`/`p2` two points "x,y" on the fold line, `move` the sheet
+   * point(s) naming the flap(s) that swing, `kind`/`pick` choose among valid
+   * layer orders ("simple", "reverse", "sink", …), `at`/`dur` the swing's
+   * beat timing, `to` how far it lands (1 = flat). Check `disabled` to skip
+   * a fold.
+   */
   steps: {
     step: 'string', p1: 'string', p2: 'string', move: 'string',
     kind: 'string', pick: 'number', at: 'number', dur: 'number', to: 'number',
@@ -1183,8 +1203,12 @@ export type DSLSurface = Easings & {
   taps(): Table
   tempo(fallback?: number): number
   beats(count: number, opts?: { fallback?: number; fit?: number }): Table
-  // Canonical schemas for the tables the runtime knows by name — pass one to
-  // editable() to get the right columns/types: editable("hydra", schemas.hydra).
+  /**
+   * Canonical schemas for the tables the runtime knows by name — pass one to
+   * editable() for the right columns, enum dropdowns, and code languages:
+   * editable("hydra", schemas.hydra). Frozen; spread to extend:
+   * editable("hydra", { ...schemas.hydra, extra: "string" }).
+   */
   schemas: Schemas
 }
 

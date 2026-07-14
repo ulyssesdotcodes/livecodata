@@ -146,17 +146,27 @@ export function buildLangEnv() {
   if (!files['/dts/dsl.d.ts']) throw new Error('gen-lang-env: /dts/dsl.d.ts missing from emit')
 
   // Ambient globals: one const per DSLSurface property, typed by indexing into
-  // the surface so overloads/doc-comments survive.
+  // the surface so overloads survive — and each member's JSDoc copied onto the
+  // generated const, so hovering the bare global in the editor shows the doc
+  // (the indexed-access type alone wouldn't carry it).
   const checker = program.getTypeChecker()
   const sf = program.getSourceFile(dslEntry)
-  /** @type {string[]} */
-  let surfaceProps = []
+  /** @type {{ name: string, doc: string }[]} */
+  let surface = []
   sf.forEachChild((node) => {
     if (ts.isTypeAliasDeclaration(node) && node.name.text === 'DSLSurface') {
-      surfaceProps = checker.getTypeAtLocation(node.name).getProperties().map((p) => p.getName())
+      surface = checker.getTypeAtLocation(node.name).getProperties().map((p) => ({
+        name: p.getName(),
+        doc: ts.displayPartsToString(p.getDocumentationComment(checker)),
+      }))
     }
   })
-  if (!surfaceProps.length) throw new Error('gen-lang-env: DSLSurface has no properties — did dsl.ts change shape?')
+  if (!surface.length) throw new Error('gen-lang-env: DSLSurface has no properties — did dsl.ts change shape?')
+  const surfaceProps = surface.map((p) => p.name)
+
+  /** @param {string} doc */
+  const jsdocLines = (doc) =>
+    doc ? [`  /** ${doc.replace(/\*\//g, '*\\/').split('\n').join('\n   * ')} */`] : []
 
   // The programs run in a browser, but only console is worth offering from
   // the host environment — pulling in lib.dom would drown the DSL surface
@@ -167,7 +177,10 @@ export function buildLangEnv() {
     '// Generated — the DSL surface as ambient globals (see scripts/gen-lang-env.js).',
     'import type { DSLSurface } from "./dts/dsl.js";',
     'declare global {',
-    ...surfaceProps.map((p) => `  const ${p}: DSLSurface[${JSON.stringify(p)}];`),
+    ...surface.flatMap(({ name, doc }) => [
+      ...jsdocLines(doc),
+      `  const ${name}: DSLSurface[${JSON.stringify(name)}];`,
+    ]),
     consoleDecl,
     '}',
     'export {};',
