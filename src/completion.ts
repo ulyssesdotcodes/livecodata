@@ -70,6 +70,52 @@ export function isExprDot(text: string, dotPos: number): boolean {
   return root !== null && EXPR_ROOTS.has(root)
 }
 
+// ── Language-service entry mapping ───────────────────────────────────────────
+// Pure translation from TS completion entries to CodeMirror option fields,
+// kept here (not editor-support.ts) so node tests can cover it without
+// CodeMirror imports.
+
+// ts.ScriptElementKind → CodeMirror completion type (drives the option icon).
+export function cmCompletionType(tsKind: string): string {
+  switch (tsKind) {
+    case 'method':
+    case 'construct':
+      return 'method'
+    case 'function':
+    case 'local function':
+      return 'function'
+    case 'property':
+    case 'getter':
+    case 'setter':
+      return 'property'
+    case 'class': return 'class'
+    case 'interface': return 'interface'
+    case 'enum':
+    case 'enum member':
+      return 'enum'
+    case 'type':
+    case 'type parameter':
+    case 'primitive type':
+      return 'type'
+    case 'keyword': return 'keyword'
+    case 'module': return 'namespace'
+    case 'string': return 'text'
+    default: return 'variable' // var/let/const/local var/parameter/alias/…
+  }
+}
+
+// Ranking: TS sortText is a two-digit priority band ("11" locals … "15"
+// globals-and-keywords; see ts.Completions.SortText). Locals and location-
+// relevant entries float, keywords sink, and anything with curated DSL docs
+// is surface API — pin it above the standard-library noise.
+export function completionBoost(sortText: string, tsKind: string, hasCuratedDoc: boolean): number {
+  const band = parseInt(sortText, 10)
+  let boost = Number.isNaN(band) ? -3 : band <= 11 ? 2 : band <= 14 ? 1 : 0
+  if (hasCuratedDoc) boost = Math.max(boost, 2)
+  if (tsKind === 'keyword') boost = -2
+  return boost
+}
+
 // True when a "." at `dotPos` sits right after a table's `.three` accessor
 // (e.g. `box().three.`) — its receiver is the bare member `three` reached by a
 // member access — so the dot should offer the three animators (rotate/scale/

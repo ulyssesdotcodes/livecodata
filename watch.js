@@ -2,11 +2,16 @@ import * as esbuild from 'esbuild'
 import { solidPlugin } from 'esbuild-plugin-solid'
 import { mkdirSync, cpSync, readFileSync, writeFileSync } from 'fs'
 import { startMultiplayerServer } from './server/server.js'
+import { writeLangEnv } from './scripts/gen-lang-env.js'
 
 mkdirSync('public/assets', { recursive: true })
 mkdirSync('public/data', { recursive: true })
 cpSync('src/data', 'public/data', { recursive: true })
 cpSync('static', 'public', { recursive: true })
+
+// The language-service environment the lang worker fetches — regenerated on
+// each watch start (not on every edit; a dsl.ts type change needs a restart).
+writeLangEnv('public/assets/lang-env.json')
 
 const html = readFileSync('index.html', 'utf8')
   .replace('</head>', '    <link rel="stylesheet" href="./assets/index.css">\n  </head>')
@@ -31,8 +36,17 @@ const workerCtx = await esbuild.context({
   external: ['module'],
 })
 
+// The language-service worker bundle (TypeScript for the browser) — see build.js.
+const langWorkerCtx = await esbuild.context({
+  entryPoints: ['src/lang-worker.ts'],
+  bundle: true,
+  outfile: 'public/assets/lang-worker.js',
+  format: 'esm',
+})
+
 await ctx.watch()
 await workerCtx.watch()
+await langWorkerCtx.watch()
 
 // Serve the built app *and* the multiplayer room socket from the same
 // process (see server/server.ts) — a jam works out of the box in dev, same
