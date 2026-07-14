@@ -69,3 +69,19 @@ export function isExprDot(text: string, dotPos: number): boolean {
   const root = chainRoot(text, dotPos)
   return root !== null && EXPR_ROOTS.has(root)
 }
+
+// True when a "." at `dotPos` sits right after a table's `.three` accessor
+// (e.g. `box().three.`) — its receiver is the bare member `three` reached by a
+// member access — so the dot should offer the three animators (rotate/scale/
+// move) instead of the ordinary table methods.
+export function isThreeDot(text: string, dotPos: number): boolean {
+  let i = dotPos - 1
+  while (i >= 0 && isWs(text[i])) i--
+  if (i < 0 || !isIdentChar(text[i])) return false // a call/index close, not a bare member
+  const end = i
+  while (i >= 0 && isIdentChar(text[i])) i--
+  if (text.slice(i + 1, end + 1) !== 'three') return false
+  // Must be a member access (`.three`), not a stray identifier named three.
+  while (i >= 0 && isWs(text[i])) i--
+  return i >= 0 && text[i] === '.'
+}
