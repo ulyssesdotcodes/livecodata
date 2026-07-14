@@ -1,7 +1,9 @@
 // livecodata presence — who's looking at (and typing in) what, right now
 // ----------------------------------------------------------------------------
 // Ephemeral multiplayer state: each replica announces the table tab it has
-// open, the code cell its editor is pointed at, and its cursor position there.
+// open, the code cell its editor is pointed at, its cursor position there,
+// and — as its own 'live-code' event kind — the in-progress buffer it is
+// typing, so peers can watch code appear before it is ever Run.
 // It rides the same event-log-over-WebSocket machinery as everything else — a
 // presence announcement is just an event on its own named log (see main.ts's
 // connectMultiplayer logs) — but deliberately NOT the editable-table store's
@@ -20,7 +22,7 @@
 // replica (src) plus table/row/col — lastCellEdits() below just reads them.
 // ----------------------------------------------------------------------------
 
-import { createEventLog, localSource, type EventLog, type StampedEvent } from './event-log.js'
+import { compactLatestPerSrcKind, createEventLog, localSource, type EventLog, type StampedEvent } from './event-log.js'
 
 export interface PresenceInfo {
   client: string
@@ -33,45 +35,97 @@ export interface PresenceInfo {
   head: number
 }
 
+// A replica's in-progress editor buffer: what they've typed since their last
+// Run, announced live (throttled) so peers can watch code appear without
+// waiting for an Apply. Purely display-side — nothing cooks off a live-code
+// announcement; the cook still happens only on an Apply pulse. seq is the
+// announcement's log stamp, so "which of two typists is newest" is the usual
+// (Lamport) comparison.
+export interface LiveCode {
+  client: string
+  cell: string
+  code: string
+  seq: number
+}
+
 export interface PresenceChannel {
   // The log to hand to connectMultiplayer (as its own named log).
   readonly log: EventLog
   // Merge into the local state and announce it (throttled — cursor moves
   // arrive per keystroke). No-op if nothing actually changed.
   set(partial: Partial<Omit<PresenceInfo, 'client'>>): void
+  // Announce the local in-progress buffer for a cell (throttled — doc changes
+  // arrive per keystroke). Rides its own event kind, separate from the cursor
+  // announcements, so cursor moves stay tiny and the buffer is only re-sent
+  // when it actually changed. No-op if unchanged.
+  setLiveCode(cell: string, code: string): void
   // Latest announced state per replica id (including this one — callers
   // filter by client and by who's actually online).
   peers(): Map<string, PresenceInfo>
+  // Latest announced in-progress buffer per replica id (same caveats).
+  liveCodes(): Map<string, LiveCode>
   // Fired when a *remote* announcement lands (local set()s don't need it —
   // the local UI never shows its own indicators).
   onChange(cb: () => void): void
 }
 
+// Trailing-edge throttle: the first change publishes immediately; changes
+// landing inside the window coalesce into one announcement at its end.
+function throttled(publish: () => void, ms: number): () => void {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let dirty = false
+  return function schedule(): void {
+    if (timer) { dirty = true; return }
+    publish()
+    timer = setTimeout(() => {
+      timer = null
+      if (dirty) { dirty = false; schedule() }
+    }, ms)
+  }
+}
+
 export function createPresenceChannel(
   { user = '', src = localSource(), throttleMs = 150 }: { user?: string; src?: string; throttleMs?: number } = {},
 ): PresenceChannel {
-  const log = createEventLog({ src })
+  // Compacted: only the latest announcement per (replica, kind) is state (the
+  // folds below are latest-wins), so superseded events are pruned rather than
+  // accumulating one event per throttle tick for the life of the session —
+  // which also keeps the join upload and the room server's copy (see
+  // room-core.ts's PRESENCE_LOG) bounded at O(replicas × kinds).
+  const log = createEventLog({ src, compact: compactLatestPerSrcKind })
   const local: PresenceInfo = { client: src, user, table: null, cell: null, head: 0 }
+  const localLive = { cell: null as string | null, code: null as string | null }
   // client → its latest presence (by that replica's own seq — merged history
   // can replay old announcements out of order after a join sync).
   const states = new Map<string, { seq: number; info: PresenceInfo }>()
+  const liveStates = new Map<string, LiveCode>()
   const listeners: (() => void)[] = []
 
   function ingest(e: StampedEvent): boolean {
-    if (e.kind !== 'presence' || typeof e.src !== 'string' || !e.src) return false
-    const cur = states.get(e.src)
-    if (cur && cur.seq >= e.seq) return false
-    states.set(e.src, {
-      seq: e.seq,
-      info: {
-        client: e.src,
-        user: typeof e.user === 'string' ? e.user : '',
-        table: typeof e.table === 'string' ? e.table : null,
-        cell: typeof e.cell === 'string' ? e.cell : null,
-        head: typeof e.head === 'number' ? e.head : 0,
-      },
-    })
-    return true
+    if (typeof e.src !== 'string' || !e.src) return false
+    if (e.kind === 'presence') {
+      const cur = states.get(e.src)
+      if (cur && cur.seq >= e.seq) return false
+      states.set(e.src, {
+        seq: e.seq,
+        info: {
+          client: e.src,
+          user: typeof e.user === 'string' ? e.user : '',
+          table: typeof e.table === 'string' ? e.table : null,
+          cell: typeof e.cell === 'string' ? e.cell : null,
+          head: typeof e.head === 'number' ? e.head : 0,
+        },
+      })
+      return true
+    }
+    if (e.kind === 'live-code') {
+      if (typeof e.cell !== 'string' || typeof e.code !== 'string') return false
+      const cur = liveStates.get(e.src)
+      if (cur && cur.seq >= e.seq) return false
+      liveStates.set(e.src, { client: e.src, cell: e.cell, code: e.code, seq: e.seq })
+      return true
+    }
+    return false
   }
 
   log.onAppend((e) => { ingest(e) })
@@ -81,22 +135,13 @@ export function createPresenceChannel(
     if (changed) listeners.forEach((cb) => cb())
   })
 
-  const publish = (): void => {
+  const schedule = throttled(() => {
     log.append({ kind: 'presence', user: local.user, table: local.table, cell: local.cell, head: local.head })
-  }
+  }, throttleMs)
 
-  // Trailing-edge throttle: the first change publishes immediately; changes
-  // landing inside the window coalesce into one announcement at its end.
-  let timer: ReturnType<typeof setTimeout> | null = null
-  let dirty = false
-  function schedule(): void {
-    if (timer) { dirty = true; return }
-    publish()
-    timer = setTimeout(() => {
-      timer = null
-      if (dirty) { dirty = false; schedule() }
-    }, throttleMs)
-  }
+  const scheduleLive = throttled(() => {
+    log.append({ kind: 'live-code', cell: localLive.cell, code: localLive.code })
+  }, throttleMs)
 
   return {
     log,
@@ -108,8 +153,19 @@ export function createPresenceChannel(
       schedule()
     },
 
+    setLiveCode(cell: string, code: string): void {
+      if (cell === localLive.cell && code === localLive.code) return
+      localLive.cell = cell
+      localLive.code = code
+      scheduleLive()
+    },
+
     peers(): Map<string, PresenceInfo> {
       return new Map([...states].map(([client, s]) => [client, { ...s.info }]))
+    },
+
+    liveCodes(): Map<string, LiveCode> {
+      return new Map([...liveStates].map(([client, lc]) => [client, { ...lc }]))
     },
 
     onChange(cb: () => void): void {

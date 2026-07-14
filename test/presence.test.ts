@@ -137,3 +137,73 @@ test('presence syncs through the room server as its own named log', async () => 
     await server.close()
   }
 })
+
+test('live-code announcements fold to the latest buffer per client, separate from cursors', async () => {
+  const a = createPresenceChannel({ user: 'alice', src: 'a', throttleMs: 1 })
+  const b = createPresenceChannel({ user: 'bob', src: 'b', throttleMs: 1 })
+
+  a.setLiveCode('code[0].code', 'view("x')
+  await sleep(10)
+  a.setLiveCode('code[0].code', 'view("x").grid()')
+  a.set({ cell: 'code[0].code', head: 16 })
+  await sleep(10)
+
+  b.log.merge(a.log.all())
+  const live = b.liveCodes().get('a')!
+  assert.equal(live.cell, 'code[0].code')
+  assert.equal(live.code, 'view("x").grid()')
+  // Cursor state rides its own events and is unaffected.
+  assert.equal(b.peers().get('a')!.head, 16)
+  // Re-announcing an identical buffer is a no-op.
+  const len = a.log.length
+  a.setLiveCode('code[0].code', 'view("x").grid()')
+  await sleep(10)
+  assert.equal(a.log.length, len)
+})
+
+test('the presence log stays bounded: superseded announcements compact away', async () => {
+  const a = createPresenceChannel({ user: 'alice', src: 'a', throttleMs: 1 })
+  for (let i = 0; i < 50; i++) {
+    a.set({ head: i })
+    a.setLiveCode('code[0].code', `v${i}`)
+    await sleep(3)
+  }
+  // One 'presence' + one 'live-code' event survive, however long the session.
+  assert.ok(a.log.length <= 2, `expected a compacted log, got ${a.log.length} events`)
+  const kinds = a.log.all().map((e) => e.kind).sort()
+  assert.deepEqual(kinds, ['live-code', 'presence'])
+  // The survivors carry the *final* state.
+  assert.equal(a.log.all().find((e) => e.kind === 'presence')!.head, 49)
+  assert.equal(a.log.all().find((e) => e.kind === 'live-code')!.code, 'v49')
+})
+
+test('live code syncs through the room server and the room copy stays compacted', async () => {
+  const server = await startMultiplayerServer({ port: 0 })
+  const url = `ws://127.0.0.1:${server.port}/ws`
+  const conns: { close(): void }[] = []
+  try {
+    const a = createPresenceChannel({ user: 'alice', src: 'a', throttleMs: 1 })
+    const b = createPresenceChannel({ user: 'bob', src: 'b', throttleMs: 1 })
+    conns.push(connectMultiplayer({ url, room: 'jam', logs: { presence: a.log } }))
+    conns.push(connectMultiplayer({ url, room: 'jam', logs: { presence: b.log } }))
+
+    for (let i = 0; i < 20; i++) {
+      a.setLiveCode('code[0].code', `view("x${i}")`)
+      await sleep(5)
+    }
+    await until(() => b.liveCodes().get('a')?.code === 'view("x19")', 'a\'s typing to reach b')
+
+    // However many announcements were published, the room holds at most the
+    // latest per (replica, kind) — the join sync a latecomer downloads is
+    // O(replicas), not O(keystrokes).
+    await until(() => server.roomLog('jam', 'presence').length > 0, 'room to hold presence')
+    const room = server.roomLog('jam', 'presence')
+    const perSrcKind = new Set(room.map((e) => `${e.src}#${e.kind}`))
+    assert.equal(room.length, perSrcKind.size, `room log has superseded events: ${room.length} events for ${perSrcKind.size} (src, kind) pairs`)
+    // b's replica also compacts what it merged.
+    assert.ok(b.log.length <= 4, `expected b's compacted log, got ${b.log.length}`)
+  } finally {
+    conns.forEach((c) => c.close())
+    await server.close()
+  }
+})

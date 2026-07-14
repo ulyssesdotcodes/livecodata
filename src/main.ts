@@ -4,7 +4,7 @@ import { initThree } from './three-scene.js'
 import { initHydra } from './hydra-scene.js'
 import { createSceneVisualizer, createHydraVisualizer } from './visualizer.js'
 import { mountApp } from './ui/app.js'
-import { createEditor, defaultProgram, defaultTables } from './ui/editor.js'
+import { createEditor, defaultProgram, defaultTables, PROGRAM_CELL } from './ui/editor.js'
 import { createTablePanel } from './ui/table-panel.js'
 import { EVENTS_SUFFIX } from './table-panel.js'
 import { createPlaybackController, type PlaybackController } from './ui/playback-controls.js'
@@ -26,6 +26,7 @@ import { beatToFrame } from './constants.js'
 import { createTapLog } from './tap-log.js'
 import { connectMultiplayer } from './multiplayer.js'
 import type { MultiplayerConnection, MultiplayerStatus } from './multiplayer.js'
+import { PRESENCE_LOG } from './room-core.js'
 import { loopEpochsFromApplies } from './playback.js'
 import type { PlaybackAPI, PlaybackOptions } from './playback.js'
 import type { Row } from './lineage.js'
@@ -618,7 +619,7 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
 // The code cell this editor is a window onto right now (ui/editor.tsx's
 // onCursor labels; "code[0].code" is the main program) — peers' cursors are
 // drawn only when they're on this same cell.
-let localCell = 'code[0].code'
+let localCell: string = PROGRAM_CELL
 
 const editor = createEditor({
   onRun: evaluate,
@@ -643,6 +644,9 @@ const editor = createEditor({
     // cursor moves only change what peers see of us.
     if (cellChanged) schedulePresenceRefresh()
   },
+  // Live typing: announce the in-progress buffer (throttled in presence.ts)
+  // so peers watching this cell can mirror it before it is ever Run.
+  onEdit: (cell, code) => presence?.setLiveCode(cell, code),
 })
 
 // --- presence indicators -----------------------------------------------------
@@ -663,8 +667,37 @@ function schedulePresenceRefresh(): void {
   })
 }
 
+// --- live typing view --------------------------------------------------------
+// Mirror a collaborator's in-progress buffer (their throttled 'live-code'
+// announcements — see presence.ts) into our editor, so watching a peer type
+// doesn't wait for their Run. Strictly display: nothing cooks until an Apply
+// pulse arrives (the onMerge reaction below), and we only mirror while our own
+// buffer is pristine — equal to the last applied program or to the last text
+// we mirrored — so a local edit in progress is never clobbered. Only the main
+// program cell mirrors: a cell editor (editCell) owns its buffer until
+// committed. With several people typing at once the newest announcement wins,
+// same last-wins rule as every other presence fold.
+let mirroredLiveCode: string | null = null
+function followLiveCode(): void {
+  if (!presence || localCell !== PROGRAM_CELL) return
+  const online = onlinePeers()
+  const me = localSource()
+  let best: { code: string; seq: number } | null = null
+  for (const [client, lc] of presence.liveCodes()) {
+    if (client === me || !online.has(client) || lc.cell !== PROGRAM_CELL) continue
+    if (!best || lc.seq > best.seq) best = { code: lc.code, seq: lc.seq }
+  }
+  if (!best) return
+  const current = editor.getCode()
+  if (best.code === current) return
+  if (current !== liveCode && current !== mirroredLiveCode) return
+  mirroredLiveCode = best.code
+  editor.setCode(best.code)
+}
+
 function refreshPresenceUI(): void {
   if (!presence) return
+  followLiveCode()
   const online = onlinePeers()
   const me = localSource()
   const edits = lastCellEdits(editableStore.log.all())
@@ -1043,7 +1076,7 @@ if (roomName) {
   multiplayer = connectMultiplayer({
     url: multiplayerUrl(),
     room: roomName,
-    logs: { session: editableStore.log, taps: tapLog.log, presence: presence!.log },
+    logs: { session: editableStore.log, taps: tapLog.log, [PRESENCE_LOG]: presence!.log },
     onStatus: chipStatus,
   })
 } else {

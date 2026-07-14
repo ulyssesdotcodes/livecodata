@@ -4,7 +4,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { StampedEvent } from '../src/event-log.js'
-import { handleEvents, handleJoin, handleLeave, nextServerSeq, SESSION_LOG, ACTIVITY_TABLE, type RoomLogs } from '../src/room-core.js'
+import { handleEvents, handleJoin, handleLeave, nextServerSeq, SESSION_LOG, ACTIVITY_TABLE, PRESENCE_LOG, type RoomLogs } from '../src/room-core.js'
 import { parseClientMessage } from '../src/protocol.js'
 
 const ev = (seq: number, src: string, extra: Record<string, unknown> = {}): StampedEvent =>
@@ -149,4 +149,44 @@ test('parseClientMessage drops garbage and unknown frames, validates shapes', ()
 
   const events = parseClientMessage(JSON.stringify({ type: 'events', log: 'x', events: [{ seq: 0, t: 0, kind: 'k' }] }))
   assert.equal(events?.type, 'events')
+})
+
+test('the presence log compacts to the latest event per (src, kind) and relays only survivors', () => {
+  const logs: RoomLogs = new Map()
+
+  // A stream of cursor announcements: each newer one replaces the last.
+  handleEvents(logs, { type: 'events', log: PRESENCE_LOG, events: [ev(0, 'a', { kind: 'presence', head: 1 })] })
+  const next = handleEvents(logs, { type: 'events', log: PRESENCE_LOG, events: [ev(1, 'a', { kind: 'presence', head: 2 })] })
+  assert.equal(next.changed, true)
+  assert.deepEqual(logs.get(PRESENCE_LOG)!.map((e) => e.seq), [1])
+
+  // Distinct kinds and srcs coexist: a live-code buffer doesn't evict cursors.
+  handleEvents(logs, { type: 'events', log: PRESENCE_LOG, events: [ev(2, 'a', { kind: 'live-code', code: 'x' })] })
+  handleEvents(logs, { type: 'events', log: PRESENCE_LOG, events: [ev(3, 'b', { kind: 'presence', head: 9 })] })
+  assert.deepEqual(logs.get(PRESENCE_LOG)!.map((e) => [e.src, e.kind]), [['a', 'presence'], ['a', 'live-code'], ['b', 'presence']])
+
+  // A stale announcement (e.g. a rejoiner re-uploading history) neither
+  // persists nor relays — the compacted log is unchanged.
+  const stale = handleEvents(logs, { type: 'events', log: PRESENCE_LOG, events: [ev(0, 'a', { kind: 'presence', head: 1 })] })
+  assert.equal(stale.changed, false)
+  assert.deepEqual(stale.outbound, [])
+  assert.equal(logs.get(PRESENCE_LOG)!.length, 3)
+
+  // Other logs are never compacted — their folds replay history.
+  handleEvents(logs, { type: 'events', log: 'tables', events: [ev(0, 'a', { kind: 'presence' }), ev(1, 'a', { kind: 'presence' })] })
+  assert.equal(logs.get('tables')!.length, 2)
+})
+
+test('a join uploading a full presence history stores and relays only the latest announcements', () => {
+  const logs: RoomLogs = new Map([[PRESENCE_LOG, [ev(5, 'b', { kind: 'presence', head: 3 })]]])
+  const history = Array.from({ length: 10 }, (_, i) => ev(i, 'a', { kind: 'presence', head: i }))
+
+  const result = handleJoin(logs, { type: 'join', client: 'alice', logs: { [PRESENCE_LOG]: history } }, 123, true)
+  assert.equal(result.changed, true)
+  // Stored: b's announcement + only a's newest.
+  assert.deepEqual(logs.get(PRESENCE_LOG)!.map((e) => [e.src, e.seq]), [['b', 5], ['a', 9]])
+  // Relayed to peers: just the one surviving event, not the whole history.
+  const relayed = result.outbound.find((o) => o.to === 'others' && o.msg.type === 'events' && o.msg.log === PRESENCE_LOG)
+  assert.ok(relayed && relayed.msg.type === 'events')
+  assert.deepEqual(relayed.msg.events.map((e) => e.seq), [9])
 })

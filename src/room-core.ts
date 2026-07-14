@@ -31,13 +31,21 @@
 // timers, no storage — which is what lets one test suite pin both backends.
 // ----------------------------------------------------------------------------
 
-import { mergeEvents, type StampedEvent } from './event-log.js'
+import { compactLatestPerSrcKind, mergeEvents, type StampedEvent } from './event-log.js'
 import { eventsMessage, syncMessage, type EventsMessage, type JoinMessage, type ServerMessage } from './protocol.js'
 
 // The log peer-connection events ride, and the pseudo-table (see
 // editable-tables.ts's record()) they're tagged with within it.
 export const SESSION_LOG = 'session'
 export const ACTIVITY_TABLE = 'activity'
+
+// The one log the room compacts rather than keeping whole (the exception to
+// "the room never interprets events"): presence announcements — cursor moves,
+// live-code buffers — fold latest-per-(src, kind) on every client (see
+// presence.ts), so history is dead weight. Without compaction the room's copy
+// grows by one event per throttle tick per typist for the life of the room,
+// and every joiner downloads all of it in the join sync.
+export const PRESENCE_LOG = 'presence'
 
 export type RoomLogs = Map<string, StampedEvent[]>
 
@@ -62,11 +70,29 @@ export interface JoinResult extends RoomResult {
 
 // Merge incoming events into a room log. Returns the newly-added events so
 // callers can relay exactly what was new.
+//
+// The presence log is compacted on both sides of the merge: incoming first
+// (a rejoiner's upload may still carry superseded announcements), then the
+// stored result. Only events that survive compaction count as new — a stale
+// announcement that a fresher one already supersedes neither persists nor
+// relays. Dedup memory for pruned events is gone with them, which is safe
+// precisely because superseded re-deliveries get compacted away again here.
 function ingest(logs: RoomLogs, name: string, incoming: StampedEvent[]): StampedEvent[] {
+  const compacting = name === PRESENCE_LOG
   const existing = logs.get(name) ?? []
-  const { events, added } = mergeEvents(existing, incoming)
-  if (added.length) logs.set(name, events)
-  return added
+  const { events, added } = mergeEvents(existing, compacting ? compactLatestPerSrcKind(incoming) : incoming)
+  if (!added.length) return added
+  if (!compacting) {
+    logs.set(name, events)
+    return added
+  }
+  const stored = compactLatestPerSrcKind(events)
+  const kept = new Set(stored.map((e) => `${e.src ?? ''}#${e.seq}`))
+  const fresh = added.filter((e) => kept.has(`${e.src ?? ''}#${e.seq}`))
+  // Everything new was already superseded: the compacted log is unchanged,
+  // so there is nothing to persist or relay.
+  if (fresh.length) logs.set(name, stored)
+  return fresh
 }
 
 // This room's own Lamport counter for server-authored events — a separate
