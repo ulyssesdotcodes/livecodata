@@ -29,6 +29,12 @@ export interface HydraAPI {
   // position (seconds) and render one frame there.
   tick(timeSeconds: number): void
   reset(): void
+  // Force the same regl-refresh/resolution/redraw sequence a real window
+  // resize triggers via the ResizeObserver below — hydra occasionally wedges
+  // into a stuck error state that only this (not reset()'s sketch-only
+  // reset) clears, previously recoverable only by actually resizing the
+  // browser window.
+  reinit(): void
 }
 
 // Shown when the program defines no hydra view, or before its first code row:
@@ -122,5 +128,6 @@ export function initHydra(canvas: HTMLCanvasElement, source: HTMLCanvasElement):
       setSketch(null)
       tick(0)
     },
+    reinit: resize,
   }
 }

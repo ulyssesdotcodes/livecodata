@@ -634,6 +634,7 @@ const editor = createEditor({
     if (enabled) ensureMidiInput()
     tablePanel.setTables(tablesForDisplay(lastViews))
   },
+  onResetHydra: () => hydraAPI.reinit(),
   onCursor: (cell, head) => {
     const cellChanged = cell !== localCell
     localCell = cell
