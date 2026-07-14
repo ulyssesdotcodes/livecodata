@@ -339,10 +339,10 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100)
   camera.position.set(0, 0, 5)
 
-  const dirLight = new THREE.DirectionalLight(0xe94560, 2)
+  const dirLight = new THREE.DirectionalLight(0xffffff, 2)
   dirLight.position.set(2, 3, 4)
   scene.add(dirLight)
-  scene.add(new THREE.AmbientLight(0x4466aa, 2))
+  scene.add(new THREE.AmbientLight(0xffffff, 2))
 
   function resize(): void {
     const { clientWidth: w, clientHeight: h } = sizeFrom
