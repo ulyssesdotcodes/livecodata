@@ -391,3 +391,201 @@ Shipping rule now: completing non-Pureland steps ≤ 20 faces bake the
 relaxed soft motion (§10), deeper ones bake the mechanism, and anything
 the mechanism can't decompose (no flipping seam, unpaired assemblies)
 falls back to the rigid swing.
+
+---
+
+## 12. Consolidated ledger: what worked, what didn't (through 2026-07-14)
+
+For whoever picks up the next solver investigation — the shortest useful
+history. Details in the section referenced.
+
+### Worked, now load-bearing
+
+- **Exact flat-state engine on the vendored MIT core** (§8, PR #75).
+  One stable world frame; folds as reflections; layer order solved by
+  taco/tortilla propagation seeded from the previous step's carried
+  orders (keeps enumeration ≤ 33 states on the crane). Sheet-topology
+  vertex indices are the tearing-proof foundation everything else sits on.
+- **The fold-table dialect** (step / p1,p2 in the fixed unit-square frame
+  / sheet-space move markers / kind / pick / at,dur,to). Sheet markers
+  name exactly one ply — the only unambiguous way to pick a flap out of a
+  deep stack. Kind+pick as *post-hoc filters over enumerated solved
+  states* (not as instructions) means a row can never fold "wrong",
+  only fail loudly.
+- **Per-flap fold direction voted from the solved stacking** (PR #83):
+  connected moving flaps are rigid bodies; each gets one rotation sense
+  from side-weighted layer-order votes against overlapping static faces.
+  (A single per-step scalar mirrors nothing — the two crane wings need
+  opposite senses in one step.)
+- **Continuous z-nudges**: display height lerps `layersFrom → layers` with
+  a program-constant gap/midline. Carrying the pre-state stacking through
+  splits (parent lookup by sheet centroid) is what removes boundary pops.
+- **Hybrid motion routing** (§10, §11): rigid hinge for simple/held steps,
+  compliant relaxation for shallow non-simple steps (≤ 20 faces), the
+  analytic rigid mechanism for deep reverse folds, rigid fallback when
+  the mechanism can't decompose. Route by step character, don't force one
+  motion model to do everything — every attempt at a universal motion
+  model has failed in this repo.
+- **Closed-form mechanism for reverse folds** (§11): mirror-pair
+  decomposition + tan-half laws + history-driven escalation. Zero tuning;
+  machine-exact closure. The dead ends before it (§10's five relaxation
+  strategies) were all attempts to *tune* around what is actually a
+  well-posed kinematics problem.
+- **Physics guards that mattered** (§9): hinge lever-arm floor, per-step
+  displacement clamp, kinetic damping, dt from the stiffest spring with
+  hinges entering as k/h². Time budgets, not iteration counts.
+
+### Didn't work (do not retry without new information)
+
+- **Hand-authored crease-table engines** (§1–2, eras 1–5): interpolating
+  dihedrals through non-rigid steps is a theorem-level dead end, and
+  global re-derivation per row made authoring regress previously-working
+  steps.
+- **Relaxation tuning for deep stacks** (§10): uniform stiffness,
+  stiffness ratios (explicit integration under-converges — strain got
+  *worse*, 15% → 107%, at ratio 8), local pinning (tears at the
+  free/pinned boundary), choreographed pocket targets, overlap-scoped
+  pockets. All five read as crumpling. The lesson: when 8+ plies overlap,
+  a soft solver has no gradient toward the paper-like path; the path must
+  be supplied analytically.
+- **Soft frames as held poses**: a relaxed mid-frame is not a pose
+  (user: "this looks really bad"). Held steps (`to < 1`) must show the
+  exact rigid pose — their whole point is the displayed state.
+- **|h|-based z with one direction scalar per step**: breaks rigidity for
+  line-straddling merged faces and can't mirror simultaneous flaps.
+- **Assuming the sample's recorded data is right** (§8): step 17 of
+  line-folder's own crane recording violates the current solver's
+  constraints. Recorded ground truth needs verifying too.
+- **Trusting seed-row tests**: two shipped bugs (PR #76, #78) came from
+  tests feeding rows directly to the compiler while the app materializes
+  cells through editable-table defaults ("" for strings, 0 for numbers).
+  Integration tests must go through `conformRow`/`schemaColumns` — the
+  real path.
+
+### Bugs worth remembering (cheap to re-hit)
+
+- Torque sign in discrete hinges: m = k(θ − target), ∂θ/∂x along −n̂1 —
+  verified by a two-triangle micro-test; the wrong sign explodes from
+  flat and looks like "instability", not "sign error".
+- Transiently degenerate triangles kick 1/h forces (one frame reached
+  |x| ≈ 17,610) — floor the lever arm before blaming the integrator.
+- flat-folder's per-cell CD stacking vs. our display order: linearize
+  came out inverted (`n−1−i`); conventions between vendored modules need
+  a dedicated test (`layers-vs-CD` in fold-engine.test.ts).
+- Flat-state assertions need tolerance (−0, 1.8e-17), not equality.
+- Slave-branch root selection near a branch point: nearest-to-previous
+  sticks to a stationary root forever (§11's ±π-pinned root). Prefer a
+  closed-form single-valued branch over root-picking whenever the
+  structure provides one.
+
+## 13. Testing methodology (what actually catches things)
+
+The verification stack, cheapest first. Every layer caught real bugs the
+layers above/below missed; keep all of them for future solver work.
+
+1. **Invariant unit tests** (test/fold-engine.test.ts, fold-mech.test.ts):
+   - the 16-fold crane fixture replays with exact face counts and kinds;
+   - hinge-axis invariant: every vertex shared by a moving and a static
+     face lies on the fold line (this is what makes swings tear-free);
+   - integer folds are exactly flat (|z| < tol);
+   - **edge-length preservation through every animation frame** — the
+     one-line definition of "rigid, no tear, no stretch". Any future
+     motion model should pass this or explicitly declare its strain
+     budget;
+   - endpoint exactness: frame 0 = pre-state, frame N−1 = solved state;
+   - determinism (bake twice, deepEqual);
+   - convention checks against the vendored core (layers vs CD).
+2. **Micro-tests for physics primitives**: a two-triangle single-hinge
+   mesh answers "is the torque sign right" in isolation. Never debug
+   force models on a 44-face crane.
+3. **Structure dumps before kinematics**: for the mechanism, a scratch
+   script printed components/adjacency/layer stats per step
+   (.scratch/reverse-mech.mts) *before* any motion code was written —
+   the pair-tree design fell out of reading those dumps, and the
+   locked-vs-free distinction (neck bridges the flanks) was visible
+   immediately.
+4. **Headless painter renders** (PIL, .scratch/mech-render.py,
+   cicada-render.py): fixed camera, per-frame tiles, faces depth-sorted,
+   moving pieces tinted. Seconds per iteration; this is where motion
+   *quality* judgments happen (crumple vs. paper) and where both
+   mechanism rooting decisions were made. Montage strips beat videos —
+   they diff visually across iterations.
+5. **Numeric motion traces**: per-frame β/φ tables (env-gated MECH_DEBUG)
+   found the stuck slave branch in one glance after renders only showed
+   "the neck never comes back". When a picture confuses, print the
+   angles.
+6. **The real app in a real browser** (.scratch/shot.html +
+   shot-entry.mts esbuild bundle of the actual runtime + three-scene,
+   Playwright on the preinstalled chromium, `window.setShot(beat, yaw)`,
+   front+side montages): catches everything the abstract renders hide —
+   sample-row plumbing, editable-table materialization, backColor/nudge
+   interaction, timing windows. Note the harness's off-by-one (drivers
+   pass `beat − 1`); label montage tiles with the *passed* value.
+7. **Look at the final model and ask if it is the animal** (user rule).
+   After every "done": does the crane look like a crane at each landed
+   state and at the end? Several engine-level "successes" failed this.
+
+Process rules that proved out: verify PR state before pushing (a merged
+PR got new commits once — never again); check in before rabbit-holing;
+hand-authored helper creases in the table are acceptable by design; no
+backward compatibility — delete dead code.
+
+## 14. Open problems and candidate next investigations
+
+Ranked roughly by expected value.
+
+- **Wings step (74 faces, 'Complex', held at 0.5)** is still a plain
+  rigid swing. It's a held step so the pose is exact, but the swing
+  through the body could get the mechanism treatment (two simultaneous
+  active pairs — the mechanism currently requires exactly one).
+- **Mechanism coverage**: today it handles chains of symmetric reverse
+  folds (mirror pairs, one active pair, seams anchored on parent seams).
+  Not yet: sinks (closed vertices), swivel/rabbit-ear folds (asymmetric —
+  no mirror plane, needs the general two-unknown loop closure instead of
+  the one-angle tan-half law), petal folds as a unit, multi-active steps.
+  The general tool if the mirror trick runs out: Newton on the loop-
+  closure constraints of the degree-4+ vertex network (Tachi's rigid
+  origami / Freeform Origami approach) — the mechanism module's pair tree
+  is already the right scaffolding to seed it.
+- **Mechanism + soft blend**: use the analytic trajectory as a per-frame
+  seed/target for a *short* relaxation pass to add organic bow to the big
+  open-flip-close motions without letting the solver invent its own path.
+  Strictly bounded iterations; endpoint blend already in place. This is
+  the most promising route if the exact rigid motion ever reads too
+  mechanical.
+- **Better soft solver, if ever needed again**: the failure mode was
+  explicit integration on a stiff ODE. Candidates in order: XPBD
+  (position-based, handles stiffness ratios natively), projective
+  dynamics, implicit Euler on the hinge network. Only worth it with a
+  concrete step the current routing handles badly — bring a failing
+  screenshot strip as the spec.
+- **Fold-table authoring from a crease pattern** (user goal from the
+  start: "come up with the fold table if I present a crease diagram").
+  sequence-folder (§4) searches fold sequences; even a semi-automatic
+  version — propose lines/markers row by row, validate through the
+  engine, binary-search reference points like .scratch/cicada-lab.mts
+  did with env-tunable parameters — would beat hand-derivation. The
+  cicada took ~15 lab iterations mostly spent re-deriving crease
+  parameterizations by hand.
+- **Layer-aware collision during motion**: mechanism frames are exact but
+  plies pass arbitrarily close mid-swing; zOff nudges hide it at landed
+  states only. A cheap post-pass separating coincident plies along the
+  local normal during baked frames would remove residual mid-swing
+  shimmer.
+- **Known non-goals**: universal physics playback (failed twice),
+  runtime solving (everything bakes at compile), GPL code (Rabbit Ear
+  stays reference-only).
+- **The CAD attitude (Rhino/Grasshopper), for reference**: Kangaroo
+  (Piker) folds origami as goal-driven constraint projection — hinge
+  goals toward target dihedrals + edge-length + developability goals,
+  relaxed interactively; its engine is projective dynamics, i.e. the
+  same family as the XPBD candidate above. Crane (Suto/Tanimichi,
+  Tachi lab) is the rigid-origami attitude in CAD: Newton iteration on
+  fold-angle variables with loop-closure constraints around interior
+  vertices, plus form-finding. Both are strong exactly where we are weak
+  (smooth interactive 3D folding, non-flat target states) and weak
+  exactly where we are strong: they are zero-thickness and layer-blind,
+  and their constraint Jacobians degenerate at flat-folded states — so
+  they avoid the flat↔flat transitions that make up a traditional
+  fold sequence. Worth mining for solver tech (constraint projection,
+  fold-angle Newton), not for architecture.
