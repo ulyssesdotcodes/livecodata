@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createEventLog, foldEvents, randomSeed, mergeEvents, compareEvents, localSource } from '../src/event-log.js'
+import { createEventLog, foldEvents, randomSeed, mergeEvents, compareEvents, localSource, compactLatestPerSrcKind } from '../src/event-log.js'
 import type { StampedEvent } from '../src/event-log.js'
 
 test('append stamps seq (monotonic) and t (ms since first event)', () => {
@@ -192,4 +192,40 @@ test('randomSeed produces unsigned 32-bit integers', () => {
     const s = randomSeed()
     assert.ok(Number.isInteger(s) && s >= 0 && s <= 0xffffffff, `seed in range: ${s}`)
   }
+})
+
+test('compactLatestPerSrcKind keeps only the newest event per (src, kind)', () => {
+  const events: StampedEvent[] = [
+    { seq: 0, t: 0, kind: 'presence', src: 'a', head: 1 },
+    { seq: 1, t: 0, kind: 'presence', src: 'b', head: 2 },
+    { seq: 2, t: 0, kind: 'live-code', src: 'a', code: 'x' },
+    { seq: 3, t: 0, kind: 'presence', src: 'a', head: 9 },
+    { seq: 4, t: 0, kind: 'live-code', src: 'a', code: 'xy' },
+  ]
+  const compacted = compactLatestPerSrcKind(events)
+  assert.deepEqual(compacted.map((e) => e.seq), [1, 3, 4])
+  // Already-compact input comes back as-is (same array, no copy).
+  assert.equal(compactLatestPerSrcKind(compacted), compacted)
+})
+
+test('a compact policy prunes superseded events on append and merge, seq stays monotonic', () => {
+  const log = createEventLog({ src: 'a', compact: compactLatestPerSrcKind })
+  for (let h = 0; h < 10; h++) log.append({ kind: 'presence', head: h })
+  log.append({ kind: 'live-code', code: 'x' })
+  // Only the latest of each kind survives…
+  assert.deepEqual(log.all().map((e) => [e.kind, e.seq]), [['presence', 9], ['live-code', 10]])
+  // …and the clock never re-mints a pruned seq.
+  assert.equal(log.append({ kind: 'presence', head: 99 }).seq, 11)
+
+  // Merging older remote events: a superseded one is pruned right back out,
+  // a fresh one (new src) folds in; the local clock still bumps past all seen.
+  const b = createEventLog({ src: 'b', compact: compactLatestPerSrcKind })
+  b.append({ kind: 'presence', head: 5 })
+  log.merge(b.all())
+  log.merge([{ seq: 1, t: 0, kind: 'presence', src: 'a', head: 1 }])
+  assert.deepEqual(
+    log.all().map((e) => [e.src, e.kind, e.seq]),
+    [['b', 'presence', 0], ['a', 'live-code', 10], ['a', 'presence', 11]],
+  )
+  assert.ok(log.append({ kind: 'presence', head: 100 }).seq > 11)
 })

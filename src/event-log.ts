@@ -85,6 +85,24 @@ export function compareEvents(a: StampedEvent, b: StampedEvent): number {
 
 const eventKey = (e: StampedEvent): string => `${e.src ?? ''}#${e.seq}`
 
+// Keep only the newest event per (src, kind) — the compaction policy for logs
+// whose fold is "latest announcement wins" (presence: cursor moves, live-code
+// buffers — see presence.ts). History carries no information in such logs, so
+// dropping superseded events bounds the log — and therefore the join upload,
+// the room's copy, and every sync — to O(replicas × kinds) instead of growing
+// with session length. Never use this on a log whose fold replays history
+// (the session store, taps): compaction would destroy it.
+export function compactLatestPerSrcKind(events: StampedEvent[]): StampedEvent[] {
+  const latest = new Map<string, StampedEvent>()
+  for (const e of events) {
+    const key = `${e.src ?? ''}#${e.kind}`
+    const cur = latest.get(key)
+    if (!cur || compareEvents(cur, e) < 0) latest.set(key, e)
+  }
+  if (latest.size === events.length) return events
+  return events.filter((e) => latest.get(`${e.src ?? ''}#${e.kind}`) === e)
+}
+
 // Union `incoming` into `existing` (both sorted by compareEvents), deduping by
 // (src, seq). Pure: returns the merged list plus which events were new. Shared
 // by EventLog.merge and the multiplayer server's room state.
@@ -129,7 +147,17 @@ export interface EventLog {
 }
 
 export function createEventLog(
-  { src = localSource(), migrations = [] }: { src?: string; migrations?: EventMigration[] } = {},
+  { src = localSource(), migrations = [], compact }: {
+    src?: string
+    migrations?: EventMigration[]
+    // Optional compaction policy (e.g. compactLatestPerSrcKind) applied after
+    // every append/merge/load. The seq counter is independent of the events
+    // list, so pruning never re-mints a (src, seq) key. A pruned event can be
+    // re-merged later (its dedup memory is gone with it) — folds over
+    // compactable logs must already tolerate stale re-deliveries, which
+    // latest-wins folds do by construction.
+    compact?: (events: StampedEvent[]) => StampedEvent[]
+  } = {},
 ): EventLog {
   // The version this log writes, and the top of the migration chain load()
   // upgrades toward (see EventMigration).
@@ -148,6 +176,7 @@ export function createEventLog(
       if (start == null) start = Date.now()
       const event: StampedEvent = { ...payload, seq: seq++, t: Date.now() - start, src }
       events.push(event)
+      if (compact) events = compact(events)
       appendListeners.forEach((cb) => cb(event))
       notify()
       return event
@@ -172,8 +201,8 @@ export function createEventLog(
     merge(incoming: StampedEvent[]): StampedEvent[] {
       const { events: merged, added } = mergeEvents(events, incoming)
       if (!added.length) return added
-      events = merged
-      seq = events.reduce((m, e) => Math.max(m, e.seq + 1), seq)
+      events = compact ? compact(merged) : merged
+      seq = merged.reduce((m, e) => Math.max(m, e.seq + 1), seq)
       if (start == null) start = Date.now()
       mergeListeners.forEach((cb) => cb(added))
       notify()
@@ -199,9 +228,9 @@ export function createEventLog(
         const from = typeof data.version === 'number' && data.version >= BASE_VERSION ? data.version : BASE_VERSION
         let migrated = data.events.map((e) => ({ ...e }))
         for (let v = from; v < serialVersion; v++) migrated = migrations[v - BASE_VERSION](migrated)
-        events = migrated
+        events = compact ? compact(migrated) : migrated
         start = data.start ?? null
-        seq = events.reduce((m, e) => Math.max(m, (e.seq ?? -1) + 1), 0)
+        seq = migrated.reduce((m, e) => Math.max(m, (e.seq ?? -1) + 1), 0)
         notify()
         return true
       } catch {

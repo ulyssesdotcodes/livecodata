@@ -22,7 +22,7 @@ import { buildTablePreview } from './table-preview.js'
 import { DocsPopover } from './docs-popover.js'
 import type { Table } from '../dsl.js'
 
-export { defaultProgram, defaultTables }
+export { defaultProgram, defaultTables, PROGRAM_CELL }
 export type { RemoteCursor }
 
 // Completion info card, rendered by Solid into a detached node for CodeMirror
@@ -60,6 +60,12 @@ export interface EditorOptions {
   // changes) with the cell this editor is a window onto — "code[0].code" for
   // the main program — and the cursor offset.
   onCursor?: (cell: string, head: number) => void
+  // Multiplayer live typing: fired with the full buffer on doc changes the
+  // *user* made (typing, paste, undo — anything not from a programmatic
+  // setCode/editCell), so peers can mirror in-progress code. The receiving
+  // side pushes remote buffers back in via setCode, which this deliberately
+  // does not re-announce — that would echo every mirrored keystroke back.
+  onEdit?: (cell: string, code: string) => void
 }
 
 export interface EditorAPI {
@@ -94,7 +100,7 @@ export interface EditorController extends EditorAPI {
 }
 
 export function createEditor(
-  { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange, onResetHydra, onCursor }: EditorOptions = {},
+  { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange, onResetHydra, onCursor, onEdit }: EditorOptions = {},
 ): EditorController {
   const [title, setTitle] = createSignal('DSL')
   const [runLabel, setRunLabel] = createSignal('Run')
@@ -116,8 +122,17 @@ export function createEditor(
     else onRun?.(text, { setError })
   }
 
+  // Programmatic doc replacements (session scrub, remote code, cell targeting)
+  // must not read as the user typing — the flag mutes onEdit for the dispatch
+  // below (the update listener runs synchronously inside it).
+  let programmaticDoc = false
   function setDoc(code: string): void {
-    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } })
+    programmaticDoc = true
+    try {
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } })
+    } finally {
+      programmaticDoc = false
+    }
   }
 
   function exitCell(restoreProgram: boolean): void {
@@ -155,6 +170,7 @@ export function createEditor(
       EditorView.updateListener.of((u) => {
         if (!(u.selectionSet || u.docChanged)) return
         onCursor?.(cellLabel(), u.state.selection.main.head)
+        if (u.docChanged && !programmaticDoc && onEdit) onEdit(cellLabel(), u.state.doc.toString())
         if (!onCaretView) return
         const name = viewAtPos(u.state.doc.toString(), u.state.selection.main.head)
         if (name && name !== lastCaretView) {
