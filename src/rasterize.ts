@@ -46,7 +46,7 @@ interface SampledState {
 // each baked frame row untouched, to be read (and bindings resolved) at playback.
 const RESERVED = new Set([
   'id', 'type', 'beat', 'loop', 'dur', 'ease', 'to', 'shape', 'color',
-  'px', 'py', 'pz', 'rx', 'ry', 'rz', 'frame',
+  'px', 'py', 'pz', 'rx', 'ry', 'rz', 'sx', 'sy', 'sz', 'frame',
 ])
 
 // Accumulate the non-reserved fields visible at frame `i` (events at-or-before
@@ -248,7 +248,7 @@ export function stateAtFrame(frameIndex: FrameIndex, i: number): Row[] {
 // Transform fields interpolated between adjacent cache frames. Everything else
 // (color, shape, id, streaming bindings, …) is discrete: it takes the earlier
 // frame's value, never a blend.
-const INTERP_FIELDS = ['px', 'py', 'pz', 'rx', 'ry', 'rz'] as const
+const INTERP_FIELDS = ['px', 'py', 'pz', 'rx', 'ry', 'rz', 'sx', 'sy', 'sz'] as const
 
 // State at a *fractional* frame: the floored frame's rows with their transform
 // fields eased toward the next frame by the fractional part. The dense cache is
