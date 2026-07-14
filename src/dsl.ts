@@ -30,7 +30,7 @@ import { rasterizeRows } from './rasterize.js'
 import { withLineage, carry, unionLineage, getLineage, type Row } from './lineage.js'
 import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS } from './constants.js'
 import { compileFoldTable, foldValueAt, type FoldTableProgram } from './fold-engine.js'
-import type { ColumnType } from './editable-tables.js'
+import type { Schema } from './editable-tables.js'
 import { beatSecondsFromTaps } from './tap-log.js'
 
 // ── Expr: a small, serializable, chainable expression over a row ─────────────
@@ -359,7 +359,7 @@ export interface DSLContext {
   // User-editable table storage: returns the live rows for a table with this
   // column schema, creating it (seeded with `seedRows`, as create events) or
   // reconciling its columns on first use.
-  editableRows?(name: string, schema: Record<string, ColumnType>, seedRows?: Row[]): Row[]
+  editableRows?(name: string, schema: Schema, seedRows?: Row[]): Row[]
 }
 
 export type ViewFn = (rand: () => number, table: (name: string) => Table) => Table | Row[]
@@ -1023,7 +1023,7 @@ export type DSLSurface = Easings & {
   // "+ column", or a rename/retype), which claims it and makes it survive
   // regardless of what's declared on a later Run. `seedRows` populate the
   // table the first time it's created.
-  editable(name: string, schema: Record<string, ColumnType>, seedRows?: Row[]): Table
+  editable(name: string, schema: Schema, seedRows?: Row[]): Table
   field(name: string): Expr
   lit(v: number | string | boolean | null): Expr
   idx(): Expr
@@ -1098,7 +1098,7 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     torus: (props: Row = {}) => sceneObject('torus', props, ctx),
     text: (props: Row = {}) => sceneObject('text', props, ctx),
     origami: makeOrigami(ctx),
-    editable: (name: string, schema: Record<string, ColumnType>, seedRows?: Row[]): Table => {
+    editable: (name: string, schema: Schema, seedRows?: Row[]): Table => {
       const rows = (ctx?.editableRows?.(name, schema, seedRows) ?? []).map((r) => ({ ...r }))
       return new Table(rows, ctx).save(name)
     },

@@ -27,7 +27,7 @@ import {
 } from '../table-panel.js'
 import { listenGlobal, focusInput } from './dom.js'
 import type { Table } from '../dsl.js'
-import { DISABLED_COL, type EditableTableStore, type ColumnType, type EditableColumn } from '../editable-tables.js'
+import { DISABLED_COL, cellValid, invalidColumns, type EditableTableStore, type ColumnType, type EditableColumn } from '../editable-tables.js'
 
 export { EVENTS_SUFFIX }
 export type { TablePanel, TablePanelOptions, PeerPresence }
@@ -335,6 +335,11 @@ function TablePanelView(props: PanelProps) {
                   <For each={COLUMN_TYPES}>
                     {(t) => <option value={t} selected={t === col.type}>{t}</option>}
                   </For>
+                  {/* Enum columns are code-only, not in COLUMN_TYPES — surface
+                      the current type so the menu isn't mislabeled. */}
+                  <Show when={col.type === 'enum'}>
+                    <option value="enum" selected disabled>enum</option>
+                  </Show>
                 </select>
               </label>
               <button
@@ -383,15 +388,19 @@ function TablePanelView(props: PanelProps) {
 
   // A single editable cell: click to open an editor in place (number box for
   // numbers, checkbox for booleans, text box otherwise); collapses back to a
-  // plain display on commit or on an outside click. Committing appends a
-  // set-cell event to the store — the edit *is* the event; the re-fold that
-  // follows shows the new state. Code-typed cells instead hand their text to
-  // the main editor (onEditCell).
+  // plain display on commit or on an outside click. Enum cells skip that
+  // dance — they show an always-live dropdown, so a value is one pick away
+  // mid-performance. Committing appends a set-cell event to the store — the
+  // edit *is* the event; the re-fold that follows shows the new state.
+  // Code-typed cells instead hand their text to the main editor (onEditCell).
+  // A value that doesn't fit the column's type (a misspelled enum, a number
+  // typed as text) gets a `cell-invalid` marker (see cellValid).
   function EditableCell(cellProps: { table: string; rowIndex: number; col: EditableColumn }) {
     const { table, rowIndex, col } = cellProps
     const key = `${rowIndex}::${col.name}`
     const editing = () => editingCell() === key
     const raw = () => editableData()?.data.rows[rowIndex]?.[col.name]
+    const invalid = () => !cellValid(raw(), col)
 
     const commit = (value: unknown): void => {
       // Guard the Enter-then-blur double fire: only the open editor commits.
@@ -414,10 +423,10 @@ function TablePanelView(props: PanelProps) {
     return (
       <td
         class="editable-cell"
-        classList={{ editing: editing() }}
+        classList={{ editing: editing(), 'cell-invalid': invalid() }}
         style={editors().length ? { outline: `2px solid ${editors()[0].color}`, 'outline-offset': '-2px' } : undefined}
         onClick={() => {
-          if (editing()) return
+          if (editing() || col.type === 'enum') return
           if (col.type === 'code') {
             const v = raw()
             props.onEditCell?.(table, rowIndex, col.name, v == null ? '' : String(v))
@@ -429,12 +438,31 @@ function TablePanelView(props: PanelProps) {
         <Show when={editors().length}>
           <span class="cell-presence"><PresenceNames peers={editors()} /></span>
         </Show>
+        <Show when={col.type === 'enum'}>
+          <select
+            class="cell-enum"
+            value={raw() == null ? '' : String(raw())}
+            onChange={(e) => { store.setCell(table, rowIndex, col.name, e.currentTarget.value); bump() }}
+          >
+            {/* A stray value not in the options still shows (and stays flagged)
+                until the user picks a valid one. */}
+            <Show when={invalid() && raw() != null && raw() !== ''}>
+              <option value={String(raw())} selected>{String(raw())}</option>
+            </Show>
+            <option value="" />
+            <For each={col.options ?? []}>
+              {(o) => <option value={o} selected={o === raw()}>{o}</option>}
+            </For>
+          </select>
+        </Show>
         <Show
-          when={editing()}
+          when={col.type !== 'enum' && editing()}
           fallback={
-            <span class={col.type === 'code' ? 'cell-value cell-code' : 'cell-value'}>
-              {formatEditableCell(col.type, raw())}
-            </span>
+            <Show when={col.type !== 'enum'}>
+              <span class={col.type === 'code' ? 'cell-value cell-code' : 'cell-value'}>
+                {formatEditableCell(col.type, raw())}
+              </span>
+            </Show>
           }
         >
           <Show when={col.type === 'boolean'}>
@@ -695,6 +723,7 @@ function TablePanelView(props: PanelProps) {
                             // row's own mute switch (see DISABLED_COL) — dim it
                             // straight from its own data, no separate state.
                             'row-disabled': ed().data.rows[i]?.[DISABLED_COL] === true,
+                            'row-invalid': invalidColumns(ed().data.rows[i], ed().data.columns).length > 0,
                           }}
                         >
                           <td class="row-actions">

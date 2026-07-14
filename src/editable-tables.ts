@@ -56,7 +56,18 @@
 import { createEventLog, type EventLog, type StampedEvent } from './event-log.js'
 import type { Row } from './lineage.js'
 
-export type ColumnType = 'number' | 'string' | 'boolean' | 'code'
+export type ColumnType = 'number' | 'string' | 'boolean' | 'code' | 'enum'
+
+// A column's spec as a program passes it to editable(name, schema). A bare
+// ColumnType is the common case; a string array is shorthand for an enum over
+// those values; the object form spells an enum out (or any type) explicitly.
+// Enum columns are code-only — the table panel renders them as a dropdown (and
+// validates against their options), but the "+ column" UI never creates one.
+export type ColumnSpec =
+  | ColumnType
+  | readonly string[]
+  | { type: ColumnType; options?: readonly string[] }
+export type Schema = Record<string, ColumnSpec>
 
 // A "run": the session bookmark recorded when the user clicks Apply (Ctrl-Enter)
 // after a batch of edits. It captures, per editable table, how many of that
@@ -76,6 +87,9 @@ export interface SessionRun {
 export interface EditableColumn {
   name: string
   type: ColumnType
+  // For an 'enum' column: the allowed values — the dropdown's choices, and the
+  // set a validator checks a cell against. Absent for every other type.
+  options?: string[]
 }
 
 export interface EditableTableData {
@@ -98,12 +112,36 @@ function visibleRows(t: TableState): Row[] {
   return t.rows.filter((r) => r[DISABLED_COL] !== true)
 }
 
-function defaultFor(type: ColumnType): unknown {
+function defaultFor(type: ColumnType, options?: string[]): unknown {
   switch (type) {
     case 'number': return 0
     case 'boolean': return false
+    case 'enum': return options?.[0] ?? ''
     default: return ''
   }
+}
+
+// Whether a cell's value fits its column's declared type — the check the table
+// panel uses to flag rows that don't match an editable() schema. Blank/unset
+// cells are always allowed: these event tables are deliberately sparse (a
+// setCode row leaves the enum/number columns of other events empty), so only a
+// *non-blank* value of the wrong type — or an enum value outside its options —
+// is a genuine mistake worth highlighting.
+export function cellValid(value: unknown, col: EditableColumn): boolean {
+  if (value === '' || value == null) return true
+  switch (col.type) {
+    case 'number': return typeof value === 'number' && Number.isFinite(value)
+    case 'boolean': return typeof value === 'boolean'
+    case 'enum': return typeof value === 'string' && !!col.options?.includes(value)
+    default: return true // string / code accept any non-blank value
+  }
+}
+
+// The names of the columns whose cell in `row` doesn't fit its type — empty
+// when the row conforms. The table panel highlights these cells (and marks the
+// row) so a mistyped value or a misspelled enum stands out at a glance.
+export function invalidColumns(row: Row, columns: EditableColumn[]): string[] {
+  return columns.filter((c) => !cellValid(row[c.name], c)).map((c) => c.name)
 }
 
 // Per-row provenance, kept parallel to `rows`. It's what lets a code-seeded
@@ -209,14 +247,23 @@ function eventRow(e: StampedEvent): Row {
 // semantics against a rows snapshot (see cook-service.ts).
 export function conformRow(row: Row, columns: EditableColumn[]): Row {
   const next: Row = {}
-  for (const c of columns) next[c.name] = c.name in row ? row[c.name] : defaultFor(c.type)
+  for (const c of columns) next[c.name] = c.name in row ? row[c.name] : defaultFor(c.type, c.options)
   return next
 }
 
 // An editable() schema in column-list form — the shape create/declare-schema
-// events carry.
-export function schemaColumns(schema: Record<string, ColumnType>): EditableColumn[] {
-  return Object.entries(schema).map(([n, t]) => ({ name: n, type: t }))
+// events carry. Normalizes each ColumnSpec: a bare type stays a type, a string
+// array becomes an enum column with those options, the object form is taken
+// as-is (options copied when present).
+export function schemaColumns(schema: Schema): EditableColumn[] {
+  return Object.entries(schema).map(([name, spec]) => {
+    if (Array.isArray(spec)) return { name, type: 'enum', options: [...spec] }
+    if (typeof spec === 'object') {
+      const s = spec as { type: ColumnType; options?: readonly string[] }
+      return s.options ? { name, type: s.type, options: [...s.options] } : { name, type: s.type }
+    }
+    return { name, type: spec as ColumnType }
+  })
 }
 
 // Re-drive a code-created table's rows from a fresh program seed, in place.
@@ -345,7 +392,7 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
     }
     case 'add-row': {
       const row: Row = {}
-      for (const c of effectiveColumns(t)) row[c.name] = defaultFor(c.type)
+      for (const c of effectiveColumns(t)) row[c.name] = defaultFor(c.type, c.options)
       t.rows.push(row)
       t.rowMeta.push(userMeta())
       break
@@ -425,7 +472,7 @@ export interface EditableTableStore {
   // declared, never touched by the user, tracks the program's schema exactly
   // (added when declared, gone when not); a column the user added or
   // edited via the table panel survives regardless of what's declared.
-  ensure(name: string, schema: Record<string, ColumnType>, seedRows?: Row[]): Row[]
+  ensure(name: string, schema: Schema, seedRows?: Row[]): Row[]
   // Drop every code-created editable table whose name isn't in `keep` — the
   // program stopped declaring it, so it should stop being editable (a computed
   // view of the same name, or nothing, takes over). Only tables a program
@@ -552,7 +599,7 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       return true
     },
 
-    ensure(name: string, schema: Record<string, ColumnType>, seedRows?: Row[]): Row[] {
+    ensure(name: string, schema: Schema, seedRows?: Row[]): Row[] {
       const wantCols = schemaColumns(schema)
       // Replay is a read-only preview: a cook running against a past run must
       // not append create/declare-schema events. Serve the historical rows
