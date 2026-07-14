@@ -719,6 +719,13 @@ function refreshPresenceUI(): void {
       .filter((p) => p.client !== me && online.has(p.client) && p.cell != null && p.cell === localCell)
       .map((p) => ({ client: p.client, user: peerLabel(p.client, p.user), color: peerColor(p.client, p.user), head: p.head })),
   )
+  // The room chip's peer count folds the presence log too, so it must refresh
+  // here as well as on peer-join/leave. A joiner receives the whole room in
+  // one sync message whose session log merges BEFORE the presence log — the
+  // peer-join reaction fires chipStatus while the presence map is still
+  // empty, and without this line nothing ever recomputes the chip afterwards,
+  // leaving the joiner's count stuck at "· 1" until the next join/leave.
+  chipStatus(multiplayer?.status ?? 'connecting')
 }
 
 presence?.onChange(schedulePresenceRefresh)
@@ -1000,7 +1007,9 @@ function chipSolo(): void {
 
 // Redraws the chip for `status` at the *current* peer fold (re-folded from
 // the "activity" table and the presence log each time, not pushed) — called
-// on a connection status change and again whenever a peer-join/leave lands.
+// on a connection status change, whenever a peer-join/leave lands, and from
+// refreshPresenceUI whenever the presence fold changes (the count needs both
+// logs, and on a join they merge at different moments within one sync).
 // Takes status as a plain argument rather than reading `multiplayer` because
 // connectMultiplayer's onStatus can fire synchronously during its own call,
 // before the `multiplayer = connectMultiplayer(...)` assignment below has
