@@ -1,9 +1,13 @@
 // livecodata MIDI — an event log folded into a streaming table
 // ----------------------------------------------------------------------------
 // MIDI is a *streaming* source: notes arrive live, while the timeline plays.
-// Like every other live thing here (code runs, table edits) what is stored is
-// the append-only log of events, on the shared event-log primitive. Each event
-// carries three time stamps:
+// Like every other live thing here (code runs, table edits, slider moves) what
+// is stored is the append-only log of events. Exactly like sliders, that log
+// is NOT a private one: it rides the shared editable-table store (main.ts
+// hands createMidiInput a thin MidiStore adapter over
+// editableStore.record('midi', …)), so recorded MIDI syncs over multiplayer
+// and persists in the session like any other table. Each event carries three
+// time stamps:
 //   t     — wall-clock ms since the first event (from the event log)
 //   loop  — which loop iteration the playhead was in when it arrived
 //   beat  — the playhead's *content/source* position (a 1-indexed beat — see
@@ -28,7 +32,7 @@
 // ----------------------------------------------------------------------------
 
 import { beatToFrame } from './constants.js'
-import { createEventLog, type StampedEvent } from './event-log.js'
+import type { StampedEvent } from './event-log.js'
 import type { Row } from './lineage.js'
 import type { EvalCtx } from './dsl.js'
 
@@ -158,7 +162,21 @@ export function currentMidiRows(events: StampedEvent[]): Row[] {
 
 // ── Live input ───────────────────────────────────────────────────────────────
 
+// The midi log, abstracted to just what the input needs — the exact twin of
+// sliders' SliderStore. main.ts backs this with the editable-table store:
+// record('midi', kind, payload) appends a store event (auto-creating the
+// "midi" log table on first sight), events() returns that table's events, and
+// onChange fires on every store change (a local message, a peer's merged
+// event, or a session load). Riding the store is what makes recorded MIDI
+// sync over multiplayer and persist in the session.
+export interface MidiStore {
+  record(kind: string, payload?: Record<string, unknown>): void
+  events(): StampedEvent[]
+  onChange(cb: () => void): void
+}
+
 export interface MidiInputOptions {
+  store: MidiStore
   // The playhead's current content/source position (a 1-indexed beat) — where new
   // events get stamped (Playback.currentSourceBeats). The same coordinate the
   // baked scene is keyed to, so a recorded sweep's speed tracks the timeline
@@ -168,8 +186,6 @@ export interface MidiInputOptions {
   // into each event so the current table can be derived per note from the most
   // recent loop that recorded it.
   getLoop?: () => number
-  // Called after an event lands (or the log is cleared) so the UI can refresh.
-  onChange?: () => void
 }
 
 export interface MidiInput {
@@ -188,58 +204,62 @@ export interface MidiInput {
   feed(data: ArrayLike<number>): void
 }
 
-export function createMidiInput({ getIndex, getLoop, onChange }: MidiInputOptions): MidiInput {
-  const log = createEventLog()
-  // Fold caches, invalidated on append.
+export function createMidiInput({ store, getIndex, getLoop }: MidiInputOptions): MidiInput {
+  // Fold caches, invalidated whenever the store changes (a local message, a
+  // merged peer event, or a session load — all reach the same fold via
+  // store.events()).
   let current: Row[] | null = null
   let index: MidiIndex | null = null
 
-  log.onChange(() => { current = null; index = null })
+  store.onChange(() => { current = null; index = null })
 
-  const rows = (): Row[] => (current ??= currentMidiRows(log.all()))
+  const rows = (): Row[] => (current ??= currentMidiRows(store.events()))
   const idx = (): MidiIndex => (index ??= buildMidiIndex(rows()))
 
   function feed(data: ArrayLike<number>): void {
     const decoded = decodeMidi(data)
     if (!decoded) return
-    log.append({
-      kind: 'midi',
+    store.record('midi', {
       note: decoded.note, noteNum: decoded.noteNum, channel: decoded.channel, value: decoded.value,
       beat: getIndex(),
       loop: getLoop?.() ?? 0,
     })
-    onChange?.()
-  }
-
-  // Best-effort Web MIDI subscription. Silently no-ops where unavailable
-  // (unsupported browser, denied permission, headless test).
-  const access = (navigator as Navigator & {
-    requestMIDIAccess?: () => Promise<{ inputs: Map<unknown, { onmidimessage: ((e: { data: Uint8Array }) => void) | null }> }>
-  }).requestMIDIAccess
-  if (typeof access === 'function') {
-    access.call(navigator).then((midi) => {
-      const inputs = [...midi.inputs.values()]
-      console.log('[midi] access granted, inputs:', inputs.length)
-      for (const input of inputs) {
-        console.log('[midi] subscribing to input:', (input as unknown as { name?: string }).name ?? input)
-        input.onmidimessage = (e) => {
-          console.log('[midi] message:', Array.from(e.data))
-          feed(e.data)
-        }
-      }
-    }).catch((err) => { console.warn('[midi] access denied:', err) })
-  } else {
-    console.warn('[midi] Web MIDI API not available in this browser')
   }
 
   return {
     rows: () => rows().map((r) => ({ ...r })),
-    eventRows: () => log.all().map(({ kind, seq, t, loop, beat, note, channel, value }) =>
-      ({ seq, t, kind, loop, beat, note, channel, value })),
-    clear: () => { log.append({ kind: 'clear' }); onChange?.() },
+    eventRows: () => store.events()
+      .filter((e) => e.kind === 'midi' || e.kind === 'clear')
+      .map(({ kind, seq, t, loop, beat, note, channel, value }) => ({ seq, t, kind, loop, beat, note, channel, value })),
+    clear: () => store.record('clear'),
     ctxAt: (srcFrame: number): EvalCtx => ({
       midi: (note, channel) => sampleMidiAt(idx(), note, channel, srcFrame),
     }),
     feed,
   }
+}
+
+// Best-effort Web MIDI subscription, separate from the input itself: the input
+// (fold + feed over the shared store) exists regardless — so MIDI synced from
+// a peer or loaded from a saved session plays back with no hardware and no
+// permission — while requesting device access pops a browser permission
+// prompt, so main.ts calls this only once the user enables the MIDI toggle.
+// Silently no-ops where unavailable (unsupported browser, denied permission,
+// headless test).
+export function subscribeWebMidi(input: Pick<MidiInput, 'feed'>): void {
+  const access = (navigator as Navigator & {
+    requestMIDIAccess?: () => Promise<{ inputs: Map<unknown, { onmidimessage: ((e: { data: Uint8Array }) => void) | null }> }>
+  }).requestMIDIAccess
+  if (typeof access !== 'function') {
+    console.warn('[midi] Web MIDI API not available in this browser')
+    return
+  }
+  access.call(navigator).then((midi) => {
+    const inputs = [...midi.inputs.values()]
+    console.log('[midi] access granted, inputs:', inputs.length)
+    for (const device of inputs) {
+      console.log('[midi] subscribing to input:', (device as unknown as { name?: string }).name ?? device)
+      device.onmidimessage = (e) => input.feed(e.data)
+    }
+  }).catch((err) => { console.warn('[midi] access denied:', err) })
 }
