@@ -63,6 +63,7 @@ function fakeHydra() {
     setSketch(): void { /* recorded implicitly via ticks */ },
     tick(t: number): void { this.ticks.push(t) },
     reset(): void { /* noop */ },
+    reinit(): void { /* noop */ },
   }
 }
 

@@ -52,6 +52,10 @@ export interface EditorOptions {
   // permission prompt (see main.ts).
   midiEnabled?: boolean
   onMidiEnabledChange?: (enabled: boolean) => void
+  // Settings-menu "Reset visuals" button: hydra occasionally wedges into a
+  // stuck error state that a canvas resize/regl refresh clears — this lets
+  // that recovery be triggered manually instead of resizing the window.
+  onResetHydra?: () => void
   // Multiplayer presence: fired (per selection/doc update, and on cell-target
   // changes) with the cell this editor is a window onto — "code[0].code" for
   // the main program — and the cursor offset.
@@ -83,13 +87,14 @@ export interface EditorController extends EditorAPI {
   initialMidiEnabled: boolean
   setVimMode(enabled: boolean): void
   setMidiEnabled(enabled: boolean): void
+  resetHydra(): void
   back(): void
   // The CodeMirror DOM, for the view's editor-host div to adopt.
   cmDom: HTMLElement
 }
 
 export function createEditor(
-  { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange, onCursor }: EditorOptions = {},
+  { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange, onResetHydra, onCursor }: EditorOptions = {},
 ): EditorController {
   const [title, setTitle] = createSignal('DSL')
   const [runLabel, setRunLabel] = createSignal('Run')
@@ -196,6 +201,9 @@ export function createEditor(
     setMidiEnabled(enabled: boolean): void {
       onMidiEnabledChange?.(enabled)
     },
+    resetHydra(): void {
+      onResetHydra?.()
+    },
     back: () => exitCell(true),
     cmDom: view.dom,
     setRemoteCursors(cursors: RemoteCursor[]): void {
@@ -283,6 +291,13 @@ export function EditorPane(props: { ctl: EditorController; children?: JSX.Elemen
               />
               MIDI
             </label>
+            <button
+              class="settings-row settings-action"
+              title="Fixes hydra visuals stuck in an error state (same fix as resizing the window)"
+              onClick={() => { ctl.resetHydra(); setSettingsOpen(false) }}
+            >
+              Reset visuals
+            </button>
           </div>
         </div>
       </div>

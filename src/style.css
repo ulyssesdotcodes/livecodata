@@ -197,6 +197,21 @@ html, body {
   cursor: pointer;
 }
 
+.settings-action {
+  background: transparent;
+  border: none;
+  border-top: 1px solid #1a5090;
+  width: 100%;
+  margin-top: 6px;
+  padding-top: 8px;
+  text-align: left;
+  font-family: inherit;
+}
+
+.settings-action:hover {
+  color: #fff;
+}
+
 /* ── Docs / reference popover ── */
 /* The ℹ button next to the settings gear opens a scrollable reference panel:
    the tables the system uses + the DSL function docs (reused from the same
