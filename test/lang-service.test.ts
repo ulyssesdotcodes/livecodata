@@ -105,6 +105,21 @@ test('signature help reports params and the active argument', () => {
   assert.equal(sh2.activeParameter, 1)
 })
 
+test('schemas namespace completes its members with the exact schema on hover', () => {
+  const text = 'editable("hydra", schemas.'
+  const res = svc.completionsAt(text, text.length)
+  assert.ok(res && res.isMemberCompletion)
+  const names = res.entries.map((e) => e.name)
+  for (const s of ['hydra', 'sliders', 'path', 'steps']) assert.ok(names.includes(s), `expected schemas.${s}`)
+
+  const text2 = 'editable("hydra", schemas.hydra)'
+  const qi = svc.quickInfoAt(text2, text2.indexOf('.hydra') + 2)
+  assert.ok(qi)
+  assert.match(qi.display, /language: "hydra"/)
+  assert.match(qi.display, /"setCode"/)
+  assert.match(qi.docs, /hydra view's event stream/)
+})
+
 test('no answers inside an unparseable mess still return gracefully', () => {
   const qi = svc.quickInfoAt('((((', 2)
   assert.equal(qi, null)
