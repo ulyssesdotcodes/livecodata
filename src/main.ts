@@ -18,7 +18,7 @@ import { createCookClient } from './cook-client.js'
 import { randomSeed, localSource } from './event-log.js'
 import { createPresenceChannel, userColor, lastCellEdits } from './presence.js'
 import { Table } from './dsl.js'
-import { createEditableTableStore, DISABLED_COL, type ColumnType } from './editable-tables.js'
+import { createEditableTableStore, DISABLED_COL, CLEAR_RUNS_KIND, type ColumnType } from './editable-tables.js'
 import { createMidiInput, type MidiInput } from './midi.js'
 import { createSliderInput, sliderDefs, type SliderInput, type SliderStore } from './sliders.js'
 import { createSliderPanel } from './ui/slider-panel.js'
@@ -761,9 +761,12 @@ let scrubEpoch = 0
 
 async function scrubSession(pos: number): Promise<void> {
   const runs = editableStore.runs()
-  if (runs.length === 0) return
-  const clamped = Math.max(0, Math.min(pos, runs.length - 1))
-  const atLatest = clamped >= runs.length - 1
+  // No runs isn't necessarily "nothing to show" — a Clear leaves the "code"
+  // table's own history (and therefore its head row) untouched, just with no
+  // bookmarks left to scrub to. Treat it as "show head"; the codeRow check
+  // below still no-ops for a genuinely empty session (no "code" table yet).
+  const clamped = runs.length ? Math.max(0, Math.min(pos, runs.length - 1)) : 0
+  const atLatest = runs.length === 0 || clamped >= runs.length - 1
   const epoch = ++scrubEpoch
   cooking++
   editableStore.setReplayView(atLatest ? null : runs[clamped])
@@ -821,8 +824,10 @@ function openSession(id: string): void {
     return
   }
   currentSessionId = id
-  // Restore the saved run list; a legacy session that predates runs derives
-  // them from "code"'s recorded program history so its history stays scrubbable.
+  // Restore the saved run list. An empty one derives runs from "code"'s
+  // recorded program history instead — either a legacy session that predates
+  // runs, or one that was Cleared (deriveRunsFromCode stops at the clear
+  // marker either way, so a cleared session reloads with none).
   const savedRuns = sessionStore.runs(id)
   quietly(() => (savedRuns.length ? editableStore.setRuns(savedRuns) : editableStore.deriveRunsFromCode()))
   sessionBar.setLog({ length: sessionLength() })
@@ -854,6 +859,23 @@ function newSession(): void {
   evaluate(defaultProgram, { setError: editor.setError, persist: false, seeds: defaultTables })
   sessionBar.setLog({ length: sessionLength() })
   refreshSelector()
+}
+
+// The "Clear" button: wipe the run list a session bar scrubs over, without
+// touching a single table's own event history — the program text, every
+// editable table's rows, all of it stay exactly as they are. Records a
+// CLEAR_RUNS_KIND marker (on the "activity" table, alongside 'apply' and
+// 'session-start') rather than deleting anything, so deriveRunsFromCode()
+// knows not to resurrect these runs on a later reload/session-switch (see
+// its doc comment in editable-tables.ts).
+function clearRuns(): void {
+  stopRewind()
+  quietly(() => {
+    editableStore.record(ACTIVITY_TABLE, CLEAR_RUNS_KIND)
+    editableStore.setRuns([])
+  })
+  sessionBar.setLog({ length: sessionLength() })
+  persistSession()
 }
 
 const sessionBar = createSessionBar({
@@ -927,6 +949,7 @@ const mounts = mountApp(document.getElementById('app') as HTMLElement, {
   roomChip,
   sliderPanel,
   playback: playbackCtl,
+  onClearRuns: clearRuns,
 })
 const sceneAPI = initThree(mounts.threeCanvas, mounts.canvasPane)
 const hydraAPI = initHydra(mounts.hydraCanvas, mounts.threeCanvas)

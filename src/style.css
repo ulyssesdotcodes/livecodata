@@ -235,6 +235,24 @@ html, body {
   border-color: #1a5090;
 }
 
+.session-clear {
+  background: transparent;
+  border: 1px solid #1a5090;
+  color: #8ca0b8;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.session-clear:hover {
+  background: #1a5090;
+  color: #fff;
+  border-color: #1a5090;
+}
+
 /* Multiplayer room chip: solo it invites ("jam"), in a room it shows status. */
 .multiplayer-chip {
   background: transparent;

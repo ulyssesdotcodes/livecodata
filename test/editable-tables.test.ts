@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   createEditableTableStore, schemaColumns, cellValid, invalidColumns,
+  CLEAR_RUNS_KIND,
   type EditableColumn,
 } from '../src/editable-tables.js'
 
@@ -534,6 +535,24 @@ test('deriveRunsFromCode reconstructs one run per recorded program Run (legacy s
   assert.ok(!store.has('nums'), 'nums was created after Run 1')
   store.setReplayView(null)
   assert.equal(store.get('code')!.rows[0].code, 'r2')
+})
+
+test('deriveRunsFromCode stops at the latest clear-runs marker, leaving the code table untouched', () => {
+  const store = createEditableTableStore()
+  store.ensure('code', { code: 'code' }, [{ code: 'r1' }]) // code Run 1 (create)
+  store.setRow('code', 0, { code: 'r2' })                  // code Run 2 (set-row)
+  store.record('activity', CLEAR_RUNS_KIND)
+  store.setRuns([])
+  store.setRow('code', 0, { code: 'r3' })                  // code Run 3 (set-row), after the clear
+
+  store.deriveRunsFromCode()
+  const runs = store.runs()
+  assert.equal(runs.length, 1, 'runs before the clear marker are not resurrected')
+
+  // The clear only touched the run bookmarks — the program's own history (and
+  // therefore its current text) is exactly as if nothing had been cleared.
+  assert.equal(store.get('code')!.rows[0].code, 'r3')
+  assert.equal(store.get('code')!.events.length, 3, 'all three code events survive the clear')
 })
 
 test('load and clear reset the run list', () => {
