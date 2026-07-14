@@ -12,14 +12,14 @@ import { createSessionBar } from './ui/session-bar.js'
 import { createSessionSelector } from './ui/session-selector.js'
 import { createRoomChip } from './ui/room-chip.js'
 import { SAMPLES } from './samples.js'
-import { createSessionStore } from './sessions.js'
+import { defaultSessionStore } from './sessions.js'
 import { getVimMode, setVimMode, getMidiEnabled, setMidiEnabled, getUsername, setUsername } from './settings.js'
 import { createCookClient } from './cook-client.js'
 import { randomSeed, localSource } from './event-log.js'
 import { createPresenceChannel, userColor, lastCellEdits } from './presence.js'
 import { Table } from './dsl.js'
 import { createEditableTableStore, DISABLED_COL, CLEAR_RUNS_KIND, type ColumnType } from './editable-tables.js'
-import { createMidiInput, type MidiInput } from './midi.js'
+import { createMidiInput, subscribeWebMidi, type MidiInput, type MidiStore } from './midi.js'
 import { createSliderInput, sliderDefs, type SliderInput, type SliderStore } from './sliders.js'
 import { createSliderPanel } from './ui/slider-panel.js'
 import { beatToFrame } from './constants.js'
@@ -169,18 +169,22 @@ function clearTaps(): void {
 
 let currentPlayIndex = 0
 
-// Live MIDI: an append-only event log on the shared primitive. Each event is
-// stamped with wall time (by the log), the current loop iteration, and the
-// playhead's content/source position (Playback.currentSourceBeats) — the
-// coordinate the baked scene is keyed to, so a recorded sweep's speed follows
-// the timeline mapping. The folded "midi" table (per note, the latest loop's
-// take) is what midi("c4") bindings resolve against each frame; the raw log
-// shows as "midi·events".
+// Live MIDI: exactly the same wiring as sliders below — an append-only event
+// stream riding the shared editable-table store (a thin MidiStore adapter over
+// editableStore.record('midi', …)), so recorded MIDI syncs over multiplayer
+// and persists in the session like any other table. Each event is stamped
+// with wall time (by the log), the current loop iteration, and the playhead's
+// content/source position (Playback.currentSourceBeats) — the coordinate the
+// baked scene is keyed to, so a recorded sweep's speed follows the timeline
+// mapping. The folded "midi" table (per note, the latest loop's take) is what
+// midi("c4") bindings resolve against each frame; the raw log shows as
+// "midi·events".
 //
-// MIDI is opt-in (see settings.ts): requesting Web MIDI access pops a browser
-// permission prompt, so createMidiInput (which requests it) only runs once
-// the user enables the toggle in the editor's settings popover, and the
-// "midi"/"midi·events" tables only appear once it's enabled.
+// Only the *hardware* side is opt-in (see settings.ts): requesting Web MIDI
+// access pops a browser permission prompt, so subscribeWebMidi only runs once
+// the user enables the toggle in the editor's settings popover. The input
+// itself (fold + playback bindings) always exists, so MIDI recorded by a room
+// peer — or loaded from a saved session — plays back regardless of the toggle.
 let loopCount = 0
 // Whether the reset button's rewind is armed — see toggleRewind/stopRewind
 // below. Stepping itself happens in onTick, every REWIND_STEP_BEATS of
@@ -196,20 +200,28 @@ let lastTick = 0
 // distance — worst case that delays one step by less than a loop.
 let rewindBaseline = 0
 let midiEnabled = getMidiEnabled()
-let midiInput: MidiInput | null = null
 
-function ensureMidiInput(): MidiInput {
-  if (!midiInput) {
-    midiInput = createMidiInput({
-      getIndex: () => playback.currentSourceBeats(),
-      getLoop: () => loopCount,
-      onChange: () => onMidi(),
-    })
-  }
-  return midiInput
+const midiStore: MidiStore = {
+  record: (kind, payload) => editableStore.record('midi', kind, payload),
+  events: () => editableStore.log.all().filter((e) => e.table === 'midi'),
+  onChange: (cb) => editableStore.onChange(cb),
 }
 
-if (midiEnabled) ensureMidiInput()
+const midiInput: MidiInput = createMidiInput({
+  store: midiStore,
+  getIndex: () => playback.currentSourceBeats(),
+  getLoop: () => loopCount,
+})
+
+// Attach the hardware exactly once, however the toggle is flipped around.
+let midiSubscribed = false
+function ensureMidiSubscription(): void {
+  if (midiSubscribed) return
+  midiSubscribed = true
+  subscribeWebMidi(midiInput)
+}
+
+if (midiEnabled) ensureMidiSubscription()
 
 // On-screen sliders: the twin of MIDI, but the "controller" is drawn over the
 // visual (see ui/slider-panel.tsx). Which sliders exist and their min/max come
@@ -299,24 +311,18 @@ const playbackOptions: PlaybackOptions = {
   },
   onLoop: () => { loopCount++ },
   tapControl: { tap: recordTap, clear: clearTaps, rows: tapRows, anchor: tapAnchor },
-  midiCtxAt: (srcFrame) => (midiEnabled && midiInput ? midiInput.ctxAt(srcFrame) : null),
+  // Recorded MIDI drives bindings whenever any exists — the recording may be a
+  // peer's (synced through the store) or a saved session's, so this doesn't
+  // gate on the local hardware toggle, mirroring sliders below.
+  midiCtxAt: (srcFrame) => (midiInput.rows().length ? midiInput.ctxAt(srcFrame) : null),
   sliderCtxAt: (srcFrame) => (sliderInput && sliderInput.defs().length ? sliderInput.ctxAt(srcFrame) : null),
 }
 
-// A new MIDI event refreshes the "midi"/"midi·events" display tables. The scene
-// itself updates live every rAF tick via the per-frame bindings regardless —
-// this refresh is purely cosmetic. Coalesced to once per animation frame: a
-// knob sweep can fire 100+ messages/sec, and re-rendering the panel per message
-// stalls the main thread.
-let midiDisplayScheduled = false
-function onMidi(): void {
-  if (midiDisplayScheduled) return
-  midiDisplayScheduled = true
-  requestAnimationFrame(() => {
-    midiDisplayScheduled = false
-    tablePanel.setTables(tablesForDisplay(lastViews))
-  })
-}
+// (A new MIDI event needs no dedicated display refresh: it's a store event
+// now, so the generic store onChange handler below already refreshes the
+// "midi"/"midi·events" tables — coalesced per animation frame, which matters
+// for a knob sweep firing 100+ messages/sec. The scene itself updates live
+// every rAF tick via the per-frame bindings regardless.)
 
 // The cook — DSL evaluation, materialize, physics baking, rasterize — runs in
 // a Web Worker (see cook-worker.ts) so a heavy Apply, local or from a room
@@ -339,7 +345,7 @@ async function cookInWorker(code: string, seed: number, seeds?: Record<string, R
   return { cooked, declaredNames: declared.map((d) => d.name) }
 }
 
-const sessionStore = createSessionStore()
+const sessionStore = defaultSessionStore()
 let currentSessionId = sessionStore.newId()
 
 // --- multiplayer -----------------------------------------------------------
@@ -361,16 +367,9 @@ function multiplayerUrl(): string {
   return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'
 }
 
-if (roomName) {
-  currentSessionId = roomSessionId(roomName)
-  const saved = sessionStore.load(currentSessionId)
-  if (saved) {
-    editableStore.load(saved)
-    const savedRuns = sessionStore.runs(currentSessionId)
-    if (savedRuns.length) editableStore.setRuns(savedRuns)
-    else editableStore.deriveRunsFromCode()
-  }
-}
+// The room's locally-persisted log is restored in boot() (the session store
+// is async) — only the id needs pinning before anything could save under it.
+if (roomName) currentSessionId = roomSessionId(roomName)
 // ---------------------------------------------------------------------------
 
 import type { GraphSpec } from './graph-panel.js'
@@ -402,7 +401,11 @@ interface CookedData {
 function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   const display = new Map(views)
   if (!display.has('taps')) display.set('taps', new Table(tapRows()))
-  if (midiEnabled && midiInput) {
+  // The folded MIDI take ("midi") and its raw log ("midi·events"), once
+  // anything has been recorded — locally, by a peer (synced through the
+  // store), or in the loaded session. The "midi" store log table itself is
+  // suppressed below, same as "slider": these are its only surface.
+  if (midiInput.rows().length) {
     if (!display.has('midi')) display.set('midi', new Table(midiInput.rows()))
     if (!display.has('midi' + EVENTS_SUFFIX)) display.set('midi' + EVENTS_SUFFIX, new Table(midiInput.eventRows()))
   }
@@ -417,9 +420,10 @@ function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
     display.set('slider' + EVENTS_SUFFIX, new Table(sliderInput.eventRows()))
   }
   for (const name of editableStore.listNames()) {
-    // The "slider" log table is the backing store for recorded automation, an
-    // implementation detail — it's surfaced (folded) above, or not at all.
-    if (name === 'slider') continue
+    // The "slider" and "midi" log tables are the backing stores for recorded
+    // automation, an implementation detail — each is surfaced (folded) above,
+    // or not at all.
+    if (name === 'slider' || name === 'midi') continue
     const key = editableStore.isLog(name) ? name : name + EVENTS_SUFFIX
     if (display.has(key)) continue
     display.set(key, new Table((editableStore.get(name)?.events ?? []).map((r) => ({ ...r }))))
@@ -480,16 +484,21 @@ function persistSession(): void {
   // The session is the whole store's event data plus the run list — see
   // sessions.ts. Serialize the *head* log (a scrubbed replay view mustn't leak
   // into what's saved); editableStore.runs() is always the full run list.
-  sessionStore.save(currentSessionId, {
+  // A failed save is surfaced on the editor's error strip — a save silently
+  // failing is exactly how session data gets lost.
+  void sessionStore.save(currentSessionId, {
     events: editableStore.serialize(),
     runs: editableStore.runs(),
     tables: [...lastViews.keys()],
   })
-  refreshSelector()
+    .then(refreshSelector)
+    .catch((err) => editor.setError(`Session save failed: ${(err as Error).message}`))
 }
 
 function refreshSelector(): void {
-  sessionSelector.setSessions(sessionStore.list(), currentSessionId)
+  void sessionStore.list()
+    .then((sessions) => sessionSelector.setSessions(sessions, currentSessionId))
+    .catch(() => { /* listing is cosmetic — never block on it */ })
 }
 
 interface EvaluateOptions {
@@ -632,7 +641,7 @@ const editor = createEditor({
   onMidiEnabledChange: (enabled) => {
     midiEnabled = enabled
     setMidiEnabled(enabled)
-    if (enabled) ensureMidiInput()
+    if (enabled) ensureMidiSubscription()
     tablePanel.setTables(tablesForDisplay(lastViews))
   },
   onResetHydra: () => hydraAPI.reinit(),
@@ -723,15 +732,17 @@ function refreshPresenceUI(): void {
 
 presence?.onChange(schedulePresenceRefresh)
 
-// A table-change event landed (cell edit, add row, …). Edits are *pending*:
-// they are NOT applied to the running program here — the cooked views and the
-// scene keep their last state until the user presses Run/Apply (Ctrl-Enter),
-// which re-cooks against the edited tables and records a run. We only refresh
-// the table panel so the edit shows in its own editable tab (and name·events
-// history), and persist the event data so a not-yet-applied edit still survives
-// a reload (a session *is* the store's events now — see sessions.ts — so any
-// change needs saving, not just a run). Coalesced per animation frame, and
-// ignored while a cook (or our own recording/session load) is in flight.
+// A table-change event landed (cell edit, add row, slider move, MIDI note, …).
+// Edits are *pending*: they are NOT applied to the running program here — the
+// cooked views and the scene keep their last state until the user presses
+// Run/Apply (Ctrl-Enter), which re-cooks against the edited tables and records
+// a run. Live edits ride the log — so they sync over multiplayer instantly —
+// but are deliberately NOT persisted here: a session on disk only advances on
+// Apply (see evaluate's persistSession), so what's saved is always an applied
+// state, never a half-finished edit batch. We only refresh the table panel so
+// the edit shows in its own editable tab (and name·events history). Coalesced
+// per animation frame, and ignored while a cook (or our own recording/session
+// load) is in flight.
 let storeRefreshScheduled = false
 editableStore.onChange(() => {
   if (cooking || storeRefreshScheduled) return
@@ -739,7 +750,6 @@ editableStore.onChange(() => {
   requestAnimationFrame(() => {
     storeRefreshScheduled = false
     tablePanel.setTables(tablesForDisplay(lastViews))
-    persistSession()
     // A store event may be a peer's set-cell — their "last edited" marker.
     schedulePresenceRefresh()
   })
@@ -843,13 +853,13 @@ function exitRoomMode(): void {
   chipSolo()
 }
 
-function openSession(id: string): void {
+async function openSession(id: string): Promise<void> {
   exitRoomMode()
   // Only a genuinely unreadable session aborts the switch: its stored data may
   // be missing, or editableStore.load may reject/throw on a corrupt log. A
   // session whose *program* errors is not corrupt — it still opens (below).
   try {
-    const events = sessionStore.load(id)
+    const events = await sessionStore.load(id)
     if (events == null) throw new Error('saved session data is missing')
     const ok = quietly(() => editableStore.load(events))
     if (!ok) throw new Error('saved session data could not be read')
@@ -862,7 +872,7 @@ function openSession(id: string): void {
   // recorded program history instead — either a legacy session that predates
   // runs, or one that was Cleared (deriveRunsFromCode stops at the clear
   // marker either way, so a cleared session reloads with none).
-  const savedRuns = sessionStore.runs(id)
+  const savedRuns = await sessionStore.runs(id).catch(() => [])
   quietly(() => (savedRuns.length ? editableStore.setRuns(savedRuns) : editableStore.deriveRunsFromCode()))
   sessionBar.setLog({ length: sessionLength() })
   refreshSelector()
@@ -932,10 +942,14 @@ function openExample(index: number): void {
 }
 
 const sessionSelector = createSessionSelector({
-  onOpen: openSession,
+  onOpen: (id) => void openSession(id),
   onNew: newSession,
   onExample: openExample,
   examples: SAMPLES.map((s) => ({ label: s.name })),
+  // Naming and archiving act on the stored record only — the open session's
+  // log is untouched, so neither needs a re-cook, just a re-listed dropdown.
+  onRename: (id, name) => void sessionStore.rename(id, name).then(refreshSelector).catch(() => {}),
+  onArchive: (id, archived) => void sessionStore.setArchived(id, archived).then(refreshSelector).catch(() => {}),
 })
 
 // The room chip: solo it opens a join popover (room name + username, seeding
@@ -945,20 +959,24 @@ const roomChip = createRoomChip({
   initialUser: getUsername(),
   onJoin: (name, user) => {
     setUsername(user)
-    // Seed the room with what's on screen: park the store under the room's
-    // session id so the reload (and then the server) picks it up.
-    if (editableStore.has('code')) {
-      sessionStore.save(roomSessionId(name), {
-        events: editableStore.serialize(),
-        runs: editableStore.runs(),
-        tables: [...lastViews.keys()],
-      })
-    }
     const u = new URL(location.href)
     u.searchParams.set('room', name)
     if (user) u.searchParams.set('user', user)
     else u.searchParams.delete('user')
-    location.href = u.toString()
+    const go = (): void => { location.href = u.toString() }
+    // Seed the room with what's on screen: park the store under the room's
+    // session id so the reload (and then the server) picks it up. Navigation
+    // waits for the save (it's async now) — and proceeds even if it fails,
+    // since the room join itself will still sync whatever peers hold.
+    if (editableStore.has('code')) {
+      void sessionStore.save(roomSessionId(name), {
+        events: editableStore.serialize(),
+        runs: editableStore.runs(),
+        tables: [...lastViews.keys()],
+      }).then(go, go)
+    } else {
+      go()
+    }
   },
   onLeave: () => {
     const u = new URL(location.href)
@@ -1017,7 +1035,19 @@ function chipStatus(status: MultiplayerStatus): void {
   roomChip.set({ kind: 'room', status, room: roomName, user: userName, peerNames })
 }
 
-if (roomName) {
+async function bootRoom(room: string): Promise<void> {
+  // A room's log is also persisted locally under its stable session id, so
+  // rejoining resumes the jam even before the server answers — restore that
+  // copy first, then connect (the join snapshot carries it up).
+  try {
+    const saved = await sessionStore.load(currentSessionId)
+    if (saved) {
+      quietly(() => editableStore.load(saved))
+      const savedRuns = await sessionStore.runs(currentSessionId).catch(() => [])
+      quietly(() => (savedRuns.length ? editableStore.setRuns(savedRuns) : editableStore.deriveRunsFromCode()))
+    }
+  } catch { /* no local copy — the join sync seeds us from peers instead */ }
+
   // Guarantee "activity" exists locally before we ever join: the room server
   // authors peer-join/leave events referencing it (see server/server.ts and
   // worker/room.ts), and if this replica were the very first to create the
@@ -1075,12 +1105,10 @@ if (roomName) {
   chipStatus('connecting')
   multiplayer = connectMultiplayer({
     url: multiplayerUrl(),
-    room: roomName,
+    room,
     logs: { session: editableStore.log, taps: tapLog.log, [PRESENCE_LOG]: presence!.log },
     onStatus: chipStatus,
   })
-} else {
-  chipSolo()
 }
 
 function firstRun(): void {
@@ -1099,5 +1127,13 @@ function firstRun(): void {
 }
 
 // Physics (jolt's WASM) now loads inside the cook worker, which holds the
-// first cook until it settles — nothing to wait for here.
-firstRun()
+// first cook until it settles — nothing to wait for here. A room boot first
+// awaits the locally-persisted copy of the room's log (bootRoom), so
+// firstRun's "resume or speculative default" decision sees the restored runs.
+async function boot(): Promise<void> {
+  if (roomName) await bootRoom(roomName)
+  else chipSolo()
+  firstRun()
+}
+
+void boot()

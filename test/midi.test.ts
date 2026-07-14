@@ -7,9 +7,28 @@ import {
 import { buildTimeline } from '../src/timeline.js'
 import { frameToBeat, beatToFrame } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
+import type { StampedEvent } from '../src/event-log.js'
+import type { MidiStore } from '../src/midi.js'
 
 // The 1-indexed source `beat` that maps to a given cache frame (30 frames/beat).
 const b = (frame: number): number => frameToBeat(frame)
+
+// A minimal in-memory MidiStore, standing in for the editable-table store the
+// app backs MIDI with (the exact twin of sliders' fake) — appends events,
+// replays them, fires onChange.
+function fakeStore(): MidiStore {
+  const events: StampedEvent[] = []
+  let seq = 0
+  const listeners: (() => void)[] = []
+  return {
+    record(kind: string, payload: Record<string, unknown> = {}): void {
+      events.push({ kind, table: 'midi', seq: seq++, t: 0, ...payload })
+      listeners.forEach((f) => f())
+    },
+    events: () => events.slice(),
+    onChange: (cb: () => void) => { listeners.push(cb) },
+  }
+}
 
 // ── Note names ↔ numbers ────────────────────────────────────────────────────
 
@@ -77,7 +96,7 @@ test('sampleMidiAt filters by channel when one is given', () => {
 
 test('createMidiInput stamps events with the current source position', () => {
   let srcBeat = 1
-  const input = createMidiInput({ getIndex: () => srcBeat })
+  const input = createMidiInput({ store: fakeStore(), getIndex: () => srcBeat })
 
   srcBeat = b(60)             // beat that maps to frame 60
   input.feed([0x90, 60, 127]) // c4 on, recorded at that source position
@@ -93,11 +112,13 @@ test('createMidiInput stamps events with the current source position', () => {
   assert.equal(input.ctxAt(59).midi!('c4', null), 0)
 })
 
-test('createMidiInput notifies on change and clears', () => {
+test('feeds and clears land in the store (whose onChange notifies); ignored messages record nothing', () => {
+  const store = fakeStore()
   let changes = 0
-  const input = createMidiInput({ getIndex: () => 1, onChange: () => { changes++ } })
+  store.onChange(() => { changes++ })
+  const input = createMidiInput({ store, getIndex: () => 1 })
   input.feed([0x90, 62, 100])
-  input.feed([0xe0, 0, 0]) // ignored message → no row, no notify
+  input.feed([0xe0, 0, 0]) // ignored message → no event, no notify
   assert.equal(input.rows().length, 1)
   assert.equal(changes, 1)
   input.clear()
@@ -111,7 +132,7 @@ test('createMidiInput notifies on change and clears', () => {
 
 test('a note played in a new loop replaces its previous take; untouched notes carry forward', () => {
   let src = 1, loop = 0
-  const input = createMidiInput({ getIndex: () => src, getLoop: () => loop })
+  const input = createMidiInput({ store: fakeStore(), getIndex: () => src, getLoop: () => loop })
 
   // Loop 0: play c4 at beat 2, d4 at beat 3
   src = 2; input.feed([0x90, 60, 127]) // c4 on
@@ -140,7 +161,7 @@ test('a note played in a new loop replaces its previous take; untouched notes ca
 
 test('a second play of the same note in the same loop adds to that take', () => {
   let src = 1, loop = 0
-  const input = createMidiInput({ getIndex: () => src, getLoop: () => loop })
+  const input = createMidiInput({ store: fakeStore(), getIndex: () => src, getLoop: () => loop })
 
   // Loop 0
   src = 2; input.feed([0x90, 60, 127]) // c4 on
@@ -160,7 +181,7 @@ test('a second play of the same note in the same loop adds to that take', () => 
 
 test('a burst of messages at the same frame replaces rather than piling up', () => {
   let src = 2
-  const input = createMidiInput({ getIndex: () => src })
+  const input = createMidiInput({ store: fakeStore(), getIndex: () => src })
 
   // Same note, same channel, same source position — e.g. rapid velocity/CC
   // messages landing within the same frame — should collapse to one row.
@@ -175,7 +196,7 @@ test('a burst of messages at the same frame replaces rather than piling up', () 
 
 test('same note/beat but different channels keep one row per channel', () => {
   let src = 2
-  const input = createMidiInput({ getIndex: () => src })
+  const input = createMidiInput({ store: fakeStore(), getIndex: () => src })
 
   input.feed([0x90, 60, 100]) // c4, channel 1
   input.feed([0x91, 60, 50])  // c4, channel 2, same beat
@@ -187,7 +208,7 @@ test('same note/beat but different channels keep one row per channel', () => {
 
 test('same note/channel but different frame both survive', () => {
   let src = b(0)
-  const input = createMidiInput({ getIndex: () => src })
+  const input = createMidiInput({ store: fakeStore(), getIndex: () => src })
 
   input.feed([0x90, 60, 100])
   src = b(30)
