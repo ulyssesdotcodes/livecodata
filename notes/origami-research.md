@@ -586,6 +586,39 @@ Ranked roughly by expected value.
   states only. A cheap post-pass separating coincident plies along the
   local normal during baked frames would remove residual mid-swing
   shimmer.
+- **The scoped-cluster design (synthesis, 2026-07-14)** — three ideas
+  that compose into the strongest candidate if the mechanism's exact
+  open-flip-close ever reads too mechanical:
+  1. *Static gluing*: fold-mech's weld/cut analysis already computes
+     which plies provably move as one slab; feed those clusters into a
+     solver as rigid bodies (6 DOF each, ~36 DOF for the neck instead of
+     ~300). Internal crumple becomes impossible by construction, and
+     rigid-cluster XPBD is a practical implementation of the "Newton on
+     loop closure" generalization for asymmetric folds the closed form
+     can't do. Glue conservatively-correctly: over-gluing locks the
+     mechanism (the neck-bridges-the-flanks lesson); the history-driven
+     cut escalation is the existing un-gluing tool.
+  2. *Sparse static bend rulings*: paper is developable — curvature
+     concentrates along straight rulings, so uniform subdivision is
+     wasted DOF. Place a few bend lines statically where the mechanism
+     says curvature must live (pocket plies near the spine and fold
+     line); `kind:"crease"` rows are already the authoring primitive.
+     Fewer DOF also shrinks the constraint-graph diameter, which is what
+     Gauss-Seidel convergence scales with.
+  3. *Base/embellishment scoping* (Lang's tree theory: a base is a tree
+     of flaps; shaping folds operate on one flap): after the base, an
+     embellishment fold touches one flap plus its pocket — freeze
+     everything else and solve only those plies. This is also why the
+     current hybrid routing works at all: traditional sequences put the
+     layer-complex work in shallow collapse steps (soft relax) and the
+     deep-stack work in point reverses (mechanism).
+  Combined — flap-scoped solve + glued clusters + static rulings +
+  XPBD projection, seeded by the analytic trajectory — each piece kills
+  a documented failure: scoping kills whole-body splay, gluing kills
+  crumple, rulings put the bow where paper bows, projection kills the
+  stiffness-ratio trap. This is how the head fold could reverse with the
+  body staying closed and slightly bowed (the way fingers cheat) instead
+  of the rigid theorem's full re-opening.
 - **Known non-goals**: universal physics playback (failed twice),
   runtime solving (everything bakes at compile), GPL code (Rabbit Ear
   stays reference-only).
