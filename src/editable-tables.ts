@@ -281,21 +281,32 @@ export function schemaColumns(schema: Schema): EditableColumn[] {
 // old sessions keep loading. The fold (applyEvent) only ever sees current-shape
 // events because load() runs these first.
 
-// v1 → v2: a create/declare-schema event's `columns` used to be serialized as
-// the raw editable() schema object ({ name: type }) — a specification produced
-// by running the program — rather than the [{ name, type }] column array the
-// fold reads. Normalize any object-shaped `columns` into the array form; an
-// array (already current) or anything else is left untouched.
-function migrateColumnsToArray(events: StampedEvent[]): StampedEvent[] {
+// v1 → v2: normalize a create/declare-schema event's schema. Older sessions
+// serialized the raw editable() schema object ({ name: type }) — a specification
+// produced by running the program — instead of the [{ name, type }] column array
+// the fold reads, and it landed in different fields across versions: under
+// `columns`, and under `rows` (where the fold then tried to seed rows from it
+// and threw `r.map is not a function`). Recover the columns from wherever the
+// schema object is, and guarantee `rows` is an array of actual seed rows (a
+// schema object there is a spec, not data). Current-shape events — an array
+// `columns` and an array/absent `rows` — are left untouched.
+function isSchemaObject(v: unknown): v is Schema {
+  return !!v && typeof v === 'object' && !Array.isArray(v)
+}
+
+function migrateSchemaShape(events: StampedEvent[]): StampedEvent[] {
   return events.map((e) => {
     if (e.kind !== 'create' && e.kind !== 'declare-schema') return e
-    const cols = e.columns
-    if (!cols || Array.isArray(cols) || typeof cols !== 'object') return e
-    return { ...e, columns: schemaColumns(cols as Schema) }
+    const next: StampedEvent = { ...e }
+    if (isSchemaObject(next.columns)) next.columns = schemaColumns(next.columns)
+    else if (!Array.isArray(next.columns) && isSchemaObject(next.rows)) next.columns = schemaColumns(next.rows)
+    // Seed rows must be an array; a mis-stored schema object is dropped.
+    if ('rows' in next && !Array.isArray(next.rows)) next.rows = []
+    return next
   })
 }
 
-const EDITABLE_MIGRATIONS: EventMigration[] = [migrateColumnsToArray]
+const EDITABLE_MIGRATIONS: EventMigration[] = [migrateSchemaShape]
 
 // Re-drive a code-created table's rows from a fresh program seed, in place.
 // The rule the whole feature turns on: a code row the user hasn't touched

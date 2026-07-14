@@ -330,34 +330,62 @@ test('serialize/load round-trips the whole store — the unit a session persists
   assert.ok(b.has('t2'), 'every table in the store round-trips, not just one')
 })
 
-test('migrates a v1 session whose create event stored the editable() schema object as columns', () => {
-  // Before v2, a create event serialized its `columns` as the raw editable()
-  // schema ({ name: type }) — a specification produced by running the program —
-  // rather than today's [{ name, type }] array. The v1→v2 migration recovers
-  // the columns on load so a session with table data always opens.
-  const legacyV1 = JSON.stringify({
+test('migrates a v1 session whose create event stored the editable() schema object (in columns or rows)', () => {
+  // Before v2, a create event serialized the raw editable() schema
+  // ({ name: type }) — a specification produced by running the program — instead
+  // of today's [{ name, type }] column array, and it landed under `columns` in
+  // some sessions and under `rows` in others (where the fold then did
+  // seed.map(...) on it and threw `r.map is not a function`). The v1→v2 migration
+  // recovers the columns from wherever the schema is and empties a schema-in-rows.
+  const schemaInColumns = JSON.stringify({
     version: 1, start: 1,
     events: [{
       kind: 'create', table: 'nums',
-      columns: { beat: 'number', px: 'number', disabled: 'boolean' },
-      rows: [{ beat: 1, px: 5, disabled: false }, { beat: 2, px: 9, disabled: false }],
+      columns: { beat: 'number', px: 'number' },
+      rows: [{ beat: 1, px: 5 }],
       declared: true, seq: 0, t: 0, src: 'a',
     }],
   })
-  const store = createEditableTableStore()
-  assert.ok(store.load(legacyV1), 'a v1 session with table data loads')
-  assert.deepEqual(store.get('nums')!.columns, [
-    { name: 'beat', type: 'number' }, { name: 'px', type: 'number' }, { name: 'disabled', type: 'boolean' },
-  ], 'columns are recovered from the legacy schema object')
-  assert.deepEqual(store.get('nums')!.rows, [
-    { beat: 1, px: 5, disabled: false }, { beat: 2, px: 9, disabled: false },
-  ], 'the table data is intact')
+  const a = createEditableTableStore()
+  assert.ok(a.load(schemaInColumns))
+  assert.deepEqual(a.get('nums')!.columns, [{ name: 'beat', type: 'number' }, { name: 'px', type: 'number' }])
+  assert.deepEqual(a.get('nums')!.rows, [{ beat: 1, px: 5 }], 'real seed rows are kept')
 
-  // Re-serializing writes the current version with columns already in array
-  // form, so a later load needs no migration.
-  const reSaved = JSON.parse(store.serialize())
+  // The debugger case: the schema object was stored under `rows`.
+  const schemaInRows = JSON.stringify({
+    version: 1, start: 1,
+    events: [{
+      kind: 'create', table: 'nums',
+      rows: { beat: 'number', px: 'number' },
+      declared: true, seq: 0, t: 0, src: 'a',
+    }],
+  })
+  const b = createEditableTableStore()
+  assert.ok(b.load(schemaInRows), 'a session that stored the schema under rows still loads')
+  assert.deepEqual(b.get('nums')!.columns, [{ name: 'beat', type: 'number' }, { name: 'px', type: 'number' }],
+    'columns are recovered from the schema object in rows')
+  assert.deepEqual(b.get('nums')!.rows, [], 'the schema-in-rows is dropped, not treated as data')
+
+  // Re-serializing writes the current version with the schema in array form.
+  const reSaved = JSON.parse(b.serialize())
   assert.equal(reSaved.version, 2)
   assert.ok(Array.isArray(reSaved.events[0].columns))
+})
+
+test('user edits after a migrated create still fold onto the recovered table', () => {
+  // The point of loading the data: the user's own edits (add-row/set-cell), which
+  // are the real table data, must land on the table the migration recovered.
+  const legacy = JSON.stringify({
+    version: 1, start: 1,
+    events: [
+      { kind: 'create', table: 'nums', rows: { beat: 'number', px: 'number' }, declared: true, seq: 0, t: 0, src: 'a' },
+      { kind: 'add-row', table: 'nums', seq: 1, t: 1, src: 'a' },
+      { kind: 'set-cell', table: 'nums', row: 0, col: 'px', value: 42, seq: 2, t: 2, src: 'a' },
+    ],
+  })
+  const store = createEditableTableStore()
+  assert.ok(store.load(legacy))
+  assert.deepEqual(store.get('nums')!.rows, [{ beat: 0, px: 42 }], 'the edited row is present on the recovered table')
 })
 
 test('a single unfoldable event never sinks the load — the table data still comes through', () => {
