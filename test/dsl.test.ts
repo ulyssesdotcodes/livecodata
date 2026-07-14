@@ -51,6 +51,13 @@ test('filterMap exposes the index and full row array (for look-back)', () => {
   assert.deepEqual(out.rows, [{ v: 9 }])
 })
 
+test('flatMap fans rows out (and drops nulls) like filterMap', () => {
+  const base = t([{ v: 1 }, { v: 2 }, { v: 3 }])
+  const out = base.flatMap((r) =>
+    r.v === 2 ? null : r.v === 3 ? [{ v: 3 }, { v: 30 }] : { v: (r.v as number) * 10 })
+  assert.deepEqual(out.rows, [{ v: 10 }, { v: 3 }, { v: 30 }])
+})
+
 test('concat accepts a Table or a bare array', () => {
   const a = t([{ v: 1 }])
   assert.deepEqual(a.concat(t([{ v: 2 }])).rows, [{ v: 1 }, { v: 2 }])
