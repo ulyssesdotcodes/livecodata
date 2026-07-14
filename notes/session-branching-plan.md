@@ -45,6 +45,8 @@ edits it applies:
   parent: 'a…' | null,      // the apply this one builds on; null for the first
   edits: ['<src>#<seq>', …],// ids of the edit events this apply commits,
                             // in (seq, src) order
+  mode: 'extend' | 'fork',  // extend = append my edits to the shared line;
+                            // fork = deliberately branch from a past apply
   ... existing fields (changed, at) }
 ```
 
@@ -60,11 +62,17 @@ fold of apply events.
 
 This makes branch membership **explicit rather than inferred**. Divergence
 needs no marker event: scrub back to apply₁ and edit, and those edits are
-simply *unclaimed* until the next apply (parent = apply₁) claims them, while
-the old branch's applies claim their own. The motivating ambiguity — two lines
-of history both "following" apply₁, indistinguishable by seq ranges because
-forked edits append at the log tail — never arises, because no fold ever asks
-"which edits follow this node"; it reads each apply's list.
+simply *unclaimed* until the next apply (parent = apply₁, mode `fork`) claims
+them, while the old branch's applies claim their own. The motivating ambiguity
+— two lines of history both "following" apply₁, indistinguishable by seq
+ranges because forked edits append at the log tail — never arises, because no
+fold ever asks "which edits follow this node"; it reads each apply's list.
+
+`mode` makes forking a recorded **intent, not a race outcome**: an apply made
+at what the replica believes is the tip records `extend` — it is "appending a
+series of edits" to the shared line — and only an apply made from a
+scrubbed/checked-out position records `fork`. Concurrency alone never creates
+a branch (see Multiplayer); only deliberately editing history does.
 
 Size note: an apply listing a few hundred cell edits costs a few KB of ids.
 Fine as-is; if a pathological session ever cares, `edits` compacts losslessly
@@ -102,7 +110,7 @@ everywhere, which is correct: they were never applied.
 Add a pure module (`src/branches.ts`, mirroring the style of `event-log.ts`):
 
 ```ts
-interface ApplyNode { id: string; parent: string | null; edits: string[]; seq: number; src: string }
+interface ApplyNode { id: string; parent: string | null; edits: string[]; mode: 'extend' | 'fork'; seq: number; src: string }
 interface BranchTree {
   nodes: Map<string, ApplyNode>
   children: Map<string, string[]>       // parent id -> child ids, (seq,src)-ordered
@@ -123,12 +131,23 @@ seq-window reasoning anywhere.
 Events predating the first apply need no special case: the first apply claims
 them in its `edits` like anything else.
 
+**Linearization of concurrent extends**: after linking nodes by `parent`,
+`buildBranchTree` rewrites each node's `extend`-mode children into a chain in
+`(seq, src)` order — the first stays a child, each next one is re-parented
+onto the previous — while `fork`-mode children remain true siblings. This is
+how a genuine race (two replicas applied at tip X before seeing each other)
+resolves: both recorded parent X and mode `extend`, and every replica folds
+them into the *same single line*, so peers stay on one branch. It's a pure
+function of the log — no reconciliation event, no "who noticed first"
+protocol.
+
 Defensive rules, same spirit as `applyEvent`: an apply whose `parent` is
-unknown (partial/merged log) parents to the root; a cycle (corrupt data) breaks
-at the repeated node; an `edits` id that dereferences to nothing is skipped;
-an event claimed by two applies on one path (shouldn't happen; concurrent
-same-parent applies on *different* paths legitimately both claim shared
-pre-fork edits) folds once.
+unknown (partial/merged log) parents to the root; a missing `mode` is read as
+`extend` (a lone child chains trivially, so this is also the legacy-friendly
+default); a cycle (corrupt data) breaks at the repeated node; an `edits` id
+that dereferences to nothing is skipped; an event claimed by two applies on
+one path (racing extends may both claim shared pending edits they'd each
+seen) folds once, at its `(seq, src)` position.
 
 ## Store changes (`editable-tables.ts`)
 
@@ -143,9 +162,15 @@ becomes branch-aware:
   onto `pending`. The incremental head-fold keeps working because, on the
   current branch, new events always extend the current fold.
 - `recordApply(payload)` replaces `recordRun()`: appends the apply event with
-  `{ id, parent: head, edits: pending }`, then sets `head = id`,
-  `pending = []`. Returns the node. `runs()`/`setRuns()`/`SessionRun` survive
-  only for session-format compatibility.
+  `{ id, parent, edits: pending, mode }`, then sets `head = id`,
+  `pending = []`. Returns the node. `mode` is `fork` only when the apply comes
+  from a scrubbed/checked-out node; otherwise `extend` — and for an `extend`,
+  `parent` **fast-forwards to the current tip** of the branch, not the stale
+  base: if merged peer applies landed since this replica's last apply, the new
+  apply parents the newest of them, and the replica's pending edits (typically
+  non-conflicting — other tables, other rows) simply ride along in `edits` and
+  fold after the peer's. `runs()`/`setRuns()`/`SessionRun` survive only for
+  session-format compatibility.
 - **Fork-on-edit** — the behavioral heart of the feature. Replace the
   `append() → replay = null` rule: if a mutation arrives while a replay view is
   active (scrubbed to apply N), set `head = N`, discard `pending` (edits based
@@ -170,11 +195,12 @@ becomes branch-aware:
 
 - `evaluate()`: when invoked while scrubbed (session bar not at latest), do
   **not** `setReplayView(null)`-back-to-head first — cook against the scrubbed
-  fold and let `recordApply` create the child of the scrubbed apply. (The cook
-  itself may append ensure()/retainDeclared events; they land as pending with
-  the right `base` and are claimed by this apply — the fork-on-edit rule makes
-  the first such append perform the fork.) When at latest, behavior is
-  unchanged (parent = current head).
+  fold and let `recordApply` create the `fork`-mode child of the scrubbed
+  apply. (The cook itself may append ensure()/retainDeclared events; they land
+  as pending with the right `base` and are claimed by this apply — the
+  fork-on-edit rule makes the first such append perform the fork.) When at
+  latest, behavior is unchanged: an `extend` apply, fast-forwarded onto
+  whatever the branch tip is by `recordApply`.
 - `scrubSession(pos)`: `pos` indexes `tree.pathTo(head)` instead of the flat
   runs list; latest position = live head fold (committed + pending), as today.
 - Edit-while-scrubbed needs no main.ts code: the store's fork-on-edit covers
@@ -238,11 +264,29 @@ Semantics to settle (deliberately kept simple):
   checkout is wanted later, it's one more activity event kind.
 - **Peers' un-applied edits** stay visible exactly as today: they merge in
   unclaimed with `base = head`, and the live fold overlays them.
-- **Concurrent applies with the same parent** just become sibling branches —
-  arguably the *correct* outcome, and better than today's last-write-wins on
-  the linear run list. Each sibling's `edits` list says precisely what it saw
-  (both may claim shared pre-fork pending edits — fine, each branch folds them
-  once), so replicas agree without any segment-splitting rule.
+- **Concurrent applies append; they don't fork.** The goal: non-conflicting
+  concurrent work (edits on separate tables, separate parts of the code) lands
+  on the *same* branch, and peers stay together. Three layers deliver it:
+  1. *Intent on the event* (`mode`): only a deliberate apply-from-history
+     records `fork`; a tip apply records `extend` — "append my series of edits
+     to the shared line".
+  2. *Apply-time fast-forward*: a replica whose tip moved underneath it (peer
+     applies merged in since its base) parents its `extend` apply onto the
+     current tip. Its claimed edits fold after the peer's — for disjoint
+     tables/cells that's exactly the intended union.
+  3. *Fold-time linearization* (see The fold): the leftover true race — both
+     applied at X before seeing each other, so both recorded parent X — chains
+     `extend` siblings deterministically into one line on every replica.
+- **Conflict is advisory, not structural.** Two `extend` applies that touch
+  the *same* cell still linearize — which is precisely today's last-write-wins
+  multiplayer semantics, so the degenerate case degrades to exactly current
+  behavior instead of silently splitting the performance. Content-conflict
+  detection becomes a GUI concern (badge the apply: "overwrote N's edit —
+  branch instead?"), not a fold concern. The one genuinely shared cell — the
+  program text in `code[0].code` — can do better at *apply time* (polish
+  phase): 3-way merge the text (base's code, mine, theirs); a clean merge
+  extends with the merged program, a dirty one surfaces the choice to fork.
+  The fold stays dumb either way.
 
 ## Testing
 
@@ -263,19 +307,27 @@ style like the existing tests:
   loads to linear behavior; first apply on a legacy log claims it wholesale;
   migration (if adopted) produces the same folds the live session had.
 - Merge: two logs forked from a common prefix merge into the same tree on both
-  replicas; concurrent same-parent applies become siblings whose folds agree
-  on every replica; a peer's unclaimed edits show at head.
+  replicas; a peer's unclaimed edits show at head.
+- Concurrency: an `extend` apply fast-forwards onto a merged-in tip (disjoint
+  table edits from both replicas all present in the folded state); racing
+  `extend` applies with the same parent linearize identically on both
+  replicas, including when both claim shared pending edits (folded once); a
+  `fork`-mode apply racing an `extend` keeps its own branch; same-cell racing
+  extends resolve last-write-wins, matching today's behavior.
 
 ## Phasing
 
-1. **Foundations (pure):** `branches.ts` fold + tests; the apply event shape
-   (`id`/`parent`/`edits`) and `base` stamping + `recordApply` in the store
-   (still linear behavior — every apply parents the previous one and claims
-   the pending edits). Ship: no visible change.
-2. **Fork-on-edit + checkout:** store fork rule, branch-aware replay/fold,
-   `evaluate`/`scrubSession` rewiring. Ship: branching works, GUI still shows
-   only the current path.
+1. **Foundations (pure):** `branches.ts` fold + tests, including extend-chain
+   linearization; the apply event shape (`id`/`parent`/`edits`/`mode`) and
+   `base` stamping + `recordApply` (with fast-forward) in the store (still
+   linear behavior — every apply extends the tip and claims the pending
+   edits). Ship: no visible change.
+2. **Fork-on-edit + checkout:** store fork rule (`fork`-mode applies),
+   branch-aware replay/fold, `evaluate`/`scrubSession` rewiring. Ship:
+   branching works, GUI still shows only the current path.
 3. **GUI:** branch chip + switcher popover, fork-warning tint, `head` in the
    session record. Ship: the feature as described.
-4. **Polish:** branch naming, mini-graph, legacy-log migration if the dual
-   path warrants it, shared-checkout event if multiplayer use asks for it.
+4. **Polish:** branch naming, mini-graph, conflict badges on concurrent
+   extends, apply-time 3-way merge of the code text, legacy-log migration if
+   the dual path warrants it, shared-checkout event if multiplayer use asks
+   for it.
