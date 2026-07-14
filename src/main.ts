@@ -808,28 +808,42 @@ function exitRoomMode(): void {
 
 function openSession(id: string): void {
   exitRoomMode()
-  // Loading a saved session can fail — its stored data may be missing or
-  // unreadable, and editableStore.load can throw on a corrupt/incompatible
-  // log. Surface any of those on the error strip instead of silently leaving
-  // the previous session on screen with no explanation.
+  // Only a genuinely unreadable session aborts the switch: its stored data may
+  // be missing, or editableStore.load may reject/throw on a corrupt log. A
+  // session whose *program* errors is not corrupt — it still opens (below).
   try {
     const events = sessionStore.load(id)
     if (events == null) throw new Error('saved session data is missing')
     const ok = quietly(() => editableStore.load(events))
     if (!ok) throw new Error('saved session data could not be read')
-    currentSessionId = id
-    // Restore the saved run list; a legacy session that predates runs derives
-    // them from "code"'s recorded program history so its history stays scrubbable.
-    const savedRuns = sessionStore.runs(id)
-    quietly(() => (savedRuns.length ? editableStore.setRuns(savedRuns) : editableStore.deriveRunsFromCode()))
-    sessionBar.setLog({ length: sessionLength() })
   } catch (err) {
     editor.setError(`Could not open session: ${(err as Error).message}`)
     return
   }
-  // The run (cook + render) of the restored program surfaces its own errors.
-  scrubSession(Math.max(0, sessionLength() - 1))
+  currentSessionId = id
+  // Restore the saved run list; a legacy session that predates runs derives
+  // them from "code"'s recorded program history so its history stays scrubbable.
+  const savedRuns = sessionStore.runs(id)
+  quietly(() => (savedRuns.length ? editableStore.setRuns(savedRuns) : editableStore.deriveRunsFromCode()))
+  sessionBar.setLog({ length: sessionLength() })
   refreshSelector()
+
+  // Open the session for editing *before* running it: show its program and make
+  // its tables editable now, so that if the program errors when cooked below the
+  // session still ends up genuinely open — the editor holds its code and the
+  // table panel its editable tables — exactly as if the user had been sitting on
+  // this session and pressed Run to a failure. Editability reads the store
+  // directly (see table-panel), so an empty view map is enough; a successful
+  // cook replaces it via applyCooked, a failed one leaves just these tables.
+  const codeRow = editableStore.get('code')?.rows[0]
+  if (codeRow && typeof codeRow.code === 'string') editor.setCode(codeRow.code)
+  lastViews = new Map<string, Table>()
+  updateSliderDefs(lastViews)
+  tablePanel.setTables(tablesForDisplay(lastViews))
+
+  // The run (cook + render) of the restored program surfaces its own errors on
+  // the editor's error strip without disturbing the opened tables above.
+  scrubSession(Math.max(0, sessionLength() - 1))
 }
 
 function newSession(): void {
