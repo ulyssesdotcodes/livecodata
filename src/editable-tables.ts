@@ -259,6 +259,27 @@ export function conformRow(row: Row, columns: EditableColumn[]): Row {
   return next
 }
 
+// A create/declare-schema event's `columns`, tolerant of how it was stored. The
+// current format is an array of { name, type }; but a create event's schema is
+// really a *specification* produced by running the program (see editable()), and
+// older sessions serialized it as the raw editable() schema object
+// ({ name: type }) instead of the column array. Accept either — array as-is, a
+// schema object via schemaColumns — and treat anything else as no columns, so a
+// session's actual table data always loads even when its saved schema is in a
+// legacy or unexpected shape (the real columns get re-declared when the code
+// next runs anyway).
+function eventColumns(raw: unknown): EditableColumn[] {
+  if (Array.isArray(raw)) return raw.map((c) => ({ ...(c as EditableColumn) }))
+  if (raw && typeof raw === 'object') return schemaColumns(raw as Schema)
+  return []
+}
+
+// A create/seed event's `rows`, guarded to an array — a malformed or legacy
+// `rows` field must never throw the fold that loads the rest of the session.
+function eventRows(raw: unknown): Row[] {
+  return Array.isArray(raw) ? (raw as Row[]) : []
+}
+
 // An editable() schema in column-list form — the shape create/declare-schema
 // events carry. Normalizes each ColumnSpec: a bare type stays a type, a string
 // array becomes an enum column with those options, the object form is taken
@@ -323,12 +344,12 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
   const name = e.table as string
   if (e.kind === 'create') {
     if (tables.has(name)) return
-    const columns = (e.columns as EditableColumn[] ?? []).map((c) => ({ ...c }))
+    const columns = eventColumns(e.columns)
     // A DSL-originated create (ensure()'s first sight of the table) seeds
     // `declared`; a table-panel create ("+ table", or record()'s columnless
     // stream) seeds `userColumns` directly — it has no program declaring it.
     const declared = e.declared === true ? columns : null
-    const seed = (e.rows as Row[] | undefined) ?? []
+    const seed = eventRows(e.rows)
     const t: TableState = {
       userColumns: declared ? [] : columns, removedColumns: new Set(), declared,
       rows: [], rowMeta: [], events: [eventRow(e)], log: e.log === true,
@@ -347,7 +368,7 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
   t.events.push(eventRow(e))
   switch (e.kind) {
     case 'declare-schema': {
-      t.declared = (e.columns as EditableColumn[] ?? []).map((c) => ({ ...c }))
+      t.declared = eventColumns(e.columns)
       t.rows = t.rows.map((r) => conformRow(r, effectiveColumns(t)))
       break
     }
@@ -355,7 +376,7 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
       // The program re-ran editable(name, schema, seedRows) with a changed
       // seed: re-drive the rows the user hasn't touched (see reseedRows). Only
       // ever appended for a code-created table (see ensure).
-      const seed = (e.rows as Row[] | undefined) ?? []
+      const seed = eventRows(e.rows)
       t.lastSeed = seed.map((r) => ({ ...r }))
       reseedRows(t, seed)
       break
@@ -452,7 +473,12 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
 // reconstructs the store as it was at an earlier run.
 function foldEventsMap(events: StampedEvent[]): Map<string, TableState> {
   const tables = new Map<string, TableState>()
-  for (const e of events) applyEvent(tables, e)
+  for (const e of events) {
+    // A single malformed event — e.g. from an older or otherwise unexpected
+    // session shape — must never sink the whole load: any session with table
+    // data should still open. Skip the bad event and fold the rest.
+    try { applyEvent(tables, e) } catch { /* ignore an unfoldable event */ }
+  }
   return tables
 }
 

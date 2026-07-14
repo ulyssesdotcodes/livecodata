@@ -330,6 +330,46 @@ test('serialize/load round-trips the whole store — the unit a session persists
   assert.ok(b.has('t2'), 'every table in the store round-trips, not just one')
 })
 
+test('loads a legacy session whose create event stored the editable() schema object as columns', () => {
+  // Older sessions serialized a create event's `columns` as the raw editable()
+  // schema ({ name: type }) rather than today's [{ name, type }] array. The
+  // schema is a product of running the program, not table data — so a session
+  // that has table data must still load, with its columns recovered.
+  const legacy = JSON.stringify({
+    version: 1, start: 1,
+    events: [{
+      kind: 'create', table: 'nums',
+      columns: { beat: 'number', px: 'number', disabled: 'boolean' },
+      rows: [{ beat: 1, px: 5, disabled: false }, { beat: 2, px: 9, disabled: false }],
+      declared: true, seq: 0, t: 0, src: 'a',
+    }],
+  })
+  const store = createEditableTableStore()
+  assert.ok(store.load(legacy), 'a session with table data loads despite a legacy schema shape')
+  assert.deepEqual(store.get('nums')!.columns, [
+    { name: 'beat', type: 'number' }, { name: 'px', type: 'number' }, { name: 'disabled', type: 'boolean' },
+  ], 'columns are recovered from the legacy schema object')
+  assert.deepEqual(store.get('nums')!.rows, [
+    { beat: 1, px: 5, disabled: false }, { beat: 2, px: 9, disabled: false },
+  ], 'the table data is intact')
+})
+
+test('a single unfoldable event does not sink the rest of a session load', () => {
+  // Belt-and-suspenders: even an event the fold cannot make sense of must not
+  // abort the load — every other table in the session still comes through.
+  const good = createEditableTableStore()
+  good.createTable('keep')
+  good.addRow('keep')
+  good.setCell('keep', 0, 'beat', 7)
+  const parsed = JSON.parse(good.serialize())
+  // Splice in an event the fold cannot touch at all (null — reading e.table throws).
+  parsed.events.push(null)
+
+  const store = createEditableTableStore()
+  assert.ok(store.load(JSON.stringify(parsed)))
+  assert.deepEqual(store.get('keep')!.rows, [{ beat: 7, loop: 0 }], 'the good table survives the bad event')
+})
+
 test('load replaces the store entirely and notifies; clear empties it and notifies', () => {
   const store = createEditableTableStore()
   store.createTable('t1')
