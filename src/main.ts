@@ -767,28 +767,30 @@ async function scrubSession(pos: number): Promise<void> {
   const epoch = ++scrubEpoch
   cooking++
   editableStore.setReplayView(atLatest ? null : runs[clamped])
-  let cooked: CookedData
+  // Keep the cook *and* the render inside one try: a program restored from a
+  // saved session can fail either when it's cooked or when its cooked output is
+  // applied, and both must surface on the editor's error strip rather than
+  // vanishing as an unhandled rejection.
   try {
     const codeRow = editableStore.get('code')?.rows[0]
     if (!codeRow || typeof codeRow.code !== 'string') return
     const code = codeRow.code
     const seed = typeof codeRow.seed === 'number' ? codeRow.seed : 0
-    ;({ cooked } = await cookInWorker(code, seed))
+    const { cooked } = await cookInWorker(code, seed)
     if (epoch !== scrubEpoch) return
     liveCode = code
     liveSeed = seed
     editor.setCode(code)
+    editor.setError(null)
+    // Re-baseline the changed-detection at what's now showing, so the next Run's
+    // apply pulse reports its diff against the scrubbed view the user sees.
+    diffCooked(cooked)
+    applyCooked(cooked)
   } catch (err) {
     if (epoch === scrubEpoch) editor.setError((err as Error).message)
-    return
   } finally {
     cooking--
   }
-  editor.setError(null)
-  // Re-baseline the changed-detection at what's now showing, so the next Run's
-  // apply pulse reports its diff against the scrubbed view the user sees.
-  diffCooked(cooked)
-  applyCooked(cooked)
 }
 
 // Switching sessions while in a room would union the newly-loaded log into the
@@ -806,16 +808,26 @@ function exitRoomMode(): void {
 
 function openSession(id: string): void {
   exitRoomMode()
-  const events = sessionStore.load(id)
-  if (events == null) return
-  const ok = quietly(() => editableStore.load(events))
-  if (!ok) return
-  currentSessionId = id
-  // Restore the saved run list; a legacy session that predates runs derives
-  // them from "code"'s recorded program history so its history stays scrubbable.
-  const savedRuns = sessionStore.runs(id)
-  quietly(() => (savedRuns.length ? editableStore.setRuns(savedRuns) : editableStore.deriveRunsFromCode()))
-  sessionBar.setLog({ length: sessionLength() })
+  // Loading a saved session can fail — its stored data may be missing or
+  // unreadable, and editableStore.load can throw on a corrupt/incompatible
+  // log. Surface any of those on the error strip instead of silently leaving
+  // the previous session on screen with no explanation.
+  try {
+    const events = sessionStore.load(id)
+    if (events == null) throw new Error('saved session data is missing')
+    const ok = quietly(() => editableStore.load(events))
+    if (!ok) throw new Error('saved session data could not be read')
+    currentSessionId = id
+    // Restore the saved run list; a legacy session that predates runs derives
+    // them from "code"'s recorded program history so its history stays scrubbable.
+    const savedRuns = sessionStore.runs(id)
+    quietly(() => (savedRuns.length ? editableStore.setRuns(savedRuns) : editableStore.deriveRunsFromCode()))
+    sessionBar.setLog({ length: sessionLength() })
+  } catch (err) {
+    editor.setError(`Could not open session: ${(err as Error).message}`)
+    return
+  }
+  // The run (cook + render) of the restored program surfaces its own errors.
   scrubSession(Math.max(0, sessionLength() - 1))
   refreshSelector()
 }
