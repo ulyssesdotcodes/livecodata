@@ -15,6 +15,17 @@
 // presence is just more log the client folds, replacing what used to be a
 // dedicated `{type:'peers'}` message.
 //
+// One exception to "merge whatever clients bring": when a connection joins a
+// room that currently has *no other users*, its own session initializes the
+// room rather than unioning onto it. A userless room's logs are stale leftovers
+// from a past jam nobody is in (backends drop a room when its last socket
+// leaves, but durable storage can outlive that), so the first person back in
+// gets a clean room seeded from their local session — not a merge of their work
+// with whatever the room happened to still hold. With peers already present the
+// join unions as usual, folding solo work into the live jam. handleJoin takes
+// `hasPeers` from the adapter (only it knows the live socket count) to tell the
+// two cases apart.
+//
 // Handlers mutate the given logs map in place and report `changed` so durable
 // backends know when to persist. They are otherwise pure: no sockets, no
 // timers, no storage — which is what lets one test suite pin both backends.
@@ -84,11 +95,19 @@ function recordServerEvent(logs: RoomLogs, kind: string, clientId: string, now: 
   return ingest(logs, SESSION_LOG, [event])
 }
 
-export function handleJoin(logs: RoomLogs, msg: JoinMessage, now: number = Date.now()): JoinResult {
+export function handleJoin(logs: RoomLogs, msg: JoinMessage, now: number = Date.now(), hasPeers = true): JoinResult {
   const outbound: Outbound[] = []
   let changed = false
-  // Union the joiner's logs first, so peers get anything it authored offline,
-  // then hand it the whole room.
+  // Nobody else is here: this joiner *initializes* the room to its own session.
+  // Any logs still present are stale leftovers (see the module comment), so drop
+  // them before seeding rather than unioning the joiner's work onto them. No
+  // relay needed — there are no peers to relay to.
+  if (!hasPeers && logs.size) {
+    logs.clear()
+    changed = true
+  }
+  // Union the joiner's logs, so peers get anything it authored offline, then
+  // hand it the whole room.
   for (const [name, events] of Object.entries(msg.logs ?? {})) {
     if (!Array.isArray(events)) continue
     const added = ingest(logs, name, events)

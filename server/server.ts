@@ -88,7 +88,10 @@ export function startMultiplayerServer(
     if (msg.type === 'join' && typeof msg.room === 'string' && msg.room) {
       leave(ws)
       const room = getRoom(msg.room)
-      const result = handleJoin(room.logs, msg)
+      // room.clients is the live membership (this socket isn't added until
+      // below), so an empty map means the joiner is the only one here — its
+      // session initializes the room rather than merging onto stale logs.
+      const result = handleJoin(room.logs, msg, undefined, room.clients.size > 0)
       room.clients.set(ws, result.clientId)
       memberships.set(ws, room)
       deliver(room, ws, result.outbound)

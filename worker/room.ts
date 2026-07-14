@@ -96,7 +96,12 @@ export class Room extends DurableObject {
 
     if (msg.type === 'join') {
       const logs = await this.getLogs()
-      const result = handleJoin(logs, msg)
+      // This socket is already attached (acceptWebSocket ran in fetch) but has
+      // no client attachment until the line below, so any *other* open socket
+      // that has already joined is a live peer. None means the joiner is alone
+      // and its session initializes the room instead of merging onto stale logs.
+      const hasPeers = this.openSockets().some((s) => s !== ws && this.joinedClient(s) !== null)
+      const result = handleJoin(logs, msg, undefined, hasPeers)
       ws.serializeAttachment({ client: result.clientId } satisfies SocketAttachment)
       if (result.changed) await this.saveLogs(logs)
       this.deliver(ws, result.outbound)
