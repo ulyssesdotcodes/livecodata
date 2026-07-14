@@ -51,6 +51,28 @@ function stringSetting(key: string, def: string): Setting<string> {
   }
 }
 
+function numberSetting(key: string, def: number): Setting<number> {
+  return {
+    get(storage = defaultStorage()): number {
+      try {
+        const stored = storage?.getItem(key)
+        if (stored === null || stored === undefined) return def
+        const n = Number(stored)
+        return Number.isFinite(n) ? n : def
+      } catch {
+        return def
+      }
+    },
+    set(value, storage = defaultStorage()): void {
+      try {
+        storage?.setItem(key, String(value))
+      } catch {
+        // storage unavailable (e.g. private browsing quota) — setting just won't persist
+      }
+    },
+  }
+}
+
 // Vim mode was previously always on (hardcoded); default to on so existing
 // users see no change until they explicitly opt out via the settings toggle.
 const vimMode = boolSetting('livecodata.vimMode', true)
@@ -69,3 +91,10 @@ export const setUsername = username.set
 const midiEnabled = boolSetting('livecodata.midiEnabled', false)
 export const getMidiEnabled = midiEnabled.get
 export const setMidiEnabled = midiEnabled.set
+
+// Table pane's share of the editor+table column height, as a fraction of the
+// column's total height. Defaults to 0.5 (table takes up half). Dragging the
+// divider between the panes (see pane-divider.tsx) updates this.
+const sidePanelSplit = numberSetting('livecodata.sidePanelSplit', 0.5)
+export const getSidePanelSplit = sidePanelSplit.get
+export const setSidePanelSplit = sidePanelSplit.set
