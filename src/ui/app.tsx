@@ -21,6 +21,7 @@ import { SessionBar, type SessionBarController } from './session-bar.js'
 import { SessionSelector, type SessionSelectorController } from './session-selector.js'
 import { RoomChip, type RoomChipController } from './room-chip.js'
 import { SliderPanel, type SliderPanelController } from './slider-panel.js'
+import { PaneDivider } from './pane-divider.js'
 
 export interface AppProps {
   editor: EditorController
@@ -47,6 +48,8 @@ export interface CanvasMounts {
 }
 
 function App(props: AppProps & { mounts: CanvasMounts }) {
+  let sidePanels: HTMLDivElement | undefined
+  let tablePane: HTMLDivElement | undefined
   return (
     <>
       <div id="canvas-pane" ref={(el) => (props.mounts.canvasPane = el)}>
@@ -59,7 +62,7 @@ function App(props: AppProps & { mounts: CanvasMounts }) {
           </Show>
         </div>
       </div>
-      <div id="side-panels">
+      <div id="side-panels" ref={sidePanels}>
         <EditorPane ctl={props.editor}>
           <SessionSelector ctl={props.sessionSelector}>
             <RoomChip ctl={props.roomChip} />
@@ -73,7 +76,8 @@ function App(props: AppProps & { mounts: CanvasMounts }) {
           </SessionSelector>
           <SessionBar ctl={props.sessionBar} />
         </EditorPane>
-        <TablePane ctl={props.tablePanel} />
+        <PaneDivider container={() => sidePanels} tablePane={() => tablePane} />
+        <TablePane ctl={props.tablePanel} ref={(el) => (tablePane = el)} />
       </div>
     </>
   )

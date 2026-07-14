@@ -835,9 +835,9 @@ export function createTablePanel(
   }
 }
 
-export function TablePane(props: { ctl: TablePanelController }) {
+export function TablePane(props: { ctl: TablePanelController; ref?: (el: HTMLDivElement) => void }) {
   return (
-    <div id="table-pane">
+    <div id="table-pane" ref={props.ref}>
       <TablePanelView {...props.ctl} />
     </div>
   )
