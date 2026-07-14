@@ -554,11 +554,25 @@ Ranked roughly by expected value.
   the most promising route if the exact rigid motion ever reads too
   mechanical.
 - **Better soft solver, if ever needed again**: the failure mode was
-  explicit integration on a stiff ODE. Candidates in order: XPBD
-  (position-based, handles stiffness ratios natively), projective
-  dynamics, implicit Euler on the hinge network. Only worth it with a
-  concrete step the current routing handles badly — bring a failing
-  screenshot strip as the spec.
+  explicit integration on a stiff ODE — explicit force dynamics needs
+  dt ≲ 2/√k_max, so the stiffest constraint sets the timestep while the
+  softest sets convergence time; widening the ratio (rigid faces vs.
+  opening hinges) is what drove strain 15% → 107%. The fix is the
+  constraint-projection family, which satisfies constraints geometrically
+  each step instead of integrating penalty forces: XPBD (per-constraint
+  Lagrange multiplier with compliance α = 1/k, an approximation of
+  implicit Euler; α = 0 — infinite stiffness — is unconditionally stable,
+  so exact inextensibility costs nothing and stretch-crumple becomes
+  structurally impossible), projective dynamics (same local projections +
+  one prefactorized global solve; this is Kangaroo2's engine — its
+  "goals" are projection functions), or implicit Euler outright.
+  Determinism survives (fixed iteration counts/order). Caveat that keeps
+  this ranked low: projection fixes the integrator, not the energy
+  landscape — deep stacks still have no gradient toward the paper-like
+  path, so XPBD's realistic role is upgrading shallow-fold quality and
+  powering the mechanism-as-seed blend above, not replacing the
+  mechanism. Only worth it with a concrete step the current routing
+  handles badly — bring a failing screenshot strip as the spec.
 - **Fold-table authoring from a crease pattern** (user goal from the
   start: "come up with the fold table if I present a crease diagram").
   sequence-folder (§4) searches fold sequences; even a semi-automatic
