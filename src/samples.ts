@@ -48,10 +48,13 @@ define("scene", (rand, table) => table("events").rasterize(8))
 // and a layer solver works out how the paper stacks (seeded from the step
 // before, so the folding stays coherent). Playback shows those exact
 // states. Between them, simple folds hinge rigidly about the fold line;
-// reverse folds and other layered moves play a physically relaxed motion
-// baked at compile time — pockets billow open and press flat the way real
-// paper moves — always landing exactly on the solved state. Every face
-// shares its vertices with its neighbours, so the paper can never tear.
+// shallow reverse folds play a physically relaxed motion baked at compile
+// time — pockets billow open and press flat the way real paper moves —
+// and the deep ones (neck, tail, head) play the fold's exact rigid
+// mechanism: the body opens around its spine, the point flips through,
+// and everything presses flat again, landing exactly on the solved state.
+// Every face shares its vertices with its neighbours, so the paper can
+// never tear.
 // Press "Run" (or Cmd/Ctrl-Enter), then hit Play.
 //
 // The table ("steps" in the table panel):

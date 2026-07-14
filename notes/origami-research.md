@@ -343,3 +343,51 @@ Iterated with per-step screenshot strips. Findings:
   (flat-foldable degree-4 vertices) — parameterize by the spine angle,
   flanks and reverse creases follow in closed form. Moderate work,
   deterministic, no solver.
+
+## 11. Analytic reverse-fold mechanism (2026-07-14, src/fold-mech.ts)
+
+The analytic route from §10 works, and better than hoped: **the whole deep
+reverse fold is a 1-DOF rigid mechanism with a closed form, no tuning
+parameters at all.**
+
+Structure. Cut the crease graph at (a) the step's changing creases (the
+new fold-line creases and the flipping seam), (b) pressed creases on the
+spine line, and (c) for models welded shut by earlier reverse folds, the
+hinge/ridge/spine lines of those folds (escalating through the fold
+history, most recent first). What remains are rigid assemblies in mirror
+pairs: two flanks joined along the spine, and point pairs (the active
+point plus one pair per slaved earlier reverse) each hanging off its
+parents by a hinge line and joined to its partner along a seam. Plies on
+one side of a point weld into one slab (they hinge to the same flank along
+the same line, so they cannot move apart).
+
+Kinematics. The flanks open ±β about the spine (a book opening). Every
+other pair has ONE angle φ about its hinge, fixed by "the pair's seam
+stays in the mirror plane z=0" — one linear equation in cos φ, sin φ:
+
+- the active point's seam tip sits ON the spine, so φ=0 is always a root
+  (the point rides its flank) and the folding branch is the tan-half law
+  **φ = 2·atan2(b, a)** — the classic degree-4-vertex relation;
+- a slaved earlier reverse has its OTHER pole pinned instead (its
+  pre-reverse tip sat on the spine), so φ=π is always a root and its
+  moving branch is **φ = 2·atan2(−a, b)** — single-valued in β: it
+  un-presses as the book opens and exactly retraces as it closes;
+- β* is where the active branch meets the trivial one (b crosses zero, or
+  the linkage's solvable domain ends — same bracket). For flat-foldable
+  models this is the fully-open state: **rigid reverse folds really do
+  pass through the open book**, which is also how diagrams draw them.
+
+Drive β = β*·sin(πt): the model opens, the point flips through at the
+apex, everything re-presses. Closure is machine-exact (tears ~1e-10 on the
+44–60-face neck/tail/head), endpoints land exactly on the solved states,
+and a 16-frame bake costs ~10 ms per step.
+
+Root choice: any pair can anchor the world frame — every rooting drives
+the same 1-DOF shape curve — so we root at the biggest pair to keep the
+model steady on screen (rooting at the neck to fold the head sends the
+body tumbling around it).
+
+Shipping rule now: completing non-Pureland steps ≤ 20 faces bake the
+relaxed soft motion (§10), deeper ones bake the mechanism, and anything
+the mechanism can't decompose (no flipping seam, unpaired assemblies)
+falls back to the rigid swing.

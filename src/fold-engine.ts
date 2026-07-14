@@ -18,6 +18,7 @@ import { CON } from './vendor/flatfolder/constraints.js'
 import { NOTE } from './vendor/flatfolder/note.js'
 import { COMP, TYPE_LABEL } from './vendor/linefolder/compute.js'
 import { buildSoftMesh, bakeSoftMotion, pickPinned, FLAT_ANGLE } from './fold-relax.js'
+import { buildReverseMech, reverseRecordOf, type ReverseRecord } from './fold-mech.js'
 
 NOTE.show = false
 let conBuilt = false
@@ -520,6 +521,7 @@ export const compileFoldTable = (
   let st = initialState()
   const initial = { FV: st.FV.map((F) => [...F]), V: st.V.map(toDisplay) }
   const steps: FoldProgramStep[] = []
+  const reverses: ReverseRecord[] = []
   for (const spec of specs) {
     if (spec.crease) {
       try {
@@ -551,13 +553,17 @@ export const compileFoldTable = (
       layersFrom: out.anim.layersFrom,
       dirs: out.anim.dirs,
       // simple folds keep the crisp rigid hinge; so do held folds
-      // (to < 1) — their whole point is the displayed pose — and folds
-      // through deep layer stacks, where relaxation reads as crumpling
-      // rather than paper (the collapse's shallow pockets are where the
-      // soft motion shines)
-      soft: out.type === 'Pureland' || spec.to < 1 || out.state.FV.length > SOFT_MAX_FACES
-        ? undefined : bakeStep(out, scale),
+      // (to < 1) — their whole point is the displayed pose. Shallow folds
+      // relax softly; deep stacks, where relaxation reads as crumpling,
+      // get the exact rigid mechanism instead: the book opens around the
+      // spine, the point flips through, earlier reverse folds un-press
+      // just enough and retrace
+      soft: out.type === 'Pureland' || spec.to < 1 ? undefined
+        : out.state.FV.length <= SOFT_MAX_FACES ? bakeStep(out, scale)
+          : bakeMech(out, reverses, scale),
     })
+    const rec = reverseRecordOf(out)
+    if (rec) reverses.push(rec)
     st = out.state
   }
   for (let i = 1; i < steps.length; ++i) {
@@ -636,6 +642,26 @@ const bakeStep = (out: FoldOutcome, scale: number): { frames: number; pos: numbe
   const pos: number[] = []
   for (const frame of baked) {
     for (let vi = 0; vi < sheet.length; ++vi) {
+      pos.push((frame[vi * 3] - 0.5) * scale, (frame[vi * 3 + 1] - 0.5) * scale, frame[vi * 3 + 2] * scale)
+    }
+  }
+  return { frames: baked.length, pos }
+}
+
+// Bake the analytic reverse-fold mechanism for one deep step. Frames are
+// exact rigid placements (machine-precision closure), so the endpoint
+// blend in foldTablePositions is a no-op safety net.
+const bakeMech = (
+  out: FoldOutcome, reverses: ReverseRecord[], scale: number,
+): { frames: number; pos: number[] } | undefined => {
+  const mech = buildReverseMech(out, reverses)
+  if (!mech) return undefined
+  const baked = mech.frames(SOFT_FRAMES)
+  if (baked.length < SOFT_FRAMES) return undefined
+  const nv = out.state.sheet.length
+  const pos: number[] = []
+  for (const frame of baked) {
+    for (let vi = 0; vi < nv; ++vi) {
       pos.push((frame[vi * 3] - 0.5) * scale, (frame[vi * 3 + 1] - 0.5) * scale, frame[vi * 3 + 2] * scale)
     }
   }
