@@ -480,6 +480,12 @@ export class Table {
     return this._xf('filterMap', { fn }, (ins) => ins[0].flatMap((r, i) => spread(fn(r, i, ins[0]), carry(r))), true)
   }
 
+  // flatMap(fn) — fan out each row into zero, one, or many rows. Alias of
+  // filterMap with a name that matches the fan-out use case (Array.flatMap).
+  flatMap(fn: (r: Row, i: number, rows: Row[]) => Row | Row[] | null | undefined): Table {
+    return this._xf('flatMap', { fn }, (ins) => ins[0].flatMap((r, i) => spread(fn(r, i, ins[0]), carry(r))), true)
+  }
+
   // emit(template | template[]) — declarative flatMap: produce one or many rows
   // per source row from Expr/literal templates. The diffable counterpart of
   // filterMap (pair with filter() for "when X, emit Y").
