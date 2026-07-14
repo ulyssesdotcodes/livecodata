@@ -74,11 +74,22 @@ series of edits" to the shared line — and only an apply made from a
 scrubbed/checked-out position records `fork`. Concurrency alone never creates
 a branch (see Multiplayer); only deliberately editing history does.
 
+This one bit cannot be inferred and dropped: in the merged log, a deliberate
+fork from X and a racing extend at X are structurally identical — both are
+children of X — and Lamport seqs make "authored after seeing its sibling"
+necessary but not sufficient to detect (concurrent replicas' seqs interleave
+arbitrarily). Without recorded intent the fold must pick one rule for all
+same-parent siblings: union them all (deliberate forks get linearized away —
+the feature disappears) or branch them all (every race forks — the accidental
+divergence this design avoids). One bit on the apply is the minimal encoding;
+a `branch: <id>` field would be an equivalent one that also buys branch
+naming.
+
 Size note: an apply listing a few hundred cell edits costs a few KB of ids.
 Fine as-is; if a pathological session ever cares, `edits` compacts losslessly
 to per-src seq ranges without changing the model.
 
-### The open working tail: one lightweight stamp
+### The open working tail: local state, not a stamp
 
 `edits` lists cover *committed* history. Un-applied edits — accumulated since
 the last apply — belong to no apply yet, but three things must still locate
@@ -91,19 +102,31 @@ them:
 3. **Multiplayer**: peers see each other's cell edits *before* apply today
    (merge refolds everything); that must survive.
 
-"Unclaimed and newer than the head apply" is not a safe rule: edits from an
-*abandoned* fork (scrub back, edit, check out away without ever applying) stay
-unclaimed forever and would wrongly overlay every later head.
+An earlier draft stamped every edit with `base: <apply id>` for this. The
+stamp isn't needed: committed membership never reads it, so only the working
+tail consumes it, and each consumer has a cheaper answer —
 
-So edit events also carry `base: <node id>` — the apply the replica was
-extending when it authored the edit. It is deliberately **not** the membership
-authority (the apply's `edits` list is); it is a working-tail hint that
-answers exactly one question: *which node are these pending, unclaimed edits
-extending?* The live fold overlays unclaimed edits with `base = head` on the
-head's committed fold; reload and peers recover the same answer from the same
-stamp. Abandoned-fork edits keep their `base` pointing at the node they forked
-from, so they never contaminate other branches — they're simply invisible
-everywhere, which is correct: they were never applied.
+- The live fold: the store tracks `pending` (edit ids since `head`) in memory
+  and overlays exactly those.
+- Reload: `head` + `pending` persist in the session record alongside the log
+  (see Persistence) — local working state riding with the local session, the
+  way `runs` does today.
+- Peers' un-applied edits: overlaid by heuristic — unclaimed edits ordered
+  after the newest apply in the log show on the performance head.
+
+The idempotent `edits` lists are what make the heuristic safe to get
+*transiently* wrong: the moment an apply claims the edits, every fold reads
+only the list, and clients catch up to the same state regardless of arrival
+order. The residual cost is that attribution of **unclaimed** edits is
+heuristic, not exact: edits abandoned mid-fork (scrub back, edit, check out
+away without applying) overlay the head until the next apply anywhere
+out-orders them, and peers live-editing *different branches* simultaneously
+can see each other's unclaimed edits flicker onto the wrong head. Committed
+history is never affected — an apply's list is authoritative — so the worst
+case is a briefly wrong preview, and today's app shows every unclaimed edit
+at head anyway. If multi-branch live jamming ever needs exact attribution,
+`base` returns as an optional field with no migration (old events simply
+lack it).
 
 ### The fold
 
@@ -123,10 +146,11 @@ branchEvents(events: StampedEvent[], head: string | null, tree: BranchTree): Sta
 
 `branchEvents` selects: the applies on `pathTo(head)` interleaved with the
 events their `edits` lists claim (dereferenced by `(src, seq)` key), plus —
-for the *live* head only — unclaimed events with `base = head`, all in
-`compareEvents` order. Scrubbing to a mid-branch apply is the same call with
-the truncated path and no pending overlay: truncation falls out for free, no
-seq-window reasoning anywhere.
+for the *live* head only — the unclaimed overlay (events no apply claims,
+ordered after the newest apply in the log: the local pending edits and, by
+the working-tail heuristic, peers'), all in `compareEvents` order. Scrubbing
+to a mid-branch apply is the same call with the truncated path and no
+overlay: truncation falls out for free, no seq-window reasoning anywhere.
 
 Events predating the first apply need no special case: the first apply claims
 them in its `edits` like anything else.
@@ -156,11 +180,11 @@ becomes branch-aware:
 
 - Internal state: `head: string | null` (the apply whose branch the live fold
   shows; null = fresh/legacy log) and `pending: string[]` (ids of edits
-  appended since `head`, i.e. the working tail — recoverable from `base`
-  stamps, kept materialized for cheap appends).
-- `append()` stamps `base: head` on every ordinary event and pushes its key
-  onto `pending`. The incremental head-fold keeps working because, on the
-  current branch, new events always extend the current fold.
+  appended since `head`, i.e. the working tail — local state, persisted with
+  the session record, see Persistence).
+- `append()` pushes each ordinary event's key onto `pending`. The incremental
+  head-fold keeps working because, on the current branch, new events always
+  extend the current fold.
 - `recordApply(payload)` replaces `recordRun()`: appends the apply event with
   `{ id, parent, edits: pending, mode }`, then sets `head = id`,
   `pending = []`. Returns the node. `mode` is `fork` only when the apply comes
@@ -173,23 +197,26 @@ becomes branch-aware:
   session-format compatibility.
 - **Fork-on-edit** — the behavioral heart of the feature. Replace the
   `append() → replay = null` rule: if a mutation arrives while a replay view is
-  active (scrubbed to apply N), set `head = N`, discard `pending` (edits based
-  on the old head stay in the log, unclaimed and inert), promote the replay
-  fold to be the live `tables` fold, clear `replay`, and land the edit there
-  with `base = N`. The user's edit hits the state they were *looking at*;
-  nothing is rewritten — the old branch's applies still claim their events and
-  its head remains a leaf in the tree.
-- `checkout(headId)`: set `head = headId`, `pending` = unclaimed events with
-  `base = headId` (normally none; picks up a working tail left by a reload or
-  a peer), refold `tables = foldEventsMap(branchEvents(log.all(), headId,
-  tree))`, notify. "Getting back to the old branch" is just checkout;
-  continuing it is just applying with that parent.
+  active (scrubbed to apply N), set `head = N`, discard `pending` (the
+  abandoned edits stay in the log, unclaimed and inert — they drop out of the
+  overlay once the next apply out-orders them), promote the replay fold to be
+  the live `tables` fold, clear `replay`, and land the edit there. The user's
+  edit hits the state they were *looking at*; nothing is rewritten — the old
+  branch's applies still claim their events and its head remains a leaf in
+  the tree.
+- `checkout(headId)`: set `head = headId`, reset `pending` (any un-applied
+  edits left behind are abandoned, as above), refold
+  `tables = foldEventsMap(branchEvents(log.all(), headId, tree))`, notify.
+  "Getting back to the old branch" is just checkout; continuing it is just
+  applying with that parent.
 - `setReplayView(nodeId | null)` changes coordinate: from a prefix `SessionRun`
   to an apply id on the current branch path (fold = truncated `branchEvents`).
 - `branchTree()`: expose the fold (cached, invalidated by `onChange`) for the
   GUI.
 - `onMerge` refold: rebuild the tree, keep `head` if it still exists, else fall
-  back to newest apply; recompute `pending` from `base` stamps.
+  back to newest apply. `pending` (locally-authored ids) is untouched by a
+  merge — unless a merged apply claims some of them (a peer committed edits it
+  had seen from us), in which case they're removed from `pending` as now-claimed.
 
 ## `main.ts` changes
 
@@ -197,8 +224,8 @@ becomes branch-aware:
   **not** `setReplayView(null)`-back-to-head first — cook against the scrubbed
   fold and let `recordApply` create the `fork`-mode child of the scrubbed
   apply. (The cook itself may append ensure()/retainDeclared events; they land
-  as pending with the right `base` and are claimed by this apply — the
-  fork-on-edit rule makes the first such append perform the fork.) When at
+  as pending and are claimed by this apply — the fork-on-edit rule makes the
+  first such append perform the fork.) When at
   latest, behavior is unchanged: an `extend` apply, fast-forwarded onto
   whatever the branch tip is by `recordApply`.
 - `scrubSession(pos)`: `pos` indexes `tree.pathTo(head)` instead of the flat
@@ -231,11 +258,12 @@ Session bar (`ui/session-bar.tsx`) additions, keeping the humble-object split:
 ## Persistence & compatibility
 
 - The saved session format (`sessions.ts`) doesn't change shape: `events` is
-  still the whole serialized log (applies' `edits`/`parent` and edits' `base`
-  are just event fields), `runs` is still written for old builds to read. Add
-  `head` (current branch) to the record — like `runs`, a convenience,
-  re-derivable as "newest apply" if absent. Pending edits need nothing extra:
-  they're in the log with `base` stamps.
+  still the whole serialized log (applies' `edits`/`parent`/`mode` are just
+  event fields), `runs` is still written for old builds to read. Add `head`
+  (current branch) and `pending` (un-applied edit ids) to the record — local
+  working state like `runs`, so a reload mid-edit reattaches the working tail
+  exactly. Both are re-derivable if absent (`head` → newest apply; `pending`
+  → the unclaimed-after-newest-apply heuristic), so older records still open.
 - Loading a **legacy linear session** needs no migration for correctness: no
   applies carry `edits`, so the tree is empty → the store falls back to
   `deriveRunsFromCode()`-style linear runs, exactly today's behavior. The
@@ -243,9 +271,9 @@ Session bar (`ui/session-bar.tsx`) additions, keeping the humble-object split:
   initial commit), after which branching works forward. Alternatively an
   `EventMigration` in `EDITABLE_MIGRATIONS` stamps legacy logs into one
   explicit branch (walk linearly; each `'apply'` gets `id` + `parent` =
-  previous apply + `edits` = the events since it; ordinary events get `base`)
-  — do this if the fallback dual-path in the scrub code turns out messier than
-  the migration. The migration is the cleaner end state; the chain exists
+  previous apply + `edits` = the events since it, mode `extend`) — do this if
+  the fallback dual-path in the scrub code turns out messier than the
+  migration. The migration is the cleaner end state; the chain exists
   precisely for this.
 - `deriveRunsFromCode()` remains the fallback for sessions with neither stamped
   applies nor a saved runs list.
@@ -262,8 +290,10 @@ Semantics to settle (deliberately kept simple):
   peer who has locally checked out another branch is in the same state as a
   peer scrubbed back today (their next edit forks). If explicit shared
   checkout is wanted later, it's one more activity event kind.
-- **Peers' un-applied edits** stay visible exactly as today: they merge in
-  unclaimed with `base = head`, and the live fold overlays them.
+- **Peers' un-applied edits** stay visible essentially as today: they merge
+  in unclaimed, and the live fold's overlay (unclaimed, ordered after the
+  newest apply) shows them at the performance head — see The open working
+  tail for the transient-misattribution caveat this heuristic accepts.
 - **Concurrent applies append; they don't fork.** The goal: non-conflicting
   concurrent work (edits on separate tables, separate parts of the code) lands
   on the *same* branch, and peers stay together. Three layers deliver it:
@@ -298,9 +328,11 @@ style like the existing tests:
 - Membership: the motivating case — apply₁ → edits → apply₂, scrub to apply₁,
   edit, apply₃ — assert apply₂'s branch folds exactly its claimed edits and
   apply₃'s exactly its own, with the shared prefix in both.
-- Working tail: pending edits overlay only their `base` head; abandoned-fork
-  edits (scrubbed, edited, checked out away, never applied) appear on no
-  branch; reload mid-edit reattaches pending to the right branch.
+- Working tail: pending edits overlay the live head and only there;
+  abandoned-fork edits (scrubbed, edited, checked out away, never applied)
+  appear on no committed branch and drop out of the overlay once out-ordered
+  by the next apply; reload mid-edit reattaches pending via the persisted
+  `head`/`pending`, and via the heuristic when they're absent.
 - Fork-on-edit: mutation while scrubbed lands on the scrubbed state, head
   branch untouched; checkout of a leaf continues it (next apply parents it).
 - Round-trips: serialize/load preserves the tree; legacy (unstamped) session
@@ -318,10 +350,10 @@ style like the existing tests:
 ## Phasing
 
 1. **Foundations (pure):** `branches.ts` fold + tests, including extend-chain
-   linearization; the apply event shape (`id`/`parent`/`edits`/`mode`) and
-   `base` stamping + `recordApply` (with fast-forward) in the store (still
-   linear behavior — every apply extends the tip and claims the pending
-   edits). Ship: no visible change.
+   linearization and the unclaimed overlay; the apply event shape
+   (`id`/`parent`/`edits`/`mode`) and pending tracking + `recordApply` (with
+   fast-forward) in the store (still linear behavior — every apply extends
+   the tip and claims the pending edits). Ship: no visible change.
 2. **Fork-on-edit + checkout:** store fork rule (`fork`-mode applies),
    branch-aware replay/fold, `evaluate`/`scrubSession` rewiring. Ship:
    branching works, GUI still shows only the current path.
