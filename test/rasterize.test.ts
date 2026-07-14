@@ -23,6 +23,17 @@ test('emits frames 0..maxFrame inclusive for an object alive throughout', () => 
   assert.ok(rows.every((r) => r.id === 's' && r.shape === 'sphere'))
 })
 
+test('bakes type: create only on the create frame, update thereafter', () => {
+  const rows = rasterizeRows([
+    create({ beat: b(2) }),
+    { id: 's', type: 'update', beat: b(6), px: 4 },
+  ], mb(8))
+  const alive = rows.filter((r) => r.id === 's')
+  assert.equal(alive.find((r) => r.frame === 2)!.type, 'create')
+  assert.ok(alive.filter((r) => r.frame !== 2).every((r) => r.type === 'update'))
+  assert.equal(alive.filter((r) => r.type === 'create').length, 1)
+})
+
 test('infers maxFrame from the largest event beat when omitted', () => {
   const rows = rasterizeRows([
     create(),

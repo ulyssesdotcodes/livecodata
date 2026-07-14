@@ -169,6 +169,12 @@ function sampleObject(events: Row[], i: number): SampledState | null {
   fields.color = color
   if (colorSource) sources.add(colorSource)
 
+  // The baked row is a `create` only on the object's create frame; every later
+  // frame is an `update` of its fields. Spreading `createEv` above seeded
+  // `type: 'create'` onto all of them, which made the dense cache read as a
+  // scene-wide wall of creates instead of one create followed by updates.
+  fields.type = i === (createEv.frame as number) ? 'create' : 'update'
+
   return { fields, sources: [...sources] }
 }
 
