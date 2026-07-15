@@ -353,8 +353,15 @@ test('a missing / blank output cell defaults to o0 (single-output tables unchang
 
 // The reveal fragment a masked transition builds for a given mask chain and
 // progress-var key (soft-edge tol 0.1, threshold span 1.2 — see hydra.ts).
-const reveal = (mask: string, key: string): string =>
-  `${mask}.thresh((props) => ((1 - props.${key}) * 1.2 - 0.1), 0.1)`
+// Progress rides hydra's own playback clock: props.time is the source position
+// in seconds (grid: FPS=60, 30 frames/beat → 0.5 s/beat), so props.time * 60 is
+// the current grid frame and the wipe reads (frame - startFrame) / durFrames,
+// clamped 0→1. The reveal fragment a masked transition builds (tol 0.1, span
+// 1.2 — see hydra.ts) for a given mask chain and grid-frame window:
+const prog = (startFrame: number, durFrames: number): string =>
+  `Math.min(Math.max((props.time * 60 - ${startFrame}) / ${durFrames}, 0), 1)`
+const reveal = (mask: string, startFrame: number, durFrames: number): string =>
+  `${mask}.thresh((props) => ((1 - ${prog(startFrame, durFrames)}) * 1.2 - 0.1), 0.1)`
 
 test('code/transition/code wipes from the before program to the after through the mask', () => {
   const idx = buildHydraIndex([
@@ -366,18 +373,19 @@ test('code/transition/code wipes from the before program to the after through th
   ])
   // Before the transition beat, just the before program.
   assert.equal(hydraFrameAt(idx, 0)!.code, 'src(s0).out(o0)')
-  // At/after the transition beat: before.layer(after.mask(mask.thresh(progress))).
+  // At/after the transition beat: before.layer(after.mask(mask.thresh(progress))),
+  // where progress reads props.time over the 4-beat (start frame 120, 120-frame)
+  // window rather than any injected value.
   const at = hydraFrameAt(idx, 120)! // beat 5 = frame 120
   assert.equal(
     at.code,
-    `src(s0).layer((osc(10)).mask(${reveal('voronoi(5)', '__hydraTransition0')})).out(o0)`,
+    `src(s0).layer((osc(10)).mask(${reveal('voronoi(5)', 120, 120)})).out(o0)`,
   )
-  // Progress rides a per-frame props value: 0 at the start, 0.5 halfway, 1 at
-  // the end of the 4-beat (120-frame) window — and the code stays byte-stable
-  // across the whole window, so the wipe animates without a recompile.
-  assert.equal(at.vars.__hydraTransition0, 0)
-  assert.equal(hydraFrameAt(idx, 180)!.vars.__hydraTransition0, 0.5)
-  assert.equal(hydraFrameAt(idx, 240)!.vars.__hydraTransition0, 1)
+  // No per-frame data is injected — the wipe rides the playback clock — so the
+  // string is byte-stable across the whole window (and past it), which is what
+  // lets it animate without a recompile.
+  assert.deepEqual(at.vars, {})
+  assert.equal(hydraFrameAt(idx, 180)!.code, at.code)
   assert.equal(hydraFrameAt(idx, 240)!.code, at.code)
 })
 
@@ -389,7 +397,7 @@ test('code/transition/layer reveals the layer through the mask', () => {
   ])
   assert.equal(
     hydraFrameAt(idx, 120)!.code,
-    `osc(10).layer((osc(10).add(voronoi(5), 0.5)).mask(${reveal('noise(3)', '__hydraTransition0')})).out(o0)`,
+    `osc(10).layer((osc(10).add(voronoi(5), 0.5)).mask(${reveal('noise(3)', 120, 60)})).out(o0)`,
   )
 })
 
@@ -402,7 +410,7 @@ test('layer/transition/code wipes from the layered program to a new one', () => 
   ])
   assert.equal(
     hydraFrameAt(idx, 120)!.code,
-    `osc(10).add(voronoi(5), 0.5).layer((src(s0)).mask(${reveal('noise(3)', '__hydraTransition0')})).out(o0)`,
+    `osc(10).add(voronoi(5), 0.5).layer((src(s0)).mask(${reveal('noise(3)', 120, 60)})).out(o0)`,
   )
 })
 
@@ -414,18 +422,21 @@ test('a transition with no mask code falls back to a plain crossfade', () => {
   ])
   assert.equal(
     hydraFrameAt(idx, 120)!.code,
-    'osc(10).blend((noise(3)), (props) => props.__hydraTransition0).out(o0)',
+    `osc(10).blend((noise(3)), (props) => ${prog(120, 60)}).out(o0)`,
   )
 })
 
-test('progress clamps to [0,1] outside the window and after the transition holds the after', () => {
+test('the wipe code is byte-stable through and past its window (no per-frame recompile)', () => {
   const idx = buildHydraIndex([
     { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
-    { beat: 5, event: 'transition', code: 'noise(3).out(o0)', value: 2 }, // 60-frame window
+    { beat: 5, event: 'transition', code: 'noise(3).out(o0)', value: 2 }, // frames 120–180
     { beat: 5, event: 'setCode', code: 'src(s0).out(o0)' },
   ])
-  // Well past the window (frame 300 vs window 120–180) progress pins at 1.
-  assert.equal(hydraFrameAt(idx, 300)!.vars.__hydraTransition0, 1)
+  const at = hydraFrameAt(idx, 120)!
+  // Start, mid, end, and well past the window all yield the identical string —
+  // only the clock hydra reads (props.time) moves, so setSketch never recompiles.
+  for (const f of [150, 180, 300]) assert.equal(hydraFrameAt(idx, f)!.code, at.code)
+  assert.deepEqual(at.vars, {})
 })
 
 test('a transition before any setCode is a no-op', () => {
@@ -445,14 +456,16 @@ test('nested transitions compose in beat order, the earliest wrapping the later'
     { beat: 9, event: 'transition', code: 'voronoi(4).out(o0)', value: 2 },
     { beat: 9, event: 'setCode', code: 'gradient().out(o0)' },
   ])
-  const inner = `src(s0).layer((gradient()).mask(${reveal('voronoi(4)', '__hydraTransition1')}))`
+  // Each transition bakes its own window (beat 5 → frame 120, beat 9 → frame
+  // 240), so nothing has to share a name — they simply nest.
+  const inner = `src(s0).layer((gradient()).mask(${reveal('voronoi(4)', 240, 60)}))`
   assert.equal(
     hydraFrameAt(idx, 240)!.code, // beat 9
-    `osc(10).layer((${inner}).mask(${reveal('noise(3)', '__hydraTransition0')})).out(o0)`,
+    `osc(10).layer((${inner}).mask(${reveal('noise(3)', 120, 60)})).out(o0)`,
   )
 })
 
-test('transitions on different outputs get their own progress key and fold apart', () => {
+test('transitions on different outputs fold apart, each on its own baked window', () => {
   const idx = buildHydraIndex([
     { beat: 1, output: 'o0', event: 'setCode', code: 'src(s0).out(o0)' },
     { beat: 5, output: 'o0', event: 'transition', code: 'noise(3).out(o0)', value: 2 },
@@ -462,12 +475,13 @@ test('transitions on different outputs get their own progress key and fold apart
     { beat: 5, output: 'o1', event: 'setCode', code: 'osc(20).out(o1)' },
   ])
   const frame = hydraFrameAt(idx, 120)!
-  // o0 is folded first (name order) so it takes progress key 0, o1 key 1.
+  // Both wipes read props.time directly, so o0 and o1 stay wholly independent —
+  // no shared counter, no cross-output renumbering, nothing to recompile when
+  // one output's transition starts.
   assert.equal(
     frame.code,
-    `src(s0).layer((osc(10)).mask(${reveal('noise(3)', '__hydraTransition0')})).out(o0)\n`
-    + `gradient().layer((osc(20)).mask(${reveal('voronoi(4)', '__hydraTransition1')})).out(o1)`,
+    `src(s0).layer((osc(10)).mask(${reveal('noise(3)', 120, 60)})).out(o0)\n`
+    + `gradient().layer((osc(20)).mask(${reveal('voronoi(4)', 120, 60)})).out(o1)`,
   )
-  assert.equal(frame.vars.__hydraTransition0, 0)
-  assert.equal(frame.vars.__hydraTransition1, 0)
+  assert.deepEqual(frame.vars, {})
 })

@@ -60,9 +60,12 @@
 //                      (just after the transition): setCode to cut to a new
 //                      program (code/transition/code), a layer to reveal an
 //                      overlay through the mask (code/transition/layer), and so
-//                      on. Progress rides a per-frame `props` value, so the wipe
-//                      animates without recompiling the sketch each frame. With
-//                      no `code`, it falls back to a plain crossfade. Once a
+//                      on. Progress rides hydra's own playback clock
+//                      (`props.time`, the source position in beats — so the wipe
+//                      is beat-aligned, tempo-independent, and pauses/scrubs with
+//                      the timeline) and is baked as constants, so the sketch
+//                      string stays byte-stable and nothing recompiles per frame.
+//                      With no `code`, it falls back to a plain crossfade. Once a
 //                      transition is present the output is retargeted to its
 //                      `.out(oN)` (see the `output` column) so the before and
 //                      after composite cleanly.
@@ -88,7 +91,7 @@
 // GPU rendering lives in hydra-scene.ts.
 // ----------------------------------------------------------------------------
 
-import { beatToFrame, beatsToFrames } from './constants.js'
+import { beatToFrame, beatsToFrames, FPS } from './constants.js'
 import type { Row } from './lineage.js'
 
 export interface HydraFrame {
@@ -206,31 +209,39 @@ function outputOf(row: Row): string {
 const TRANSITION_TOL = 0.1
 const TRANSITION_SPAN = 1 + 2 * TRANSITION_TOL
 
-function clamp01(x: number): number {
-  return x < 0 ? 0 : x > 1 ? 1 : x
-}
-
 // A `transition` snapshotted mid-fold: the `before` chain (frozen at the
 // transition's beat), its `mask` sketch (or '' for a plain crossfade), and the
-// `key` under which its per-frame progress (0 → 1 across `value` beats) is
-// exposed to the sketch as `props[key]`.
+// grid-frame window (`startFrame`, `durFrames`) the wipe animates across. The
+// wipe rides hydra's own clock rather than any injected value: hydra's per-frame
+// `props.time` is the source position in grid seconds (see hydra-scene.ts —
+// playback drives it as srcFrameF / FPS), so `props.time * FPS` is the current
+// grid frame and `(props.time * FPS - startFrame) / durFrames` is progress
+// 0 → 1, beat-aligned and tempo-independent. Baking the window as constants
+// keeps the sketch string byte-stable through the whole wipe (and past it, since
+// the clamp holds at 1), so nothing recompiles per frame.
 interface Transition {
   before: string
   mask: string
-  key: string
+  startFrame: number
+  durFrames: number
+}
+
+// The progress expression (0 → 1 across the transition's grid-frame window) for
+// a mask reveal or crossfade, read fresh each frame from hydra's playback clock.
+function progressExpr(t: Transition): string {
+  return `Math.min(Math.max((props.time * ${FPS} - ${t.startFrame}) / ${t.durFrames}, 0), 1)`
 }
 
 // Fold one output's events (already sorted, filtered to this output) into its
 // running code string, exactly like the single-output fold used to: setCode
 // replaces it, setSource/append/replace/layer transform it, transition records
-// a wipe to apply at the end, and setVariable/transition-progress accumulate
-// into the shared `vars`. `counter` hands out unique progress keys across every
-// output in the frame. Returns null until a setCode is reached (nothing to show
-// yet); with no transitions the string is returned untouched, so pre-existing
-// single-o0 tables fold byte-for-byte as before.
+// a wipe to apply at the end, and setVariable folds into the shared `vars`.
+// Returns null until a setCode is reached (nothing to show yet); with no
+// transitions the string is returned untouched, so pre-existing single-o0
+// tables fold byte-for-byte as before.
 function foldOutput(
   rows: Row[], frame: number, loop: number, output: string,
-  vars: Record<string, unknown>, counter: { n: number },
+  vars: Record<string, unknown>,
 ): string | null {
   let code: string | null = null
   const transitions: Transition[] = []
@@ -277,14 +288,12 @@ function foldOutput(
         // it's applied to the final "after" (the code that keeps folding after
         // it) once the whole output is folded. A no-op with nothing to wipe yet.
         if (code != null) {
-          const key = `__hydraTransition${counter.n++}`
-          const dur = typeof row.value === 'number' && row.value > 0 ? row.value : 1
-          const durFrames = Math.max(1, beatsToFrames(dur))
-          vars[key] = clamp01((frame - (row.index as number)) / durFrames)
+          const durBeats = typeof row.value === 'number' && row.value > 0 ? row.value : 1
           transitions.push({
             before: chainOf(code),
             mask: typeof row.code === 'string' ? row.code.trim() : '',
-            key,
+            startFrame: row.index as number,
+            durFrames: Math.max(1, beatsToFrames(durBeats)),
           })
         }
         break
@@ -300,14 +309,17 @@ function foldOutput(
   let result = chainOf(code)
   for (let i = transitions.length - 1; i >= 0; i--) {
     const t = transitions[i]
+    const p = progressExpr(t)
     if (t.mask !== '') {
-      // Reveal the after through the mask, thresholded by a per-frame props
-      // value so the wipe animates without recompiling the sketch each frame.
-      const reveal = `${chainOf(t.mask)}.thresh((props) => ((1 - props.${t.key}) * ${TRANSITION_SPAN} - ${TRANSITION_TOL}), ${TRANSITION_TOL})`
+      // Reveal the after through the mask: sweep the luma threshold as progress
+      // climbs (bright mask regions cross over first, dark ones last). Progress
+      // reads hydra's own playback clock, so the string is byte-stable and the
+      // wipe animates without recompiling the sketch each frame.
+      const reveal = `${chainOf(t.mask)}.thresh((props) => ((1 - ${p}) * ${TRANSITION_SPAN} - ${TRANSITION_TOL}), ${TRANSITION_TOL})`
       result = `${t.before}.layer((${result}).mask(${reveal}))`
     } else {
-      // No mask → a plain crossfade driven by the same per-frame progress.
-      result = `${t.before}.blend((${result}), (props) => props.${t.key})`
+      // No mask → a plain crossfade driven by the same progress.
+      result = `${t.before}.blend((${result}), (props) => ${p})`
     }
   }
   return `${result}.out(${output})`
@@ -336,10 +348,9 @@ export function hydraFrameAt(index: Row[], f: number, loop = 0): HydraFrame | nu
     else groups.set(out, [row])
   }
   const vars: Record<string, unknown> = {}
-  const counter = { n: 0 }
   const codes: string[] = []
   for (const out of [...groups.keys()].sort()) {
-    const code = foldOutput(groups.get(out)!, frame, loop, out, vars, counter)
+    const code = foldOutput(groups.get(out)!, frame, loop, out, vars)
     if (code != null) codes.push(code)
   }
   return codes.length === 0 ? null : { code: codes.join('\n'), vars }
