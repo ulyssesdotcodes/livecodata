@@ -627,6 +627,11 @@ export interface EditableTableStore {
   // un-applied working tail, and make its tip the current head. The way "get
   // back to an old branch" is expressed; continuing it is just applying.
   checkout(headId: string): void
+  // If scrubbed to a branch node, promote it to a forked live head *now* (so a
+  // commit-cook's ensure()/setRow appends land on the fork) and return true;
+  // otherwise a no-op returning false. Fork-on-edit runs anyway on first append,
+  // but a cook reads before it writes, so evaluate forks up front.
+  forkFromReplay(): boolean
   // Reconstruct runs from a legacy session that saved no run list, one per
   // recorded program Run in "code"'s own history (best-effort backward compat).
   // Stops at the latest CLEAR_RUNS_KIND marker, if any, so a cleared session
@@ -739,19 +744,26 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
     return out
   }
 
+  // Fork-on-edit: promote a scrubbed branch-node replay to the live fold, point
+  // head at the scrubbed node (remembering the tip we came from for `seen`), and
+  // discard the abandoned working tail — the old branch's applies still claim
+  // their events, so nothing is rewritten. Returns whether a fork happened. Runs
+  // implicitly on the first append while scrubbed, or explicitly before a
+  // commit-cook (evaluate) so its ensure()/setRow appends land on the fork.
+  function forkFromReplay(): boolean {
+    if (replay === null || replayNode === null || head === null) return false
+    seenTip = branchTip(head, branchTree())
+    head = replayNode
+    forked = true
+    pending = []
+    tables = replay
+    replay = null
+    replayNode = null
+    return true
+  }
+
   function append(payload: Record<string, unknown> & { kind: string; table: string }): void {
-    // Fork-on-edit: a mutation while scrubbed to an apply node lands on the
-    // state being *looked at*. Promote that replay fold to the live fold, point
-    // head at the scrubbed node (remembering the tip we came from for `seen`),
-    // and discard the abandoned working tail — the old branch's applies still
-    // claim their events, so nothing is rewritten.
-    if (replay !== null && replayNode !== null && head !== null) {
-      seenTip = branchTip(head, branchTree())
-      head = replayNode
-      forked = true
-      pending = []
-      tables = replay
-    }
+    forkFromReplay()
     replay = null
     replayNode = null
     const e = log.append(payload)
@@ -1026,6 +1038,12 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       pending = []
       refoldBranch()
       notify()
+    },
+
+    forkFromReplay(): boolean {
+      const forkedNow = forkFromReplay()
+      if (forkedNow) { invalidateTree(); notify() }
+      return forkedNow
     },
 
     setReplayView(target: SessionRun | string | null): void {
