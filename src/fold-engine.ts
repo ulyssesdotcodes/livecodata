@@ -18,6 +18,8 @@ import { CON } from './vendor/flatfolder/constraints.js'
 import { NOTE } from './vendor/flatfolder/note.js'
 import { COMP, TYPE_LABEL } from './vendor/linefolder/compute.js'
 import { buildSoftMesh, bakeSoftMotion, pickPinned, FLAT_ANGLE } from './fold-relax.js'
+import { buildReverseMech, reverseRecordOf, type ReverseRecord } from './fold-mech.js'
+import { bakedMotionDepth } from './tri-clearance.js'
 
 NOTE.show = false
 let conBuilt = false
@@ -107,35 +109,35 @@ const edgesOf = (FV: number[][]): [number, number][] => {
   return Array.from(s).sort().map((k) => M.decode(k))
 }
 
-// total display order from the pairwise order relation; undefined on cycles
-const linearize = (H: Map<string, number>, n: number): number[] | undefined => {
+// total display order from the pairwise order relation; undefined on
+// cycles. The relation is partial — where it leaves freedom, prefer the
+// carried previous ranks (prio) so faces never swap display layers
+// between steps without a solved reason; gratuitous swaps make offset
+// paths cross mid-swing and shimmer.
+const linearize = (H: Map<string, number>, n: number, prio: number[]): number[] | undefined => {
   const Adj: number[][] = Array(n).fill(0).map(() => [])
+  const inDeg = Array(n).fill(0)
   for (const [k, o] of H) {
     if (o !== -1) continue
     const [f1, f2] = M.decode(k)
     Adj[f1].push(f2)
+    inDeg[f2]++
   }
-  const L: number[] = []
-  const seen = Array(n).fill(false)
-  const stack: [number, number][] = []
-  for (let s = 0; s < n; ++s) {
-    if (seen[s]) continue
-    stack.push([s, 0])
-    seen[s] = true
-    while (stack.length > 0) {
-      const top = stack[stack.length - 1]
-      if (top[1] < Adj[top[0]].length) {
-        const next = Adj[top[0]][top[1]++]
-        if (!seen[next]) { seen[next] = true; stack.push([next, 0]) }
-      } else {
-        L.push(top[0])
-        stack.pop()
-      }
+  // Kahn's, top face first: among the available faces always take the one
+  // that used to sit highest
+  const idx = Array(n).fill(-1)
+  const done = Array(n).fill(false)
+  for (let i = 0; i < n; ++i) {
+    let pick = -1
+    for (let f = 0; f < n; ++f) {
+      if (done[f] || inDeg[f] > 0) continue
+      if (pick < 0 || prio[f] > prio[pick] || (prio[f] === prio[pick] && f < pick)) pick = f
     }
+    if (pick < 0) return undefined // cycle
+    idx[pick] = i
+    done[pick] = true
+    for (const g of Adj[pick]) inDeg[g]--
   }
-  L.reverse()
-  const idx = Array(n).fill(0)
-  for (let i = 0; i < n; ++i) idx[L[i]] = i
   for (const [k, o] of H) {
     if (o !== -1) continue
     const [f1, f2] = M.decode(k)
@@ -265,13 +267,13 @@ export const foldStep = (st: FoldState, spec: FoldSpec): FoldOutcome => {
   const edges = X.BF_GB_GA_GI_2_edges(BF, GB, GA, sel.gi)
   const FO = X.edges_Ff_2_FO(edges, Ff) as FaceOrder[]
   const [H, EAto] = COMP.FO_Ff_EF_2_H_EA(FO, Ff, EF)
-  const layers = linearize(H, Ff.length)
-  if (layers === undefined) {
-    throw new FoldError('chosen state has cyclic layering; try another kind/pick')
-  }
   const layersFrom: number[] = FVy.map(() => 0)
   for (let f = 0; f < F_map2.length; ++f) {
     for (const f_ of F_map2[f]) layersFrom[f_] = st.layers[f]
+  }
+  const layers = linearize(H, Ff.length, layersFrom)
+  if (layers === undefined) {
+    throw new FoldError('chosen state has cyclic layering; try another kind/pick')
   }
   const dirs = flapDirs(FVy, Vx as Vec2[], FM, line, FO, layers)
   // dihedral targets: the start state's angles come from the carried-over
@@ -403,10 +405,13 @@ export interface FoldProgramStep {
   layersFrom: number[]  // stacking before it, on this step's face set
   dirs: number[]        // rotation sense per face (0 = static); each flap
                         // swings out on the side it lands on
-  // baked soft motion (reverse folds, sinks, …): keyframed vertex
-  // positions from the compliant solver, display frame, flattened
-  // [frame][vertex][xyz]. Simple folds stay on the rigid swing.
-  soft?: { frames: number; pos: number[] }
+  // baked motion (reverse folds, sinks, …): keyframed vertex positions,
+  // display frame, flattened [frame][vertex][xyz]. Simple folds stay on
+  // the rigid swing. Mechanism bakes also carry zDirs — each face's
+  // layer-offset direction per frame ([frame][face][xyz]), the world ẑ
+  // carried along by the face's rigid assembly so the display stack rides
+  // the paper instead of shearing through it when assemblies stand up.
+  soft?: { frames: number; pos: number[]; zDirs?: number[] }
 }
 
 export interface FoldTableProgram {
@@ -520,6 +525,8 @@ export const compileFoldTable = (
   let st = initialState()
   const initial = { FV: st.FV.map((F) => [...F]), V: st.V.map(toDisplay) }
   const steps: FoldProgramStep[] = []
+  const reverses: ReverseRecord[] = []
+  const priorLines: Line[] = []
   for (const spec of specs) {
     if (spec.crease) {
       try {
@@ -551,13 +558,18 @@ export const compileFoldTable = (
       layersFrom: out.anim.layersFrom,
       dirs: out.anim.dirs,
       // simple folds keep the crisp rigid hinge; so do held folds
-      // (to < 1) — their whole point is the displayed pose — and folds
-      // through deep layer stacks, where relaxation reads as crumpling
-      // rather than paper (the collapse's shallow pockets are where the
-      // soft motion shines)
-      soft: out.type === 'Pureland' || spec.to < 1 || out.state.FV.length > SOFT_MAX_FACES
-        ? undefined : bakeStep(out, scale),
+      // (to < 1) — their whole point is the displayed pose. Shallow folds
+      // relax softly; deep stacks, where relaxation reads as crumpling,
+      // get the exact rigid mechanism instead: the book opens around the
+      // spine, the point flips through, earlier reverse folds un-press
+      // just enough and retrace. Every bake must pass the clearance gate
+      // (no plunging through the stack) or the step falls back — relax to
+      // mechanism, mechanism to the rigid swing.
+      soft: bakeMotion(out, spec, reverses, priorLines, scale, size),
     })
+    const rec = reverseRecordOf(out)
+    if (rec) reverses.push(rec)
+    priorLines.push(spec.line)
     st = out.state
   }
   for (let i = 1; i < steps.length; ++i) {
@@ -642,6 +654,73 @@ const bakeStep = (out: FoldOutcome, scale: number): { frames: number; pos: numbe
   return { frames: baked.length, pos }
 }
 
+// Bake the analytic reverse-fold mechanism for one step. Frames are exact
+// rigid placements (machine-precision closure), so the endpoint blend in
+// foldTablePositions is a no-op safety net.
+const bakeMech = (
+  out: FoldOutcome, reverses: ReverseRecord[], pageLines: Line[], scale: number,
+): { frames: number; pos: number[]; zDirs: number[] } | undefined => {
+  const mech = buildReverseMech(out, reverses, pageLines)
+  if (!mech) return undefined
+  const baked = mech.frames(SOFT_FRAMES)
+  if (baked.pos.length < SOFT_FRAMES) return undefined
+  const nv = out.state.sheet.length
+  const pos: number[] = []
+  for (const frame of baked.pos) {
+    for (let vi = 0; vi < nv; ++vi) {
+      pos.push((frame[vi * 3] - 0.5) * scale, (frame[vi * 3 + 1] - 0.5) * scale, frame[vi * 3 + 2] * scale)
+    }
+  }
+  return { frames: baked.pos.length, pos, zDirs: baked.zdir.flat() }
+}
+
+// Routing gates: a baked motion that drives paper through paper deeper
+// than its budget is worse than the rigid swing — throw it away. The
+// relaxed solver gets a tight budget (its plunges measure ~9 stack
+// thicknesses when it fails). The mechanism gets a page-brush allowance:
+// paper that spans the opening spine without a crease there (it would
+// need to bend, which rigid assemblies cannot) brushes through the
+// opposite cover's overhang by a bounded amount that vanishes at the
+// apex — the way real pages brush past each other.
+const GATE_RELAX_DEPTH = 2 * STACK_DEPTH
+const GATE_MECH_DEPTH = 4.5 * STACK_DEPTH
+const bakePassesGate = (
+  bake: { frames: number; pos: number[] } | undefined,
+  FV: number[][], nv: number, size: number, budget: number,
+): boolean => {
+  if (!bake) return false
+  const frames = [...Array(bake.frames).keys()].map((f) => ({
+    pos: (vi: number): [number, number, number] => [
+      bake.pos[(f * nv + vi) * 3], bake.pos[(f * nv + vi) * 3 + 1], bake.pos[(f * nv + vi) * 3 + 2]],
+  }))
+  return bakedMotionDepth(FV, frames) <= budget * size
+}
+
+// Motion routing for one step: rigid for simple and held folds; relaxed
+// soft motion for shallow folds; the analytic mechanism for deep stacks
+// (or as fallback when relaxation plunges); rigid when nothing passes.
+// When the mechanism's bake fails the gate, earlier fold lines are freed
+// one at a time (most recent first) so overhanging pages can fan out of
+// the way instead of sweeping through the opposite cover.
+const bakeMotion = (
+  out: FoldOutcome, spec: FoldTableRowSpec, reverses: ReverseRecord[],
+  priorLines: Line[], scale: number, size: number,
+): FoldProgramStep['soft'] => {
+  if (out.type === 'Pureland' || spec.to < 1) return undefined
+  const FV = out.state.FV
+  const nv = out.state.sheet.length
+  if (FV.length <= SOFT_MAX_FACES) {
+    const relax = bakeStep(out, scale)
+    if (bakePassesGate(relax, FV, nv, size, GATE_RELAX_DEPTH)) return relax
+  }
+  const recent = [...priorLines].reverse()
+  for (let nPages = 0; nPages <= recent.length; ++nPages) {
+    const mech = bakeMech(out, reverses, recent.slice(0, nPages), scale)
+    if (bakePassesGate(mech, FV, nv, size, GATE_MECH_DEPTH)) return mech
+  }
+  return undefined
+}
+
 const smooth = (a: number, b: number, x: number): number => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
   return t * t * (3 - 2 * t)
@@ -653,7 +732,13 @@ const smooth = (a: number, b: number, x: number): number => {
 // consumes this one function.
 export const foldTablePositions = (
   program: FoldTableProgram, fold: number,
-): { FV: number[][]; pos: [number, number, number][]; moving: boolean[]; zOff: number[] } => {
+): {
+  FV: number[][]; pos: [number, number, number][]; moving: boolean[]
+  zOff: number[]
+  // layer-offset direction per face when the motion carries one (mechanism
+  // bakes); undefined = world z, as in flat states
+  zDir?: [number, number, number][]
+} => {
   const N = program.steps.length
   const mid = program.maxLayer / 2
   if (N === 0 || fold <= 0) {
@@ -684,10 +769,16 @@ export const foldTablePositions = (
     return [p[0] + (hh - h) * u[0], p[1] + (hh - h) * u[1], sense[vi] * h * Math.sin(theta2)]
   }
   let pos: [number, number, number][]
+  let zDir: [number, number, number][] | undefined
+  // per-face sign of the layer-offset target: a face whose assembly ends
+  // the step flipped (its carried ẑ pointing down) needs the mirrored
+  // scalar so direction × scalar lands exactly on the next step's world-z
+  // stacking
+  let sig: number[] | undefined
   if (step.soft !== undefined) {
     // sample the baked compliant motion, easing the residuals into the
     // exact endpoint geometry at both ends of the swing
-    const { frames, pos: P } = step.soft
+    const { frames, pos: P, zDirs } = step.soft
     const nv = step.Vfrom.length
     const x = t * (frames - 1)
     const f0 = Math.min(frames - 1, Math.floor(x))
@@ -707,14 +798,29 @@ export const foldTablePositions = (
       }
       return out
     })
+    if (zDirs) {
+      const nf = step.FV.length
+      zDir = step.FV.map((_, fi) => {
+        const v: [number, number, number] = [0, 0, 0]
+        for (let c = 0; c < 3; ++c) {
+          v[c] = zDirs[(f0 * nf + fi) * 3 + c] * (1 - fx) + zDirs[(f1 * nf + fi) * 3 + c] * fx
+        }
+        const n = Math.hypot(v[0], v[1], v[2]) || 1
+        return [v[0] / n, v[1] / n, v[2] / n]
+      })
+      sig = step.FV.map((_, fi) => (zDirs[((frames - 1) * nf + fi) * 3 + 2] < 0 ? -1 : 1))
+    }
   } else {
     pos = step.Vfrom.map((_, vi) => rigid(vi, theta))
   }
   // each face's display height eases from where its paper sat before this
   // fold to where it ends up, so consecutive steps join without a jump
-  const zOff = step.FV.map((_, fi) =>
-    program.gap * (step.layersFrom[fi] + (step.layers[fi] - step.layersFrom[fi]) * t - mid))
-  return { FV: step.FV, pos, moving: step.moving, zOff }
+  const zOff = step.FV.map((_, fi) => {
+    const from = step.layersFrom[fi] - mid
+    const target = (sig?.[fi] ?? 1) * (step.layers[fi] - mid)
+    return program.gap * (from + (target - from) * t)
+  })
+  return { FV: step.FV, pos, moving: step.moving, zOff, zDir }
 }
 
 // The fold value a beat-timed schedule reaches at a given beat — steps swing

@@ -220,16 +220,21 @@ const PAPER_BACK = 0xf4efe2
 
 function fillOrigami(obj: OrigamiObject): void {
   const { program } = obj
-  const { FV, pos, zOff } = foldTablePositions(program, obj.fold)
+  const { FV, pos, zOff, zDir } = foldTablePositions(program, obj.fold)
+  // layer offsets ride the paper: along the face's carried direction when
+  // the motion provides one, else world z (the flat-state stacking axis)
+  const offX = (fi: number): number => (zDir ? zDir[fi][0] * zOff[fi] : 0)
+  const offY = (fi: number): number => (zDir ? zDir[fi][1] * zOff[fi] : 0)
+  const offZ = (fi: number): number => (zDir ? zDir[fi][2] * zOff[fi] : zOff[fi])
   const P = obj.posAttr.array as Float32Array
   let n = 0
   for (let fi = 0; fi < FV.length; ++fi) {
     const F = FV[fi]
-    const z = zOff[fi]
+    const ox = offX(fi), oy = offY(fi), oz = offZ(fi)
     for (let j = 1; j + 1 < F.length; ++j) {
       for (const vi of [F[0], F[j], F[j + 1]]) {
         const v = pos[vi]
-        P[n++] = v[0]; P[n++] = v[1]; P[n++] = v[2] + z
+        P[n++] = v[0] + ox; P[n++] = v[1] + oy; P[n++] = v[2] + oz
       }
     }
   }
@@ -240,7 +245,7 @@ function fillOrigami(obj: OrigamiObject): void {
   const seen = new Set<string>()
   for (let fi = 0; fi < FV.length; ++fi) {
     const F = FV[fi]
-    const z = zOff[fi]
+    const ox = offX(fi), oy = offY(fi), oz = offZ(fi)
     let i = F.length - 1
     for (let j = 0; j < F.length; ++j) {
       const a = F[i], b = F[j]
@@ -248,8 +253,8 @@ function fillOrigami(obj: OrigamiObject): void {
       const key = a < b ? `${a},${b}` : `${b},${a}`
       if (seen.has(key)) continue
       seen.add(key)
-      L[m++] = pos[a][0]; L[m++] = pos[a][1]; L[m++] = pos[a][2] + z
-      L[m++] = pos[b][0]; L[m++] = pos[b][1]; L[m++] = pos[b][2] + z
+      L[m++] = pos[a][0] + ox; L[m++] = pos[a][1] + oy; L[m++] = pos[a][2] + oz
+      L[m++] = pos[b][0] + ox; L[m++] = pos[b][1] + oy; L[m++] = pos[b][2] + oz
     }
   }
   obj.lineGeometry.setDrawRange(0, m / 3)
