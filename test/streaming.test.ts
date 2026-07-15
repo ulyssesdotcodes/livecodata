@@ -23,10 +23,10 @@ test('isStreamingNode is true for any expression containing midi()', () => {
   assert.equal(isStreamingNode(nodeOf(field('base').add(midi('c4')))), true)
 })
 
-// ── setField: streaming → binding, constant → baked ─────────────────────────
+// ── derive: streaming → binding, constant → baked ─────────────────────────
 
-test('setField(midi) leaves a per-frame binding; resolveBindings reads the ctx', () => {
-  const row = t([{ id: 'a' }]).setField('amount', midi('c4')).rows[0]
+test('derive(midi) leaves a per-frame binding; resolveBindings reads the ctx', () => {
+  const row = t([{ id: 'a' }]).derive({ amount: midi('c4') }).rows[0]
   assert.ok(isBinding(row.amount), 'a streaming value is deferred')
   const resolved = resolveBindings(row, { midi: () => 0.7 })
   assert.equal(resolved.amount, 0.7)
@@ -41,29 +41,29 @@ test('isStreamingNode is true for any expression containing slider()', () => {
   assert.equal(isStreamingNode(nodeOf(field('base').add(slider('x')))), true)
 })
 
-test('setField(slider) leaves a per-frame binding; resolveBindings reads ctx.slider', () => {
-  const row = t([{ id: 'a' }]).setField('py', slider('height')).rows[0]
+test('derive(slider) leaves a per-frame binding; resolveBindings reads ctx.slider', () => {
+  const row = t([{ id: 'a' }]).derive({ py: slider('height') }).rows[0]
   assert.ok(isBinding(row.py), 'a streaming slider value is deferred')
   const resolved = resolveBindings(row, { slider: () => 0.4 })
   assert.equal(resolved.py, 0.4)
 })
 
 test('slider bindings are diffable: same id hashes equal, different id differs', () => {
-  const a = t([{ id: 'x' }]).setField('v', slider('height'))
-  const b2 = t([{ id: 'x' }]).setField('v', slider('height'))
-  const c = t([{ id: 'x' }]).setField('v', slider('warp'))
+  const a = t([{ id: 'x' }]).derive({ v: slider('height') })
+  const b2 = t([{ id: 'x' }]).derive({ v: slider('height') })
+  const c = t([{ id: 'x' }]).derive({ v: slider('warp') })
   assert.equal(hashOf(a), hashOf(b2))
   assert.notEqual(hashOf(a), hashOf(c))
 })
 
-test('setField with a constant Expr bakes immediately (no binding)', () => {
-  const row = t([{ a: 2 }]).setField('b', field('a').mul(3)).rows[0]
+test('derive with a constant Expr bakes immediately (no binding)', () => {
+  const row = t([{ a: 2 }]).derive({ b: field('a').mul(3) }).rows[0]
   assert.equal(row.b, 6)
   assert.ok(!isBinding(row.b))
 })
 
 test('a midi value composes with row fields, resolved at frame time', () => {
-  const row = t([{ base: 10 }]).setField('v', field('base').add(midi('c4').mul(100))).rows[0]
+  const row = t([{ base: 10 }]).derive({ v: field('base').add(midi('c4').mul(100)) }).rows[0]
   assert.ok(isBinding(row.v))
   // base (baked: 10) + c4 (live: 0.5) * 100 = 60
   assert.equal(resolveBindings(row, { midi: () => 0.5 }).v, 60)
@@ -75,9 +75,9 @@ test('resolveBindings returns the same row when there is nothing to resolve', ()
 })
 
 test('midi bindings are diffable: same note hashes equal, different note differs', () => {
-  const a = t([{ id: 'x' }]).setField('amount', midi('c4'))
-  const b = t([{ id: 'x' }]).setField('amount', midi('c4'))
-  const c = t([{ id: 'x' }]).setField('amount', midi('e4'))
+  const a = t([{ id: 'x' }]).derive({ amount: midi('c4') })
+  const b = t([{ id: 'x' }]).derive({ amount: midi('c4') })
+  const c = t([{ id: 'x' }]).derive({ amount: midi('e4') })
   assert.equal(hashOf(a), hashOf(b))
   assert.notEqual(hashOf(a), hashOf(c))
 })
@@ -87,7 +87,7 @@ test('midi bindings are diffable: same note hashes equal, different note differs
 test('rasterize carries a midi binding onto each dense frame row', () => {
   const events = t([
     { id: 's', type: 'create', beat: 1, shape: 'box', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
-  ]).setField('amount', midi('c4'))
+  ]).derive({ amount: midi('c4') })
 
   const baked = rasterizeRows(events.rows, 0.1) // ~3 frames
   assert.ok(baked.length >= 2)
@@ -110,7 +110,7 @@ test('a note recorded at frame 60 drives the field every time the loop passes it
   // The baked scene with a midi-bound field, as rasterize produces it.
   const baked = rasterizeRows(
     t([{ id: 's', type: 'create', beat: 1, shape: 'box', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
-      .setField('amount', midi('c4')).rows,
+      .derive({ amount: midi('c4') }).rows,
     5,
   )
   const rowAt = (frame: number): Row => resolveBindings(baked.find((r) => r.frame === frame)!, ctxAt(frame))
@@ -125,7 +125,7 @@ test('a note recorded at frame 60 drives the field every time the loop passes it
 
 test('a midi binding in a hydra setVariable event survives to hydraFrameAt and resolves at playback', () => {
   const codeRow = { beat: 1, event: 'setCode', code: 'osc(speed).out()' }
-  const varRow = t([{ beat: 1, event: 'setVariable', name: 'speed' }]).setField('value', midi('c4')).rows[0]
+  const varRow = t([{ beat: 1, event: 'setVariable', name: 'speed' }]).derive({ value: midi('c4') }).rows[0]
   assert.ok(isBinding(varRow.value), 'the variable value is deferred, like a scene field')
 
   const idx = buildHydraIndex([codeRow, varRow])

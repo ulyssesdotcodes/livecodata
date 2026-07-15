@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Table } from '../src/dsl.js'
+import { Table, field } from '../src/dsl.js'
 import { createRuntime } from '../src/runtime.js'
 import { LINEAGE, getLineage, withLineage, activeLineage, type Row } from '../src/lineage.js'
 
@@ -21,18 +21,18 @@ test('lineage rides through a {...spread} but stays out of columns', () => {
   assert.ok(!(new Table([row]).columns as unknown[]).includes(LINEAGE))
 })
 
-test('map / filter / filterMap / slice thread the source row lineage', () => {
+test('map / filter / flatMap / slice thread the source row lineage', () => {
   const src = tagged('src', 4)
   const mapped = src.map((r) => ({ v: r.value }))
   assert.deepEqual(getLineage(mapped.rows[2]), [{ table: 'src', index: 2 }])
 
-  const filtered = src.filter((r) => (r.index as number) % 2 === 0)
+  const filtered = src.filter(field('index').mod(2).eq(0))
   assert.deepEqual(filtered.rows.map((r) => getLineage(r)[0].index), [0, 2])
 
   const sliced = src.slice(1, 3)
   assert.deepEqual(sliced.rows.map((r) => getLineage(r)[0].index), [1, 2])
 
-  const fm = src.filterMap((r) => (r.index === 1 ? null : [{ v: r.value }, { v: -(r.value as number) }]))
+  const fm = src.flatMap((r) => (r.index === 1 ? null : [{ v: r.value }, { v: -(r.value as number) }]))
   assert.deepEqual(fm.rows.map((r) => getLineage(r)[0].index), [0, 0, 2, 2, 3, 3])
 })
 
@@ -74,8 +74,8 @@ test('end-to-end: the scene cache traces back to the randsin sample that set col
     define("base", "events", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
     define("flash", "events", (rand, table) => {
-      const objects = table("base").filterMap(o => o.type === "create" ? { id: o.id } : null)
-      return table("randsin").filterMap((cur, i, rows) =>
+      const objects = table("base").flatMap(o => o.type === "create" ? { id: o.id } : null)
+      return table("randsin").flatMap((cur, i, rows) =>
         i > 0 && cur.value * rows[i - 1].value < 0
           ? objects.rows.map(o => ({ id: o.id, type: "color", beat: cur.beat, color: 0xffffff }))
           : null)

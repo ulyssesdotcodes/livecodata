@@ -442,12 +442,12 @@ editable("sliders", schemas.sliders)
 // 2. slider(id) is the sibling of midi(note): a live per-frame value you bind
 //    into any field. Here the sphere's height follows the "height" slider —
 //    drag it and the orb moves; the value is recorded against playback time and
-//    replays every loop (watch the thumb retrace your move). setField leaves a
-//    binding resolved each frame, exactly like setField("amount", midi("c4")).
+//    replays every loop (watch the thumb retrace your move). derive leaves a
+//    binding resolved each frame, exactly like derive({ amount: midi("c4") }).
 define("scene", () =>
   rows([{ id: "orb", type: "create", beat: 1, shape: "sphere", color: 0xffd43b,
           px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
-    .setField("py", slider("height"))
+    .derive({ py: slider("height") })
     .rasterize(16))
 
 // 3. In a hydra sketch every slider is also on props.sliders, keyed by id — no
@@ -494,7 +494,7 @@ define("hydra", () => rows([
 //    columns, not the table it's attached to.
 editable("hydra sketch", schemas.hydra)
 
-// 2. \`.pairBy(field, value, fn)\` finds the rows where row[field] === value and
+// 2. \`.pairBy({ field: value }, fn)\` finds the rows matching that pattern and
 //    cycles through them pairwise: match k is \`second\`, paired with match
 //    k-1 as \`first\` — and the LAST match wraps around to pair with the
 //    FIRST, so every match gets a partner. fn(first, second) returns the
@@ -515,7 +515,7 @@ const flicker = (n, step) => (first, second) =>
   ).rows
 
 define("hydra", (rand, table) =>
-  table("hydra sketch").pairBy("event", "setCode", flicker(3, 0.1))
+  table("hydra sketch").pairBy({ event: "setCode" }, flicker(3, 0.1))
 )
 `,
     tables: {
@@ -700,12 +700,12 @@ define("scene", (rand, table) => table("events").rasterize(12))
 // 4. Collisions are just rows — pull them into their own view to inspect, and
 //    graph the ball's height over time as it bounces and settles.
 define("collisions", (rand, table) =>
-  table("events").filter(r => r.type === "collision")
+  table("events").filter({ type: "collision" })
 )
 
 define("ball_height", (rand, table) =>
   table("events")
-    .filter(r => r.id === "ball" && r.type === "update")
+    .filter({ id: "ball", type: "update" })
     .map(r => ({ beat: r.beat, height: r.py }))
     .graph("height")
 )

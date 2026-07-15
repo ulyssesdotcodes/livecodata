@@ -42,7 +42,7 @@ interface SampledState {
 
 // Fields rasterize interprets itself (timing, transform, color, bookkeeping).
 // Anything else on an event — e.g. a custom field, or a { $expr } streaming
-// binding from setField("amount", midi("c4")) — is "extra": carried through to
+// binding from derive({ amount: midi("c4") }) — is "extra": carried through to
 // each baked frame row untouched, to be read (and bindings resolved) at playback.
 const RESERVED = new Set([
   'id', 'type', 'beat', 'loop', 'dur', 'ease', 'to', 'shape', 'color',
@@ -123,8 +123,8 @@ function sampleObject(events: Row[], i: number): SampledState | null {
   const keyframes = events.filter((e) => e.type === 'create' || e.type === 'update')
 
   const fields: Row = { ...createEv }
-  // Custom fields — a { $expr } streaming binding from setField("amount",
-  // midi("c4")), a string, … — carry the most recent event's value through
+  // Custom fields — a { $expr } streaming binding from derive({ amount:
+  // midi("c4") }), a string, … — carry the most recent event's value through
   // (last write wins, whatever the event type).
   Object.assign(fields, gatherExtra(events, i))
 

@@ -68,7 +68,7 @@ test('hydra variables can be data-driven from another view without cycling', () 
         { beat: 1, event: "setVariable", name: "amount", value: 0.2 },
       ]).concat(
         table("sim")
-          .filter(r => r.type === "collision" && r.other === "floor")
+          .filter({ type: "collision", other: "floor" })
           .map(r => ({ beat: r.beat, event: "setVariable", name: "amount", value: 2.6 }))
       ))
   `

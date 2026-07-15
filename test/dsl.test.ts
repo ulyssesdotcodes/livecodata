@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Table, createDSL } from '../src/dsl.js'
+import { Table, createDSL, field } from '../src/dsl.js'
 import { withLineage, getLineage, type Row } from '../src/lineage.js'
 
 const t = (rows: Row[]): Table => new Table(rows)
@@ -8,7 +8,7 @@ const t = (rows: Row[]): Table => new Table(rows)
 test('map / filter / slice return new tables', () => {
   const base = t([{ v: 1 }, { v: 2 }, { v: 3 }])
   assert.deepEqual(base.map((r) => ({ v: (r.v as number) * 10 })).rows, [{ v: 10 }, { v: 20 }, { v: 30 }])
-  assert.deepEqual(base.filter((r) => (r.v as number) % 2 === 1).rows, [{ v: 1 }, { v: 3 }])
+  assert.deepEqual(base.filter(field('v').mod(2).eq(1)).rows, [{ v: 1 }, { v: 3 }])
   assert.deepEqual(base.slice(1, 2).rows, [{ v: 2 }])
   assert.deepEqual(base.rows, [{ v: 1 }, { v: 2 }, { v: 3 }])
 })
@@ -38,20 +38,24 @@ test('map exposes the row index', () => {
   assert.deepEqual(out.rows, [{ v: 5, i: 0 }, { v: 6, i: 1 }])
 })
 
-test('filterMap drops nulls, keeps rows, and flattens arrays', () => {
-  const base = t([{ v: 1 }, { v: 2 }, { v: 3 }])
-  const out = base.filterMap((r) =>
-    r.v === 2 ? null : r.v === 3 ? [{ v: 3 }, { v: 30 }] : { v: (r.v as number) * 10 })
-  assert.deepEqual(out.rows, [{ v: 10 }, { v: 3 }, { v: 30 }])
+test('filter matches a { field: value } pattern (multi-key = AND, ===)', () => {
+  const base = t([
+    { id: 'ball', type: 'update', py: 1 },
+    { id: 'ball', type: 'create', py: 2 },
+    { id: 'box', type: 'update', py: 3 },
+  ])
+  assert.deepEqual(base.filter({ type: 'update' }).rows.map((r) => r.py), [1, 3])
+  assert.deepEqual(base.filter({ id: 'ball', type: 'update' }).rows.map((r) => r.py), [1])
+  assert.deepEqual(base.filter({ id: 'none' }).rows, [])
 })
 
-test('filterMap exposes the index and full row array (for look-back)', () => {
+test('flatMap exposes the index and full row array (for look-back)', () => {
   const base = t([{ v: 5 }, { v: 9 }, { v: 2 }])
-  const out = base.filterMap((r, i, rows) => (i > 0 && (r.v as number) > (rows[i - 1].v as number) ? r : null))
+  const out = base.flatMap((r, i, rows) => (i > 0 && (r.v as number) > (rows[i - 1].v as number) ? r : null))
   assert.deepEqual(out.rows, [{ v: 9 }])
 })
 
-test('flatMap fans rows out (and drops nulls) like filterMap', () => {
+test('flatMap fans rows out, dropping nulls and flattening arrays', () => {
   const base = t([{ v: 1 }, { v: 2 }, { v: 3 }])
   const out = base.flatMap((r) =>
     r.v === 2 ? null : r.v === 3 ? [{ v: 3 }, { v: 30 }] : { v: (r.v as number) * 10 })
@@ -87,17 +91,12 @@ test('scan can emit arrays', () => {
   assert.deepEqual(out.rows, [{ x: 1 }, { x: 2 }, { x: 2 }, { x: 4 }])
 })
 
-test('mapAccum threads extra state per row and discards it at the end', () => {
-  const out = t([{ v: 1 }, { v: 2 }, { v: 3 }]).mapAccum((sum, cur) => {
+test('scan threads a running accumulator, emitting one row per input row', () => {
+  const out = t([{ v: 1 }, { v: 2 }, { v: 3 }]).scan((sum, cur) => {
     const nextSum = sum + (cur.v as number)
-    return [{ v: cur.v, runningSum: nextSum }, nextSum]
+    return { state: nextSum, emit: { v: cur.v, runningSum: nextSum } }
   }, 0)
   assert.deepEqual(out.rows, [{ v: 1, runningSum: 1 }, { v: 2, runningSum: 3 }, { v: 3, runningSum: 6 }])
-})
-
-test('mapAccum can emit multiple rows per input row', () => {
-  const out = t([{ v: 1 }, { v: 2 }]).mapAccum((s, cur) => [[{ x: cur.v }, { x: (cur.v as number) * 2 }], s], null)
-  assert.deepEqual(out.rows, [{ x: 1 }, { x: 2 }, { x: 2 }, { x: 4 }])
 })
 
 test('columns is the first-seen union of keys across rows', () => {
@@ -133,17 +132,14 @@ test('orderBy sorts asc and desc by key or fn', () => {
   assert.deepEqual(base.orderBy((r) => -(r.v as number)).rows.map((r) => r.v), [3, 2, 1])
 })
 
-test('derive/assign add and overwrite columns, keeping the rest', () => {
+test('derive adds and overwrites columns, keeping the rest (Expr, fn, or literal)', () => {
   const base = t([{ a: 1 }, { a: 2 }])
   assert.deepEqual(base.derive({ b: (r: Row) => (r.a as number) * 10, c: 'k' }).rows, [
     { a: 1, b: 10, c: 'k' }, { a: 2, b: 20, c: 'k' },
   ])
-  assert.deepEqual(base.assign({ a: (r: Row) => (r.a as number) + 1 }).rows, [{ a: 2 }, { a: 3 }])
-})
-
-test('mapField derives one field from one source field', () => {
-  const out = t([{ v: 1 }, { v: 4 }]).mapField('v', 'root', (val) => Math.sqrt(val as number))
-  assert.deepEqual(out.rows, [{ v: 1, root: 1 }, { v: 4, root: 2 }])
+  assert.deepEqual(base.derive({ a: (r: Row) => (r.a as number) + 1 }).rows, [{ a: 2 }, { a: 3 }])
+  // An Expr value is evaluated against the row (the diffable form).
+  assert.deepEqual(base.derive({ root: field('a').mul(10) }).rows, [{ a: 1, root: 10 }, { a: 2, root: 20 }])
 })
 
 test('rescale linearly remaps a field into a range', () => {
@@ -164,11 +160,10 @@ test('groupBy().agg aggregates per group; count is shorthand', () => {
   assert.deepEqual(base.groupBy('g').count().rows, [{ g: 'x', count: 2 }, { g: 'y', count: 1 }])
 })
 
-test('trigger emits only where the predicate fires', () => {
-  const out = t([{ v: 1 }, { v: 5 }, { v: 2 }, { v: 9 }]).trigger(
-    (r) => (r.v as number) > 3,
-    (r) => ({ hit: r.v }),
-  )
+test('filter(Expr) + emit(template) selects and reshapes matching rows', () => {
+  const out = t([{ v: 1 }, { v: 5 }, { v: 2 }, { v: 9 }])
+    .filter(field('v').gt(3))
+    .emit({ hit: field('v') })
   assert.deepEqual(out.rows, [{ hit: 5 }, { hit: 9 }])
 })
 
@@ -184,7 +179,7 @@ test('pairBy pairs matches cyclically, replacing each `second` with fn\'s output
     { beat: 1, event: 'setCode', code: 'a' },
     { beat: 5, event: 'setVariable', name: 'freq', value: 3 },
     { beat: 9, event: 'setCode', code: 'b' },
-  ]).pairBy('event', 'setCode', (first, second) => [
+  ]).pairBy({ event: 'setCode' }, (first, second) => [
     { beat: second.beat, from: first.code, to: second.code },
   ])
   assert.deepEqual(out.rows, [
@@ -196,7 +191,7 @@ test('pairBy pairs matches cyclically, replacing each `second` with fn\'s output
 
 test('pairBy leaves rows unchanged when nothing matches', () => {
   const rows = [{ beat: 1, event: 'setVariable' }]
-  assert.deepEqual(t(rows).pairBy('event', 'setCode', () => ({})).rows, rows)
+  assert.deepEqual(t(rows).pairBy({ event: 'setCode' }, () => ({})).rows, rows)
 })
 
 test('triggerEach fans out across objects and unions lineage from trigger + object', () => {
