@@ -1,0 +1,388 @@
+# Plan: branching edits derived from session history
+
+Goal: the user scrubs back in the session history, makes some changes, and ends
+up on a *new branch* instead of (as today) being snapped back to the head. The
+old branch stays intact and reachable through a custom GUI. Everything is
+derived by folding the apply history: each event has an id, each apply
+references its parent apply event, and each apply lists the edit events it
+applies — an apply action *is* applying a series of edits.
+
+## Where the codebase is today
+
+- Everything rides ONE append-only event log (`event-log.ts`). Events carry
+  `(seq, t, src, kind, ...)`; `(src, seq)` is already a unique id and
+  `compareEvents` gives a deterministic total order, so replicas that hold the
+  same event set fold to the same state. Branch data can live in this same log
+  and inherit serialize/load/merge/multiplayer for free.
+- A "run" is recorded by `recordRun()` as `SessionRun { at: log.length, tables }`
+  — a **prefix index**. Replay (`setReplayView`) is literally
+  `foldEventsMap(log.all().slice(0, run.at))`. Separately, `evaluate()` records
+  an `'apply'` activity event (only when `broadcast`), and the run *list* is
+  persisted alongside the events in `sessions.ts`.
+- Editing while scrubbed does not branch: `append()` sets `replay = null`, so
+  the mutation lands on the head fold and the view jumps to head ("you edit the
+  head, never rewrite history").
+
+Two assumptions have to fall:
+
+1. **"History is a prefix."** With branches, "the state at run R" is no longer
+   `log[0..at]` — it's the set of events R's ancestry *explicitly claims*,
+   folded in `(seq, src)` order.
+2. **"Runs are a linear list."** Runs become a tree; the session bar scrubs the
+   path from the root to the current branch head.
+
+## Data model
+
+### The apply node: a commit of an explicit changeset
+
+Make the apply bookmark itself a first-class event (it mostly already is — the
+`'apply'` record on the activity table), carrying identity, ancestry, and the
+edits it applies:
+
+```
+{ kind: 'apply', table: 'activity',
+  id: 'a<random>',          // stable id, minted at append time
+  parent: 'a…' | null,      // the apply this one builds on; null for the first
+  edits: ['<src>#<seq>', …],// ids of the edit events this apply commits,
+                            // in (seq, src) order
+  seen: 'a…' | null,        // the newest apply on the author's branch when
+                            // this one was made — the tip it was aware of.
+                            // seen == parent ⇒ ordinary apply extending the
+                            // tip; seen != parent ⇒ a deliberate fork (the
+                            // author knowingly applied from an earlier point)
+  ... existing fields (changed, at) }
+```
+
+Edit events are identified by their existing `(src, seq)` key (`eventKey` in
+`event-log.ts`) — no new field needed on them for *membership*. The apply's own
+id is minted (same recipe as `localSource()`): sturdier across migrations than
+reusing its stamp, and what `parent` refs point at.
+
+Crucially, `recordRun()` and the `'apply'` activity record merge into one
+event: the apply event **is** the run. `SessionRun`/the saved `runs` list stays
+only as a legacy input (see Compatibility); at runtime the run structure is a
+fold of apply events.
+
+This makes branch membership **explicit rather than inferred**. Divergence
+needs no marker event: scrub back to apply₁ and edit, and those edits are
+simply *unclaimed* until the next apply (parent = apply₁, `seen` = the tip
+scrubbed back from) claims them, while the old branch's applies claim their
+own. The motivating ambiguity — two lines of history both "following" apply₁,
+indistinguishable by seq ranges because forked edits append at the log tail —
+never arises, because no fold ever asks "which edits follow this node"; it
+reads each apply's list.
+
+`seen` makes forking **derived, not declared** — in keeping with everything
+else here being a fold. An ordinary apply extends the newest apply its author
+knows about (fast-forward — see the store changes), so for it
+`seen == parent` and the field is pure confirmation. The only way the two can
+differ is the author *knowingly bypassing* a newer tip: scrubbing back or
+checking out an ancestor and applying from there. So
+
+    fork ⟺ seen ≠ parent
+
+— a plain string compare, no dereferencing, computed identically by every
+replica from the event alone. Concurrency never creates a branch: two
+replicas racing at tip X both record `seen = parent = X` and the fold
+linearizes them (below); a deliberate fork records the tip it peeled away
+from and stays a true sibling.
+
+Why record this rather than infer it? Because it *cannot* be inferred: in the
+merged log a fork from X and a racing apply at X are structurally identical —
+both children of X — and Lamport stamps make "authored after seeing its
+sibling" necessary but not sufficient ("my seq is past Y's" never proves
+receipt of Y; a replica's own events push its clock along). Naming Y's id
+does prove receipt — you can't reference an id you never merged. For the same
+reason `seen` must be a specific apply id, not a "last seen seq" horizon.
+And versus a bare `mode: extend|fork` bit, `seen` costs the same one field
+and says strictly more: a fork permanently records *what* it forked away from
+(a GUI label — "branched from run 8 while run 11 was live"), and each apply
+becomes a small vector-clock entry, reconstructing what every replica knew at
+every apply.
+
+Size note: an apply listing a few hundred cell edits costs a few KB of ids.
+Fine as-is; if a pathological session ever cares, `edits` compacts losslessly
+to per-src seq ranges without changing the model.
+
+### The open working tail: local state, not a stamp
+
+`edits` lists cover *committed* history. Un-applied edits — accumulated since
+the last apply — belong to no apply yet, but three things must still locate
+them:
+
+1. **The live fold**: your pending edits must show in the current state.
+2. **Reload mid-edit**: the session persists on every change (`persistSession`
+   fires on store change), so pending edits must reattach to the right branch
+   when the session is reopened.
+3. **Multiplayer**: peers see each other's cell edits *before* apply today
+   (merge refolds everything); that must survive.
+
+An earlier draft stamped every edit with `base: <apply id>` for this. The
+stamp isn't needed: committed membership never reads it, so only the working
+tail consumes it, and each consumer has a cheaper answer —
+
+- The live fold: the store tracks `pending` (edit ids since `head`) in memory
+  and overlays exactly those.
+- Reload: `head` + `pending` persist in the session record alongside the log
+  (see Persistence) — local working state riding with the local session, the
+  way `runs` does today.
+- Peers' un-applied edits: overlaid by heuristic — unclaimed edits ordered
+  after the newest apply in the log show on the performance head.
+
+The idempotent `edits` lists are what make the heuristic safe to get
+*transiently* wrong: the moment an apply claims the edits, every fold reads
+only the list, and clients catch up to the same state regardless of arrival
+order. The residual cost is that attribution of **unclaimed** edits is
+heuristic, not exact: edits abandoned mid-fork (scrub back, edit, check out
+away without applying) overlay the head until the next apply anywhere
+out-orders them, and peers live-editing *different branches* simultaneously
+can see each other's unclaimed edits flicker onto the wrong head. Committed
+history is never affected — an apply's list is authoritative — so the worst
+case is a briefly wrong preview, and today's app shows every unclaimed edit
+at head anyway. If multi-branch live jamming ever needs exact attribution,
+`base` returns as an optional field with no migration (old events simply
+lack it).
+
+### The fold
+
+Add a pure module (`src/branches.ts`, mirroring the style of `event-log.ts`):
+
+```ts
+interface ApplyNode { id: string; parent: string | null; edits: string[]; seen: string | null; fork: boolean /* derived: seen !== parent */; seq: number; src: string }
+interface BranchTree {
+  nodes: Map<string, ApplyNode>
+  children: Map<string, string[]>       // parent id -> child ids, (seq,src)-ordered
+  heads: string[]                       // leaf apply ids = the branches
+  pathTo(id: string): ApplyNode[]       // root..id — the session bar's scrub axis
+}
+buildBranchTree(events: StampedEvent[]): BranchTree
+branchEvents(events: StampedEvent[], head: string | null, tree: BranchTree): StampedEvent[]
+```
+
+`branchEvents` selects: the applies on `pathTo(head)` interleaved with the
+events their `edits` lists claim (dereferenced by `(src, seq)` key), plus —
+for the *live* head only — the unclaimed overlay (events no apply claims,
+ordered after the newest apply in the log: the local pending edits and, by
+the working-tail heuristic, peers'), all in `compareEvents` order. Scrubbing
+to a mid-branch apply is the same call with the truncated path and no
+overlay: truncation falls out for free, no seq-window reasoning anywhere.
+
+Events predating the first apply need no special case: the first apply claims
+them in its `edits` like anything else.
+
+**Linearization of concurrent applies**: after linking nodes by `parent`,
+`buildBranchTree` rewrites each node's non-fork children (`seen == parent`)
+into a chain in `(seq, src)` order — the first stays a child, each next one
+is re-parented onto the previous — while forks (`seen != parent`) remain true
+siblings. This is how a genuine race (two replicas applied at tip X before
+seeing each other) resolves: both recorded `seen = parent = X`, and every
+replica folds them into the *same single line*, so peers stay on one branch.
+It's a pure function of the log — no reconciliation event, no "who noticed
+first" protocol.
+
+Defensive rules, same spirit as `applyEvent`: an apply whose `parent` is
+unknown (partial/merged log) parents to the root; a missing `seen` is read as
+equal to `parent` (a lone child chains trivially, so this is also the
+legacy-friendly default); a cycle (corrupt data) breaks at the repeated node;
+an `edits` id that dereferences to nothing is skipped; an event claimed by
+two applies on one path (racing applies may both claim shared pending edits
+they'd each seen) folds once, at its `(seq, src)` position.
+
+## Store changes (`editable-tables.ts`)
+
+The store gains a notion of *current node* and *pending edits*, and its fold
+becomes branch-aware:
+
+- Internal state: `head: string | null` (the apply whose branch the live fold
+  shows; null = fresh/legacy log) and `pending: string[]` (ids of edits
+  appended since `head`, i.e. the working tail — local state, persisted with
+  the session record, see Persistence).
+- `append()` pushes each ordinary event's key onto `pending`. The incremental
+  head-fold keeps working because, on the current branch, new events always
+  extend the current fold.
+- `recordApply(payload)` replaces `recordRun()`: appends the apply event with
+  `{ id, parent, edits: pending, seen }`, then sets `head = id`,
+  `pending = []`. Returns the node. `seen` is the leaf of the branch the
+  author was on when they committed. For an ordinary tip apply the two stay
+  equal because `parent` **fast-forwards to the current tip**, not the stale
+  base: if merged peer applies landed since this replica's last apply, the
+  new apply parents the newest of them (and `seen` = that same tip), and the
+  replica's pending edits (typically non-conflicting — other tables, other
+  rows) simply ride along in `edits` and fold after the peer's. After a
+  scrub/checkout to an earlier node, `parent` is that node while `seen` stays
+  the leaf the author came from (the store remembers it at fork-on-edit
+  time), so the apply reads as a fork. `runs()`/`setRuns()`/`SessionRun`
+  survive only for session-format compatibility.
+- **Fork-on-edit** — the behavioral heart of the feature. Replace the
+  `append() → replay = null` rule: if a mutation arrives while a replay view is
+  active (scrubbed to apply N), set `head = N`, discard `pending` (the
+  abandoned edits stay in the log, unclaimed and inert — they drop out of the
+  overlay once the next apply out-orders them), promote the replay fold to be
+  the live `tables` fold, clear `replay`, and land the edit there. The user's
+  edit hits the state they were *looking at*; nothing is rewritten — the old
+  branch's applies still claim their events and its head remains a leaf in
+  the tree.
+- `checkout(headId)`: set `head = headId`, reset `pending` (any un-applied
+  edits left behind are abandoned, as above), refold
+  `tables = foldEventsMap(branchEvents(log.all(), headId, tree))`, notify.
+  "Getting back to the old branch" is just checkout; continuing it is just
+  applying with that parent.
+- `setReplayView(nodeId | null)` changes coordinate: from a prefix `SessionRun`
+  to an apply id on the current branch path (fold = truncated `branchEvents`).
+- `branchTree()`: expose the fold (cached, invalidated by `onChange`) for the
+  GUI.
+- `onMerge` refold: rebuild the tree, keep `head` if it still exists, else fall
+  back to newest apply. `pending` (locally-authored ids) is untouched by a
+  merge — unless a merged apply claims some of them (a peer committed edits it
+  had seen from us), in which case they're removed from `pending` as now-claimed.
+
+## `main.ts` changes
+
+- `evaluate()`: when invoked while scrubbed (session bar not at latest), do
+  **not** `setReplayView(null)`-back-to-head first — cook against the scrubbed
+  fold and let `recordApply` create the forking child of the scrubbed apply
+  (`parent` = the scrubbed node, `seen` = the leaf scrubbed back from). (The
+  cook itself may append ensure()/retainDeclared events; they land as pending
+  and are claimed by this apply — the fork-on-edit rule makes the first such
+  append perform the fork.) When at latest, behavior is unchanged: an
+  ordinary apply (`seen == parent`), fast-forwarded onto whatever the branch
+  tip is by `recordApply`.
+- `scrubSession(pos)`: `pos` indexes `tree.pathTo(head)` instead of the flat
+  runs list; latest position = live head fold (committed + pending), as today.
+- Edit-while-scrubbed needs no main.ts code: the store's fork-on-edit covers
+  inline table edits, and the subsequent Ctrl-Enter apply commits the branch.
+- `clearRuns()` keeps its meaning by scoping: the CLEAR_RUNS_KIND marker hides
+  applies at-or-before it on the current path from the scrub bar (tree fold
+  skips them), same spirit as today.
+
+## GUI
+
+Session bar (`ui/session-bar.tsx`) additions, keeping the humble-object split:
+
+1. Scrubber semantics: unchanged look; `count` = current branch path length.
+2. **Branch indicator + switcher**: when the tree has >1 leaf, show a chip
+   ("branch 2/3" or a name) that opens a small popover listing branch heads —
+   labeled by time, run count, and a short diff hint (first changed line of
+   `code` vs. the fork point's, derivable from the folds). Clicking one calls
+   `checkout(headId)`; the bar re-targets that path and jumps to its tip.
+3. **Fork affordance while scrubbed**: when the thumb sits on an apply with
+   children (i.e. an edit/apply here will fork), tint the bar differently and
+   label it ("editing here starts a new branch") so branching is visible before
+   it happens, not after.
+4. Optional (later): a mini tree/graph popover — nodes per apply, one column
+   per branch — for sessions where the dropdown list stops being enough.
+5. Branch naming: a `{ kind: 'name-branch', head, name }` activity event; pure
+   fold, trivially multiplayer-safe. Nice-to-have, not phase 1.
+
+## Persistence & compatibility
+
+- The saved session format (`sessions.ts`) doesn't change shape: `events` is
+  still the whole serialized log (applies' `edits`/`parent`/`seen` are just
+  event fields), `runs` is still written for old builds to read. Add `head`
+  (current branch) and `pending` (un-applied edit ids) to the record — local
+  working state like `runs`, so a reload mid-edit reattaches the working tail
+  exactly. Both are re-derivable if absent (`head` → newest apply; `pending`
+  → the unclaimed-after-newest-apply heuristic), so older records still open.
+- Loading a **legacy linear session** needs no migration for correctness: no
+  applies carry `edits`, so the tree is empty → the store falls back to
+  `deriveRunsFromCode()`-style linear runs, exactly today's behavior. The
+  first new apply claims the whole existing log as its `edits` (one big
+  initial commit), after which branching works forward. Alternatively an
+  `EventMigration` in `EDITABLE_MIGRATIONS` stamps legacy logs into one
+  explicit branch (walk linearly; each `'apply'` gets `id` + `parent` =
+  previous apply + `edits` = the events since it, `seen` = parent) — do this if
+  the fallback dual-path in the scrub code turns out messier than the
+  migration. The migration is the cleaner end state; the chain exists
+  precisely for this.
+- `deriveRunsFromCode()` remains the fallback for sessions with neither stamped
+  applies nor a saved runs list.
+
+## Multiplayer
+
+Nothing new to sync: applies and stamps are ordinary events, `mergeEvents` and
+the (seq, src) order already make the tree deterministic on every replica.
+Semantics to settle (deliberately kept simple):
+
+- **Which branch do peers watch?** Keep the current rule generalized: the
+  performance head is the newest apply event (by seq, src) on *any* branch —
+  an apply on a fork moves everyone there, exactly like an apply does today. A
+  peer who has locally checked out another branch is in the same state as a
+  peer scrubbed back today (their next edit forks). If explicit shared
+  checkout is wanted later, it's one more activity event kind.
+- **Peers' un-applied edits** stay visible essentially as today: they merge
+  in unclaimed, and the live fold's overlay (unclaimed, ordered after the
+  newest apply) shows them at the performance head — see The open working
+  tail for the transient-misattribution caveat this heuristic accepts.
+- **Concurrent applies append; they don't fork.** The goal: non-conflicting
+  concurrent work (edits on separate tables, separate parts of the code) lands
+  on the *same* branch, and peers stay together. Three layers deliver it:
+  1. *Observation on the event* (`seen`): every apply writes down the branch
+     tip its author knew about. A deliberate apply-from-history is the only
+     case where `seen != parent`, so fork-ness is derived from what was seen —
+     never guessed from timing.
+  2. *Apply-time fast-forward*: a replica whose tip moved underneath it (peer
+     applies merged in since its base) parents its apply onto the current tip
+     (keeping `seen == parent`). Its claimed edits fold after the peer's — for
+     disjoint tables/cells that's exactly the intended union.
+  3. *Fold-time linearization* (see The fold): the leftover true race — both
+     applied at X before seeing each other, so both recorded
+     `seen = parent = X` — chains those siblings deterministically into one
+     line on every replica.
+- **Conflict is advisory, not structural.** Two racing tip applies that touch
+  the *same* cell still linearize — which is precisely today's last-write-wins
+  multiplayer semantics, so the degenerate case degrades to exactly current
+  behavior instead of silently splitting the performance. Content-conflict
+  detection becomes a GUI concern (badge the apply: "overwrote N's edit —
+  branch instead?"), not a fold concern. The one genuinely shared cell — the
+  program text in `code[0].code` — can do better at *apply time* (polish
+  phase): 3-way merge the text (base's code, mine, theirs); a clean merge
+  extends with the merged program, a dirty one surfaces the choice to fork.
+  The fold stays dumb either way.
+
+## Testing
+
+Extend `test/editable-tables.test.ts` / add `test/branches.test.ts`, pure-fold
+style like the existing tests:
+
+- Tree fold: linear log → single path; fork → two heads; fork-of-fork; unknown
+  parent; dangling `edits` id; cycle guard; CLEAR_RUNS interaction.
+- Membership: the motivating case — apply₁ → edits → apply₂, scrub to apply₁,
+  edit, apply₃ — assert apply₂'s branch folds exactly its claimed edits and
+  apply₃'s exactly its own, with the shared prefix in both.
+- Working tail: pending edits overlay the live head and only there;
+  abandoned-fork edits (scrubbed, edited, checked out away, never applied)
+  appear on no committed branch and drop out of the overlay once out-ordered
+  by the next apply; reload mid-edit reattaches pending via the persisted
+  `head`/`pending`, and via the heuristic when they're absent.
+- Fork-on-edit: mutation while scrubbed lands on the scrubbed state, head
+  branch untouched; checkout of a leaf continues it (next apply parents it).
+- Round-trips: serialize/load preserves the tree; legacy (unstamped) session
+  loads to linear behavior; first apply on a legacy log claims it wholesale;
+  migration (if adopted) produces the same folds the live session had.
+- Merge: two logs forked from a common prefix merge into the same tree on both
+  replicas; a peer's unclaimed edits show at head.
+- Concurrency: a tip apply fast-forwards onto a merged-in tip, keeping
+  `seen == parent` (disjoint table edits from both replicas all present in
+  the folded state); racing same-parent applies with `seen == parent`
+  linearize identically on both replicas, including when both claim shared
+  pending edits (folded once); a fork (`seen != parent`) racing a tip apply
+  keeps its own branch; same-cell racing tip applies resolve last-write-wins,
+  matching today's behavior; a missing `seen` reads as `parent`.
+
+## Phasing
+
+1. **Foundations (pure):** `branches.ts` fold + tests, including
+   linearization of `seen == parent` siblings and the unclaimed overlay; the
+   apply event shape (`id`/`parent`/`edits`/`seen`) and pending tracking +
+   `recordApply` (with fast-forward) in the store (still linear behavior —
+   every apply extends the tip and claims the pending edits). Ship: no
+   visible change.
+2. **Fork-on-edit + checkout:** store fork rule (applies with
+   `seen != parent`), branch-aware replay/fold, `evaluate`/`scrubSession`
+   rewiring. Ship: branching works, GUI still shows only the current path.
+3. **GUI:** branch chip + switcher popover, fork-warning tint, `head` in the
+   session record. Ship: the feature as described.
+4. **Polish:** branch naming, mini-graph, conflict badges on concurrent
+   applies, apply-time 3-way merge of the code text, legacy-log migration if
+   the dual path warrants it, shared-checkout event if multiplayer use asks
+   for it.
