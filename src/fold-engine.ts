@@ -17,6 +17,7 @@ import { X } from './vendor/flatfolder/conversion.js'
 import { CON } from './vendor/flatfolder/constraints.js'
 import { NOTE } from './vendor/flatfolder/note.js'
 import { COMP, TYPE_LABEL } from './vendor/linefolder/compute.js'
+import { buildSoftMesh, bakeSoftMotion, pickPinned, FLAT_ANGLE } from './fold-relax.js'
 
 NOTE.show = false
 let conBuilt = false
@@ -58,6 +59,12 @@ export interface FoldAnim {
   // side it lands on. Independent flaps in one step (e.g. both wings) can
   // swing to opposite sides.
   dirs: number[]
+  // the crease network for the soft solver: every edge of the face graph
+  // with its dihedral target before and after this fold (0 flat, ±FLAT
+  // folded — sign in the sheet's material frame)
+  EV: [number, number][]
+  angleFrom: number[]
+  angleTo: number[]
 }
 
 export interface FoldOutcome {
@@ -157,6 +164,25 @@ export const initialState = (corners?: Vec2[]): FoldState => {
 
 const MAX_STATES = 100000n
 
+// A crease without a fold: cut every ply along the line, keep the
+// geometry exactly as it is. This is origami pre-creasing — it gives the
+// paper hinge lines that later folds (and the soft solver) bend along.
+export const creaseStep = (st: FoldState, line: Line): FoldState => {
+  ensureCon()
+  const [FVd, Vd, Sd, , F_map] = COMP.split_FOLD_on_line(
+    { FV: st.FV, V: st.V, Vf: st.sheet, eps: st.eps }, line)
+  const [FOLDn, CELLn] = COMP.V_FV_2_FOLD_CELL(Vd, FVd)
+  const FO = COMP.map_order(CELLn.BI, F_map, st.FO) as FaceOrder[]
+  const layers: number[] = FVd.map(() => 0)
+  for (let parent = 0; parent < F_map.length; ++parent) {
+    for (const piece of F_map[parent]) layers[piece] = st.layers[parent]
+  }
+  return {
+    V: Vd as Vec2[], FV: FVd, FO, Ff: FOLDn.Ff,
+    sheet: Sd as Vec2[], layers, eps: FOLDn.eps,
+  }
+}
+
 export const foldStep = (st: FoldState, spec: FoldSpec): FoldOutcome => {
   ensureCon()
   const line = spec.line
@@ -238,7 +264,7 @@ export const foldStep = (st: FoldState, spec: FoldSpec): FoldOutcome => {
   const sel = candidates[Math.min(spec.pick ?? 0, candidates.length - 1)]
   const edges = X.BF_GB_GA_GI_2_edges(BF, GB, GA, sel.gi)
   const FO = X.edges_Ff_2_FO(edges, Ff) as FaceOrder[]
-  const [H] = COMP.FO_Ff_EF_2_H_EA(FO, Ff, EF)
+  const [H, EAto] = COMP.FO_Ff_EF_2_H_EA(FO, Ff, EF)
   const layers = linearize(H, Ff.length)
   if (layers === undefined) {
     throw new FoldError('chosen state has cyclic layering; try another kind/pick')
@@ -248,9 +274,22 @@ export const foldStep = (st: FoldState, spec: FoldSpec): FoldOutcome => {
     for (const f_ of F_map2[f]) layersFrom[f_] = st.layers[f]
   }
   const dirs = flapDirs(FVy, Vx as Vec2[], FM, line, FO, layers)
+  // dihedral targets: the start state's angles come from the carried-over
+  // orders (FOO) with the movers' parity mirrored (they haven't reflected
+  // yet); the end state's from the solved orders. Empirically calibrated:
+  // a valley ('V') is a NEGATIVE dihedral in the solver's convention.
+  const FfFrom = Ff.map((f: boolean, fi: number) => FM[fi] ? !f : f)
+  const EAfrom = COMP.FO_Ff_EF_2_H_EA(FOO, FfFrom, EF)[1] as string[]
+  const angleOf = (ea: string): number =>
+    ea === 'V' ? -FLAT_ANGLE : ea === 'M' ? FLAT_ANGLE : 0
   return {
     state: { V: Vy, FV: FVy, FO, Ff, sheet: Sy as Vec2[], layers, eps: FOLDn.eps },
-    anim: { Vfrom: Vx as Vec2[], moving: FM, line, layersFrom, dirs },
+    anim: {
+      Vfrom: Vx as Vec2[], moving: FM, line, layersFrom, dirs,
+      EV: FOLDn.EV as [number, number][],
+      angleFrom: EAfrom.map(angleOf),
+      angleTo: (EAto as string[]).map(angleOf),
+    },
     type: TYPE_LABEL[sel.type],
     nStates: Number(n),
   }
@@ -347,6 +386,7 @@ export interface FoldTableRowSpec {
   at: number
   dur: number
   to: number   // terminal swing fraction: 1 = flat, 0.5 = held at 90°
+  crease: boolean  // kind "crease": cut only, nothing folds, no timeline slot
 }
 
 export interface FoldProgramStep {
@@ -363,6 +403,10 @@ export interface FoldProgramStep {
   layersFrom: number[]  // stacking before it, on this step's face set
   dirs: number[]        // rotation sense per face (0 = static); each flap
                         // swings out on the side it lands on
+  // baked soft motion (reverse folds, sinks, …): keyframed vertex
+  // positions from the compliant solver, display frame, flattened
+  // [frame][vertex][xyz]. Simple folds stay on the rigid swing.
+  soft?: { frames: number; pos: number[] }
 }
 
 export interface FoldTableProgram {
@@ -417,8 +461,12 @@ const posAt = (r: Record<string, unknown>, key: string): number | undefined => {
   return n !== undefined && n > 0 ? n : undefined
 }
 
+const isCrease = (r: Record<string, unknown>): boolean =>
+  (strAt(r, 'kind') ?? '').toLowerCase() === 'crease'
+
 export const parseFoldRows = (rows: Record<string, unknown>[]): FoldTableRowSpec[] => {
   const specs: FoldTableRowSpec[] = []
+  let foldCount = 0
   rows.forEach((r, i) => {
     if (r == null) return
     const name = strAt(r, 'step') ?? `fold${i + 1}`
@@ -430,23 +478,32 @@ export const parseFoldRows = (rows: Record<string, unknown>[]): FoldTableRowSpec
     const p1 = parsePoint(p1raw, 'p1', name)
     const p2 = parsePoint(p2raw, 'p2', name)
     const moveRaw = strAt(r, 'move')
-    if (moveRaw === undefined) throw new FoldError(`step "${name}": needs move ("x,y" sheet points, ";"-separated)`)
-    const move = moveRaw.split(';').map((m) => parsePoint(m, 'move', name))
+    if (moveRaw === undefined && !isCrease(r)) {
+      throw new FoldError(`step "${name}": needs move ("x,y" sheet points, ";"-separated)`)
+    }
+    const move = (moveRaw ?? '').split(';').filter((m) => m.trim() !== '')
+      .map((m) => parsePoint(m, 'move', name))
     let kind: string | undefined
+    let crease = false
     const kindRaw = strAt(r, 'kind')
     if (kindRaw !== undefined) {
-      kind = KINDS.includes(kindRaw) ? kindRaw : KIND_ALIASES[kindRaw.toLowerCase()]
-      if (kind === undefined) {
-        throw new FoldError(`step "${name}": unknown kind "${kindRaw}" (try simple, reverse, sink, …)`)
+      if (kindRaw.toLowerCase() === 'crease') {
+        crease = true
+      } else {
+        kind = KINDS.includes(kindRaw) ? kindRaw : KIND_ALIASES[kindRaw.toLowerCase()]
+        if (kind === undefined) {
+          throw new FoldError(`step "${name}": unknown kind "${kindRaw}" (try simple, reverse, sink, crease, …)`)
+        }
       }
     }
-    const at = posAt(r, 'at') ?? specs.length + 1
+    if (!crease) foldCount += 1
+    const at = posAt(r, 'at') ?? foldCount
     const dur = posAt(r, 'dur') ?? 0.75
     const to = Math.min(1, posAt(r, 'to') ?? 1)
     specs.push({
       name, line: lineThrough(p1, p2), move,
       kind, pick: numAt(r, 'pick'),
-      at, dur, to,
+      at, dur, to, crease,
     })
   })
   return specs
@@ -464,6 +521,15 @@ export const compileFoldTable = (
   const initial = { FV: st.FV.map((F) => [...F]), V: st.V.map(toDisplay) }
   const steps: FoldProgramStep[] = []
   for (const spec of specs) {
+    if (spec.crease) {
+      try {
+        st = creaseStep(st, spec.line)
+      } catch (e) {
+        if (e instanceof FoldError) throw new FoldError(`step "${spec.name}": ${e.message}`)
+        throw e
+      }
+      continue
+    }
     let out: FoldOutcome
     try {
       out = foldStep(st, spec)
@@ -484,6 +550,13 @@ export const compileFoldTable = (
       layers: out.state.layers,
       layersFrom: out.anim.layersFrom,
       dirs: out.anim.dirs,
+      // simple folds keep the crisp rigid hinge; so do held folds
+      // (to < 1) — their whole point is the displayed pose — and folds
+      // through deep layer stacks, where relaxation reads as crumpling
+      // rather than paper (the collapse's shallow pockets are where the
+      // soft motion shines)
+      soft: out.type === 'Pureland' || spec.to < 1 || out.state.FV.length > SOFT_MAX_FACES
+        ? undefined : bakeStep(out, scale),
     })
     st = out.state
   }
@@ -512,6 +585,67 @@ export const compileFoldTable = (
 // total thickness of the whole layer stack, relative to the paper size —
 // each layer gets an equal slice, so deep models stay visually thin
 const STACK_DEPTH = 0.05
+
+// Bake the compliant in-between motion for one non-simple step: the mesh
+// relaxes from the flat start (seeded a hair along each flap's rigid
+// swing, so every flap breaks symmetry toward the side it lands on) while
+// the crease targets ramp to the end state's angles. Positions come out
+// in the display frame, flattened [frame][vertex][xyz].
+const SOFT_FRAMES = 16
+const SOFT_MAX_FACES = 20
+
+const bakeStep = (out: FoldOutcome, scale: number): { frames: number; pos: number[] } => {
+  const { FV, sheet } = out.state
+  const { Vfrom, moving, line, dirs, EV, angleFrom, angleTo } = out.anim
+  const [EF] = X.EV_FV_2_EF_FE(EV, FV)
+  // the pocket: the plies the moving point passes between are exactly the
+  // static faces that overlap a mover in the solved stack — only THEIR
+  // pressed creases open to let the point through, the rest of the model
+  // stays pressed (a folder opens one pocket, not the whole bird)
+  const pocket = FV.map(() => false)
+  for (const [f, g] of out.state.FO) {
+    if (moving[f] !== moving[g]) pocket[moving[f] ? g : f] = true
+  }
+  const flank = EV.map((_, ei) => {
+    if (Math.abs(angleTo[ei] - angleFrom[ei]) > 1e-9) return false
+    if (Math.abs(angleFrom[ei]) < 1e-9) return false
+    return EF[ei].some((fi: number) => pocket[fi])
+  })
+  const mesh = buildSoftMesh(FV, sheet, EV, EF, angleFrom, angleTo,
+    pickPinned(FV, sheet, moving), flank)
+  const seed = new Float64Array(sheet.length * 3)
+  const [u, d] = line
+  const theta = Math.PI * 0.05
+  const sense: number[] = sheet.map(() => 0)
+  for (let fi = 0; fi < FV.length; ++fi) {
+    if (!moving[fi]) continue
+    for (const vi of FV[fi]) sense[vi] = dirs[fi]
+  }
+  Vfrom.forEach((p, vi) => {
+    const h = p[0] * u[0] + p[1] * u[1] - d
+    if (sense[vi] === 0 || Math.abs(h) < 1e-12) {
+      seed[vi * 3] = p[0]; seed[vi * 3 + 1] = p[1]; seed[vi * 3 + 2] = 0
+    } else {
+      const hh = h * Math.cos(theta)
+      seed[vi * 3] = p[0] + (hh - h) * u[0]
+      seed[vi * 3 + 1] = p[1] + (hh - h) * u[1]
+      seed[vi * 3 + 2] = sense[vi] * h * Math.sin(theta)
+    }
+  })
+  const baked = bakeSoftMotion(mesh, seed, { frames: SOFT_FRAMES })
+  const pos: number[] = []
+  for (const frame of baked) {
+    for (let vi = 0; vi < sheet.length; ++vi) {
+      pos.push((frame[vi * 3] - 0.5) * scale, (frame[vi * 3 + 1] - 0.5) * scale, frame[vi * 3 + 2] * scale)
+    }
+  }
+  return { frames: baked.length, pos }
+}
+
+const smooth = (a: number, b: number, x: number): number => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
+  return t * t * (3 - 2 * t)
+}
 
 // Fold-progress value → per-vertex [x, y, z] positions plus the face set to
 // draw. fold = k + t means step k+1 is mid-swing at fraction t; whole
@@ -542,12 +676,40 @@ export const foldTablePositions = (
     if (!step.moving[fi]) continue
     for (const vi of step.FV[fi]) sense[vi] = step.dirs[fi]
   }
-  const pos: [number, number, number][] = step.Vfrom.map((p, vi) => {
+  const rigid = (vi: number, theta2: number): [number, number, number] => {
+    const p = step.Vfrom[vi]
     const h = p[0] * u[0] + p[1] * u[1] - d
     if (sense[vi] === 0 || Math.abs(h) < 1e-12) return [p[0], p[1], 0]
-    const hh = h * cos
-    return [p[0] + (hh - h) * u[0], p[1] + (hh - h) * u[1], sense[vi] * h * sin]
-  })
+    const hh = h * Math.cos(theta2)
+    return [p[0] + (hh - h) * u[0], p[1] + (hh - h) * u[1], sense[vi] * h * Math.sin(theta2)]
+  }
+  let pos: [number, number, number][]
+  if (step.soft !== undefined) {
+    // sample the baked compliant motion, easing the residuals into the
+    // exact endpoint geometry at both ends of the swing
+    const { frames, pos: P } = step.soft
+    const nv = step.Vfrom.length
+    const x = t * (frames - 1)
+    const f0 = Math.min(frames - 1, Math.floor(x))
+    const f1 = Math.min(frames - 1, f0 + 1)
+    const fx = x - f0
+    const a = 1 - smooth(0, 0.15, t)
+    const b = smooth(0.85, 1, t)
+    pos = step.Vfrom.map((_, vi) => {
+      const out: [number, number, number] = [0, 0, 0]
+      const start = rigid(vi, 0)
+      const end = rigid(vi, Math.PI)
+      for (let c = 0; c < 3; ++c) {
+        const baked = P[(f0 * nv + vi) * 3 + c] * (1 - fx) + P[(f1 * nv + vi) * 3 + c] * fx
+        out[c] = baked +
+          a * (start[c] - P[vi * 3 + c]) +
+          b * (end[c] - P[((frames - 1) * nv + vi) * 3 + c])
+      }
+      return out
+    })
+  } else {
+    pos = step.Vfrom.map((_, vi) => rigid(vi, theta))
+  }
   // each face's display height eases from where its paper sat before this
   // fold to where it ends up, so consecutive steps join without a jump
   const zOff = step.FV.map((_, fi) =>
