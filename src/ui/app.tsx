@@ -22,6 +22,7 @@ import { SessionSelector, type SessionSelectorController } from './session-selec
 import { RoomChip, type RoomChipController } from './room-chip.js'
 import { SliderPanel, type SliderPanelController } from './slider-panel.js'
 import { PaneDivider } from './pane-divider.js'
+import { Icon } from './icon.js'
 
 export interface AppProps {
   editor: EditorController
@@ -69,9 +70,10 @@ function App(props: AppProps & { mounts: CanvasMounts }) {
             <button
               class="session-clear"
               title="Clear the saved run history — the program text is untouched"
+              aria-label="clear run history"
               onClick={() => props.onClearRuns()}
             >
-              clear
+              <Icon name="trash-2" />
             </button>
           </SessionSelector>
           <SessionBar ctl={props.sessionBar} />

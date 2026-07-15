@@ -18,6 +18,7 @@
 
 import { createSignal, For, Show, type Accessor, type JSX } from 'solid-js'
 import type { SessionSummary } from '../sessions.js'
+import { Icon } from './icon.js'
 
 export interface ExampleEntry {
   label: string
@@ -172,17 +173,21 @@ export function SessionSelector(props: { ctl: SessionSelectorController; childre
         </select>
       </Show>
       <Show when={activeSummary()}>
-        <button class="session-rename" title="rename session" aria-label="rename session" onClick={() => setRenaming(true)}>✎</button>
+        <button class="session-rename" title="rename session" aria-label="rename session" onClick={() => setRenaming(true)}>
+          <Icon name="edit-2" />
+        </button>
         <button
           class="session-archive"
           title={activeSummary()?.archived ? 'unarchive session' : 'archive session'}
           aria-label={activeSummary()?.archived ? 'unarchive session' : 'archive session'}
           onClick={() => { const s = activeSummary(); if (s) ctl.setArchived(!s.archived) }}
         >
-          {activeSummary()?.archived ? '📤' : '🗄'}
+          <Icon name={activeSummary()?.archived ? 'inbox' : 'archive'} />
         </button>
       </Show>
-      <button class="session-new" title="new session" aria-label="new session" onClick={() => ctl.startNew()}>+</button>
+      <button class="session-new" title="new session" aria-label="new session" onClick={() => ctl.startNew()}>
+        <Icon name="plus" />
+      </button>
       {props.children}
     </div>
   )

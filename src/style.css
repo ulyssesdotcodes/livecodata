@@ -19,6 +19,18 @@ html, body {
   height: 100vh;
 }
 
+/* Feather icons (src/ui/icon.tsx): inherit currentColor and sit on the
+   text baseline so icon-only and icon+label buttons line up the same way. */
+.icon {
+  display: inline-flex;
+  vertical-align: -2px;
+}
+
+.icon svg {
+  stroke: currentColor;
+  fill: none;
+}
+
 #side-panels {
   display: flex;
   flex-direction: column;
