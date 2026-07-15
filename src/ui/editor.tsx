@@ -9,21 +9,42 @@
 import { createSignal, Show, type Accessor, type JSX } from 'solid-js'
 import { listenGlobal, mountComponent } from './dom.js'
 import { EditorView, basicSetup } from 'codemirror'
-import { javascript, javascriptLanguage } from '@codemirror/lang-javascript'
+import { javascriptLanguage } from '@codemirror/lang-javascript'
+import { LanguageSupport } from '@codemirror/language'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { keymap } from '@codemirror/view'
 import { Prec, Compartment } from '@codemirror/state'
 import { vim } from '@replit/codemirror-vim'
 import {
-  dslCompletions, dslHover, viewAtPos, defaultProgram, defaultTables,
-  remoteCursorField, setRemoteCursorsEffect, PROGRAM_CELL, type RemoteCursor,
+  viewNameCompletions, codeCompletions, typeHover, signatureHelp, dslHover,
+  viewAtPos, defaultProgram, defaultTables,
+  remoteCursorField, setRemoteCursorsEffect, PROGRAM_CELL,
+  type RemoteCursor, type SymbolCardData, type SigCardFactory,
 } from '../editor-support.js'
+import { createLangClient, type LangClient } from '../lang-client.js'
+import type { LangSignatureHelp, EditorLang } from '../lang-service.js'
 import { buildTablePreview } from './table-preview.js'
 import { DocsPopover } from './docs-popover.js'
 import type { Table } from '../dsl.js'
 
 export { defaultProgram, defaultTables, PROGRAM_CELL }
 export type { RemoteCursor }
+
+// The TypeScript language service, in its own worker (see lang-worker.ts):
+// one per page, shared by every editor instance, created lazily on the first
+// editor. If the worker can't come up the client reports 'failed' and the
+// editor falls back to the heuristic completions.
+let langClient: LangClient | null = null
+function getLangClient(): LangClient | null {
+  if (langClient) return langClient
+  try {
+    const worker = new Worker(new URL('lang-worker.js', import.meta.url), { type: 'module' })
+    langClient = createLangClient(worker)
+  } catch (err) {
+    console.error('language service unavailable:', err)
+  }
+  return langClient
+}
 
 // Completion info card, rendered by Solid into a detached node for CodeMirror
 // to adopt (and dispose of) as tooltip content.
@@ -37,6 +58,48 @@ function makeInfoNode(sig: string, info: string): () => { dom: HTMLElement; dest
     ))
     return { dom: el, destroy: dispose }
   }
+}
+
+// A resolved symbol's card — the full signature from the language service on
+// top, curated DSL prose (when the name is surface API) below. Used by both
+// completion info tooltips and the hover tooltip.
+function makeSymbolCard({ display, docs, curated }: SymbolCardData): { dom: HTMLElement; destroy: () => void } {
+  const { el, dispose } = mountComponent(() => (
+    <div class="cm-completion-info cm-symbol-card">
+      <Show when={display}><code>{display}</code></Show>
+      <Show when={docs}><p>{docs}</p></Show>
+      <Show when={curated}><p>{curated!.info}</p></Show>
+    </div>
+  ))
+  return { dom: el, destroy: dispose }
+}
+
+// Signature-help card: the active overload with the active parameter
+// highlighted, plus that parameter's docs when it has any.
+const makeSigCard: SigCardFactory = (sig: LangSignatureHelp) => {
+  const item = sig.signatures[Math.min(sig.activeSignature, sig.signatures.length - 1)]
+  const active = sig.activeParameter
+  const { el, dispose } = mountComponent(() => (
+    <div class="cm-signature-help">
+      <code>
+        {item.prefix}
+        {item.params.map((p, i) => (
+          <>
+            {i > 0 ? item.separator : ''}
+            <span classList={{ 'cm-signature-param-active': i === active }}>{p.label}</span>
+          </>
+        ))}
+        {item.suffix}
+      </code>
+      <Show when={sig.signatures.length > 1}>
+        <span class="cm-signature-overloads">+{sig.signatures.length - 1} overload{sig.signatures.length > 2 ? 's' : ''}</span>
+      </Show>
+      <Show when={item.params[active]?.docs}>
+        <p>{item.params[active].docs}</p>
+      </Show>
+    </div>
+  ))
+  return { dom: el, destroy: dispose }
 }
 
 export interface EditorOptions {
@@ -76,8 +139,10 @@ export interface EditorAPI {
   // Point the editor at a single table cell (e.g. hydra[0].code): the program
   // text is stashed, the cell's text loads, and Run/Ctrl-Enter calls onCommit
   // with the current text instead of running the program. The "Back" button
-  // (or an external setCode) returns to the program.
-  editCell(label: string, code: string, onCommit: (text: string) => void): void
+  // (or an external setCode) returns to the program. `lang` picks which
+  // surface completions/hover run against — 'hydra' for hydra sketch cells,
+  // default 'dsl'.
+  editCell(label: string, code: string, onCommit: (text: string) => void, opts?: { lang?: EditorLang }): void
   // Multiplayer presence: draw collaborators' carets (only cursors for the
   // cell currently open here — the caller filters; see main.ts).
   setRemoteCursors(cursors: RemoteCursor[]): void
@@ -111,10 +176,11 @@ export function createEditor(
 
   // When set, the editor is a window onto one table cell rather than the
   // program: Run commits the text back to the cell (an event append upstream).
-  let cellTarget: { label: string; onCommit: (text: string) => void } | null = null
+  let cellTarget: { label: string; lang: EditorLang; onCommit: (text: string) => void } | null = null
   let stashedProgram = ''
 
   const cellLabel = (): string => cellTarget ? cellTarget.label : PROGRAM_CELL
+  const cellLang = (): EditorLang => cellTarget ? cellTarget.lang : 'dsl'
 
   function run(): void {
     const text = view.state.doc.toString()
@@ -144,9 +210,9 @@ export function createEditor(
     if (restoreProgram) setDoc(stashedProgram)
   }
 
-  function editCell(label: string, code: string, onCommit: (text: string) => void): void {
+  function editCell(label: string, code: string, onCommit: (text: string) => void, { lang = 'dsl' }: { lang?: EditorLang } = {}): void {
     if (!cellTarget) stashedProgram = view.state.doc.toString()
-    cellTarget = { label, onCommit }
+    cellTarget = { label, lang, onCommit }
     setTitle(label)
     setRunLabel('Apply')
     setBackVisible(true)
@@ -158,6 +224,8 @@ export function createEditor(
 
   let lastCaretView: string | null = null
 
+  const langService = getLangClient()
+
   // Created detached; <EditorPane>'s host div appends view.dom (CodeMirror
   // re-measures itself on attachment).
   const view = new EditorView({
@@ -165,8 +233,13 @@ export function createEditor(
     extensions: [
       vimCompartment.of(vimMode ? [vim()] : []),
       basicSetup,
-      javascript(),
-      javascriptLanguage.data.of({ autocomplete: dslCompletions(getViews, makeInfoNode) }),
+      // The bare language (not javascript(), whose bundled keyword-snippet and
+      // local-variable sources would duplicate what the language service
+      // returns) — completion sources are registered explicitly below.
+      new LanguageSupport(javascriptLanguage),
+      javascriptLanguage.data.of({ autocomplete: viewNameCompletions(getViews, cellLang) }),
+      javascriptLanguage.data.of({ autocomplete: codeCompletions(langService, makeInfoNode, makeSymbolCard, cellLang) }),
+      ...(langService ? [typeHover(langService, makeSymbolCard, cellLang), signatureHelp(langService, makeSigCard, cellLang)] : []),
       EditorView.updateListener.of((u) => {
         if (!(u.selectionSet || u.docChanged)) return
         onCursor?.(cellLabel(), u.state.selection.main.head)

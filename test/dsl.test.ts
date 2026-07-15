@@ -386,3 +386,34 @@ test('rotate output length follows values, not rows', () => {
   assert.deepEqual(rotate([{ a: 1 }], []).rows, [])
   assert.deepEqual(rotate([], [{ b: 1 }, { b: 2 }]).rows, [{ b: 1 }, { b: 2 }])
 })
+
+test('schemas: canonical table schemas ride the DSL surface, typed and frozen', async () => {
+  const { schemas } = createDSL(null)
+  const { SCHEMAS } = await import('../src/dsl.js')
+  assert.equal(schemas, SCHEMAS)
+  // The hydra schema carries the full column story: enum events, a
+  // hydra-language code column, the meta-event fields.
+  const { schemaColumns } = await import('../src/editable-tables.js')
+  const cols = schemaColumns(schemas.hydra)
+  assert.deepEqual(cols.find((c) => c.name === 'code'), { name: 'code', type: 'code', language: 'hydra' })
+  assert.deepEqual(cols.find((c) => c.name === 'event')?.options,
+    ['setCode', 'setSource', 'append', 'replace', 'layer', 'setVariable'])
+  for (const name of ['sliders', 'path', 'steps']) assert.ok(name in schemas, `expected schemas.${name}`)
+  // Frozen: an untyped program can't reshape a shared schema for later runs.
+  assert.ok(Object.isFrozen(schemas.hydra) && Object.isFrozen(schemas.hydra.event))
+  assert.throws(() => { (schemas.hydra as Record<string, unknown>).beat = 'string' })
+})
+
+test('schemas: editable(name, schemas.hydra) yields those exact columns in the store', async () => {
+  const { createEditableTableStore } = await import('../src/editable-tables.js')
+  const { SCHEMAS, } = await import('../src/dsl.js')
+  const store = createEditableTableStore()
+  store.ensure('hydra', SCHEMAS.hydra, [{ beat: 1, event: 'setCode', code: 'osc(4).out(o0)' }])
+  const t = store.get('hydra')!
+  assert.deepEqual(t.columns.map((c) => c.name),
+    ['beat', 'event', 'code', 'find', 'name', 'value', 'mode', 'disabled'])
+  assert.equal(t.columns.find((c) => c.name === 'code')!.language, 'hydra')
+  // Unset cells take their column type's default: number 0, boolean false,
+  // enum its first option, string/code ''.
+  assert.deepEqual(t.rows, [{ beat: 1, event: 'setCode', code: 'osc(4).out(o0)', find: '', name: '', value: 0, mode: 'blend', disabled: false }])
+})

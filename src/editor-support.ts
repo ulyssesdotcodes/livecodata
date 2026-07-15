@@ -4,11 +4,21 @@
 // injected by the view (ui/editor.tsx) as a factory, keeping this module
 // free of rendering concerns.
 
-import { EditorView, hoverTooltip, Decoration, WidgetType, type DecorationSet } from '@codemirror/view'
-import { StateField, StateEffect } from '@codemirror/state'
-import { isExprDot, isThreeDot } from './completion.js'
+import { EditorView, hoverTooltip, showTooltip, Decoration, WidgetType, type DecorationSet, type Tooltip } from '@codemirror/view'
+import { StateField, StateEffect, type Extension } from '@codemirror/state'
+import { syntaxTree } from '@codemirror/language'
+import { localCompletionSource } from '@codemirror/lang-javascript'
+import type { CompletionContext, CompletionResult, Completion } from '@codemirror/autocomplete'
+import { isExprDot, isThreeDot, cmCompletionType, completionBoost } from './completion.js'
 import { SAMPLES } from './samples.js'
 import type { Table } from './dsl.js'
+import type { LangClient } from './lang-client.js'
+import type { LangSignatureHelp, EditorLang } from './lang-service.js'
+
+// Which language surface the editor is currently a window onto: the DSL
+// program, or a hydra sketch cell (see editor.tsx's cell-target mode). The
+// view owns the state; sources read it per query.
+export type GetLang = () => EditorLang
 
 export interface DocEntry {
   sig: string
@@ -35,7 +45,7 @@ export const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
   text:       { sig: 'text({ id, text, size, px, py, pz, color, … })', detail: 'create 3D text', info: 'A create-row Table for extruded 3D text (shape "text") — beat 1, at the origin. text is the string (\\n splits into stacked lines), size the world-space cap height (default 0.5), color a hex number (default white). id defaults to "text". Only bundled-font (helvetiker: Latin + common punctuation) glyphs render. Concat with other primitives and .rasterize().' },
   object:     { sig: 'object(shape, { id, … })', detail: 'create any shape', info: 'The generic behind box()/sphere()/… — a create-row Table for any shape string ("box", "sphere", "cylinder", "cone", "torus", "text", or a future shape). Defaults to beat 1 at the origin; id defaults to the shape name. Prefer the named helpers so autocomplete shows the shapes.' },
   physics:    { sig: 'physics(table)',               detail: 'physics scene',    info: 'Load a base scene table into the JoltPhysics engine. Chain .simulate() to run the simulation.' },
-  editable:   { sig: 'editable(name, schema, seedRows?)', detail: 'user table', info: 'A user-editable table: rows are edited in the table panel, not computed — every edit is an appended event and the visible table is the fold (see the name·events tab). schema maps column name to "number" | "string" | "boolean" | "code"; code cells open in this editor. seedRows fill the table when first created.' },
+  editable:   { sig: 'editable(name, schema, seedRows?)', detail: 'user table', info: 'A user-editable table: rows are edited in the table panel, not computed — every edit is an appended event and the visible table is the fold (see the name·events tab). schema maps column name to "number" | "string" | "boolean" | "code" (or a string[] for an enum dropdown); code cells open in this editor, and declare their language via { type: "code", language: "hydra" } so completions match (default the DSL). seedRows fill the table when first created.' },
   origami:    { sig: 'origami()', detail: 'folding paper', info: 'A sheet of paper folded by a table of fold steps, each solved exactly. Chain .steps(table) — one row per fold: p1/p2 two points "x,y" on the fold line (drawn on the current folded paper, unit-square frame), move sheet-space marker(s) for the flap(s) that swing, kind/pick to choose the move when a fold is ambiguous ("simple", "reverse", "sink", …), at/dur/to its timing. Then .spawn({ id, color, … }) for the scene create row and .sequence() for the beat-timed keyframes. Every row is verified: a fold that cannot lie flat fails with an error naming the step.' },
   field:      { sig: 'field(name)',                   detail: 'expr: read field',  info: 'A chainable expression reading row[name]. Chain .add/.sub/.mul/.div/.mod, .eq/.gt/…, .and/.or/.not, .cond(a,b). Use in filter(expr), map(template), emit(template), derive — these are diffable (no opaque closures).' },
   lit:        { sig: 'lit(value)',                   detail: 'expr: literal',     info: 'A constant expression. Usually you can pass a raw value directly to an Expr method.' },
@@ -44,6 +54,7 @@ export const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
   beats:      { sig: 'beats(count, { fit }?)',       detail: 'beat timeline',     info: 'A timeline that loops every `count` beats. Tempo is automatic — the playhead always runs at the tapped tempo (Tap) — so this is a RETIME: define("timeline", () => beats(16)) just loops every 16 beats; { fit: beats } stretches a span of source beats across the window (e.g. beats(16, { fit: 8 }) plays 8 beats of content at half speed).' },
   tempo:      { sig: 'tempo(fallback?)',             detail: 'beat length (s)',   info: 'Seconds per beat derived from the tap-beat table (Tap), or `fallback` (default 0.5s = 120 BPM) until two taps are recorded.' },
   taps:       { sig: 'taps()',                       detail: 'tap-beat table',    info: 'The tap-beat table: one row per wall-time button press ({ beat, time }, time as an absolute UTC epoch ms).' },
+  schemas:    { sig: 'schemas.hydra / .sliders / .path / .steps', detail: 'canonical table schemas', info: 'The column schemas of the tables the runtime knows by name, ready to pass to editable() — right columns, enum dropdowns, and code languages included: editable("hydra", schemas.hydra). Frozen; spread to extend: { ...schemas.hydra, extra: "string" }.' },
   linear:     { sig: 'linear',                       detail: 'easing curve',     info: 'Linear easing (t → t). Pass as the ease field of a color-pulse row.' },
   easeIn:     { sig: 'easeIn',                       detail: 'easing curve',     info: 'Quadratic ease-in (t → t²). Starts slow, ends fast.' },
   easeOut:    { sig: 'easeOut',                      detail: 'easing curve',     info: 'Quadratic ease-out (t → 1-(1-t)²). Starts fast, ends slow.' },
@@ -142,48 +153,227 @@ export function viewAtPos(text: string, pos: number): string | null {
 // this module decides *when* and with which docs it appears.
 export type InfoNodeFactory = (sig: string, info: string) => () => { dom: HTMLElement; destroy?: () => void }
 
-export function dslCompletions(getViews: (() => Map<string, Table> | undefined) | undefined, makeInfoNode: InfoNodeFactory) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (context: any) => {
-    if (context.matchBefore(/\b(?:table|define)\(\s*"[^"]*/)) {
-      const open = context.matchBefore(/"[^"]*/)
-      const names = [...(getViews?.() ?? new Map()).keys()]
-      if (!names.length) return null
-      return {
-        from: open ? open.from + 1 : context.pos,
-        options: names.map((n: string) => ({ label: n, type: 'variable' })),
-        validFor: /^[^"]*$/,
-      }
-    }
-    const dot = context.matchBefore(/\.\w*/)
-    if (dot) {
-      // Pick the method set by the chain's root: the three animators right after
-      // a `.three` accessor, else Expr methods after field()/lit()/idx() (and
-      // their chains), else Table methods.
-      const text = context.state.doc.toString() as string
-      const docs = isThreeDot(text, dot.from as number) ? THREE_METHOD_DOCS
-        : isExprDot(text, dot.from as number) ? EXPR_METHOD_DOCS
-          : TABLE_METHOD_DOCS
-      return {
-        from: dot.from + 1,
-        options: Object.keys(docs).map((label) => {
-          const d = docs[label]
-          return { label, type: 'method', detail: d.detail, info: makeInfoNode(d.sig, d.info) }
-        }),
-        validFor: /^\w*$/,
-      }
-    }
-    const word = context.matchBefore(/\w+/)
-    if (!word && !context.explicit) return null
+// A resolved symbol's card: the full type from the language service plus the
+// curated DSL prose when the name is surface API. The view owns the DOM.
+export interface SymbolCardData {
+  display: string | null
+  docs: string
+  curated: DocEntry | null
+}
+export type SymbolCardFactory = (data: SymbolCardData) => { dom: HTMLElement; destroy?: () => void }
+
+// Curated docs for `name` completed/hovered at `start`: member access picks
+// the method table by the chain's root (the same heuristic the fallback
+// completions use), a bare identifier is a DSL builtin or nothing. The
+// language service supplies exact types either way; this only adds prose.
+export function curatedDocFor(text: string, start: number, name: string): DocEntry | null {
+  let i = start - 1
+  while (i >= 0 && /\s/.test(text[i])) i--
+  if (i >= 0 && text[i] === '.') {
+    const docs = isThreeDot(text, i) ? THREE_METHOD_DOCS
+      : isExprDot(text, i) ? EXPR_METHOD_DOCS
+        : TABLE_METHOD_DOCS
+    return docs[name] ?? null
+  }
+  return DSL_BUILTIN_DOCS[name] ?? null
+}
+
+// Completing view names inside table("…") / define("…" quotes. DSL-only:
+// those calls don't exist in a hydra sketch.
+export function viewNameCompletions(getViews: (() => Map<string, Table> | undefined) | undefined, getLang: GetLang) {
+  return (context: CompletionContext): CompletionResult | null => {
+    if (getLang() !== 'dsl') return null
+    if (!context.matchBefore(/\b(?:table|define)\(\s*"[^"]*/)) return null
+    const open = context.matchBefore(/"[^"]*/)
+    const names = [...(getViews?.() ?? new Map()).keys()]
+    if (!names.length) return null
     return {
-      from: word ? word.from : context.pos,
-      options: DSL_BUILTINS.map((label) => {
-        const d = DSL_BUILTIN_DOCS[label]
-        return { label, type: 'function', detail: d.detail, info: makeInfoNode(d.sig, d.info) }
+      from: open ? open.from + 1 : context.pos,
+      options: names.map((n: string) => ({ label: n, type: 'variable' })),
+      validFor: /^[^"]*$/,
+    }
+  }
+}
+
+// The pre-language-service completions, retained as the fallback while the
+// worker loads (or if it never does): the chain-root heuristic picks a method
+// table after a dot; bare words offer the DSL builtins plus whatever locals
+// the syntax tree knows about.
+function heuristicCompletions(context: CompletionContext, makeInfoNode: InfoNodeFactory): CompletionResult | null {
+  const dot = context.matchBefore(/\.\w*/)
+  if (dot) {
+    const text = context.state.doc.toString()
+    const docs = isThreeDot(text, dot.from) ? THREE_METHOD_DOCS
+      : isExprDot(text, dot.from) ? EXPR_METHOD_DOCS
+        : TABLE_METHOD_DOCS
+    return {
+      from: dot.from + 1,
+      options: Object.keys(docs).map((label) => {
+        const d = docs[label]
+        return { label, type: 'method', detail: d.detail, info: makeInfoNode(d.sig, d.info) }
       }),
       validFor: /^\w*$/,
     }
   }
+  const word = context.matchBefore(/\w+/)
+  if (!word && !context.explicit) return null
+  const from = word ? word.from : context.pos
+  const local = localCompletionSource(context)
+  return {
+    from,
+    options: [
+      ...DSL_BUILTINS.map((label): Completion => {
+        const d = DSL_BUILTIN_DOCS[label]
+        return { label, type: 'function', detail: d.detail, info: makeInfoNode(d.sig, d.info) }
+      }),
+      ...(local && local.from === from ? local.options : []),
+    ],
+    validFor: /^\w*$/,
+  }
+}
+
+// The main completion source: the TypeScript language service when its worker
+// is ready (real type-aware completions — "what follows this dot" answered by
+// the checker against the DSL's actual types), the heuristics otherwise. Each
+// option's info card resolves lazily: full signature from the service, plus
+// curated DSL prose when the name is surface API.
+export function codeCompletions(
+  client: LangClient | null,
+  makeInfoNode: InfoNodeFactory,
+  makeSymbolCard: SymbolCardFactory,
+  getLang: GetLang,
+) {
+  return async (context: CompletionContext): Promise<CompletionResult | null> => {
+    // Strings and comments never complete here — view names inside quotes
+    // have their own source (viewNameCompletions).
+    const node = syntaxTree(context.state).resolveInner(context.pos, -1)
+    if (/String|Comment/.test(node.name)) return null
+    const lang = getLang()
+
+    if (client && client.status() === 'ready') {
+      const word = context.matchBefore(/[\w$]+/)
+      const dot = context.matchBefore(/\.[\w$]*/)
+      if (!word && !dot && !context.explicit) return null
+      const text = context.state.doc.toString()
+      const res = await client.completions(text, context.pos, lang)
+      if (res && res.entries.length) {
+        const from = word ? word.from : context.pos
+        return {
+          from,
+          options: res.entries.map((e): Completion => {
+            const curated = lang === 'dsl' ? curatedDocFor(text, from, e.name) : null
+            return {
+              label: e.name,
+              type: cmCompletionType(e.kind),
+              ...(curated ? { detail: curated.detail } : {}),
+              boost: completionBoost(e.sortText, e.kind, curated !== null),
+              info: async () => {
+                const det = await client.details(text, context.pos, e.name, lang)
+                if (!det && !curated) return null
+                return makeSymbolCard({
+                  display: det?.display ?? curated?.sig ?? null,
+                  docs: det?.docs ?? '',
+                  curated,
+                })
+              },
+            }
+          }),
+          validFor: /^[\w$]*$/,
+        }
+      }
+      // No answer (e.g. the parse is too broken mid-edit) — fall through.
+    }
+    // The heuristic fallback knows only the DSL surface; in a hydra cell
+    // wrong suggestions are worse than none.
+    return lang === 'dsl' ? heuristicCompletions(context, makeInfoNode) : null
+  }
+}
+
+// Hovering an identifier shows its complete type from the language service
+// (and the curated DSL prose when it's surface API).
+export function typeHover(client: LangClient, makeSymbolCard: SymbolCardFactory, getLang: GetLang) {
+  return hoverTooltip(async (view, pos) => {
+    if (client.status() !== 'ready') return null
+    const lang = getLang()
+    const text = view.state.doc.toString()
+    const info = await client.quickInfo(text, pos, lang)
+    if (!info || !info.display) return null
+    const curated = lang === 'dsl' ? curatedDocFor(text, info.start, text.slice(info.start, info.end)) : null
+    return {
+      pos: info.start,
+      end: info.end,
+      above: true,
+      create: () => makeSymbolCard({ display: info.display, docs: info.docs, curated }),
+    }
+  })
+}
+
+// ── Signature help ───────────────────────────────────────────────────────────
+// Typing "(" or "," inside a call pops a tooltip with the callee's signature,
+// the active parameter highlighted; it follows re-queries as the arguments
+// evolve and clears when the cursor leaves the call (or on Escape).
+
+export interface SigHelpState {
+  pos: number
+  sig: LangSignatureHelp
+}
+
+export type SigCardFactory = (sig: LangSignatureHelp) => { dom: HTMLElement; destroy?: () => void }
+
+export function signatureHelp(client: LangClient, makeSigCard: SigCardFactory, getLang: GetLang): Extension {
+  const setSig = StateEffect.define<SigHelpState | null>()
+
+  const field = StateField.define<SigHelpState | null>({
+    create: () => null,
+    update(value, tr) {
+      if (value && tr.docChanged) value = { ...value, pos: tr.changes.mapPos(value.pos) }
+      for (const e of tr.effects) if (e.is(setSig)) value = e.value
+      return value
+    },
+    provide: (f) => showTooltip.from(f, (value): Tooltip | null => value && {
+      pos: value.pos,
+      above: true,
+      create: () => makeSigCard(value.sig),
+    }),
+  })
+
+  // Stale-response guard: only the latest query may update the tooltip.
+  let epoch = 0
+
+  const listener = EditorView.updateListener.of((update) => {
+    const active = update.state.field(field) !== null
+    let trigger: string | undefined
+    if (update.docChanged) {
+      const head = update.state.selection.main.head
+      const ch = head > 0 ? update.state.doc.sliceString(head - 1, head) : ''
+      if (ch === '(' || ch === ',') trigger = ch
+      else if (!active) return // only ( and , open the tooltip
+    } else if (!(update.selectionSet && active)) {
+      return // cursor moves only re-query (or clear) an open tooltip
+    }
+    if (client.status() !== 'ready') return
+    const id = ++epoch
+    const { view } = update
+    const text = update.state.doc.toString()
+    const head = update.state.selection.main.head
+    void client.signatureHelp(text, head, trigger, getLang()).then((sig) => {
+      if (id !== epoch) return
+      const value = sig ? { pos: Math.min(sig.argumentStart, head), sig } : null
+      if (value === null && view.state.field(field, false) == null) return // nothing to clear
+      view.dispatch({ effects: setSig.of(value) })
+    })
+  })
+
+  const closeOnEscape = EditorView.domEventHandlers({
+    keydown: (event, view) => {
+      if (event.key === 'Escape' && view.state.field(field, false)) {
+        view.dispatch({ effects: setSig.of(null) })
+      }
+      return false // never swallow — vim &co. still see the key
+    },
+  })
+
+  return [field, listener, closeOnEscape]
 }
 
 // ── Remote cursors (multiplayer presence) ────────────────────────────────────

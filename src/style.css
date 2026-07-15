@@ -1608,3 +1608,53 @@ html, body {
   color: #b8c9db;
   line-height: 1.5;
 }
+
+.cm-completion-info p + p {
+  margin-top: 5px;
+}
+
+/* ── Type hover / symbol cards (language service) ── */
+.cm-symbol-card {
+  max-width: 420px;
+}
+
+.cm-symbol-card code {
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+/* ── Signature help tooltip ── */
+.cm-signature-help {
+  padding: 5px 10px;
+  max-width: 480px;
+  background: #21262e;
+  border: 1px solid #3a4553;
+  border-radius: 4px;
+}
+
+.cm-signature-help code {
+  display: block;
+  font-family: monospace;
+  font-size: 11px;
+  color: #7ec8e3;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.cm-signature-param-active {
+  color: #e2c08d;
+  font-weight: bold;
+  text-decoration: underline;
+}
+
+.cm-signature-overloads {
+  font-size: 10px;
+  color: #607a96;
+}
+
+.cm-signature-help p {
+  margin: 3px 0 0;
+  font-size: 11px;
+  color: #b8c9db;
+  line-height: 1.4;
+}

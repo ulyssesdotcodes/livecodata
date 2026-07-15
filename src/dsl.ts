@@ -1028,6 +1028,76 @@ export const EASINGS = {
 
 export type Easings = typeof EASINGS
 
+// ── Canonical table schemas ──────────────────────────────────────────────────
+// The column schemas of the tables the runtime gives meaning to by name, so an
+// editable version comes out with the right columns, enum dropdowns, and code
+// languages without restating them: editable("hydra", schemas.hydra). Keys
+// match the table names the runtime looks for. Frozen — a schema is a shared
+// constant, not per-run state; spread one to extend it:
+// editable("hydra", { ...schemas.hydra, layerName: "string" }).
+export const SCHEMAS = deepFreeze({
+  /**
+   * The hydra view's event stream: one row per event, placed on the loop by
+   * `beat` (1-indexed). `event` picks what it does — "setCode" (`code` = the
+   * whole sketch), "setVariable" (`name`/`value` = a live input the sketch
+   * reads as a props function), "setSource"/"append" (`code` = a new chain
+   * head / a ".effect(…)" fragment), "replace" (swap substring `find` for
+   * `value`), "layer" (`code` = another sketch composited via `mode`, amount
+   * `value`). `event` and `mode` are enums (dropdowns in the table panel);
+   * `code` cells open in the editor with hydra completions; check `disabled`
+   * to mute a row without deleting it.
+   */
+  hydra: {
+    beat: 'number',
+    event: ['setCode', 'setSource', 'append', 'replace', 'layer', 'setVariable'],
+    code: { type: 'code', language: 'hydra' },
+    find: 'string',
+    name: 'string',
+    value: 'number',
+    mode: ['blend', 'add', 'mult', 'diff', 'layer', 'mask'],
+    disabled: 'boolean',
+  },
+  /**
+   * The "sliders" view: one on-screen control per row — `id` names it (and is
+   * what slider(id) reads), `min`/`max` its range, `default` its initial
+   * value. Check `disabled` to pull the control off screen without losing
+   * its settings.
+   */
+  sliders: { id: 'string', min: 'number', max: 'number', default: 'number', disabled: 'boolean' },
+  /**
+   * Beat-timed positions: one keyframe per row — `beat` places it on the loop
+   * (1-indexed), `px`/`py`/`pz` the position. The usual shape for an editable
+   * motion path; check `disabled` to skip a keyframe.
+   */
+  path: { beat: 'number', px: 'number', py: 'number', pz: 'number', disabled: 'boolean' },
+  /**
+   * An origami fold table (see origami().steps()): one fold per row — `step`
+   * a label, `p1`/`p2` two points "x,y" on the fold line, `move` the sheet
+   * point(s) naming the flap(s) that swing, `kind`/`pick` choose among valid
+   * layer orders ("simple", "reverse", "sink", …), `at`/`dur` the swing's
+   * beat timing, `to` how far it lands (1 = flat). Check `disabled` to skip
+   * a fold.
+   */
+  steps: {
+    step: 'string', p1: 'string', p2: 'string', move: 'string',
+    kind: 'string', pick: 'number', at: 'number', dur: 'number', to: 'number',
+    disabled: 'boolean',
+  },
+} as const satisfies Record<string, Schema>)
+
+export type Schemas = typeof SCHEMAS
+
+// User programs are untyped JS, so `as const` alone can't stop a sketch from
+// assigning into a shared schema and quietly reshaping every later run's
+// tables — freeze the whole tree.
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object') {
+    for (const v of Object.values(value)) deepFreeze(v)
+    Object.freeze(value)
+  }
+  return value
+}
+
 // ── Scene primitives ───────────────────────────────────────────────────────
 // Sugar for the verbose "create" row you'd otherwise hand-write for a 3D scene
 // object. box()/sphere()/cylinder()/cone()/torus()/text() each return a Table
@@ -1133,6 +1203,13 @@ export type DSLSurface = Easings & {
   taps(): Table
   tempo(fallback?: number): number
   beats(count: number, opts?: { fallback?: number; fit?: number }): Table
+  /**
+   * Canonical schemas for the tables the runtime knows by name — pass one to
+   * editable() for the right columns, enum dropdowns, and code languages:
+   * editable("hydra", schemas.hydra). Frozen; spread to extend:
+   * editable("hydra", { ...schemas.hydra, extra: "string" }).
+   */
+  schemas: Schemas
 }
 
 export function createDSL(ctx: DSLContext | null): DSLSurface {
@@ -1226,5 +1303,6 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       ], ctx)
     },
     ...EASINGS,
+    schemas: SCHEMAS,
   }
 }

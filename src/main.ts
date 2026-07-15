@@ -2,6 +2,7 @@ import './style.css'
 import { createSignal } from 'solid-js'
 import { initThree } from './three-scene.js'
 import { initHydra } from './hydra-scene.js'
+import { isHydraRow } from './hydra.js'
 import { createSceneVisualizer, createHydraVisualizer } from './visualizer.js'
 import { mountApp } from './ui/app.js'
 import { createEditor, defaultProgram, defaultTables, PROGRAM_CELL } from './ui/editor.js'
@@ -133,10 +134,21 @@ const tablePanel = createTablePanel(editableStore, {
     // edited tables and record a run — keeping the current seed so tweaking a
     // sketch doesn't re-randomize the scene. (Plain inline edits stay pending
     // until an apply; this one is the apply.)
+    // Which language surface the editor should run completions/hover against
+    // for this cell: the code column's declared language wins (editable(name,
+    // { code: { type: "code", language: "hydra" } }) — the only signal that
+    // survives the rows being mapped/renamed into the "hydra" view by code).
+    // Tables declared before language existed fall back to sniffing the row:
+    // a hydra event row's `code` cell is a sketch.
+    const data = editableStore.get(table)
+    const colSpec = data?.columns.find((c) => c.name === col)
+    const declaredLang = colSpec?.type === 'code' ? colSpec.language : undefined
+    const lang = declaredLang
+      ?? (col === 'code' && isHydraRow(data?.rows[rowIndex]) ? 'hydra' as const : 'dsl' as const)
     editor.editCell(`${table}[${rowIndex}].${col}`, value, (text) => {
       editableStore.setCell(table, rowIndex, col, text)
       if (liveCode != null) void evaluate(liveCode, { setError: editor.setError, seed: liveSeed })
-    })
+    }, { lang })
   },
   onCtrlEnter: () => editor.run(),
   onSelectTable: (name) => {
