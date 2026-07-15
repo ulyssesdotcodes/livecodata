@@ -476,10 +476,16 @@ html, body {
   border: 1px solid #1a5090;
   color: #8ca0b8;
   cursor: pointer;
-  font-size: 11px;
-  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   border-radius: 4px;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
@@ -1045,10 +1051,17 @@ html, body {
   color: #6fbf73;
   border: 1px dashed #2f6b3a;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-family: inherit;
-  padding: 2px 10px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
