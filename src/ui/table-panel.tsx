@@ -27,6 +27,7 @@ import {
 } from '../table-panel.js'
 import { listenGlobal, focusInput } from './dom.js'
 import { isHydraRow, hydraCodeUpToRow } from '../hydra.js'
+import { Icon } from './icon.js'
 import type { Table } from '../dsl.js'
 import { DISABLED_COL, cellValid, invalidColumns, type EditableTableStore, type ColumnType, type EditableColumn } from '../editable-tables.js'
 
@@ -675,7 +676,7 @@ function TablePanelView(props: PanelProps) {
               bump()
             }}
           >
-            + table
+            <Icon name="plus" /> table
           </button>
           <input
             class="table-filter"
@@ -710,10 +711,11 @@ function TablePanelView(props: PanelProps) {
             <div class="graph-header">
               <button
                 class="collapse-btn"
+                title={graphCollapsed() ? 'Expand graph' : 'Collapse graph'}
                 aria-label={graphCollapsed() ? 'Expand graph' : 'Collapse graph'}
                 onClick={() => setGraphCollapsed(!graphCollapsed())}
               >
-                {graphCollapsed() ? 'Expand' : 'Collapse'}
+                <Icon name={graphCollapsed() ? 'chevron-down' : 'chevron-up'} />
               </button>
               <span class="graph-title">Graph</span>
             </div>

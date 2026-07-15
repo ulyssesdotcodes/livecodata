@@ -939,6 +939,11 @@ export class OrigamiBuilder {
   spawn(props: Row = {}): Table {
     const program = this.program()
     this._id = props.id ?? this._id
+    // turn-overs rotate about the axis the VIEWER sees as vertical: the
+    // scene rotates the whole object by rz, so undo it to find which
+    // paper direction displays upright
+    const rz = typeof props.rz === 'number' ? props.rz : 0
+    program.flipAxis = [Math.sin(rz), Math.cos(rz)]
     return new Table([{
       id: this._id, type: 'create', beat: 1, shape: 'origami',
       px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, color: 0xd94f2a,

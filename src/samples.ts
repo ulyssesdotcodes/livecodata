@@ -313,8 +313,8 @@ define("scene", (rand, table) => table("events").rasterize(12))
         { step: "cornerR", p1: "0.5,0", p2: "0.5,1", move: "0.6,0.8;0.8,0.6", at: 3 },
         // wings: sweep each tip back down so they point away from each
         // other and stick out past the triangle's edges
-        { step: "wingL", p1: "0.159099,0.628769", p2: "0.901561,0.946967", move: "0.03,0.12;0.12,0.03", at: 4 },
-        { step: "wingR", p1: "0.371231,0.840901", p2: "0.053033,0.098439", move: "0.88,0.97;0.97,0.88", at: 5 },
+        { step: "wingL", p1: "0.19885,0.598479", p2: "1.001892,0.99618", move: "0.03,0.12;0.12,0.03", at: 4 },
+        { step: "wingR", p1: "0.401521,0.80115", p2: "0.00382,-0.001892", move: "0.88,0.97;0.97,0.88", at: 5 },
         // the head: one layer down over the wings, the second stops short —
         // that little gap is the cicada's stripe
         { step: "head1", p1: "-0.19,0.59", p2: "0.41,1.19", move: "0.97,0.03", at: 6 },

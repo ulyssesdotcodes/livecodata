@@ -19,6 +19,18 @@ html, body {
   height: 100vh;
 }
 
+/* Feather icons (src/ui/icon.tsx): inherit currentColor and sit on the
+   text baseline so icon-only and icon+label buttons line up the same way. */
+.icon {
+  display: inline-flex;
+  vertical-align: -2px;
+}
+
+.icon svg {
+  stroke: currentColor;
+  fill: none;
+}
+
 #side-panels {
   display: flex;
   flex-direction: column;
@@ -419,10 +431,16 @@ html, body {
   border: 1px solid #1a5090;
   color: #8ca0b8;
   cursor: pointer;
-  font-size: 11px;
-  padding: 2px 8px;
+  font-size: 12px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  padding: 0;
   border-radius: 4px;
   white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
@@ -585,6 +603,72 @@ html, body {
 
 .session-bar.replaying {
   background: #3a2a16;
+}
+
+/* Editing where the thumb rests will fork a new branch — a distinct tint so the
+   branch is visible before it happens, not after. */
+.session-bar.forking {
+  background: #2a1636;
+}
+
+/* Branch switcher: a chip that opens a small popover of branch heads. */
+.session-branch {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.session-branch-chip {
+  background: transparent;
+  border: 1px solid #a06fd6;
+  color: #cbb4ea;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.session-branch-chip:hover {
+  background: #a06fd6;
+  color: #1a1a2e;
+}
+
+.session-branch-popover {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  padding: 4px;
+  gap: 2px;
+  background: #13294b;
+  border: 1px solid #a06fd6;
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+.session-branch-item {
+  background: transparent;
+  border: none;
+  color: #c8d6e5;
+  cursor: pointer;
+  font-size: 11px;
+  text-align: left;
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.session-branch-item:hover {
+  background: #1f3d6b;
+}
+
+.session-branch-item.current {
+  color: #cbb4ea;
+  font-weight: 600;
+  cursor: default;
 }
 
 .session-label {
