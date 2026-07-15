@@ -106,13 +106,29 @@ interface Pair {
   phi: number             // current hinge angle (+ side; - side gets -phi)
 }
 
+export interface MechFrameOpts {
+  // fix this cover of the root pair flat for the whole motion (folding on
+  // a table: the bottom sheet never leaves it); default keeps the mirror
+  // plane fixed and both covers swing ±β
+  anchor?: 'a' | 'b'
+  // cap the book opening below the exact branch point. The rigid theorem
+  // demands opening fully so earlier folds un-press completely; capping
+  // keeps them in place ("the front body opens up a bit") at the cost of
+  // a bounded seam error on the active point, absorbed as gentle bending
+  // by the shared-vertex averaging. Endpoints stay exact.
+  betaCap?: number
+}
+
 export interface ReverseMech {
   // per frame: vertex positions (world [x,y,z]*V) and each face's layer-
   // offset direction ([x,y,z]*F) — the world ẑ carried by the face's
   // rigid assembly, so display stacking rides the paper instead of
   // shearing through it when the assemblies stand up
-  frames: (n: number) => { pos: number[][]; zdir: number[][] }
+  frames: (n: number, opts?: MechFrameOpts) => { pos: number[][]; zdir: number[][] }
   betaStar: number
+  // pairs beyond the covers and the active point — earlier reverse folds
+  // that must un-press while the book opens (the cue to cap the opening)
+  slavePairs: number
 }
 
 const sameLine = (p: Line, q: Line): boolean =>
@@ -577,27 +593,63 @@ export const buildReverseMech = (
       }
     })
 
-    const frames = (n: number): { pos: number[][]; zdir: number[][] } => {
+    const frames = (n: number, opts: MechFrameOpts = {}): { pos: number[][]; zdir: number[][] } => {
       for (const p of pairs) p.phi = 0
       const outPos: number[][] = []
       const outDir: number[][] = []
+      const betaMax = Math.min(betaStar * (1 - 1e-9), opts.betaCap ?? Infinity)
+      const capped = betaMax < betaStar * (1 - 1e-6)
+      const smooth01 = (a: number, b: number, x: number): number => {
+        const s = Math.min(1, Math.max(0, (x - a) / (b - a)))
+        return s * s * (3 - 2 * s)
+      }
+      const rootAxis = seamLine[root.a] ?? seamNow
       let prevPhi = 0
+      let sigmaCap = 0
       for (let k = 0; k < n; ++k) {
         const t = k / (n - 1)
-        const beta = Math.min(betaStar * Math.sin(Math.PI * t), betaStar * (1 - 1e-9))
+        let beta: number
         let phiA = 0
-        if (t > 0.5) {
-          const raw = foldBranch(beta)
-          if (raw === undefined) return { pos: outPos, zdir: outDir }
-          phiA = raw
-          for (const cand of [raw - 2 * Math.PI, raw + 2 * Math.PI]) {
-            if (Math.abs(cand - prevPhi) < Math.abs(phiA - prevPhi)) phiA = cand
+        if (capped) {
+          // capped runs can't reach the branch crossing, so: open to the
+          // cap on the trivial branch (exact), hold the book there while
+          // the point sweeps between the branches (the folder pushing the
+          // point through — the only torn stretch, bent across the shared
+          // vertices), then close riding the fold branch (exact again)
+          beta = betaMax * (smooth01(0, 0.35, t) - smooth01(0.65, 1, t))
+          if (t <= 0.35) {
+            phiA = 0
+          } else {
+            const raw = foldBranch(Math.max(beta, 1e-6))
+            if (raw === undefined) return { pos: outPos, zdir: outDir }
+            // canonical branch value in (−π, π], sign pinned by the sweep
+            let rep = raw
+            while (rep > Math.PI + 1e-9) rep -= 2 * Math.PI
+            while (rep <= -Math.PI - 1e-9) rep += 2 * Math.PI
+            if (sigmaCap === 0) sigmaCap = rep >= 0 ? 1 : -1
+            if (rep * sigmaCap < 0) rep += 2 * Math.PI * sigmaCap
+            phiA = t >= 0.65 ? rep : rep * smooth01(0.35, 0.65, t)
           }
-          prevPhi = phiA
+        } else {
+          beta = betaMax * Math.sin(Math.PI * t)
+          if (t > 0.5) {
+            const raw = foldBranch(beta)
+            if (raw === undefined) return { pos: outPos, zdir: outDir }
+            phiA = raw
+            for (const cand of [raw - 2 * Math.PI, raw + 2 * Math.PI]) {
+              if (Math.abs(cand - prevPhi) < Math.abs(phiA - prevPhi)) phiA = cand
+            }
+            prevPhi = phiA
+          }
         }
         const T = place(beta, phiA, true)
         if (!T) return { pos: outPos, zdir: outDir }
         dbg?.(`frame ${k} beta=${(beta * 180 / Math.PI).toFixed(1)} phis=${pairs.map((p) => (p.phi * 180 / Math.PI).toFixed(1)).join(',')}${pairs.map((p) => (p.active ? '*' : '')).join('')}`)
+        // folding on a table: hold the chosen cover flat by undoing its
+        // spin on the whole frame (every rooting is the same shape curve)
+        const G: Xform = opts.anchor
+          ? rotLine(rootAxis, opts.anchor === 'a' ? -beta : beta)
+          : idX
         const pos: number[] = []
         Vfrom.forEach((p, vi) => {
           const cs = vComps[vi]
@@ -605,7 +657,7 @@ export const buildReverseMech = (
           let y = 0
           let z = 0
           for (const c of cs) {
-            const w = T[c]([p[0], p[1], 0])
+            const w = G(T[c]([p[0], p[1], 0]))
             x += w[0] / cs.length
             y += w[1] / cs.length
             z += w[2] / cs.length
@@ -615,8 +667,8 @@ export const buildReverseMech = (
         outPos.push(pos)
         // each assembly carries its ẑ: rotation part applied to (0,0,1)
         const compDir = [...Array(nComp).keys()].map((c) => {
-          const o = T[c]([0, 0, 0])
-          const zc = T[c]([0, 0, 1])
+          const o = G(T[c]([0, 0, 0]))
+          const zc = G(T[c]([0, 0, 1]))
           return [zc[0] - o[0], zc[1] - o[1], zc[2] - o[2]]
         })
         const zdir: number[] = []
@@ -644,7 +696,7 @@ export const buildReverseMech = (
     dbg?.(`betaStar=${(betaStar * 180 / Math.PI).toFixed(2)}° tear=${tear.toExponential(1)}`)
     if (tear > 1e-6) return undefined
 
-    return { frames, betaStar }
+    return { frames, betaStar, slavePairs: pairs.length - 2 }
   }
 
   for (const pl of pageLines) addLine(cuts, { line: pl, kind: 'page' })

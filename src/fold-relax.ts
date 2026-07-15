@@ -266,7 +266,11 @@ export const bakeSoftMotion = (
   // the working creases swing through the middle, everything presses
   // flat at the end — sin(πs) shapes the transient open-and-close
   const FLANK_OPEN = Math.PI * 0.45
-  for (let f = 0; f <= frames; ++f) {
+  // frame 0 is the seed itself — the barely-swung flat start. Relaxing
+  // toward the from-state first can lurch to a different flat
+  // configuration entirely and snap back a frame later.
+  out.push(Float64Array.from(pos))
+  for (let f = 1; f <= frames; ++f) {
     const s = f / frames
     relax(mesh, pos, vel, (h) => {
       if (h.role === 'flank') {
