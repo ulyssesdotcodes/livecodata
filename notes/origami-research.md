@@ -514,6 +514,42 @@ history. Details in the section referenced.
   single-instant coincidences; the test allows them transiently, never
   persistently.
 
+## 12c. Table folding (2026-07-15)
+
+Real folding happens on a table with the working side up; the display now
+honours that:
+
+- **Auto flip-over**: each step's landing side is voted from its flap
+  senses; a step acting on the underside turns the whole model over first
+  (an animated half-turn about y in the step's opening 30%), exactly like
+  a folder flipping the paper. Parity accumulates across steps
+  (flipFrom/flipTo per step); exact half-turns are trig-residue-free so
+  flat states stay exactly flat.
+- **Anchored mechanism**: mechanism bakes hold the table-side cover flat
+  (compose every frame with the inverse of that cover's spin — any
+  rooting is the same shape curve), so the book opens UPWARD off the
+  table instead of breathing ±β through it.
+- **Capped opening for deep models** (the "don't unfold the neck to fold
+  the head" note): when a deep step carries slaved earlier reverses, the
+  book opens only ~35° (MECH_BETA_CAP): open on the trivial branch
+  (exact), hold while the point sweeps between branches (the only torn
+  stretch, bent across shared vertices — the folder pushing the point
+  through), close riding the fold branch (exact). Shallow collapses in
+  progress keep the full-open exact motion.
+- **Hinge validation**: a fold whose flap boundary leaves the fold line
+  is now rejected at compile ("the paper would stretch") instead of
+  silently deforming static faces — this caught the cicada's wing
+  creases missing their junction vertex by 0.05 (the user-visible
+  wrong-way/snap artifact); the wing rows are re-derived through the
+  junction.
+- **One sampling path**: playback and the compile-time gates share
+  sampleStepMotion, so what is judged is exactly what is shown (two
+  hand-rolled replicas of the blend disagreed by 2.5x on strain before).
+  The relax gate is a teleport guard (displayed strain ≤ 65% — approved
+  pocket billow reaches ~60%; frame-lurch artifacts measure far above),
+  plus bakeSoftMotion now stores the seed as frame 0 rather than a
+  first-relax lurch.
+
 ## 13. Testing methodology (what actually catches things)
 
 The verification stack, cheapest first. Every layer caught real bugs the

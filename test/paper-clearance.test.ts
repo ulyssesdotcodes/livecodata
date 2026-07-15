@@ -42,8 +42,8 @@ const CICADA_ROWS = [
   { step: 'half', p1: '0,0', p2: '1,1', move: '0.667,0.333', at: 1 },
   { step: 'cornerL', p1: '0,0.5', p2: '1,0.5', move: '0.1,0.3;0.3,0.1', at: 2 },
   { step: 'cornerR', p1: '0.5,0', p2: '0.5,1', move: '0.6,0.8;0.8,0.6', at: 3 },
-  { step: 'wingL', p1: '0.159099,0.628769', p2: '0.901561,0.946967', move: '0.03,0.12;0.12,0.03', at: 4 },
-  { step: 'wingR', p1: '0.371231,0.840901', p2: '0.053033,0.098439', move: '0.88,0.97;0.97,0.88', at: 5 },
+  { step: 'wingL', p1: '0.19885,0.598479', p2: '1.001892,0.99618', move: '0.03,0.12;0.12,0.03', at: 4 },
+  { step: 'wingR', p1: '0.401521,0.80115', p2: '0.00382,-0.001892', move: '0.88,0.97;0.97,0.88', at: 5 },
   { step: 'head1', p1: '-0.19,0.59', p2: '0.41,1.19', move: '0.97,0.03', at: 6 },
   { step: 'head2', p1: '-0.24,0.64', p2: '0.36,1.24', move: '0.03,0.97', at: 7 },
   { step: 'tuckL', p1: '0.09,0.59', p2: '0.39,0.29', move: '0.05,0.55', at: 8 },
@@ -94,4 +94,33 @@ test('the deep reverse folds keep their baked mechanism motion', () => {
     const step = program.steps.find((s) => s.name === name)!
     assert.ok(step.soft!.zDirs, `step "${name}" bakes the mechanism (offsets ride the paper)`)
   }
+})
+
+test('table folding: parity chains across steps and starts face-up', () => {
+  for (const rows of [CRANE_ROWS, CICADA_ROWS]) {
+    const program = compileFoldTable(rows, { size: 1 })
+    let parity = 0
+    for (const step of program.steps) {
+      assert.equal(step.flipFrom, parity, `step "${step.name}" starts at the running parity`)
+      assert.ok(step.flipTo === step.flipFrom || step.flipTo === (step.flipFrom ^ 1))
+      parity = step.flipTo
+    }
+    // mechanism steps never flip: they open upward off the anchored cover
+    for (const step of program.steps) {
+      if (step.soft?.zDirs) assert.equal(step.flipFrom, step.flipTo, `mech step "${step.name}" does not flip`)
+    }
+  }
+})
+
+test('a fold whose flap hinge leaves the line is rejected, not stretched', () => {
+  // the cicada wing rows as first authored: the crease misses the corner
+  // where the flap boundary meets static paper by 0.05 — the old engine
+  // silently stretched a static face 11% to absorb it
+  const rows = [
+    { step: 'half', p1: '0,0', p2: '1,1', move: '0.667,0.333', at: 1 },
+    { step: 'cornerL', p1: '0,0.5', p2: '1,0.5', move: '0.1,0.3;0.3,0.1', at: 2 },
+    { step: 'cornerR', p1: '0.5,0', p2: '0.5,1', move: '0.6,0.8;0.8,0.6', at: 3 },
+    { step: 'wingL', p1: '0.159099,0.628769', p2: '0.901561,0.946967', move: '0.03,0.12;0.12,0.03', at: 4 },
+  ]
+  assert.throws(() => compileFoldTable(rows, { size: 1 }), /hinge leaves the fold line/)
 })
