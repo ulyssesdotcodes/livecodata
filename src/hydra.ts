@@ -49,11 +49,43 @@
 //                      fresh every frame with `props` in scope (e.g. "props.mix"
 //                      or "Math.sin(props.time)") so the amount can be driven
 //                      live from a setVariable, a slider, or hydra's own time.
+//   - "transition"  : wipes from the program built up so far (the "before",
+//                      layers and all) to the program built up after it (the
+//                      "after") over `value` beats, revealing the after through
+//                      `code` used as a black-and-white MASK — bright mask
+//                      regions cross over first, dark ones last (a luma wipe).
+//                      The before is snapshotted at the transition's beat; the
+//                      after is the output's live program, so you build the
+//                      destination with ordinary events placed at the same beat
+//                      (just after the transition): setCode to cut to a new
+//                      program (code/transition/code), a layer to reveal an
+//                      overlay through the mask (code/transition/layer), and so
+//                      on. Progress rides hydra's own playback clock
+//                      (`props.time`, the source position in beats — so the wipe
+//                      is beat-aligned, tempo-independent, and pauses/scrubs with
+//                      the timeline) and is baked as constants, so the sketch
+//                      string stays byte-stable and nothing recompiles per frame.
+//                      When the window elapses the wipe collapses to just the
+//                      after program (like setCode replacing old code), so it
+//                      leaves nothing behind. With no `code`, it falls back to a
+//                      plain crossfade. Once a
+//                      transition is present the output is retargeted to its
+//                      `.out(oN)` (see the `output` column) so the before and
+//                      after composite cleanly.
+//
+// The `output` column names the hydra output a row drives — o0 (the visible
+// output) by default, or o1/o2/… to build a multi-output program. Events fold
+// PER OUTPUT: each output's rows evolve their own running code string, wholly
+// independent of the other outputs', and the sampled sketch is every output's
+// program concatenated (each ending in its own `.out(oN)`). So a transition on
+// o0 blends only o0's before/after, an osc rendered to o1 can be read back as
+// src(o1) from o0, and the single-output tables that predate the column keep
+// folding exactly as before (everything defaults to o0).
 //
 // Sampling at a frame folds every event seen at/before it in order: setCode/
-// setSource/append/replace/layer evolve one running code string, and setVariable
-// folds into the most-recent value of each named variable. So both the sketch
-// and the
+// setSource/append/replace/layer/transition evolve one running code string per
+// output, and setVariable folds into the most-recent value of each named
+// variable. So both the sketch and the
 // values driving it are plain table data the user can inspect and wire up from
 // the rest of the dataflow (physics, beats, math, …). Because a new variable is
 // just rows carrying a new `name`, not a new table column, adding one doesn't
@@ -62,7 +94,7 @@
 // GPU rendering lives in hydra-scene.ts.
 // ----------------------------------------------------------------------------
 
-import { beatToFrame } from './constants.js'
+import { beatToFrame, beatsToFrames, FPS } from './constants.js'
 import type { Row } from './lineage.js'
 
 export interface HydraFrame {
@@ -74,7 +106,7 @@ export interface HydraFrame {
 
 // The event kinds a hydra table understands: the two sketch/value events plus
 // the meta-programming transforms that rewrite the accumulated code.
-const HYDRA_EVENTS = new Set(['setCode', 'setVariable', 'setSource', 'replace', 'append', 'layer'])
+const HYDRA_EVENTS = new Set(['setCode', 'setVariable', 'setSource', 'replace', 'append', 'layer', 'transition'])
 
 // A hydra row is any of those events.
 export function isHydraRow(row: Row | null | undefined): boolean {
@@ -163,20 +195,61 @@ function amountExpr(value: unknown): string {
   return s.includes('=>') ? `(${s})` : `(props) => (${s})`
 }
 
-// The active sketch at frame `f` of loop pass `loop`: every event from earlier
-// passes in full, plus this pass's events at/before f, folded in order onto one
-// running code string. setCode replaces it; setSource/append/replace/layer
-// transform it; setVariable folds into the most-recent value of each named variable (later
-// events override earlier ones, so a row can change just one variable while the
-// sketch stays put). Returns null until a setCode event is reached — playback
-// then falls back to showing the raw scene. The meta events are no-ops while
-// `code` is still null (nothing to transform yet).
-export function hydraFrameAt(index: Row[], f: number, loop = 0): HydraFrame | null {
-  const frame = Math.floor(f)
-  if (frame < 0) return null
+// The hydra output a row drives: o0 (the visible output) unless the `output`
+// cell names another (o1, o2, …). Anything that isn't an `o`+digits token falls
+// back to o0, so a blank or malformed cell behaves like the default.
+const OUTPUT_RE = /^o\d+$/
+function outputOf(row: Row): string {
+  const o = typeof row.output === 'string' ? row.output.trim() : ''
+  return OUTPUT_RE.test(o) ? o : 'o0'
+}
+
+// A transition's soft-edge half-width: the mask luminance band the wipe sweeps
+// across as it reveals the after program. Progress 0 → 1 sweeps the threshold
+// from just above 1 (nothing revealed) to just below 0 (all revealed), so the
+// endpoints land cleanly on the before / after program even for pure-white or
+// pure-black mask pixels.
+const TRANSITION_TOL = 0.1
+const TRANSITION_SPAN = 1 + 2 * TRANSITION_TOL
+
+// A `transition` snapshotted mid-fold: the `before` chain (frozen at the
+// transition's beat), its `mask` sketch (or '' for a plain crossfade), and the
+// grid-frame window (`startFrame`, `durFrames`) the wipe animates across. The
+// wipe rides hydra's own clock rather than any injected value: hydra's per-frame
+// `props.time` is the source position in grid seconds (see hydra-scene.ts —
+// playback drives it as srcFrameF / FPS), so `props.time * FPS` is the current
+// grid frame and `(props.time * FPS - startFrame) / durFrames` is progress
+// 0 → 1, beat-aligned and tempo-independent. Baking the window as constants
+// keeps the sketch string byte-stable for the whole wipe, so nothing recompiles
+// per frame; when the window elapses the fold drops the transition entirely
+// (see foldOutput) and the string collapses to the bare after program.
+interface Transition {
+  before: string
+  mask: string
+  startFrame: number
+  durFrames: number
+}
+
+// The progress expression (0 → 1 across the transition's grid-frame window) for
+// a mask reveal or crossfade, read fresh each frame from hydra's playback clock.
+function progressExpr(t: Transition): string {
+  return `Math.min(Math.max((props.time * ${FPS} - ${t.startFrame}) / ${t.durFrames}, 0), 1)`
+}
+
+// Fold one output's events (already sorted, filtered to this output) into its
+// running code string, exactly like the single-output fold used to: setCode
+// replaces it, setSource/append/replace/layer transform it, transition records
+// a wipe to apply at the end, and setVariable folds into the shared `vars`.
+// Returns null until a setCode is reached (nothing to show yet); with no
+// transitions the string is returned untouched, so pre-existing single-o0
+// tables fold byte-for-byte as before.
+function foldOutput(
+  rows: Row[], frame: number, loop: number, output: string,
+  vars: Record<string, unknown>,
+): string | null {
   let code: string | null = null
-  const vars: Record<string, unknown> = {}
-  for (const row of index) {
+  const transitions: Transition[] = []
+  for (const row of rows) {
     const l = (row.loop as number | undefined) ?? 0
     if (l > loop || (l === loop && (row.index as number) > frame)) break
     switch (row.event) {
@@ -201,7 +274,7 @@ export function hydraFrameAt(index: Row[], f: number, loop = 0): HydraFrame | nu
       case 'append':
         // Extend the chain with a `.method(...)` fragment, before its `.out()`.
         if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
-          code = `${chainOf(code)}${row.code.trim()}.out(o0)`
+          code = `${chainOf(code)}${row.code.trim()}.out(${output})`
         }
         break
       case 'layer':
@@ -211,10 +284,87 @@ export function hydraFrameAt(index: Row[], f: number, loop = 0): HydraFrame | nu
         if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
           const mode = typeof row.mode === 'string' && row.mode in BLEND_OPS ? row.mode : 'blend'
           const amt = BLEND_OPS[mode] && hasAmount(row.value) ? `, ${amountExpr(row.value)}` : ''
-          code = `${chainOf(code)}.${mode}(${chainOf(row.code.trim())}${amt}).out(o0)`
+          code = `${chainOf(code)}.${mode}(${chainOf(row.code.trim())}${amt}).out(${output})`
         }
         break
+      case 'transition': {
+        // Snapshot the current program as the "before" and remember the wipe;
+        // it's applied to the final "after" (the code that keeps folding after
+        // it) once the whole output is folded. A no-op with nothing to wipe yet.
+        // Only while the window is still live: once it has fully elapsed the
+        // wipe is done, so we drop it and let the "after" stand alone — the same
+        // way a new setCode replaces the old code rather than layering over it
+        // forever (which would also pile finished wipes up without bound).
+        if (code != null) {
+          const durBeats = typeof row.value === 'number' && row.value > 0 ? row.value : 1
+          const durFrames = Math.max(1, beatsToFrames(durBeats))
+          const startFrame = row.index as number
+          if (frame < startFrame + durFrames) {
+            transitions.push({
+              before: chainOf(code),
+              mask: typeof row.code === 'string' ? row.code.trim() : '',
+              startFrame,
+              durFrames,
+            })
+          }
+        }
+        break
+      }
     }
   }
-  return code == null ? null : { code, vars }
+  if (code == null) return null
+  if (transitions.length === 0) return code
+
+  // Apply the wipes from the innermost (latest) out: the final program is the
+  // last transition's "after", and each earlier transition blends its own
+  // frozen "before" over the wipe that follows it — so nested transitions
+  // compose in beat order, the earliest wrapping all the later ones.
+  let result = chainOf(code)
+  for (let i = transitions.length - 1; i >= 0; i--) {
+    const t = transitions[i]
+    const p = progressExpr(t)
+    if (t.mask !== '') {
+      // Reveal the after through the mask: sweep the luma threshold as progress
+      // climbs (bright mask regions cross over first, dark ones last). Progress
+      // reads hydra's own playback clock, so the string is byte-stable and the
+      // wipe animates without recompiling the sketch each frame.
+      const reveal = `${chainOf(t.mask)}.thresh((props) => ((1 - ${p}) * ${TRANSITION_SPAN} - ${TRANSITION_TOL}), ${TRANSITION_TOL})`
+      result = `${t.before}.layer((${result}).mask(${reveal}))`
+    } else {
+      // No mask → a plain crossfade driven by the same progress.
+      result = `${t.before}.blend((${result}), (props) => ${p})`
+    }
+  }
+  return `${result}.out(${output})`
+}
+
+// The active sketch at frame `f` of loop pass `loop`: every output's events from
+// earlier passes in full, plus this pass's events at/before f, folded in order
+// (see foldOutput) into one running code string PER output, then concatenated
+// (each output ends in its own `.out(oN)`). setCode replaces an output's code;
+// setSource/append/replace/layer transform it; transition wipes to the after
+// program; setVariable folds into the most-recent value of each named variable
+// (later events override earlier ones, so a row can change just one variable
+// while the sketch stays put). Returns null until some output reaches a setCode
+// event — playback then falls back to showing the raw scene.
+export function hydraFrameAt(index: Row[], f: number, loop = 0): HydraFrame | null {
+  const frame = Math.floor(f)
+  if (frame < 0) return null
+  // Split the (already (loop, frame)-sorted) rows into per-output streams,
+  // preserving order; fold each independently and concatenate in output-name
+  // order for a stable, deterministic program.
+  const groups = new Map<string, Row[]>()
+  for (const row of index) {
+    const out = outputOf(row)
+    const g = groups.get(out)
+    if (g) g.push(row)
+    else groups.set(out, [row])
+  }
+  const vars: Record<string, unknown> = {}
+  const codes: string[] = []
+  for (const out of [...groups.keys()].sort()) {
+    const code = foldOutput(groups.get(out)!, frame, loop, out, vars)
+    if (code != null) codes.push(code)
+  }
+  return codes.length === 0 ? null : { code: codes.join('\n'), vars }
 }
