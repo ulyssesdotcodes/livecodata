@@ -455,6 +455,38 @@ test('a transition before any setCode is a no-op', () => {
   assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).out(o0)')
 })
 
+test('a wipe wraps cleanly at the loop boundary (loop 0) and re-runs each pass', () => {
+  // A single-loop program (no `loop` column → pass 0): a program at the start,
+  // and a wipe to a new one late in the loop. hydraFrameAt is a pure function of
+  // the within-loop frame — and playback samples it at the *wrapped* source
+  // frame each pass (playback.ts: srcFrameF = (srcBeat - 1) * FRAMES_PER_BEAT,
+  // pos %= maxBeats) — so the frames below are exactly what each loop replays.
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'osc(20).out(o0)' },
+    { beat: 14, event: 'transition', code: 'gradient(1).out(o0)', value: 2 }, // frames 390–450
+    { beat: 14, event: 'setCode', code: 'noise(3).out(o0)' },
+  ])
+  const start = 'osc(20).out(o0)'
+  // Top of the loop (frame 0): only the start program — the transition, later in
+  // the loop, isn't reached yet. So every wrap back to frame 0 lands cleanly on
+  // the start, with no residue of the after program from the pass just ended.
+  assert.equal(hydraFrameAt(idx, 0)!.code, start)
+  // Mid-wipe (frame 420): before wiped to after through the mask.
+  const mid = hydraFrameAt(idx, 420)!.code
+  assert.equal(
+    mid,
+    `osc(20).layer((noise(3)).mask(${reveal('gradient(1)', 390, 60)})).out(o0)`,
+  )
+  // End of the loop (frame 450+, window elapsed): just the after program — this
+  // is the "code at the end of the loop" that shows until the wrap.
+  assert.equal(hydraFrameAt(idx, 450)!.code, 'noise(3).out(o0)')
+  assert.equal(hydraFrameAt(idx, 479)!.code, 'noise(3).out(o0)')
+  // Because sampling is a pure function of the within-loop frame, the next pass
+  // replays all of it identically — the wipe re-runs every loop, not just once.
+  assert.equal(hydraFrameAt(idx, 0)!.code, start)
+  assert.equal(hydraFrameAt(idx, 420)!.code, mid)
+})
+
 test('overlapping transitions compose in beat order, the earliest wrapping the later', () => {
   const idx = buildHydraIndex([
     { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
