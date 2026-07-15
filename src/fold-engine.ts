@@ -608,14 +608,8 @@ export const compileFoldTable = (
       layersFrom: out.anim.layersFrom,
       dirs: out.anim.dirs,
       soft,
-      // parity is ABSOLUTE: the side being worked must face the viewer,
-      // so a step folding engine-down shows flipped (1) and a step
-      // folding engine-up shows upright (0), flipping over in between
-      // whenever the parity changes. Mechanism steps open toward the
-      // viewer from their anchored cover at either parity, so they keep
-      // whatever parity they inherit.
       flipFrom: parity,
-      flipTo: soft?.zDirs ? parity : down ? 1 : 0,
+      flipTo: down ? parity ^ 1 : parity,
     })
     parity = steps[steps.length - 1].flipTo
     const rec = reverseRecordOf(out)
@@ -655,6 +649,12 @@ const STACK_DEPTH = 0.05
 // the crease targets ramp to the end state's angles. Positions come out
 // in the display frame, flattened [frame][vertex][xyz].
 const SOFT_FRAMES = 16
+// mechanism bakes are closed-form and nearly free, so they afford dense
+// keyframes: a fast 180-degree point sweep lerped across few segments
+// cuts inside the rotation arc (poking through the plies it grazes) and
+// its stair-stepped velocity reads as jitter. Odd count puts a keyframe
+// exactly at the apex.
+const MECH_FRAMES = 49
 const SOFT_MAX_FACES = 20
 
 const bakeStep = (out: FoldOutcome, scale: number): { frames: number; pos: number[] } => {
@@ -722,27 +722,10 @@ const bakeMech = (
   // full-open motion.
   const betaCap = mech.slavePairs > 0 && out.state.FV.length > SOFT_MAX_FACES
     ? MECH_BETA_CAP : undefined
-  // folding on a table with the worked side facing the viewer: hold one
-  // cover flat and open the book toward the side the display shows the
-  // viewer (engine +z upright, −z when the display parity is flipped).
-  // Which anchor achieves that depends on where the swinging material
-  // sits relative to the spine, so probe the mid-frame and re-anchor if
-  // the book opened the wrong way.
-  let baked = mech.frames(SOFT_FRAMES, { anchor: parity ? 'a' : 'b', betaCap })
-  const opensWrongWay = (b: { pos: number[][] }): boolean => {
-    if (b.pos.length < SOFT_FRAMES) return false
-    const midFrame = b.pos[Math.floor(SOFT_FRAMES / 2)]
-    let zSum = 0
-    out.state.FV.forEach((F, fi) => {
-      if (!out.anim.moving[fi]) return
-      for (const vi of F) zSum += midFrame[vi * 3 + 2]
-    })
-    return (parity ? -zSum : zSum) < 0
-  }
-  if (opensWrongWay(baked)) {
-    baked = mech.frames(SOFT_FRAMES, { anchor: parity ? 'b' : 'a', betaCap })
-  }
-  if (baked.pos.length < SOFT_FRAMES) return undefined
+  // folding on a table: the cover that faces the table stays flat — the
+  // engine's b side dips when the display is face-up, a when flipped
+  const baked = mech.frames(MECH_FRAMES, { anchor: parity ? 'a' : 'b', betaCap })
+  if (baked.pos.length < MECH_FRAMES) return undefined
   const nv = out.state.sheet.length
   const pos: number[] = []
   for (const frame of baked.pos) {
@@ -997,11 +980,16 @@ export const foldTablePositions = (
   let zDir = sampled.zDir
   const sig = sampled.sig
   // each face's display height eases from where its paper sat before this
-  // fold to where it ends up, so consecutive steps join without a jump
+  // fold to where it ends up, so consecutive steps join without a jump.
+  // During a mechanism swing the offsets damp toward zero mid-motion: the
+  // open book separates the assemblies geometrically, and full-length
+  // offsets pointing along DIFFERENT assembly directions would shear the
+  // displayed copies through each other where they graze
+  const damp = sampled.zDir ? 1 - 0.75 * Math.sin(Math.PI * t) : 1
   const zOff = step.FV.map((_, fi) => {
     const from = step.layersFrom[fi] - mid
     const target = (sig?.[fi] ?? 1) * (step.layers[fi] - mid)
-    return program.gap * (from + (target - from) * t)
+    return program.gap * (from + (target - from) * t) * damp
   })
   // display parity: turn the whole model over about the y axis (in place —
   // the resting stack is centred on the paper plane, so a half-turn lands
