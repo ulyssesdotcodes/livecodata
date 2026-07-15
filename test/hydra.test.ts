@@ -5,6 +5,7 @@ import {
   hydraRows,
   buildHydraIndex,
   hydraFrameAt,
+  hydraCodeUpToRow,
   hydraLoops,
   type HydraFrame,
 } from '../src/hydra.js'
@@ -531,4 +532,51 @@ test('transitions on different outputs fold apart, each on its own baked window'
     + `gradient().layer((osc(20)).mask(${reveal('voronoi(4)', 120, 60)})).out(o1)`,
   )
   assert.deepEqual(frame.vars, {})
+})
+
+// --- hydraCodeUpToRow: the compiled code as of one table row ------------------
+
+test('hydraCodeUpToRow folds up to and including the given row (in raw table order)', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'setCode', code: 'osc(20).out(o0)' },
+    { beat: 5, event: 'replace', find: '20', value: 45 },
+    { beat: 7, event: 'append', code: '.kaleid(5)' },
+    { beat: 9, event: 'setSource', code: 'noise(2.5)' },
+  ]
+  // Each row shows the running program right after it applies.
+  assert.equal(hydraCodeUpToRow(rows, 0), 'osc(20).out(o0)')
+  assert.equal(hydraCodeUpToRow(rows, 1), 'osc(45).out(o0)')
+  assert.equal(hydraCodeUpToRow(rows, 2), 'osc(45).kaleid(5).out(o0)')
+  assert.equal(hydraCodeUpToRow(rows, 3), 'noise(2.5).kaleid(5).out(o0)')
+})
+
+test('hydraCodeUpToRow stops at the row even when several share a beat', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'setCode', code: 'src(s0).out(o0)' },
+    { beat: 5, event: 'transition', code: 'voronoi(5).out(o0)', value: 4 },
+    { beat: 5, event: 'setCode', code: 'osc(10).out(o0)' },
+  ]
+  const reveal = (mask: string, s: number, d: number): string =>
+    `${mask}.thresh((props) => ((1 - Math.min(Math.max((props.time * 60 - ${s}) / ${d}, 0), 1)) * 1.2 - 0.1), 0.1)`
+  // At the transition row, the destination (the beat-5 setCode) hasn't folded
+  // yet, so before === after: the wipe is from src(s0) to itself.
+  assert.equal(
+    hydraCodeUpToRow(rows, 1),
+    `src(s0).layer((src(s0)).mask(${reveal('voronoi(5)', 120, 120)})).out(o0)`,
+  )
+  // At the following setCode row, the destination is in place.
+  assert.equal(
+    hydraCodeUpToRow(rows, 2),
+    `src(s0).layer((osc(10)).mask(${reveal('voronoi(5)', 120, 120)})).out(o0)`,
+  )
+})
+
+test('hydraCodeUpToRow returns null for a non-hydra row or before any setCode', () => {
+  assert.equal(hydraCodeUpToRow([{ beat: 1, foo: 'bar' }], 0), null, 'not a hydra row')
+  assert.equal(hydraCodeUpToRow([
+    { beat: 1, event: 'append', code: '.rotate(0.1)' }, // no setCode yet
+    { beat: 5, event: 'setCode', code: 'osc(1).out(o0)' },
+  ], 0), null, 'nothing compiled yet at that row')
+  assert.equal(hydraCodeUpToRow([], 0), null)
+  assert.equal(hydraCodeUpToRow(null, 0), null)
 })

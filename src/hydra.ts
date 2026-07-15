@@ -368,3 +368,23 @@ export function hydraFrameAt(index: Row[], f: number, loop = 0): HydraFrame | nu
   }
   return codes.length === 0 ? null : { code: codes.join('\n'), vars }
 }
+
+// The compiled sketch as of one table row: every hydra event folded in order up
+// to and INCLUDING the row at `rowIndex` in the raw `rows` array (an editable
+// hydra table's current fold), exactly as it would render at that event's beat.
+// Returns null when that row isn't a hydra event, or when no setCode has
+// established any code yet by that point. Unlike sampling a frame, this stops at
+// the row itself — so two events on the same beat show the running code after
+// each in turn, not just the beat's end state. Powers the table panel's per-row
+// "compiled code" info popover.
+export function hydraCodeUpToRow(rows: Row[] | null | undefined, rowIndex: number): string | null {
+  const all = rows ?? []
+  if (!isHydraRow(all[rowIndex])) return null
+  // Tag rows with their original position so the target is findable after the
+  // (loop, frame) sort, then fold only the prefix up to and including it.
+  const index = buildHydraIndex(all.map((row, i) => ({ ...row, __row: i })))
+  const pos = index.findIndex((r) => (r as { __row?: number }).__row === rowIndex)
+  if (pos < 0) return null
+  const at = index[pos]
+  return hydraFrameAt(index.slice(0, pos + 1), at.index as number, at.loop as number)?.code ?? null
+}

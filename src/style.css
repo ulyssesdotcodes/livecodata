@@ -1048,7 +1048,7 @@ html, body {
 
 .row-actions-head {
   background: #0f3460;
-  width: 36px;
+  width: 54px;
 }
 
 .row-actions {
@@ -1075,6 +1075,55 @@ html, body {
 
 .row-del-btn:hover {
   color: #e94560;
+}
+
+/* Per-row "compiled code at this event" info button + popover (hydra rows).
+   The popover reuses .settings-menu for its fixed positioning and chrome. */
+.row-info-wrap {
+  margin-left: 0;
+}
+
+.row-info-btn {
+  background: transparent;
+  color: #607a96;
+  border: none;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 3px;
+}
+
+.row-info-btn:hover {
+  color: #4aa3df;
+}
+
+.row-info-popover {
+  max-width: min(460px, calc(100vw - 16px));
+}
+
+.row-info-title {
+  color: #8ca0b8;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 6px;
+}
+
+.row-info-code {
+  margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #c8d6e5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.row-info-empty {
+  color: #8ca0b8;
+  font-size: 12px;
+  font-style: italic;
 }
 
 /* A row whose own boolean "disabled" column is checked stays fully

@@ -26,6 +26,7 @@ import {
   type TablePanel, type TablePanelOptions, type PeerPresence,
 } from '../table-panel.js'
 import { listenGlobal, focusInput } from './dom.js'
+import { isHydraRow, hydraCodeUpToRow } from '../hydra.js'
 import type { Table } from '../dsl.js'
 import { DISABLED_COL, cellValid, invalidColumns, type EditableTableStore, type ColumnType, type EditableColumn } from '../editable-tables.js'
 
@@ -90,6 +91,8 @@ function TablePanelView(props: PanelProps) {
   const [editingCell, setEditingCell] = createSignal<string | null>(null)
   // Same one-at-a-time pattern for a column header's settings popover.
   const [openColMenu, setOpenColMenu] = createSignal<string | null>(null)
+  // …and for a row's "compiled code at this event" info popover (hydra rows).
+  const [openInfoRow, setOpenInfoRow] = createSignal<string | null>(null)
   // Editable tables show two sub-tabs below the main tab strip: the
   // interactive fold ("table") and the read-only `name·events` history
   // ("events"). Resets to "table" whenever the selected tab changes.
@@ -97,11 +100,13 @@ function TablePanelView(props: PanelProps) {
   const [graphCollapsed, setGraphCollapsed] = createSignal(window.matchMedia('(max-width: 767px)').matches)
   const [colRanges, setColRanges] = createSignal<ColRange[] | null>(null)
 
-  // Outside mousedowns cancel the open cell editor / column-settings popover.
+  // Outside mousedowns cancel the open cell editor / column-settings popover /
+  // row-info popover.
   listenGlobal(document, 'mousedown', (e) => {
     const target = e.target as HTMLElement | null
     if (editingCell() != null && !target?.closest?.('.editable-cell.editing')) setEditingCell(null)
     if (openColMenu() != null && !target?.closest?.('.col-settings-wrap')) setOpenColMenu(null)
+    if (openInfoRow() != null && !target?.closest?.('.row-info-wrap')) setOpenInfoRow(null)
   })
 
   const names = createMemo(() => {
@@ -122,6 +127,7 @@ function TablePanelView(props: PanelProps) {
   createEffect(on(current, () => {
     setEditingCell(null)
     setOpenColMenu(null)
+    setOpenInfoRow(null)
     setSubView('table')
   }, { defer: true }))
 
@@ -510,6 +516,70 @@ function TablePanelView(props: PanelProps) {
     )
   }
 
+  // A per-row info button (hydra rows only): opens a popover showing the sketch
+  // compiled up to and including this event — the running program the fold has
+  // built at this point (see hydraCodeUpToRow). Mirrors ColHeader's popover: a
+  // fixed-position menu measured from the button so it doesn't clip.
+  function RowInfo(rowProps: { table: string; rowIndex: number }) {
+    const { table, rowIndex } = rowProps
+    const infoKey = `${table}::${rowIndex}`
+    const open = () => openInfoRow() === infoKey
+    const [menuPos, setMenuPos] = createSignal<{ top: number; left: number } | null>(null)
+    let infoBtn: HTMLButtonElement | undefined
+    let popEl: HTMLDivElement | undefined
+
+    // Recompute only while open; re-reads the (tick-gated) store fold so an edit
+    // to any earlier row updates the shown code live.
+    const code = createMemo(() => {
+      tick(); views()
+      if (!open()) return null
+      const data = store.get(table)
+      return data ? hydraCodeUpToRow(data.rows, rowIndex) : null
+    })
+
+    createEffect(() => {
+      if (!open() || !infoBtn || !popEl) return
+      // Depend on the code so remeasuring happens once it has content (height).
+      code()
+      const r = infoBtn.getBoundingClientRect()
+      const left = Math.max(4, Math.min(r.left, window.innerWidth - popEl.offsetWidth - 4))
+      // Flip above the button when it would overflow the viewport bottom — the
+      // info icon often sits on the last row, near the panel's edge.
+      const h = popEl.offsetHeight
+      const below = r.bottom + 4
+      const top = below + h > window.innerHeight - 4 && r.top - h - 4 >= 4 ? r.top - h - 4 : below
+      setMenuPos({ top, left })
+    })
+
+    return (
+      <div class="settings-wrap row-info-wrap">
+        <button
+          class="row-info-btn"
+          title="Compiled code at this event"
+          aria-label="Compiled code at this event"
+          ref={infoBtn}
+          onClick={(e) => { e.stopPropagation(); setOpenInfoRow(open() ? null : infoKey) }}
+        >
+          ⓘ
+        </button>
+        <div
+          class="settings-menu row-info-popover"
+          classList={{ open: open() }}
+          ref={popEl}
+          style={menuPos() ? { top: `${menuPos()!.top}px`, left: `${menuPos()!.left}px` } : undefined}
+        >
+          <div class="row-info-title">Compiled code at this event</div>
+          <Show
+            when={code() != null}
+            fallback={<div class="row-info-empty">No compiled sketch at this event yet.</div>}
+          >
+            <pre class="row-info-code">{code()}</pre>
+          </Show>
+        </div>
+      </div>
+    )
+  }
+
   function Tab(tabProps: { name: string }) {
     const { name } = tabProps
     const [renaming, setRenaming] = createSignal(false)
@@ -727,6 +797,9 @@ function TablePanelView(props: PanelProps) {
                           }}
                         >
                           <td class="row-actions">
+                            <Show when={isHydraRow(ed().data.rows[i])}>
+                              <RowInfo table={ed().name} rowIndex={i} />
+                            </Show>
                             <button
                               class="row-dup-btn"
                               title="Duplicate row"
