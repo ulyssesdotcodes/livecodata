@@ -547,10 +547,14 @@ define("hydra", (rand, table) =>
 //                 mult (which also take an amount \`value\`) or diff / layer /
 //                 mask. Here voronoi is added in over the tail of the loop.
 //   - transition : WIPE from the program built up so far (the "before", layers
-//                 and all) to the program built up after it, revealing the
-//                 after through \`code\` used as a black-and-white MASK over
-//                 \`value\` beats — bright mask regions cross first, dark last.
-//                 Here a gradient's left→right ramp wipes to a fresh sketch.
+//                 and all) to the program built up after it over \`value\` beats,
+//                 using \`code\` as a MASK: where it's BLACK the before shows,
+//                 where it's WHITE the after shows. The mask is YOUR sketch and
+//                 you animate it from all-black to all-white across the window —
+//                 three names are in scope to drive it: \`transitionStart\` /
+//                 \`transitionEnd\` (the window in props.time units) and
+//                 \`transitionPos(t)\` (that time as 0→1). Here a gradient ramp
+//                 thresholded by transitionPos sweeps in as a directional wipe.
 //
 // The events fold in beat order onto one running sketch: sampling at any beat
 // replays every earlier transform, so the code you see is always the sum of the
@@ -582,11 +586,12 @@ editable("hydra", schemas.hydra)
         // amount 0.5) — a different compositor than a plain crossfade.
         { beat: 13, event: "layer", code: "voronoi(10).out(o0)", mode: "add", value: 0.5 },
         // beat 14: WIPE to a fresh program over 2 beats. `transition` snapshots
-        // everything so far (noise + kaleid + voronoi) as the "before", then
-        // reveals whatever folds on next through `code` — here gradient()'s
-        // left→right luma ramp, so the new sketch sweeps in as a directional
-        // wipe rather than a hard cut.
-        { beat: 14, event: "transition", code: "gradient(1).out(o0)", value: 2 },
+        // everything so far (noise + kaleid + voronoi) as the "before"; `code`
+        // is the mask YOU animate black→white across the window. Here a static
+        // gradient ramp is thresholded by transitionPos, so the threshold sweeps
+        // 1→0 and the ramp fills in white left→right — a directional wipe. Swap
+        // the mask for a dissolve, an iris, anything that goes black→white.
+        { beat: 14, event: "transition", code: "gradient(0).thresh((props) => 1 - transitionPos(props.time), 0.15).out(o0)", value: 2 },
         // beat 14 (right after the transition): the destination it reveals — a
         // brand-new sketch that the wipe crosses over to by beat 16.
         { beat: 14, event: "setCode", code: "osc(30, 0.2, 2).kaleid(7).out(o0)" },

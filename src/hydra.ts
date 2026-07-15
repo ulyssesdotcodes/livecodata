@@ -51,24 +51,30 @@
 //                      live from a setVariable, a slider, or hydra's own time.
 //   - "transition"  : wipes from the program built up so far (the "before",
 //                      layers and all) to the program built up after it (the
-//                      "after") over `value` beats, revealing the after through
-//                      `code` used as a black-and-white MASK — bright mask
-//                      regions cross over first, dark ones last (a luma wipe).
-//                      The before is snapshotted at the transition's beat; the
-//                      after is the output's live program, so you build the
-//                      destination with ordinary events placed at the same beat
-//                      (just after the transition): setCode to cut to a new
+//                      "after") over `value` beats, using `code` as a MASK: where
+//                      the mask is black the before shows, where it's white the
+//                      after shows (composited through the mask's luminance). The
+//                      mask is the USER's sketch and the user animates it from all
+//                      black to all white across the window however they like — a
+//                      wipe, a dissolve, an iris. To drive it, three names are in
+//                      scope inside the mask code: `transitionStart` and
+//                      `transitionEnd` (the window bounds in `props.time` units)
+//                      and `transitionPos(t)` (that time normalised to 0 → 1 over
+//                      the window, clamped) — e.g. a plain fade is
+//                      `solid().luma((props) => 1 - transitionPos(props.time))`.
+//                      transitionPos reads hydra's own playback clock, so the
+//                      wipe is beat-aligned, tempo-independent, and pauses/scrubs
+//                      with the timeline; the window bounds bake as constants, so
+//                      the sketch string stays byte-stable and nothing recompiles
+//                      per frame. The before is snapshotted at the transition's
+//                      beat; the after is the output's live program, so you build
+//                      the destination with ordinary events placed at the same
+//                      beat (just after the transition): setCode to cut to a new
 //                      program (code/transition/code), a layer to reveal an
-//                      overlay through the mask (code/transition/layer), and so
-//                      on. Progress rides hydra's own playback clock
-//                      (`props.time`, the source position in beats — so the wipe
-//                      is beat-aligned, tempo-independent, and pauses/scrubs with
-//                      the timeline) and is baked as constants, so the sketch
-//                      string stays byte-stable and nothing recompiles per frame.
-//                      When the window elapses the wipe collapses to just the
-//                      after program (like setCode replacing old code), so it
-//                      leaves nothing behind. With no `code`, it falls back to a
-//                      plain crossfade. Once a
+//                      overlay (code/transition/layer), and so on. When the window
+//                      elapses the wipe collapses to just the after program (like
+//                      setCode replacing old code), so it leaves nothing behind.
+//                      With no `code`, it falls back to a plain crossfade. Once a
 //                      transition is present the output is retargeted to its
 //                      `.out(oN)` (see the `output` column) so the before and
 //                      after composite cleanly.
@@ -204,25 +210,17 @@ function outputOf(row: Row): string {
   return OUTPUT_RE.test(o) ? o : 'o0'
 }
 
-// A transition's soft-edge half-width: the mask luminance band the wipe sweeps
-// across as it reveals the after program. Progress 0 → 1 sweeps the threshold
-// from just above 1 (nothing revealed) to just below 0 (all revealed), so the
-// endpoints land cleanly on the before / after program even for pure-white or
-// pure-black mask pixels.
-const TRANSITION_TOL = 0.1
-const TRANSITION_SPAN = 1 + 2 * TRANSITION_TOL
-
 // A `transition` snapshotted mid-fold: the `before` chain (frozen at the
 // transition's beat), its `mask` sketch (or '' for a plain crossfade), and the
 // grid-frame window (`startFrame`, `durFrames`) the wipe animates across. The
-// wipe rides hydra's own clock rather than any injected value: hydra's per-frame
-// `props.time` is the source position in grid seconds (see hydra-scene.ts —
-// playback drives it as srcFrameF / FPS), so `props.time * FPS` is the current
-// grid frame and `(props.time * FPS - startFrame) / durFrames` is progress
-// 0 → 1, beat-aligned and tempo-independent. Baking the window as constants
-// keeps the sketch string byte-stable for the whole wipe, so nothing recompiles
-// per frame; when the window elapses the fold drops the transition entirely
-// (see foldOutput) and the string collapses to the bare after program.
+// window is exposed to the mask sketch in `props.time` units (seconds — see
+// hydra-scene.ts, which drives props.time as srcFrameF / FPS): `transitionStart`
+// = startFrame / FPS, `transitionEnd` = (startFrame + durFrames) / FPS, and
+// `transitionPos(t)` normalises a time to 0 → 1 across them, clamped. These bake
+// as constants, so the mask animates on hydra's own clock (beat-aligned,
+// tempo-independent) without the string changing per frame; when the window
+// elapses the fold drops the transition (see foldOutput) and the string
+// collapses to the bare after program.
 interface Transition {
   before: string
   mask: string
@@ -230,10 +228,18 @@ interface Transition {
   durFrames: number
 }
 
-// The progress expression (0 → 1 across the transition's grid-frame window) for
-// a mask reveal or crossfade, read fresh each frame from hydra's playback clock.
-function progressExpr(t: Transition): string {
-  return `Math.min(Math.max((props.time * ${FPS} - ${t.startFrame}) / ${t.durFrames}, 0), 1)`
+// The window bounds a transition exposes to its mask sketch, in `props.time`
+// (seconds) units, plus the `transitionPos(t)` helper that normalises a time to
+// 0 → 1 across them (clamped) — the tools the user drives the black→white mask
+// with.
+function transitionWindow(t: Transition): { start: number; end: number; posFn: string } {
+  const start = t.startFrame / FPS
+  const dur = t.durFrames / FPS
+  return {
+    start,
+    end: start + dur,
+    posFn: `(t) => Math.min(Math.max((t - ${start}) / ${dur}, 0), 1)`,
+  }
 }
 
 // Fold one output's events (already sorted, filtered to this output) into its
@@ -322,17 +328,17 @@ function foldOutput(
   let result = chainOf(code)
   for (let i = transitions.length - 1; i >= 0; i--) {
     const t = transitions[i]
-    const p = progressExpr(t)
+    const { start, end, posFn } = transitionWindow(t)
     if (t.mask !== '') {
-      // Reveal the after through the mask: sweep the luma threshold as progress
-      // climbs (bright mask regions cross over first, dark ones last). Progress
-      // reads hydra's own playback clock, so the string is byte-stable and the
-      // wipe animates without recompiling the sketch each frame.
-      const reveal = `${chainOf(t.mask)}.thresh((props) => ((1 - ${p}) * ${TRANSITION_SPAN} - ${TRANSITION_TOL}), ${TRANSITION_TOL})`
-      result = `${t.before}.layer((${result}).mask(${reveal}))`
+      // Composite before (mask black) under after (mask white) through the
+      // mask's luminance. The mask is the user's own sketch, animated from black
+      // to white across the window using the transitionStart/End/Pos we bind
+      // around it — so they choose the wipe, we just wire the clock in.
+      const mask = `((transitionStart, transitionEnd, transitionPos) => (${chainOf(t.mask)}))(${start}, ${end}, ${posFn})`
+      result = `${t.before}.layer((${result}).mask(${mask}))`
     } else {
-      // No mask → a plain crossfade driven by the same progress.
-      result = `${t.before}.blend((${result}), (props) => ${p})`
+      // No mask → a plain crossfade over the same window.
+      result = `${t.before}.blend((${result}), (props) => (${posFn})(props.time))`
     }
   }
   return `${result}.out(${output})`
