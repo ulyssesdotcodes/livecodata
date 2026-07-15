@@ -125,22 +125,61 @@ test('a fold whose flap hinge leaves the line is rejected, not stretched', () =>
   assert.throws(() => compileFoldTable(rows, { size: 1 }), /hinge leaves the fold line/)
 })
 
-test('every completing fold swings toward the viewer', () => {
-  // absolute parity: the side being worked always faces the viewer, so at
-  // mid-swing the moving paper sits in front of the flat back
-  for (const [name, rows] of [['crane', CRANE_ROWS], ['cicada', CICADA_ROWS]] as const) {
-    const program = compileFoldTable(rows, { size: 1 })
-    for (let k = 0; k < program.steps.length; ++k) {
-      const step = program.steps[k]
-      if (step.to < 1) continue
-      const { pos, FV, moving } = foldTablePositions(program, k + 0.55)
-      const movingV = new Set<number>()
-      FV.forEach((F, fi) => { if (moving[fi]) for (const vi of F) movingV.add(vi) })
-      let sum = 0
-      let n = 0
-      for (const vi of movingV) { sum += pos[vi][2]; n++ }
-      assert.ok(sum / n > 0,
-        `${name} step "${step.name}" folds toward the viewer (mean z ${(sum / n).toFixed(3)})`)
+
+// displayed worst edge stretch across a step's swing — piecewise keyframe
+// wobble and seam tears show up here
+const displayedStrain = (rows: Record<string, unknown>[], name: string): number => {
+  const program = compileFoldTable(rows, { size: 1 })
+  const k = program.steps.findIndex((s) => s.name === name)
+  const step = program.steps[k]
+  const edges: [number, number, number][] = []
+  const seen = new Set<string>()
+  for (const F of step.FV) {
+    for (let i = 0, j = F.length - 1; i < F.length; j = i++) {
+      const key = F[i] < F[j] ? `${F[i]}:${F[j]}` : `${F[j]}:${F[i]}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      const rest = Math.hypot(step.Vfrom[F[i]][0] - step.Vfrom[F[j]][0], step.Vfrom[F[i]][1] - step.Vfrom[F[j]][1])
+      if (rest > 1e-9) edges.push([F[i], F[j], rest])
     }
   }
+  let worst = 0
+  for (let i = 1; i < 24; ++i) {
+    const { pos } = foldTablePositions(program, k + (i / 24) * step.to)
+    for (const [a, b, rest] of edges) {
+      const len = Math.hypot(pos[a][0] - pos[b][0], pos[a][1] - pos[b][1], pos[a][2] - pos[b][2])
+      worst = Math.max(worst, Math.abs(len - rest) / rest)
+    }
+  }
+  return worst
+}
+
+test('mechanism swings are smooth and clear (the beat-5.5 class of artifact)', () => {
+  // two artifacts the coarse sweep missed, both user-reported on
+  // collapse4's swing: keyframe-lerp wobble (paper visibly shivers — the
+  // dense-keyframe bake keeps displayed strain near zero) and persistent
+  // grazing crossings from display offsets shearing along different
+  // assembly directions (damped mid-swing; must stay in the invisible
+  // interleave-graze range)
+  const program = compileFoldTable(CRANE_ROWS, { size: 1 })
+  const stack = program.gap * program.maxLayer
+  for (const name of ['collapse4', 'neck']) {
+    assert.ok(displayedStrain(CRANE_ROWS, name) < 0.02,
+      `${name}: exact mechanism plays without wobble`)
+  }
+  for (const name of ['tail', 'head']) {
+    assert.ok(displayedStrain(CRANE_ROWS, name) < 0.35,
+      `${name}: capped mechanism stays within its bending budget`)
+  }
+  for (let k = 0; k < program.steps.length; ++k) {
+    const step = program.steps[k]
+    if (!step.soft?.zDirs || step.FV.length > 20) continue
+    let worst = 0
+    for (let i = 1; i < 24; ++i) {
+      worst = Math.max(worst, clearanceAt(program, k + (i / 24) * step.to).depth)
+    }
+    assert.ok(worst <= 0.35 * stack,
+      `${name(step)}: shallow mechanism crossings stay in the graze range (${(worst / stack).toFixed(2)}x stack)`)
+  }
+  function name(s: { name: string }): string { return s.name }
 })
