@@ -111,7 +111,8 @@ test('Hydra Meta sample: replace/append/setSource/layer rewrite the sketch acros
   const hydra = views.get('hydra')!
   const cols = schemaColumns({
     beat: 'number',
-    event: ['setCode', 'setSource', 'append', 'replace', 'layer', 'setVariable'],
+    event: ['setCode', 'setSource', 'append', 'replace', 'layer', 'transition', 'setVariable'],
+    output: ['o0', 'o1', 'o2', 'o3'],
     code: 'code', find: 'string', name: 'string', value: 'number',
     mode: ['blend', 'add', 'mult', 'diff', 'layer', 'mask'],
   })
@@ -133,6 +134,19 @@ test('Hydra Meta sample: replace/append/setSource/layer rewrite the sketch acros
   assert.equal(at(9).code, 'noise(2.5, 0.3).kaleid(5).out(o0)')
   // beat 13: an additive layer of voronoi over the current sketch.
   assert.equal(at(13).code, 'noise(2.5, 0.3).kaleid(5).add(voronoi(10), 0.5).out(o0)')
+  // beat 14: a transition wipes from that whole program (the "before") to a
+  // fresh sketch (the "after"), revealed through the gradient mask; progress
+  // starts at 0 and rides a per-frame props value.
+  assert.equal(
+    at(14).code,
+    'noise(2.5, 0.3).kaleid(5).add(voronoi(10), 0.5).layer((osc(30, 0.2, 2).kaleid(7))'
+    + '.mask(gradient(1).thresh((props) => ((1 - props.__hydraTransition0) * 1.2 - 0.1), 0.1))).out(o0)',
+  )
+  assert.equal(at(14).vars.__hydraTransition0, 0)
+  // beat 16: the 2-beat wipe has completed — progress pins at 1 (fully the
+  // after program) and the code stays byte-stable so nothing recompiles.
+  assert.equal(at(16).vars.__hydraTransition0, 1)
+  assert.equal(at(16).code, at(14).code)
   // frameToBeat is the inverse used above — a light sanity tie to constants.
   assert.equal(Math.round(frameToBeat(0)), 1)
 })

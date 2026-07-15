@@ -542,21 +542,28 @@ define("hydra", (rand, table) =>
 //   - setSource : swap the HEAD of the chain — the leading generator — for
 //                 \`code\`, keeping the effects after it. Here osc → noise, and
 //                 the kaleidoscope from the append carries straight over.
-//   - layer     : composite another whole sketch (\`code\`) over the current one
+//   - layer      : composite another whole sketch (\`code\`) over the current one
 //                 with the hydra blend operator named by \`mode\` — blend / add /
 //                 mult (which also take an amount \`value\`) or diff / layer /
 //                 mask. Here voronoi is added in over the tail of the loop.
+//   - transition : WIPE from the program built up so far (the "before", layers
+//                 and all) to the program built up after it, revealing the
+//                 after through \`code\` used as a black-and-white MASK over
+//                 \`value\` beats — bright mask regions cross first, dark last.
+//                 Here a gradient's left→right ramp wipes to a fresh sketch.
 //
 // The events fold in beat order onto one running sketch: sampling at any beat
 // replays every earlier transform, so the code you see is always the sum of the
-// rows up to that point. Everything below is seeded into the "hydra" tab on the
-// right — edit a cell, drag a beat, or "+ row" another transform, no code change
-// needed. This just declares the schema.
+// rows up to that point. The \`output\` column names the hydra output a row
+// drives (o0 by default) and each output folds on its own, so you can build a
+// multi-output program — but here everything stays on o0. All of it is seeded
+// into the "hydra" tab on the right — edit a cell, drag a beat, or "+ row"
+// another transform, no code change needed. This just declares the schema.
 //
 // \`schemas.hydra\` is the canonical schema for this table — hover it to see
-// the columns. Two of them are ENUMS: \`event\` and \`mode\` render as
-// dropdowns, so picking a valid one during a set is a click, not a typed
-// guess. And because every column is typed, a cell that doesn't fit — a
+// the columns. Three of them are ENUMS: \`event\`, \`mode\`, and \`output\`
+// render as dropdowns, so picking a valid one during a set is a click, not a
+// typed guess. And because every column is typed, a cell that doesn't fit — a
 // misspelled event, text where a number belongs — is flagged red (its row
 // too), a quick "this row is wrong" you catch before hitting Run.
 editable("hydra", schemas.hydra)
@@ -574,6 +581,15 @@ editable("hydra", schemas.hydra)
         // beat 13: add a voronoi field in over the current sketch (mode "add",
         // amount 0.5) — a different compositor than a plain crossfade.
         { beat: 13, event: "layer", code: "voronoi(10).out(o0)", mode: "add", value: 0.5 },
+        // beat 14: WIPE to a fresh program over 2 beats. `transition` snapshots
+        // everything so far (noise + kaleid + voronoi) as the "before", then
+        // reveals whatever folds on next through `code` — here gradient()'s
+        // left→right luma ramp, so the new sketch sweeps in as a directional
+        // wipe rather than a hard cut.
+        { beat: 14, event: "transition", code: "gradient(1).out(o0)", value: 2 },
+        // beat 14 (right after the transition): the destination it reveals — a
+        // brand-new sketch that the wipe crosses over to by beat 16.
+        { beat: 14, event: "setCode", code: "osc(30, 0.2, 2).kaleid(7).out(o0)" },
       ],
     },
   },

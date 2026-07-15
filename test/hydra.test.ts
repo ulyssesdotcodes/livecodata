@@ -310,3 +310,164 @@ test('meta events compose in beat order and fold across loop passes', () => {
   assert.equal(hydraFrameAt(idx, 0, 1)!.code, 'osc(10).rotate(0.1).out(o0)')
   assert.equal(hydraFrameAt(idx, 2, 1)!.code, 'osc(20).rotate(0.1).out(o0)')
 })
+
+// --- the `output` column: per-output folding --------------------------------
+
+test('isHydraRow recognises the transition event', () => {
+  assert.equal(isHydraRow({ beat: 1, event: 'transition', code: 'noise(3).out(o0)', value: 4 }), true)
+  assert.equal(hydraRows([
+    { beat: 1, event: 'setCode', code: 'osc(1).out(o0)' },
+    { beat: 1, event: 'transition', code: 'noise(3).out(o0)', value: 2 },
+  ]).length, 2)
+})
+
+test('events fold per output; the sketch concatenates every output in name order', () => {
+  // o1 renders an oscillator; o0 reads it back as src(o1). Each output folds on
+  // its own, and the sampled code is both programs, one per line, o0 then o1.
+  const idx = buildHydraIndex([
+    { beat: 1, output: 'o1', event: 'setCode', code: 'osc(10).out(o1)' },
+    { beat: 1, output: 'o0', event: 'setCode', code: 'src(o1).out(o0)' },
+  ])
+  assert.equal(hydraFrameAt(idx, 0)!.code, 'src(o1).out(o0)\nosc(10).out(o1)')
+})
+
+test('append / layer target the row’s own output', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, output: 'o1', event: 'setCode', code: 'osc(10).out(o1)' },
+    { beat: b(2), output: 'o1', event: 'append', code: '.rotate(0.1)' },
+    { beat: b(3), output: 'o1', event: 'layer', code: 'noise(3).out(o1)', mode: 'add' },
+  ])
+  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).rotate(0.1).out(o1)')
+  assert.equal(hydraFrameAt(idx, 3)!.code, 'osc(10).rotate(0.1).add(noise(3)).out(o1)')
+})
+
+test('a missing / blank output cell defaults to o0 (single-output tables unchanged)', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, output: '', event: 'setCode', code: 'osc(10).out(o0)' },
+    { beat: b(2), event: 'append', code: '.kaleid(4)' },
+  ])
+  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).kaleid(4).out(o0)')
+})
+
+// --- the transition event: a mask wipe from the before to the after program --
+
+// The reveal fragment a masked transition builds for a given mask chain and
+// progress-var key (soft-edge tol 0.1, threshold span 1.2 — see hydra.ts).
+const reveal = (mask: string, key: string): string =>
+  `${mask}.thresh((props) => ((1 - props.${key}) * 1.2 - 0.1), 0.1)`
+
+test('code/transition/code wipes from the before program to the after through the mask', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'src(s0).out(o0)' },
+    // At the same beat: the transition (snapshots src(s0) as "before"), then the
+    // destination program that folds on as the live "after".
+    { beat: 5, event: 'transition', code: 'voronoi(5).out(o0)', value: 4 },
+    { beat: 5, event: 'setCode', code: 'osc(10).out(o0)' },
+  ])
+  // Before the transition beat, just the before program.
+  assert.equal(hydraFrameAt(idx, 0)!.code, 'src(s0).out(o0)')
+  // At/after the transition beat: before.layer(after.mask(mask.thresh(progress))).
+  const at = hydraFrameAt(idx, 120)! // beat 5 = frame 120
+  assert.equal(
+    at.code,
+    `src(s0).layer((osc(10)).mask(${reveal('voronoi(5)', '__hydraTransition0')})).out(o0)`,
+  )
+  // Progress rides a per-frame props value: 0 at the start, 0.5 halfway, 1 at
+  // the end of the 4-beat (120-frame) window — and the code stays byte-stable
+  // across the whole window, so the wipe animates without a recompile.
+  assert.equal(at.vars.__hydraTransition0, 0)
+  assert.equal(hydraFrameAt(idx, 180)!.vars.__hydraTransition0, 0.5)
+  assert.equal(hydraFrameAt(idx, 240)!.vars.__hydraTransition0, 1)
+  assert.equal(hydraFrameAt(idx, 240)!.code, at.code)
+})
+
+test('code/transition/layer reveals the layer through the mask', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
+    { beat: 5, event: 'transition', code: 'noise(3).out(o0)', value: 2 },
+    { beat: 5, event: 'layer', code: 'voronoi(5).out(o0)', mode: 'add', value: 0.5 },
+  ])
+  assert.equal(
+    hydraFrameAt(idx, 120)!.code,
+    `osc(10).layer((osc(10).add(voronoi(5), 0.5)).mask(${reveal('noise(3)', '__hydraTransition0')})).out(o0)`,
+  )
+})
+
+test('layer/transition/code wipes from the layered program to a new one', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
+    { beat: b(60), event: 'layer', code: 'voronoi(5).out(o0)', mode: 'add', value: 0.5 }, // frame 60
+    { beat: 5, event: 'transition', code: 'noise(3).out(o0)', value: 2 },
+    { beat: 5, event: 'setCode', code: 'src(s0).out(o0)' },
+  ])
+  assert.equal(
+    hydraFrameAt(idx, 120)!.code,
+    `osc(10).add(voronoi(5), 0.5).layer((src(s0)).mask(${reveal('noise(3)', '__hydraTransition0')})).out(o0)`,
+  )
+})
+
+test('a transition with no mask code falls back to a plain crossfade', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
+    { beat: 5, event: 'transition', value: 2 },
+    { beat: 5, event: 'setCode', code: 'noise(3).out(o0)' },
+  ])
+  assert.equal(
+    hydraFrameAt(idx, 120)!.code,
+    'osc(10).blend((noise(3)), (props) => props.__hydraTransition0).out(o0)',
+  )
+})
+
+test('progress clamps to [0,1] outside the window and after the transition holds the after', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
+    { beat: 5, event: 'transition', code: 'noise(3).out(o0)', value: 2 }, // 60-frame window
+    { beat: 5, event: 'setCode', code: 'src(s0).out(o0)' },
+  ])
+  // Well past the window (frame 300 vs window 120–180) progress pins at 1.
+  assert.equal(hydraFrameAt(idx, 300)!.vars.__hydraTransition0, 1)
+})
+
+test('a transition before any setCode is a no-op', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'transition', code: 'noise(3).out(o0)', value: 2 },
+    { beat: b(2), event: 'setCode', code: 'osc(10).out(o0)' },
+  ])
+  assert.equal(hydraFrameAt(idx, 0), null)
+  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).out(o0)')
+})
+
+test('nested transitions compose in beat order, the earliest wrapping the later', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
+    { beat: 5, event: 'transition', code: 'noise(3).out(o0)', value: 2 },
+    { beat: 5, event: 'setCode', code: 'src(s0).out(o0)' },
+    { beat: 9, event: 'transition', code: 'voronoi(4).out(o0)', value: 2 },
+    { beat: 9, event: 'setCode', code: 'gradient().out(o0)' },
+  ])
+  const inner = `src(s0).layer((gradient()).mask(${reveal('voronoi(4)', '__hydraTransition1')}))`
+  assert.equal(
+    hydraFrameAt(idx, 240)!.code, // beat 9
+    `osc(10).layer((${inner}).mask(${reveal('noise(3)', '__hydraTransition0')})).out(o0)`,
+  )
+})
+
+test('transitions on different outputs get their own progress key and fold apart', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, output: 'o0', event: 'setCode', code: 'src(s0).out(o0)' },
+    { beat: 5, output: 'o0', event: 'transition', code: 'noise(3).out(o0)', value: 2 },
+    { beat: 5, output: 'o0', event: 'setCode', code: 'osc(10).out(o0)' },
+    { beat: 1, output: 'o1', event: 'setCode', code: 'gradient().out(o1)' },
+    { beat: 5, output: 'o1', event: 'transition', code: 'voronoi(4).out(o1)', value: 2 },
+    { beat: 5, output: 'o1', event: 'setCode', code: 'osc(20).out(o1)' },
+  ])
+  const frame = hydraFrameAt(idx, 120)!
+  // o0 is folded first (name order) so it takes progress key 0, o1 key 1.
+  assert.equal(
+    frame.code,
+    `src(s0).layer((osc(10)).mask(${reveal('noise(3)', '__hydraTransition0')})).out(o0)\n`
+    + `gradient().layer((osc(20)).mask(${reveal('voronoi(4)', '__hydraTransition1')})).out(o1)`,
+  )
+  assert.equal(frame.vars.__hydraTransition0, 0)
+  assert.equal(frame.vars.__hydraTransition1, 0)
+})

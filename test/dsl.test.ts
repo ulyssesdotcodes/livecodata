@@ -397,7 +397,8 @@ test('schemas: canonical table schemas ride the DSL surface, typed and frozen', 
   const cols = schemaColumns(schemas.hydra)
   assert.deepEqual(cols.find((c) => c.name === 'code'), { name: 'code', type: 'code', language: 'hydra' })
   assert.deepEqual(cols.find((c) => c.name === 'event')?.options,
-    ['setCode', 'setSource', 'append', 'replace', 'layer', 'setVariable'])
+    ['setCode', 'setSource', 'append', 'replace', 'layer', 'transition', 'setVariable'])
+  assert.deepEqual(cols.find((c) => c.name === 'output')?.options, ['o0', 'o1', 'o2', 'o3'])
   for (const name of ['sliders', 'path', 'steps']) assert.ok(name in schemas, `expected schemas.${name}`)
   // Frozen: an untyped program can't reshape a shared schema for later runs.
   assert.ok(Object.isFrozen(schemas.hydra) && Object.isFrozen(schemas.hydra.event))
@@ -411,9 +412,9 @@ test('schemas: editable(name, schemas.hydra) yields those exact columns in the s
   store.ensure('hydra', SCHEMAS.hydra, [{ beat: 1, event: 'setCode', code: 'osc(4).out(o0)' }])
   const t = store.get('hydra')!
   assert.deepEqual(t.columns.map((c) => c.name),
-    ['beat', 'event', 'code', 'find', 'name', 'value', 'mode', 'disabled'])
+    ['beat', 'event', 'output', 'code', 'find', 'name', 'value', 'mode', 'disabled'])
   assert.equal(t.columns.find((c) => c.name === 'code')!.language, 'hydra')
   // Unset cells take their column type's default: number 0, boolean false,
   // enum its first option, string/code ''.
-  assert.deepEqual(t.rows, [{ beat: 1, event: 'setCode', code: 'osc(4).out(o0)', find: '', name: '', value: 0, mode: 'blend', disabled: false }])
+  assert.deepEqual(t.rows, [{ beat: 1, event: 'setCode', output: 'o0', code: 'osc(4).out(o0)', find: '', name: '', value: 0, mode: 'blend', disabled: false }])
 })
