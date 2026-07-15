@@ -47,6 +47,16 @@ test('save then runs round-trips the run list; legacy sessions report none', asy
   assert.deepEqual(await store.runs('missing'), [])
 })
 
+test('save then head round-trips the branch head; absent reads as null', async () => {
+  const store = createSessionStore(fakeStorage())
+  await store.save('a', { events: 'e', head: 'a12xyz' })
+  assert.equal(await store.head('a'), 'a12xyz')
+
+  await store.save('b', { events: 'e' }) // no head — legacy/single-branch session
+  assert.equal(await store.head('b'), null)
+  assert.equal(await store.head('missing'), null)
+})
+
 test('save upserts: same id updates in place and preserves createdAt', async () => {
   const store = createSessionStore(fakeStorage())
   const first = await store.save('a', { events: 'v0', tables: ['x'] })

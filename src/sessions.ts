@@ -43,6 +43,11 @@ export interface SessionRecord {
   tables: string[]
   events: string
   runs: SessionRun[]
+  // The branch head (apply id) the session was on when last saved — local
+  // working state like `runs`, so a reload reopens on the same branch rather
+  // than snapping to the newest. Null/absent for a legacy or single-branch
+  // session (the store re-derives the newest apply as head on load).
+  head: string | null
 }
 
 export interface SessionSummary {
@@ -58,6 +63,7 @@ export interface SessionSaveData {
   events: string
   tables?: string[]
   runs?: SessionRun[]
+  head?: string | null
 }
 
 export interface SessionStore {
@@ -69,6 +75,8 @@ export interface SessionStore {
   load(id: string): Promise<string | null>
   // The saved run list (empty for a legacy session that predates runs).
   runs(id: string): Promise<SessionRun[]>
+  // The saved branch head (null for a legacy/single-branch session).
+  head(id: string): Promise<string | null>
   // Set the user-facing name. A no-op for an id that was never saved.
   rename(id: string, name: string): Promise<void>
   // Archive/unarchive. A no-op for an id that was never saved.
@@ -92,12 +100,13 @@ function normalizeRecord(s: Partial<SessionRecord> & { id: string }): SessionRec
     tables: Array.isArray(s.tables) ? s.tables : [],
     events: typeof s.events === 'string' ? s.events : '',
     runs: Array.isArray(s.runs) ? s.runs : [],
+    head: typeof s.head === 'string' ? s.head : null,
   }
 }
 
 // The upsert both backends share: fresh data fields, identity/label fields
 // carried over from the existing record when there is one.
-function upsertRecord(existing: SessionRecord | null, id: string, { events, tables = [], runs = [] }: SessionSaveData): SessionRecord {
+function upsertRecord(existing: SessionRecord | null, id: string, { events, tables = [], runs = [], head = null }: SessionSaveData): SessionRecord {
   const now = Date.now()
   return {
     id,
@@ -108,6 +117,7 @@ function upsertRecord(existing: SessionRecord | null, id: string, { events, tabl
     tables,
     events,
     runs,
+    head,
   }
 }
 
@@ -202,6 +212,11 @@ export function createSessionStore(storage: MinimalStorage = defaultStorage()): 
     async runs(id: string): Promise<SessionRun[]> {
       const s = readAll().find((s) => s.id === id)
       return s ? s.runs : []
+    },
+
+    async head(id: string): Promise<string | null> {
+      const s = readAll().find((s) => s.id === id)
+      return s ? s.head : null
     },
 
     async rename(id: string, name: string): Promise<void> {
@@ -330,6 +345,11 @@ export function createIdbSessionStore(storage: MinimalStorage | undefined = defa
     async runs(id: string): Promise<SessionRun[]> {
       const db = await open()
       return (await get(db, id))?.runs ?? []
+    },
+
+    async head(id: string): Promise<string | null> {
+      const db = await open()
+      return (await get(db, id))?.head ?? null
     },
 
     async rename(id: string, name: string): Promise<void> {

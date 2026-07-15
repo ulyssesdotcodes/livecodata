@@ -507,6 +507,7 @@ function persistSession(): void {
   void sessionStore.save(currentSessionId, {
     events: editableStore.serialize(),
     runs: editableStore.runs(),
+    head: editableStore.currentHead(),
     tables: [...lastViews.keys()],
   })
     .then(refreshSelector)
@@ -638,7 +639,7 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
       const changedKinds = Object.keys(changed).filter((k) => changed[k as keyof typeof changed])
       editableStore.recordApply({ changed: changedKinds, at: Date.now() })
     }
-    sessionBar.setLog({ length: sessionLength() })
+    syncSessionBar()
     applyCooked(cooked)
     if (persist) persistSession()
   } finally {
@@ -841,6 +842,10 @@ async function scrubSession(pos: number): Promise<void> {
   // apply id (branch-aware — a mid-branch node shows only its committed history).
   const target = atLatest ? null : head === null ? (path[clamped] as SessionRun) : (path[clamped] as ApplyNode).id
   editableStore.setReplayView(target)
+  // Warn (bar tint) when the thumb rests on an earlier apply of a branching
+  // session: an edit/apply here forks a new branch rather than extending. At the
+  // tip, or on a legacy linear session, editing just extends — no warning.
+  sessionBar.setForking(head !== null && !atLatest)
   // Keep the cook *and* the render inside one try: a program restored from a
   // saved session can fail either when it's cooked or when its cooked output is
   // applied, and both must surface on the editor's error strip rather than
@@ -905,7 +910,13 @@ async function openSession(id: string): Promise<void> {
     if (savedRuns.length) editableStore.setRuns(savedRuns)
     else editableStore.deriveRunsFromCode()
   })
-  sessionBar.setLog({ length: sessionLength() })
+  // Reopen on the branch the session was last on (load() defaulted head to the
+  // newest apply). Only when the saved head is a real, different branch node.
+  const savedHead = await sessionStore.head(id).catch(() => null)
+  if (savedHead && savedHead !== editableStore.currentHead() && editableStore.branchTree().nodes.has(savedHead)) {
+    quietly(() => editableStore.checkout(savedHead))
+  }
+  syncSessionBar()
   refreshSelector()
 
   // Open the session for editing *before* running it: show its program and make
@@ -932,7 +943,7 @@ function newSession(): void {
   quietly(() => editableStore.clear())
   editor.setCode(defaultProgram)
   evaluate(defaultProgram, { setError: editor.setError, persist: false, seeds: defaultTables })
-  sessionBar.setLog({ length: sessionLength() })
+  syncSessionBar()
   refreshSelector()
 }
 
@@ -949,14 +960,51 @@ function clearRuns(): void {
     editableStore.record(ACTIVITY_TABLE, CLEAR_RUNS_KIND)
     editableStore.setRuns([])
   })
-  sessionBar.setLog({ length: sessionLength() })
+  syncSessionBar()
   persistSession()
 }
 
 const sessionBar = createSessionBar({
   onScrub: (pos) => { stopRewind(); scrubSession(pos) },
   onReset: toggleRewind,
+  onCheckout: (headId) => checkoutBranch(headId),
 })
+
+// Refresh the session bar's branch switcher from the store's tree: the heads
+// (branches), each labeled by apply count and marked if it's the current one.
+// The chip only shows when there's more than one, so a linear session is
+// unchanged. Called wherever the tree or head can move (apply, scrub, checkout,
+// load). Labels stay deliberately light — apply count and a "(current)" mark;
+// a richer diff hint is a later polish.
+function refreshBranches(): void {
+  const tree = editableStore.branchTree()
+  const head = editableStore.currentHead()
+  const branches = tree.heads.map((id, i) => {
+    const runs = tree.pathTo(id).length
+    return { id, label: `branch ${i + 1} · ${runs} run${runs === 1 ? '' : 's'}`, current: id === head }
+  })
+  sessionBar.setBranches(branches)
+}
+
+// Refresh the whole session bar after the branch structure or head moves: the
+// scrub range (jumps the thumb to latest), the branch switcher, and — since
+// "latest" is never a fork point — clear the fork tint. scrubSession sets the
+// fork tint itself while replaying an earlier apply.
+function syncSessionBar(): void {
+  sessionBar.setLog({ length: sessionLength() })
+  sessionBar.setForking(false)
+  refreshBranches()
+}
+
+// Check out another branch: refold to its tip, re-cook the program that was
+// live there, jump the scrubber to its tip, and persist the new head.
+function checkoutBranch(headId: string): void {
+  stopRewind()
+  quietly(() => editableStore.checkout(headId))
+  syncSessionBar()
+  void scrubSession(sessionLength() - 1)
+  persistSession()
+}
 function openExample(index: number): void {
   const sample = SAMPLES[index]
   if (!sample) return
@@ -968,7 +1016,7 @@ function openExample(index: number): void {
   // so the example's editable(name, schema) calls carry column schemas only —
   // the row data lives with the sample, and populates the table panel on open.
   void evaluate(sample.code, { setError: editor.setError, persist: false, seeds: sample.tables })
-  sessionBar.setLog({ length: sessionLength() })
+  syncSessionBar()
   refreshSelector()
 }
 
@@ -1157,7 +1205,7 @@ function firstRun(): void {
     // (see obsoleteIfProgramChanged) instead of clobbering the room.
     evaluate(editor.getCode(), { setError: editor.setError, persist: false, obsoleteIfProgramChanged: true, seeds: defaultTables })
   }
-  sessionBar.setLog({ length: sessionLength() })
+  syncSessionBar()
   refreshSelector()
 }
 
