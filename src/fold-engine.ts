@@ -456,6 +456,10 @@ export interface FoldTableProgram {
   // program so the stack never jumps between steps
   gap: number
   maxLayer: number
+  // the paper direction that displays as the viewer's vertical (set by
+  // spawn from the object's rz): turn-overs rotate about this axis so the
+  // model mirrors left-right on screen instead of tumbling. Default [0,1].
+  flipAxis?: Vec2
 }
 
 const KIND_ALIASES: Record<string, string> = {
@@ -604,10 +608,16 @@ export const compileFoldTable = (
       layersFrom: out.anim.layersFrom,
       dirs: out.anim.dirs,
       soft,
+      // parity is ABSOLUTE: the side being worked must face the viewer,
+      // so a step folding engine-down shows flipped (1) and a step
+      // folding engine-up shows upright (0), flipping over in between
+      // whenever the parity changes. Mechanism steps open toward the
+      // viewer from their anchored cover at either parity, so they keep
+      // whatever parity they inherit.
       flipFrom: parity,
-      flipTo: down ? parity ^ 1 : parity,
+      flipTo: soft?.zDirs ? parity : down ? 1 : 0,
     })
-    if (down) parity ^= 1
+    parity = steps[steps.length - 1].flipTo
     const rec = reverseRecordOf(out)
     if (rec) reverses.push(rec)
     priorLines.push(spec.line)
@@ -704,19 +714,34 @@ const bakeMech = (
 ): { frames: number; pos: number[]; zDirs: number[] } | undefined => {
   const mech = buildReverseMech(out, reverses, pageLines)
   if (!mech) return undefined
-  const baked = mech.frames(SOFT_FRAMES, {
-    // folding on a table: the cover that faces the table stays flat — the
-    // engine's b side dips when the display is face-up, a when flipped
-    anchor: parity ? 'a' : 'b',
-    // on a deep model, earlier reverse folds are finished features — a
-    // made neck should stay a neck — so don't open the book to the exact
-    // branch point (that would fully un-press them); crack it open and let
-    // the point sweep through, the small seam error bending across the
-    // shared vertices. Shallow collapses in progress keep the exact
-    // full-open motion.
-    betaCap: mech.slavePairs > 0 && out.state.FV.length > SOFT_MAX_FACES
-      ? MECH_BETA_CAP : undefined,
-  })
+  // on a deep model, earlier reverse folds are finished features — a
+  // made neck should stay a neck — so don't open the book to the exact
+  // branch point (that would fully un-press them); crack it open and let
+  // the point sweep through, the small seam error bending across the
+  // shared vertices. Shallow collapses in progress keep the exact
+  // full-open motion.
+  const betaCap = mech.slavePairs > 0 && out.state.FV.length > SOFT_MAX_FACES
+    ? MECH_BETA_CAP : undefined
+  // folding on a table with the worked side facing the viewer: hold one
+  // cover flat and open the book toward the side the display shows the
+  // viewer (engine +z upright, −z when the display parity is flipped).
+  // Which anchor achieves that depends on where the swinging material
+  // sits relative to the spine, so probe the mid-frame and re-anchor if
+  // the book opened the wrong way.
+  let baked = mech.frames(SOFT_FRAMES, { anchor: parity ? 'a' : 'b', betaCap })
+  const opensWrongWay = (b: { pos: number[][] }): boolean => {
+    if (b.pos.length < SOFT_FRAMES) return false
+    const midFrame = b.pos[Math.floor(SOFT_FRAMES / 2)]
+    let zSum = 0
+    out.state.FV.forEach((F, fi) => {
+      if (!out.anim.moving[fi]) return
+      for (const vi of F) zSum += midFrame[vi * 3 + 2]
+    })
+    return (parity ? -zSum : zSum) < 0
+  }
+  if (opensWrongWay(baked)) {
+    baked = mech.frames(SOFT_FRAMES, { anchor: parity ? 'b' : 'a', betaCap })
+  }
   if (baked.pos.length < SOFT_FRAMES) return undefined
   const nv = out.state.sheet.length
   const pos: number[] = []
@@ -982,12 +1007,28 @@ export const foldTablePositions = (
   // the resting stack is centred on the paper plane, so a half-turn lands
   // where it started)
   if (flipT !== 0) {
-    // exact half/whole turns stay exactly flat (no trig residue)
-    const fc = flipT === 1 ? -1 : Math.cos(Math.PI * flipT)
-    const fs = flipT === 1 ? 0 : Math.sin(Math.PI * flipT)
-    pos = pos.map(([x, y, z]) => [x * fc + z * fs, y, -x * fs + z * fc])
-    zDir = (zDir ?? step.FV.map((): [number, number, number] => [0, 0, 1]))
-      .map(([x, y, z]) => [x * fc + z * fs, y, -x * fs + z * fc])
+    // rotate about the in-plane axis that displays as the viewer's
+    // vertical, so the model mirrors left-right on screen. Exact
+    // half-turns stay exactly flat (no trig residue): x' = 2(â·x)â − x.
+    const [ax, ay] = program.flipAxis ?? [0, 1]
+    const rot = flipT === 1
+      ? ([x, y, z]: [number, number, number]): [number, number, number] => {
+          const dd = ax * x + ay * y
+          return [2 * dd * ax - x, 2 * dd * ay - y, -z]
+        }
+      : ([x, y, z]: [number, number, number]): [number, number, number] => {
+          // Rodrigues about â = (ax, ay, 0) by π·flipT
+          const c = Math.cos(Math.PI * flipT)
+          const s = Math.sin(Math.PI * flipT)
+          const dd = (ax * x + ay * y) * (1 - c)
+          return [
+            x * c + ay * z * s + ax * dd,
+            y * c - ax * z * s + ay * dd,
+            (ax * y - ay * x) * s + z * c,
+          ]
+        }
+    pos = pos.map(rot)
+    zDir = (zDir ?? step.FV.map((): [number, number, number] => [0, 0, 1])).map(rot)
   }
   return { FV: step.FV, pos, moving: step.moving, zOff, zDir }
 }

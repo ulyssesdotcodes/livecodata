@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { compileFoldTable } from '../src/fold-engine.js'
+import { compileFoldTable, foldTablePositions } from '../src/fold-engine.js'
 import { clearanceAt } from './util/clearance.js'
 
 // Paper must not pass through paper — and where zero-thickness folding
@@ -123,4 +123,24 @@ test('a fold whose flap hinge leaves the line is rejected, not stretched', () =>
     { step: 'wingL', p1: '0.159099,0.628769', p2: '0.901561,0.946967', move: '0.03,0.12;0.12,0.03', at: 4 },
   ]
   assert.throws(() => compileFoldTable(rows, { size: 1 }), /hinge leaves the fold line/)
+})
+
+test('every completing fold swings toward the viewer', () => {
+  // absolute parity: the side being worked always faces the viewer, so at
+  // mid-swing the moving paper sits in front of the flat back
+  for (const [name, rows] of [['crane', CRANE_ROWS], ['cicada', CICADA_ROWS]] as const) {
+    const program = compileFoldTable(rows, { size: 1 })
+    for (let k = 0; k < program.steps.length; ++k) {
+      const step = program.steps[k]
+      if (step.to < 1) continue
+      const { pos, FV, moving } = foldTablePositions(program, k + 0.55)
+      const movingV = new Set<number>()
+      FV.forEach((F, fi) => { if (moving[fi]) for (const vi of F) movingV.add(vi) })
+      let sum = 0
+      let n = 0
+      for (const vi of movingV) { sum += pos[vi][2]; n++ }
+      assert.ok(sum / n > 0,
+        `${name} step "${step.name}" folds toward the viewer (mean z ${(sum / n).toFixed(3)})`)
+    }
+  }
 })
