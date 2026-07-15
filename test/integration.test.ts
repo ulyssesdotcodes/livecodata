@@ -145,9 +145,12 @@ test('Hydra Meta sample: replace/append/setSource/layer rewrite the sketch acros
     + `.mask(gradient(1).thresh((props) => ((1 - ${prog}) * 1.2 - 0.1), 0.1))).out(o0)`,
   )
   // Nothing is injected per frame (vars stay empty), and the code is byte-stable
-  // from the wipe's start through completion at beat 16 — so it never recompiles.
+  // through the wipe (beat 15, frame 420, is mid-window) — so it never recompiles.
   assert.deepEqual(at(14).vars, {})
-  assert.equal(at(16).code, at(14).code)
+  assert.equal(at(15).code, at(14).code)
+  // At beat 16 (frame 450) the 2-beat window has elapsed: the wipe collapses to
+  // just the after sketch, leaving nothing of the before or the mask behind.
+  assert.equal(at(16).code, 'osc(30, 0.2, 2).kaleid(7).out(o0)')
   // frameToBeat is the inverse used above — a light sanity tie to constants.
   assert.equal(Math.round(frameToBeat(0)), 1)
 })

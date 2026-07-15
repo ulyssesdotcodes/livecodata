@@ -382,11 +382,14 @@ test('code/transition/code wipes from the before program to the after through th
     `src(s0).layer((osc(10)).mask(${reveal('voronoi(5)', 120, 120)})).out(o0)`,
   )
   // No per-frame data is injected — the wipe rides the playback clock — so the
-  // string is byte-stable across the whole window (and past it), which is what
-  // lets it animate without a recompile.
+  // string is byte-stable across the whole 120-frame window (start 120), which
+  // is what lets it animate without a recompile.
   assert.deepEqual(at.vars, {})
   assert.equal(hydraFrameAt(idx, 180)!.code, at.code)
-  assert.equal(hydraFrameAt(idx, 240)!.code, at.code)
+  assert.equal(hydraFrameAt(idx, 239)!.code, at.code)
+  // Once the window elapses (frame 120 + 120 = 240) the wipe is done and
+  // collapses to just the after program — the before and mask are gone.
+  assert.equal(hydraFrameAt(idx, 240)!.code, 'osc(10).out(o0)')
 })
 
 test('code/transition/layer reveals the layer through the mask', () => {
@@ -426,17 +429,21 @@ test('a transition with no mask code falls back to a plain crossfade', () => {
   )
 })
 
-test('the wipe code is byte-stable through and past its window (no per-frame recompile)', () => {
+test('the wipe code is byte-stable through its window, then collapses to the after', () => {
   const idx = buildHydraIndex([
     { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
     { beat: 5, event: 'transition', code: 'noise(3).out(o0)', value: 2 }, // frames 120–180
     { beat: 5, event: 'setCode', code: 'src(s0).out(o0)' },
   ])
   const at = hydraFrameAt(idx, 120)!
-  // Start, mid, end, and well past the window all yield the identical string —
-  // only the clock hydra reads (props.time) moves, so setSketch never recompiles.
-  for (const f of [150, 180, 300]) assert.equal(hydraFrameAt(idx, f)!.code, at.code)
+  // Every frame inside the window yields the identical string — only the clock
+  // hydra reads (props.time) moves, so setSketch never recompiles mid-wipe.
+  for (const f of [150, 179]) assert.equal(hydraFrameAt(idx, f)!.code, at.code)
   assert.deepEqual(at.vars, {})
+  // At and past the window's end (frame 120 + 60 = 180) the wipe is finished and
+  // the code is just the after program — nothing of the before/mask lingers.
+  assert.equal(hydraFrameAt(idx, 180)!.code, 'src(s0).out(o0)')
+  assert.equal(hydraFrameAt(idx, 300)!.code, 'src(s0).out(o0)')
 })
 
 test('a transition before any setCode is a no-op', () => {
@@ -448,20 +455,28 @@ test('a transition before any setCode is a no-op', () => {
   assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).out(o0)')
 })
 
-test('nested transitions compose in beat order, the earliest wrapping the later', () => {
+test('overlapping transitions compose in beat order, the earliest wrapping the later', () => {
   const idx = buildHydraIndex([
     { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
-    { beat: 5, event: 'transition', code: 'noise(3).out(o0)', value: 2 },
+    // A long (8-beat, frames 120–360) wipe still running when a short one starts.
+    { beat: 5, event: 'transition', code: 'noise(3).out(o0)', value: 8 },
     { beat: 5, event: 'setCode', code: 'src(s0).out(o0)' },
     { beat: 9, event: 'transition', code: 'voronoi(4).out(o0)', value: 2 },
     { beat: 9, event: 'setCode', code: 'gradient().out(o0)' },
   ])
-  // Each transition bakes its own window (beat 5 → frame 120, beat 9 → frame
-  // 240), so nothing has to share a name — they simply nest.
+  // At beat 9 (frame 240) both windows are live (beat 5 → frames 120–360, beat 9
+  // → frames 240–300), so they nest — each on its own baked window, nothing
+  // shared. The earliest wraps the later.
   const inner = `src(s0).layer((gradient()).mask(${reveal('voronoi(4)', 240, 60)}))`
   assert.equal(
-    hydraFrameAt(idx, 240)!.code, // beat 9
-    `osc(10).layer((${inner}).mask(${reveal('noise(3)', 120, 60)})).out(o0)`,
+    hydraFrameAt(idx, 240)!.code,
+    `osc(10).layer((${inner}).mask(${reveal('noise(3)', 120, 240)})).out(o0)`,
+  )
+  // Once the inner (voronoi) wipe finishes at frame 300, it collapses away and
+  // only the outer (noise) wipe — from osc to the now-settled gradient — remains.
+  assert.equal(
+    hydraFrameAt(idx, 300)!.code,
+    `osc(10).layer((gradient()).mask(${reveal('noise(3)', 120, 240)})).out(o0)`,
   )
 })
 

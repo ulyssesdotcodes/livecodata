@@ -65,7 +65,10 @@
 //                      is beat-aligned, tempo-independent, and pauses/scrubs with
 //                      the timeline) and is baked as constants, so the sketch
 //                      string stays byte-stable and nothing recompiles per frame.
-//                      With no `code`, it falls back to a plain crossfade. Once a
+//                      When the window elapses the wipe collapses to just the
+//                      after program (like setCode replacing old code), so it
+//                      leaves nothing behind. With no `code`, it falls back to a
+//                      plain crossfade. Once a
 //                      transition is present the output is retargeted to its
 //                      `.out(oN)` (see the `output` column) so the before and
 //                      after composite cleanly.
@@ -217,8 +220,9 @@ const TRANSITION_SPAN = 1 + 2 * TRANSITION_TOL
 // playback drives it as srcFrameF / FPS), so `props.time * FPS` is the current
 // grid frame and `(props.time * FPS - startFrame) / durFrames` is progress
 // 0 → 1, beat-aligned and tempo-independent. Baking the window as constants
-// keeps the sketch string byte-stable through the whole wipe (and past it, since
-// the clamp holds at 1), so nothing recompiles per frame.
+// keeps the sketch string byte-stable for the whole wipe, so nothing recompiles
+// per frame; when the window elapses the fold drops the transition entirely
+// (see foldOutput) and the string collapses to the bare after program.
 interface Transition {
   before: string
   mask: string
@@ -283,20 +287,29 @@ function foldOutput(
           code = `${chainOf(code)}.${mode}(${chainOf(row.code.trim())}${amt}).out(${output})`
         }
         break
-      case 'transition':
+      case 'transition': {
         // Snapshot the current program as the "before" and remember the wipe;
         // it's applied to the final "after" (the code that keeps folding after
         // it) once the whole output is folded. A no-op with nothing to wipe yet.
+        // Only while the window is still live: once it has fully elapsed the
+        // wipe is done, so we drop it and let the "after" stand alone — the same
+        // way a new setCode replaces the old code rather than layering over it
+        // forever (which would also pile finished wipes up without bound).
         if (code != null) {
           const durBeats = typeof row.value === 'number' && row.value > 0 ? row.value : 1
-          transitions.push({
-            before: chainOf(code),
-            mask: typeof row.code === 'string' ? row.code.trim() : '',
-            startFrame: row.index as number,
-            durFrames: Math.max(1, beatsToFrames(durBeats)),
-          })
+          const durFrames = Math.max(1, beatsToFrames(durBeats))
+          const startFrame = row.index as number
+          if (frame < startFrame + durFrames) {
+            transitions.push({
+              before: chainOf(code),
+              mask: typeof row.code === 'string' ? row.code.trim() : '',
+              startFrame,
+              durFrames,
+            })
+          }
         }
         break
+      }
     }
   }
   if (code == null) return null
