@@ -668,3 +668,156 @@ test('record() rides the same log multiplayer syncs — merges in on another rep
   assert.equal(b.get('activity')?.events.length, 2)
   assert.equal(b.get('activity')?.events[1].kind, 'apply')
 })
+
+// ── Branches: recordApply, fork-on-edit, checkout ────────────────────────────
+
+test('recordApply commits the pending edits as an apply node and grows the branch path', () => {
+  const store = createEditableTableStore()
+  store.createTable('t')
+  store.addRow('t')
+  store.setCell('t', 0, 'beat', 1)
+  const a1 = store.recordApply({ changed: ['t'] })!
+  assert.equal(a1.parent, null, 'the first apply parents to the root')
+  assert.equal(a1.fork, false)
+  assert.equal(store.currentHead(), a1.id)
+
+  store.setCell('t', 0, 'beat', 2)
+  const a2 = store.recordApply()!
+  assert.equal(a2.parent, a1.id, 'an ordinary apply extends the tip')
+  assert.equal(a2.seen, a1.id)
+  assert.equal(a2.fork, false)
+  assert.deepEqual(store.branchPath().map((n) => n.id), [a1.id, a2.id])
+})
+
+test('editing while scrubbed to an apply forks a new branch, leaving the old one intact', () => {
+  const store = createEditableTableStore()
+  store.createTable('t')
+  store.addRow('t')
+  store.setCell('t', 0, 'beat', 1)
+  const a1 = store.recordApply()!
+  store.setCell('t', 0, 'beat', 2)
+  const a2 = store.recordApply()!
+
+  // Scrub back to a1 — a read-only preview of the state then.
+  store.setReplayView(a1.id)
+  assert.equal(store.get('t')!.rows[0].beat, 1)
+
+  // Edit while scrubbed → fork-on-edit: the edit lands on what we were looking at.
+  store.setCell('t', 0, 'beat', 9)
+  assert.equal(store.get('t')!.rows[0].beat, 9, 'edit hit the scrubbed state, not the head')
+
+  const a3 = store.recordApply()!
+  assert.equal(a3.parent, a1.id, 'the fork parents the scrubbed node')
+  assert.equal(a3.seen, a2.id, 'seen records the tip forked away from')
+  assert.equal(a3.fork, true)
+
+  const tree = store.branchTree()
+  assert.deepEqual(new Set(tree.heads), new Set([a2.id, a3.id]), 'two branches')
+})
+
+test('checkout switches the live fold to another branch and continues it', () => {
+  const store = createEditableTableStore()
+  store.createTable('t')
+  store.addRow('t')
+  store.setCell('t', 0, 'beat', 1)
+  const a1 = store.recordApply()!
+  store.setCell('t', 0, 'beat', 2)
+  const a2 = store.recordApply()!
+  store.setReplayView(a1.id)
+  store.setCell('t', 0, 'beat', 9)
+  const a3 = store.recordApply()!
+  assert.equal(store.get('t')!.rows[0].beat, 9)
+
+  // Get back to the old branch.
+  store.checkout(a2.id)
+  assert.equal(store.currentHead(), a2.id)
+  assert.equal(store.get('t')!.rows[0].beat, 2, 'a2 branch restored')
+
+  // Continuing it is just applying — the next apply extends a2, not a3.
+  store.setCell('t', 0, 'beat', 3)
+  const a4 = store.recordApply()!
+  assert.equal(a4.parent, a2.id)
+  assert.equal(a4.fork, false)
+  assert.deepEqual(store.branchTree().heads.includes(a3.id), true, 'the fork stays a leaf')
+})
+
+test('un-applied edits overlay the live head only, not a scrubbed-back run', () => {
+  const store = createEditableTableStore()
+  store.createTable('t')
+  store.addRow('t')
+  store.setCell('t', 0, 'beat', 1)
+  const a1 = store.recordApply()!
+  store.setCell('t', 0, 'beat', 2)
+  store.recordApply()
+  store.setCell('t', 0, 'beat', 5) // pending — not applied
+
+  assert.equal(store.get('t')!.rows[0].beat, 5, 'pending edit shows at the live head')
+  store.setReplayView(a1.id)
+  assert.equal(store.get('t')!.rows[0].beat, 1, 'scrubbed back — pending edit hidden')
+  store.setReplayView(null)
+  assert.equal(store.get('t')!.rows[0].beat, 5, 'back at head — pending edit visible again')
+})
+
+test('serialize/load round-trips the branch tree and reopens on the latest branch', () => {
+  const store = createEditableTableStore()
+  store.createTable('t')
+  store.addRow('t')
+  store.setCell('t', 0, 'beat', 1)
+  const a1 = store.recordApply()!
+  store.setCell('t', 0, 'beat', 2)
+  const a2 = store.recordApply()!
+  store.setReplayView(a1.id)
+  store.setCell('t', 0, 'beat', 9)
+  const a3 = store.recordApply()!
+
+  const reopened = createEditableTableStore()
+  assert.ok(reopened.load(store.serialize()))
+  assert.equal(reopened.currentHead(), a3.id, 'reopens on the newest apply')
+  assert.deepEqual(new Set(reopened.branchTree().heads), new Set([a2.id, a3.id]))
+  assert.equal(reopened.get('t')!.rows[0].beat, 9, 'a3 branch state restored')
+
+  reopened.checkout(a2.id)
+  assert.equal(reopened.get('t')!.rows[0].beat, 2)
+})
+
+test('a reload mid-edit reattaches the working tail so the next apply claims it', () => {
+  const store = createEditableTableStore()
+  store.createTable('t')
+  store.addRow('t')
+  store.setCell('t', 0, 'beat', 1)
+  store.recordApply()
+  store.setCell('t', 0, 'beat', 7) // pending, never applied
+
+  const reopened = createEditableTableStore()
+  assert.ok(reopened.load(store.serialize()))
+  assert.equal(reopened.get('t')!.rows[0].beat, 7, 'working tail overlays after reload')
+  const a2 = reopened.recordApply()!
+  assert.ok(a2.edits.length > 0, 'the next apply claims the reattached working tail')
+  // Once claimed, the edit is committed history on this branch.
+  reopened.setReplayView(null)
+  assert.equal(reopened.get('t')!.rows[0].beat, 7)
+})
+
+test('concurrent applies at the same tip linearize onto one branch across replicas', () => {
+  const a = createEditableTableStore({ src: 'a' })
+  const b = createEditableTableStore({ src: 'b' })
+  a.createTable('t')
+  a.addRow('t')
+  const base = a.recordApply()!
+  b.log.merge(a.log.all())
+  b.checkout(base.id)
+
+  // Both edit disjoint-ish and apply at the same tip, before seeing each other.
+  a.setCell('t', 0, 'beat', 1)
+  const aApply = a.recordApply()!
+  b.setCell('t', 0, 'loop', 2)
+  const bApply = b.recordApply()!
+  assert.equal(aApply.seen, base.id)
+  assert.equal(bApply.seen, base.id)
+
+  // Merge both ways; both replicas fold to the same single-branch tree.
+  a.log.merge(b.log.all())
+  b.log.merge(a.log.all())
+  assert.deepEqual(a.branchTree().heads, b.branchTree().heads)
+  assert.equal(a.branchTree().heads.length, 1, 'the race resolves to one branch')
+})
