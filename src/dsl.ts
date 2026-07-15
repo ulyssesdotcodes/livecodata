@@ -360,16 +360,25 @@ export interface ThreeAnimOpts {
 // table's `create` rows and append the update keyframes carrying each object's
 // transform. Every method returns a Table (the base rows plus the new
 // keyframes), so they chain — box().three.rotate().three.scale().rasterize(8).
+//
+// The option bags are spelled out as inline object literals (matching
+// ThreeAnimOpts) rather than named: this is purely for the editor — the TS
+// type printer *expands* an inline literal to show its fields on hover, but
+// prints a named (or imported) interface by its opaque name, so `.three.rotate`
+// would otherwise read `rotate(opts?: ThreeAnimOpts)` with nothing to see.
+// ThreeAnimOpts stays the canonical shape for the implementation;
+// ASSERT_INLINE_OPTS_IN_SYNC (after the Table class) fails the typecheck if
+// these literals drift from it, so the duplication can't rot.
 export interface ThreeChain {
   // Spin each object by `amount` radians about `axis` (default a full turn about
   // y) over `dur` beats — adds to the object's current rotation.
-  rotate(opts?: ThreeAnimOpts): Table
+  rotate(opts?: { amount?: number; dur?: number; axis?: 'x' | 'y' | 'z'; ease?: (t: number) => number; at?: number }): Table
   // Grow/shrink each object by the `amount` factor (default 2×) over `dur` beats
   // — multiplies the object's current scale uniformly on all axes (sx/sy/sz).
-  scale(opts?: ThreeAnimOpts): Table
+  scale(opts?: { amount?: number; dur?: number; axis?: 'x' | 'y' | 'z'; ease?: (t: number) => number; at?: number }): Table
   // Slide each object by `amount` along `axis` (default 1 unit along x) over
   // `dur` beats — adds to the object's current position.
-  move(opts?: ThreeAnimOpts): Table
+  move(opts?: { amount?: number; dur?: number; axis?: 'x' | 'y' | 'z'; ease?: (t: number) => number; at?: number }): Table
 }
 
 const TAU = Math.PI * 2
@@ -773,7 +782,9 @@ export class Table {
   // the common case. Function form retime(beat => newBeat) remaps each row's beat
   // arbitrarily (a closure, so hashed by source text, like map(fn)). Rows without
   // a `beat` are left untouched. shift(beats) is sugar for retime({ offset }).
-  retime(spec: RetimeSpec | ((beat: number) => number)): Table {
+  // The declarative spec is inlined (matching RetimeSpec) so hover shows its
+  // fields — see the note on ThreeChain.
+  retime(spec: { offset?: number; scale?: number } | ((beat: number) => number)): Table {
     if (typeof spec === 'function') {
       const fn = spec
       return this._xf('retimeFn', { fn }, (ins) => ins[0].map((r) => {
@@ -875,7 +886,9 @@ class PhysicsBuilder {
     this._ctx = ctx
   }
 
-  simulate(opts: SimulateOptions = {}): Table {
+  // opts inlined (matching SimulateOptions) so hover shows its fields — see the
+  // note on ThreeChain.
+  simulate(opts: { steps?: number; gravity?: number; fps?: number; sampleEvery?: number; collisions?: boolean } = {}): Table {
     const src = this._source instanceof Table ? this._source : new Table(this._source ?? [], this._ctx)
     return Table._fromNode(this._ctx, {
       op: 'physics',
@@ -892,6 +905,29 @@ class PhysicsBuilder {
     })
   }
 }
+
+// Drift guard for the inlined option shapes (see the note on ThreeChain): each
+// row checks an actual surface parameter type against its canonical interface,
+// so adding a field to ThreeAnimOpts/RetimeSpec/SimulateOptions without updating
+// the inlined literal — or the reverse — fails `npm run typecheck` here. Types
+// only; erased at build.
+// Strict type equality (the standard function-identity trick): unlike mutual
+// assignability, it distinguishes an added/removed *optional* field — exactly
+// the drift that matters here, since every option field is optional.
+type SameShape<A, B> =
+  (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false
+// The object arm of a param that may also be a function (retime).
+type ObjectArm<T> = T extends (...args: never[]) => unknown ? never : T
+type _AssertInlineOptsInSync = [
+  SameShape<NonNullable<Parameters<ThreeChain['rotate']>[0]>, ThreeAnimOpts>,
+  SameShape<NonNullable<Parameters<ThreeChain['scale']>[0]>, ThreeAnimOpts>,
+  SameShape<NonNullable<Parameters<ThreeChain['move']>[0]>, ThreeAnimOpts>,
+  SameShape<ObjectArm<Parameters<Table['retime']>[0]>, RetimeSpec>,
+  SameShape<NonNullable<Parameters<PhysicsBuilder['simulate']>[0]>, SimulateOptions>,
+] extends [true, true, true, true, true] ? true : never
+// Force the conditional to evaluate (an unused type alias alone isn't checked).
+const _assertInlineOptsInSync: _AssertInlineOptsInSync = true
+void _assertInlineOptsInSync
 
 // ── Origami ───────────────────────────────────────────────────────────────────
 // A sheet of paper folded by a TABLE OF FOLD STEPS: every row is one fold.

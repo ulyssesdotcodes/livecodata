@@ -132,6 +132,31 @@ test('schemas namespace completes its members with the exact schema on hover', (
   }
 })
 
+test('option-bag signatures render their fields inline on hover, not an opaque interface name', () => {
+  // The TS type printer expands an inline object literal but prints a named
+  // interface by name; the surface inlines these so hover is useful (see the
+  // note on ThreeChain in dsl.ts).
+  const three = 'box().three.rotate()'
+  const qiThree = svc.quickInfoAt(three, 'box().three.rotate'.length - 1)
+  assert.ok(qiThree)
+  assert.doesNotMatch(qiThree.display, /ThreeAnimOpts/, 'the interface name must not leak')
+  for (const field of ['amount?: number', 'axis?: "x" | "y" | "z"', 'ease?: (t: number) => number']) {
+    assert.ok(qiThree.display.includes(field), `expected inlined field ${field} in ${qiThree.display}`)
+  }
+  // Clean optional rendering — no `| undefined` noise on the fields.
+  assert.doesNotMatch(qiThree.display, /\| undefined/)
+
+  const retime = 'rows([]).retime()'
+  const qiRetime = svc.quickInfoAt(retime, 'rows([]).retime'.length - 1)
+  assert.ok(qiRetime && qiRetime.display.includes('offset?: number') && qiRetime.display.includes('scale?: number'))
+  assert.doesNotMatch(qiRetime.display, /RetimeSpec/)
+
+  const sim = 'physics(rows([])).simulate()'
+  const qiSim = svc.quickInfoAt(sim, 'physics(rows([])).simulate'.length - 1)
+  assert.ok(qiSim && qiSim.display.includes('gravity?: number') && qiSim.display.includes('collisions?: boolean'))
+  assert.doesNotMatch(qiSim.display, /SimulateOptions/)
+})
+
 test('no answers inside an unparseable mess still return gracefully', () => {
   const qi = svc.quickInfoAt('((((', 2)
   assert.equal(qi, null)
