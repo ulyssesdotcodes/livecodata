@@ -135,14 +135,16 @@ test('Hydra Meta sample: replace/append/setSource/layer rewrite the sketch acros
   // beat 13: an additive layer of voronoi over the current sketch.
   assert.equal(at(13).code, 'noise(2.5, 0.3).kaleid(5).add(voronoi(10), 0.5).out(o0)')
   // beat 14: a transition wipes from that whole program (the "before") to a
-  // fresh sketch (the "after"), revealed through the gradient mask. Progress
-  // reads hydra's own clock — props.time * 60 is the current grid frame, over
-  // the 2-beat window that starts at beat 14 (frame 390, 60 frames long).
-  const prog = 'Math.min(Math.max((props.time * 60 - 390) / 60, 0), 1)'
+  // fresh sketch (the "after") through the user's mask — a gradient thresholded
+  // by transitionPos. The mask is wrapped so transitionStart/End/Pos are in
+  // scope, the window baked in props.time units: beat 14 = 6.5s, +2 beats = 7.5s.
+  const posFn = '(t) => Math.min(Math.max((t - 6.5) / 1, 0), 1)'
+  const userMask = 'gradient(0).thresh((props) => 1 - transitionPos(props.time), 0.15)'
+  const maskExpr = `((transitionStart, transitionEnd, transitionPos) => (${userMask}))(6.5, 7.5, ${posFn})`
   assert.equal(
     at(14).code,
     'noise(2.5, 0.3).kaleid(5).add(voronoi(10), 0.5).layer((osc(30, 0.2, 2).kaleid(7))'
-    + `.mask(gradient(1).thresh((props) => ((1 - ${prog}) * 1.2 - 0.1), 0.1))).out(o0)`,
+    + `.mask(${maskExpr})).out(o0)`,
   )
   // Nothing is injected per frame (vars stay empty), and the code is byte-stable
   // through the wipe (beat 15, frame 420, is mid-window) — so it never recompiles.

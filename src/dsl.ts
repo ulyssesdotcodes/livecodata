@@ -1049,16 +1049,17 @@ export const SCHEMAS = deepFreeze({
    * head / a ".effect(…)" fragment), "replace" (swap substring `find` for
    * `value`), "layer" (`code` = another sketch composited via `mode`, amount
    * `value`), "transition" (`code` = a black-and-white mask that wipes to the
-   * program after it over `value` beats). `output` names the hydra output the
-   * row drives (o0 by default), and each output's events fold independently.
-   * `event`, `mode`, and `output` are enums (dropdowns in the table panel);
-   * `code` cells open in the editor with hydra completions; check `disabled`
-   * to mute a row without deleting it.
+   * program after it over `value` beats). `out` names the hydra output the row
+   * drives (o0 by default) and is appended as the terminal `.out(oN)`, so a
+   * setCode's `code` needn't write its own; each output's events fold
+   * independently. `event`, `mode`, and `out` are enums (dropdowns in the table
+   * panel); `code` cells open in the editor with hydra completions; check
+   * `disabled` to mute a row without deleting it.
    */
   hydra: {
     beat: 'number',
     event: ['setCode', 'setSource', 'append', 'replace', 'layer', 'transition', 'setVariable'],
-    output: ['o0', 'o1', 'o2', 'o3'],
+    out: ['o0', 'o1', 'o2', 'o3'],
     code: { type: 'code', language: 'hydra' },
     find: 'string',
     name: 'string',
