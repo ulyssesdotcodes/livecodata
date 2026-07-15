@@ -172,16 +172,17 @@ export function SessionSelector(props: { ctl: SessionSelectorController; childre
         </select>
       </Show>
       <Show when={activeSummary()}>
-        <button class="session-rename" title="rename session" onClick={() => setRenaming(true)}>✎</button>
+        <button class="session-rename" title="rename session" aria-label="rename session" onClick={() => setRenaming(true)}>✎</button>
         <button
           class="session-archive"
           title={activeSummary()?.archived ? 'unarchive session' : 'archive session'}
+          aria-label={activeSummary()?.archived ? 'unarchive session' : 'archive session'}
           onClick={() => { const s = activeSummary(); if (s) ctl.setArchived(!s.archived) }}
         >
-          {activeSummary()?.archived ? 'unarchive' : 'archive'}
+          {activeSummary()?.archived ? '📤' : '🗄'}
         </button>
       </Show>
-      <button class="session-new" onClick={() => ctl.startNew()}>+ New</button>
+      <button class="session-new" title="new session" aria-label="new session" onClick={() => ctl.startNew()}>+</button>
       {props.children}
     </div>
   )
