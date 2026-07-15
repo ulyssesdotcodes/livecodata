@@ -19,7 +19,8 @@ import { createCookClient } from './cook-client.js'
 import { randomSeed, localSource } from './event-log.js'
 import { createPresenceChannel, userColor, lastCellEdits } from './presence.js'
 import { Table } from './dsl.js'
-import { createEditableTableStore, DISABLED_COL, CLEAR_RUNS_KIND, type ColumnType } from './editable-tables.js'
+import { createEditableTableStore, DISABLED_COL, CLEAR_RUNS_KIND, ACTIVITY_TABLE, type ColumnType, type SessionRun } from './editable-tables.js'
+import type { ApplyNode } from './branches.js'
 import { createMidiInput, subscribeWebMidi, type MidiInput, type MidiStore } from './midi.js'
 import { createSliderInput, sliderDefs, type SliderInput, type SliderStore } from './sliders.js'
 import { createSliderPanel } from './ui/slider-panel.js'
@@ -59,11 +60,12 @@ function setCodeRow(code: string, seed: number): void {
 }
 
 // Multiplayer's own pseudo-table (see EditableTableStore.record): an Apply
-// pulse per successful evaluate() and a peer-join/peer-leave per connection
+// commit per successful evaluate() and a peer-join/peer-leave per connection
 // change (the latter authored by the room server — see server/server.ts and
 // worker/room.ts), so both ride the exact same store log — and therefore the
 // exact same multiplayer sync/replay-on-connect path — as any editable table.
-const ACTIVITY_TABLE = 'activity'
+// ACTIVITY_TABLE is exported from editable-tables so the apply node the branch
+// tree folds and its consumers here name the same table.
 
 // Who's currently in the room, per the "activity" table's peer-join/leave
 // history (net per client id — last event wins). Includes this replica once
@@ -99,11 +101,15 @@ const presence = roomName ? createPresenceChannel({ user: userName }) : null
 const peerLabel = (client: string, user: string): string => user || client.slice(0, 6)
 const peerColor = (client: string, user: string): string => userColor(user || client)
 
-// How many runs the session has recorded — the session bar's scrub range. A
-// run is an Apply (Ctrl-Enter) bookmark spanning *every* editable table (see
-// editableStore.recordRun), not just "code"'s history.
+// How many applies the current branch has — the session bar's scrub range. An
+// apply (Ctrl-Enter) commits a batch of edits spanning *every* editable table
+// (see editableStore.recordApply). A branching session scrubs its current
+// branch path; a legacy session with no apply nodes falls back to its linear
+// run list, exactly as before.
 function sessionLength(): number {
-  return editableStore.runs().length
+  return editableStore.currentHead() === null
+    ? editableStore.runs().length
+    : editableStore.branchPath().length
 }
 
 function extractDataUrls(code: string): string[] {
@@ -501,6 +507,7 @@ function persistSession(): void {
   void sessionStore.save(currentSessionId, {
     events: editableStore.serialize(),
     runs: editableStore.runs(),
+    head: editableStore.currentHead(),
     tables: [...lastViews.keys()],
   })
     .then(refreshSelector)
@@ -583,10 +590,14 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
   stopRewind()
   cooking++
   try {
-    // Applying / cooking always operates on the live head, never a scrubbed
-    // replay view — return to head first so the snapshot reads (and ensure()
-    // records against) current table state.
-    editableStore.setReplayView(null)
+    // Applying while scrubbed back forks: promote the scrubbed branch to a live
+    // (forked) head *now*, so the cook's ensure()/setRow appends land on it and
+    // recordApply commits a forking child of the scrubbed apply. A reactive
+    // evaluate (broadcast:false, reacting to a peer's apply) must not fork — it
+    // returns to the head the merge already moved us to. At the live head both
+    // are no-ops (no replay active).
+    if (broadcast) editableStore.forkFromReplay()
+    else editableStore.setReplayView(null)
     let cooked: CookedData
     let declaredNames: string[]
     try {
@@ -609,27 +620,26 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
     // is a read-only preview and retainDeclared no-ops there anyway.
     editableStore.retainDeclared(declaredNames)
 
-    // Write the "code" table row (if the program changed) and record the run —
-    // *before* applyCooked renders the table panel below, so its first render
-    // already sees "code" (otherwise the onChange reaction that would normally
-    // pick up a newly-created table is itself suppressed by `cooking` right now).
-    // recordRun snapshots every editable table's log index (including the "code"
-    // row just written, and any table the cook above created via ensure) as one
-    // Apply bookmark — the unit the session bar scrubs.
+    // Write the "code" table row (if the program changed) — *before* applyCooked
+    // renders the table panel below, so its first render already sees "code"
+    // (otherwise the onChange reaction that would normally pick up a newly-
+    // created table is itself suppressed by `cooking` right now).
     setCodeRow(code, seed)
-    editableStore.recordRun()
-    sessionBar.setLog({ length: sessionLength() })
-    // Stamp the apply pulse with which cooked outputs this run changed and the
-    // absolute instant it happened, BEFORE applyCooked — the loop epochs it
-    // folds (loopEpochsFromApplies) must already include this apply, so this
-    // replica re-bases from the very stamp its peers will. The reactive
-    // evaluate (broadcast:false) records nothing: the author's merged stamp is
-    // already in the fold.
+    // Commit this batch of edits as an apply node — the branch commit that *is*
+    // the run (recordApply supersedes recordRun + the separate apply pulse). It
+    // claims every pending edit (the "code" row just written, any table the cook
+    // created via ensure), stamps which cooked outputs changed and the instant,
+    // and — BEFORE applyCooked — so the loop epochs it folds
+    // (loopEpochsFromApplies) already include this apply, re-basing this replica
+    // from the very stamp its peers will. A reactive evaluate (broadcast:false)
+    // commits nothing: the author's apply is already merged into the fold, and
+    // the store's onMerge has already followed it to become our head.
     const changed = diffCooked(cooked)
     if (broadcast) {
       const changedKinds = Object.keys(changed).filter((k) => changed[k as keyof typeof changed])
-      editableStore.record(ACTIVITY_TABLE, 'apply', { changed: changedKinds, at: Date.now() })
+      editableStore.recordApply({ changed: changedKinds, at: Date.now() })
     }
+    syncSessionBar()
     applyCooked(cooked)
     if (persist) persistSession()
   } finally {
@@ -816,16 +826,26 @@ function toggleRewind(): void {
 let scrubEpoch = 0
 
 async function scrubSession(pos: number): Promise<void> {
-  const runs = editableStore.runs()
-  // No runs isn't necessarily "nothing to show" — a Clear leaves the "code"
-  // table's own history (and therefore its head row) untouched, just with no
-  // bookmarks left to scrub to. Treat it as "show head"; the codeRow check
-  // below still no-ops for a genuinely empty session (no "code" table yet).
-  const clamped = runs.length ? Math.max(0, Math.min(pos, runs.length - 1)) : 0
-  const atLatest = runs.length === 0 || clamped >= runs.length - 1
+  // The scrub axis is the current branch path (apply nodes), or — for a legacy
+  // session with no apply nodes — the flat run list, exactly as before. An empty
+  // axis isn't necessarily "nothing to show": a Clear leaves the "code" table's
+  // history (and head row) untouched, just with no bookmarks left to scrub to.
+  // Treat it as "show head"; the codeRow check below still no-ops for a
+  // genuinely empty session (no "code" table yet).
+  const head = editableStore.currentHead()
+  const path = head === null ? editableStore.runs() : editableStore.branchPath()
+  const clamped = path.length ? Math.max(0, Math.min(pos, path.length - 1)) : 0
+  const atLatest = path.length === 0 || clamped >= path.length - 1
   const epoch = ++scrubEpoch
   cooking++
-  editableStore.setReplayView(atLatest ? null : runs[clamped])
+  // Legacy runs replay by log-prefix (SessionRun); a branch path replays by
+  // apply id (branch-aware — a mid-branch node shows only its committed history).
+  const target = atLatest ? null : head === null ? (path[clamped] as SessionRun) : (path[clamped] as ApplyNode).id
+  editableStore.setReplayView(target)
+  // Warn (bar tint) when the thumb rests on an earlier apply of a branching
+  // session: an edit/apply here forks a new branch rather than extending. At the
+  // tip, or on a legacy linear session, editing just extends — no warning.
+  sessionBar.setForking(head !== null && !atLatest)
   // Keep the cook *and* the render inside one try: a program restored from a
   // saved session can fail either when it's cooked or when its cooked output is
   // applied, and both must surface on the editor's error strip rather than
@@ -880,13 +900,23 @@ async function openSession(id: string): Promise<void> {
     return
   }
   currentSessionId = id
-  // Restore the saved run list. An empty one derives runs from "code"'s
-  // recorded program history instead — either a legacy session that predates
-  // runs, or one that was Cleared (deriveRunsFromCode stops at the clear
-  // marker either way, so a cleared session reloads with none).
+  // A branching session's scrub axis is its branch path (load() already adopted
+  // the newest apply as head), so its legacy run list is unused — restore/derive
+  // runs only for a session with no apply nodes (a legacy linear session, or one
+  // Cleared to none; deriveRunsFromCode stops at the clear marker either way).
   const savedRuns = await sessionStore.runs(id).catch(() => [])
-  quietly(() => (savedRuns.length ? editableStore.setRuns(savedRuns) : editableStore.deriveRunsFromCode()))
-  sessionBar.setLog({ length: sessionLength() })
+  quietly(() => {
+    if (editableStore.currentHead() !== null) return
+    if (savedRuns.length) editableStore.setRuns(savedRuns)
+    else editableStore.deriveRunsFromCode()
+  })
+  // Reopen on the branch the session was last on (load() defaulted head to the
+  // newest apply). Only when the saved head is a real, different branch node.
+  const savedHead = await sessionStore.head(id).catch(() => null)
+  if (savedHead && savedHead !== editableStore.currentHead() && editableStore.branchTree().nodes.has(savedHead)) {
+    quietly(() => editableStore.checkout(savedHead))
+  }
+  syncSessionBar()
   refreshSelector()
 
   // Open the session for editing *before* running it: show its program and make
@@ -913,7 +943,7 @@ function newSession(): void {
   quietly(() => editableStore.clear())
   editor.setCode(defaultProgram)
   evaluate(defaultProgram, { setError: editor.setError, persist: false, seeds: defaultTables })
-  sessionBar.setLog({ length: sessionLength() })
+  syncSessionBar()
   refreshSelector()
 }
 
@@ -930,14 +960,51 @@ function clearRuns(): void {
     editableStore.record(ACTIVITY_TABLE, CLEAR_RUNS_KIND)
     editableStore.setRuns([])
   })
-  sessionBar.setLog({ length: sessionLength() })
+  syncSessionBar()
   persistSession()
 }
 
 const sessionBar = createSessionBar({
   onScrub: (pos) => { stopRewind(); scrubSession(pos) },
   onReset: toggleRewind,
+  onCheckout: (headId) => checkoutBranch(headId),
 })
+
+// Refresh the session bar's branch switcher from the store's tree: the heads
+// (branches), each labeled by apply count and marked if it's the current one.
+// The chip only shows when there's more than one, so a linear session is
+// unchanged. Called wherever the tree or head can move (apply, scrub, checkout,
+// load). Labels stay deliberately light — apply count and a "(current)" mark;
+// a richer diff hint is a later polish.
+function refreshBranches(): void {
+  const tree = editableStore.branchTree()
+  const head = editableStore.currentHead()
+  const branches = tree.heads.map((id, i) => {
+    const runs = tree.pathTo(id).length
+    return { id, label: `branch ${i + 1} · ${runs} run${runs === 1 ? '' : 's'}`, current: id === head }
+  })
+  sessionBar.setBranches(branches)
+}
+
+// Refresh the whole session bar after the branch structure or head moves: the
+// scrub range (jumps the thumb to latest), the branch switcher, and — since
+// "latest" is never a fork point — clear the fork tint. scrubSession sets the
+// fork tint itself while replaying an earlier apply.
+function syncSessionBar(): void {
+  sessionBar.setLog({ length: sessionLength() })
+  sessionBar.setForking(false)
+  refreshBranches()
+}
+
+// Check out another branch: refold to its tip, re-cook the program that was
+// live there, jump the scrubber to its tip, and persist the new head.
+function checkoutBranch(headId: string): void {
+  stopRewind()
+  quietly(() => editableStore.checkout(headId))
+  syncSessionBar()
+  void scrubSession(sessionLength() - 1)
+  persistSession()
+}
 function openExample(index: number): void {
   const sample = SAMPLES[index]
   if (!sample) return
@@ -949,7 +1016,7 @@ function openExample(index: number): void {
   // so the example's editable(name, schema) calls carry column schemas only —
   // the row data lives with the sample, and populates the table panel on open.
   void evaluate(sample.code, { setError: editor.setError, persist: false, seeds: sample.tables })
-  sessionBar.setLog({ length: sessionLength() })
+  syncSessionBar()
   refreshSelector()
 }
 
@@ -1056,7 +1123,11 @@ async function bootRoom(room: string): Promise<void> {
     if (saved) {
       quietly(() => editableStore.load(saved))
       const savedRuns = await sessionStore.runs(currentSessionId).catch(() => [])
-      quietly(() => (savedRuns.length ? editableStore.setRuns(savedRuns) : editableStore.deriveRunsFromCode()))
+      quietly(() => {
+        if (editableStore.currentHead() !== null) return
+        if (savedRuns.length) editableStore.setRuns(savedRuns)
+        else editableStore.deriveRunsFromCode()
+      })
     }
   } catch { /* no local copy — the join sync seeds us from peers instead */ }
 
@@ -1134,7 +1205,7 @@ function firstRun(): void {
     // (see obsoleteIfProgramChanged) instead of clobbering the room.
     evaluate(editor.getCode(), { setError: editor.setError, persist: false, obsoleteIfProgramChanged: true, seeds: defaultTables })
   }
-  sessionBar.setLog({ length: sessionLength() })
+  syncSessionBar()
   refreshSelector()
 }
 

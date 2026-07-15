@@ -53,8 +53,25 @@
 // the program declared it comes and goes freely as the declaration changes.
 // ----------------------------------------------------------------------------
 
-import { createEventLog, type EventLog, type EventMigration, type StampedEvent } from './event-log.js'
+import { compareEvents, createEventLog, type EventLog, type EventMigration, type StampedEvent } from './event-log.js'
+import { buildBranchTree, branchEvents, APPLY_KIND, type ApplyNode, type BranchTree } from './branches.js'
 import type { Row } from './lineage.js'
+
+// The "activity" pseudo-table every Apply pulse, peer-join/leave and session
+// marker rides (see EditableTableStore.record / main.ts). Exported so the apply
+// node the branch tree folds (recordApply) and its consumers agree on the name.
+export const ACTIVITY_TABLE = 'activity'
+
+// A stable, unique id for an apply node — the thing `parent`/`seen` reference.
+// Same recipe as localSource()'s replica id, but its own 'a' prefix so an apply
+// id never reads like a replica id in a log dump.
+function mintApplyId(): string {
+  return 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+}
+
+// An edit event's identity in the log — the (src, seq) key an apply's `edits`
+// list holds (mirrors event-log.ts's private eventKey).
+const eventKey = (e: StampedEvent): string => `${e.src ?? ''}#${e.seq}`
 
 export type ColumnType = 'number' | 'string' | 'boolean' | 'code' | 'enum'
 
@@ -588,17 +605,47 @@ export interface EditableTableStore {
   recordRun(): SessionRun
   runs(): SessionRun[]
   setRuns(runs: SessionRun[]): void
+  // --- branches -----------------------------------------------------------
+  // Commit the pending edits as a new apply node — the branch-aware successor
+  // to recordRun (the apply event *is* the run). Fast-forwards `parent` onto
+  // the current branch tip (so concurrent peer applies fold in order), unless
+  // the store is in a forked state (an edit landed while scrubbed), in which
+  // case `parent` is the scrubbed node and `seen` the tip it forked away from
+  // — making the apply read as a fork (seen != parent). `payload` carries the
+  // apply's display fields (changed/at). Returns the new node.
+  recordApply(payload?: Record<string, unknown>): ApplyNode | null
+  // The branch tree folded from the log's apply events (cached; invalidated by
+  // any change) — the GUI's window onto the branch structure.
+  branchTree(): BranchTree
+  // The apply id the live fold currently shows (its branch's tip, or the node
+  // scrubbed/forked to), or null for a fresh/legacy log with no applies.
+  currentHead(): string | null
+  // root..head applies on the current branch — the session bar's scrub axis
+  // (applies at or before the latest clear-runs marker are hidden, as runs are).
+  branchPath(): ApplyNode[]
+  // Switch the live fold to another branch head: refold its events, drop any
+  // un-applied working tail, and make its tip the current head. The way "get
+  // back to an old branch" is expressed; continuing it is just applying.
+  checkout(headId: string): void
+  // If scrubbed to a branch node, promote it to a forked live head *now* (so a
+  // commit-cook's ensure()/setRow appends land on the fork) and return true;
+  // otherwise a no-op returning false. Fork-on-edit runs anyway on first append,
+  // but a cook reads before it writes, so evaluate forks up front.
+  forkFromReplay(): boolean
   // Reconstruct runs from a legacy session that saved no run list, one per
   // recorded program Run in "code"'s own history (best-effort backward compat).
   // Stops at the latest CLEAR_RUNS_KIND marker, if any, so a cleared session
   // that got saved without an explicit (now-empty) run list doesn't derive its
   // pre-clear runs back into existence.
   deriveRunsFromCode(): void
-  // Show the store as it was at `run` — reads (get/has/listNames/ensure) serve
-  // that historical fold and ensure() appends nothing, so a scrubbed replay is
-  // a pure preview. `null` returns to the live head. Any real mutation also
-  // returns to head (you edit the head, never rewrite history).
-  setReplayView(run: SessionRun | null): void
+  // Show the store as it was at a past point — reads (get/has/listNames/ensure)
+  // serve that historical fold and ensure() appends nothing, so a scrubbed
+  // replay is a pure preview. `null` returns to the live head. The coordinate
+  // is either an apply node id (branch-aware: folds that apply's branch up to
+  // it) or a legacy SessionRun (a log prefix). A real mutation while scrubbed
+  // to a *node* forks (see fork-on-edit); while on a legacy run it edits the
+  // head, exactly as before branches.
+  setReplayView(target: SessionRun | string | null): void
   // The whole store as one serialized blob (every table's events) — the event
   // data half of what a session persists (runs are the other half). load()
   // replaces the store's entire history and re-folds every table from scratch,
@@ -613,36 +660,150 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
   // The live head fold, kept incrementally: append() applies the new event to
   // this map. Always the full log — replay views are separate (below).
   let tables = new Map<string, TableState>()
-  // The recorded runs (Apply bookmarks) — the session bar's scrub coordinates.
+  // The recorded runs (Apply bookmarks) — the *legacy* linear scrub coordinates,
+  // kept for sessions that predate branches and for session-format round-trips
+  // (see recordRun/SessionRun). The branch tree (below) is the live coordinate.
   let runs: SessionRun[] = []
   // When set (a scrubbed replay), reads serve this historical fold instead of
-  // `tables`, and ensure() is read-only. Null = live head. Any append() clears
-  // it, so an edit always lands on the head, never on a past run.
+  // `tables`, and ensure() is read-only. Null = live head.
   let replay: Map<string, TableState> | null = null
+  // The apply node id the replay view shows (branch-aware scrub), or null for a
+  // legacy SessionRun replay (or no replay). Editing while this is set forks.
+  let replayNode: string | null = null
+
+  // --- branch state -----------------------------------------------------------
+  // `head` is the apply whose branch the live fold shows (null = fresh/legacy
+  // log). `pending` is the working tail — keys of events appended since `head`,
+  // the un-applied edits the next apply will claim. `forked` records that the
+  // live fold was promoted from a scrubbed replay (an edit landed while scrubbed
+  // back), so the next apply parents the scrubbed node and reads as a fork;
+  // `seenTip` is the branch tip it forked away from (the apply's `seen`).
+  let head: string | null = null
+  let pending: string[] = []
+  let forked = false
+  let seenTip: string | null = null
+  // The branch tree, folded lazily from the log and invalidated on any change.
+  let treeCache: BranchTree | null = null
+  const branchTree = (): BranchTree => (treeCache ??= buildBranchTree(log.all()))
+  const invalidateTree = (): void => { treeCache = null }
+
   const listeners: (() => void)[] = []
   const notify = (): void => listeners.forEach((cb) => cb())
 
   // Which fold reads resolve against — the replay view while scrubbing, else head.
   const view = (): Map<string, TableState> => replay ?? tables
 
-  function refold(): void {
-    tables = foldEventsMap(log.all())
+  // Follow the linearized non-fork chain down from `id` to its branch tip — the
+  // node an ordinary apply fast-forwards its parent onto (peer applies that
+  // merged in since `head` chain ahead of it).
+  function branchTip(id: string, tree: BranchTree): string {
+    let cur = id
+    for (;;) {
+      const next = (tree.children.get(cur) ?? []).find((k) => !tree.nodes.get(k)!.fork)
+      if (!next) return cur
+      cur = next
+    }
+  }
+
+  // The newest apply on any branch (by seq, src) — the performance head peers
+  // follow, and the parent for the first apply on a legacy/fresh log.
+  function newestApplyId(tree: BranchTree): string | null {
+    let best: ApplyNode | null = null
+    for (const n of tree.nodes.values()) {
+      if (!best || n.seq > best.seq || (n.seq === best.seq && n.src > best.src)) best = n
+    }
+    return best?.id ?? null
+  }
+
+  // Rebuild the live fold from `head`'s branch — used on checkout and merge,
+  // where the incremental head-fold can't absorb the change. With head null
+  // (legacy/fresh) branchEvents returns the whole log, i.e. today's behavior.
+  function refoldBranch(): void {
+    tables = foldEventsMap(branchEvents(log.all(), head, branchTree()))
+  }
+
+  // The working tail derived from the log alone: non-apply events that no apply
+  // claims, ordered after the newest apply. It's how `pending` reattaches to the
+  // right branch after a reload mid-edit (the session record persists no pending
+  // list of its own yet), matching the overlay branchEvents shows for a leaf.
+  function deriveWorkingTail(tree: BranchTree): string[] {
+    const all = log.all()
+    const claimed = new Set<string>()
+    for (const n of tree.nodes.values()) for (const k of n.edits) claimed.add(k)
+    let newest: StampedEvent | null = null
+    for (const e of all) {
+      if (e.kind === APPLY_KIND && typeof e.id === 'string' && (!newest || compareEvents(e, newest) > 0)) newest = e
+    }
+    const out: string[] = []
+    for (const e of all) {
+      if (e.kind === APPLY_KIND) continue
+      if (claimed.has(eventKey(e))) continue
+      if (newest && compareEvents(e, newest) <= 0) continue
+      out.push(eventKey(e))
+    }
+    return out
+  }
+
+  // Fork-on-edit: promote a scrubbed branch-node replay to the live fold, point
+  // head at the scrubbed node (remembering the tip we came from for `seen`), and
+  // discard the abandoned working tail — the old branch's applies still claim
+  // their events, so nothing is rewritten. Returns whether a fork happened. Runs
+  // implicitly on the first append while scrubbed, or explicitly before a
+  // commit-cook (evaluate) so its ensure()/setRow appends land on the fork.
+  function forkFromReplay(): boolean {
+    if (replay === null || replayNode === null || head === null) return false
+    seenTip = branchTip(head, branchTree())
+    head = replayNode
+    forked = true
+    pending = []
+    tables = replay
+    replay = null
+    replayNode = null
+    return true
   }
 
   function append(payload: Record<string, unknown> & { kind: string; table: string }): void {
+    forkFromReplay()
     replay = null
+    replayNode = null
     const e = log.append(payload)
     applyEvent(tables, e)
+    // Every ordinary event joins the working tail so the next apply claims it —
+    // including record()'s markers (session-start, the activity create), so the
+    // first apply wholesale-claims a legacy/fresh log's prior events too. Apply
+    // events are the commits themselves, never their own pending.
+    if (e.kind !== APPLY_KIND) pending.push(eventKey(e))
+    invalidateTree()
     notify()
   }
 
   // Remote events (multiplayer) can land between existing ones, so the
-  // incremental fold can't absorb them — rebuild it from the merged log. Any
-  // in-progress replay view is dropped too: it's a fold of a log prefix, and
-  // that prefix's meaning can shift once earlier history changes underneath it.
-  log.onMerge(() => {
+  // incremental fold can't absorb them — rebuild from the branch fold. An
+  // in-progress replay is dropped (a prefix's meaning can shift under it), and
+  // a forked-but-uncommitted state is reset. When a peer's *apply* merges in,
+  // follow it: the performance head is the newest apply on any branch, so peers
+  // stay together (their next local edit forks if they'd checked out elsewhere).
+  log.onMerge((added) => {
     replay = null
-    refold()
+    replayNode = null
+    forked = false
+    invalidateTree()
+    const tree = branchTree()
+    if (added.some((e) => e.kind === APPLY_KIND && typeof e.id === 'string')) {
+      const newest = newestApplyId(tree)
+      if (newest) { head = newest; seenTip = newest }
+    } else if (head !== null && !tree.nodes.has(head)) {
+      head = newestApplyId(tree)
+      seenTip = head
+    }
+    // Drop from the working tail anything a merged apply now claims (a peer
+    // committed edits it had seen from us).
+    if (pending.length) {
+      const claimed = new Set<string>()
+      for (const n of tree.nodes.values()) for (const k of n.edits) claimed.add(k)
+      pending = pending.filter((k) => !claimed.has(k))
+    }
+    refoldBranch()
     notify()
   })
 
@@ -817,8 +978,88 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
         })
     },
 
-    setReplayView(run: SessionRun | null): void {
-      replay = run ? foldEventsMap(log.all().slice(0, run.at)) : null
+    recordApply(payload: Record<string, unknown> = {}): ApplyNode | null {
+      replay = null
+      replayNode = null
+      const tree = branchTree()
+      let parent: string | null
+      let seen: string | null
+      if (forked && head !== null) {
+        // A deliberate fork: parent is the scrubbed node (don't fast-forward
+        // past it), seen the tip we came from — so seen != parent.
+        parent = head
+        seen = seenTip ?? head
+      } else {
+        // An ordinary apply fast-forwards onto the current branch tip, so
+        // seen == parent even if peer applies merged in since our last apply.
+        parent = head !== null ? branchTip(head, tree) : newestApplyId(tree)
+        seen = parent
+      }
+      const id = mintApplyId()
+      const edits = pending.slice()
+      // The apply rides the "activity" table like every marker — ensure it
+      // exists first (an apply on an unknown table would be dropped by the fold).
+      if (!tables.has(ACTIVITY_TABLE)) {
+        const create = log.append({ kind: 'create', table: ACTIVITY_TABLE, columns: [], log: true })
+        applyEvent(tables, create)
+        edits.push(eventKey(create))
+      }
+      const e = log.append({ kind: APPLY_KIND, table: ACTIVITY_TABLE, id, parent, seen, edits, ...payload })
+      applyEvent(tables, e)
+      head = id
+      seenTip = id
+      forked = false
+      pending = []
+      invalidateTree()
+      notify()
+      return branchTree().nodes.get(id) ?? null
+    },
+
+    branchTree,
+
+    currentHead: () => head,
+
+    branchPath(): ApplyNode[] {
+      if (head === null) return []
+      const all = log.all()
+      const clearedSeq = all.reduce((max, e) => (e.kind === CLEAR_RUNS_KIND ? Math.max(max, e.seq) : max), -1)
+      // Hide applies at or before the latest clear marker from the scrub axis,
+      // the same way a Clear hides runs — the fold still uses the full path.
+      return branchTree().pathTo(head).filter((n) => n.seq > clearedSeq)
+    },
+
+    checkout(headId: string): void {
+      if (!branchTree().nodes.has(headId)) return
+      replay = null
+      replayNode = null
+      forked = false
+      head = headId
+      seenTip = headId
+      pending = []
+      refoldBranch()
+      notify()
+    },
+
+    forkFromReplay(): boolean {
+      const forkedNow = forkFromReplay()
+      if (forkedNow) { invalidateTree(); notify() }
+      return forkedNow
+    },
+
+    setReplayView(target: SessionRun | string | null): void {
+      if (target === null) {
+        replay = null
+        replayNode = null
+      } else if (typeof target === 'string') {
+        // Branch-aware scrub: fold that apply's branch up to it. A leaf (the
+        // live tip) overlays the working tail; a scrubbed-back node does not.
+        replayNode = target
+        replay = foldEventsMap(branchEvents(log.all(), target, branchTree()))
+      } else {
+        // Legacy SessionRun: a log prefix (editing while here edits the head).
+        replayNode = null
+        replay = foldEventsMap(log.all().slice(0, target.at))
+      }
     },
 
     serialize: () => log.serialize(),
@@ -826,8 +1067,19 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
     load(json: string | unknown): boolean {
       if (!log.load(json)) return false
       replay = null
+      replayNode = null
       runs = []
-      refold()
+      forked = false
+      pending = []
+      invalidateTree()
+      // Adopt the newest apply as the head so a saved branching session opens on
+      // its latest branch; a legacy log has none, so head stays null (linear).
+      head = newestApplyId(branchTree())
+      seenTip = head
+      // Reattach any un-applied working tail so the next apply claims it (and it
+      // stays visible), derived from the log since no pending list is persisted.
+      pending = head !== null ? deriveWorkingTail(branchTree()) : []
+      refoldBranch()
       notify()
       return true
     },
@@ -836,7 +1088,13 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       log.clear()
       tables = new Map()
       replay = null
+      replayNode = null
       runs = []
+      head = null
+      seenTip = null
+      forked = false
+      pending = []
+      invalidateTree()
       notify()
     },
   }
