@@ -43,11 +43,6 @@ export function RoomChip(props: { ctl: RoomChipController }) {
   let roomInput: HTMLInputElement | undefined
   let nameInput: HTMLInputElement | undefined
 
-  const text = () => {
-    const s = ctl.state()
-    if (s.kind === 'solo') return 'room'
-    return s.status === 'connected' ? `${s.room} · ${s.peerNames.length + 1}` : `${s.room} …`
-  }
   const title = () => {
     const s = ctl.state()
     if (s.kind === 'solo') return 'start or join a shared room'
@@ -97,9 +92,10 @@ export function RoomChip(props: { ctl: RoomChipController }) {
         // and closes the popover before a click handler even runs. Only
         // present while solo; in a room the button has no popover to open.
         popoverTarget={ctl.state().kind === 'solo' ? popoverId : undefined}
+        aria-label={title()}
         onClick={() => { if (ctl.state().kind === 'room') ctl.onLeave() }}
       >
-        <Icon name="users" /> {text()}
+        <Icon name="users" />
       </button>
       <div
         id={popoverId}

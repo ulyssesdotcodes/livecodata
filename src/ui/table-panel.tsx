@@ -599,6 +599,7 @@ function TablePanelView(props: PanelProps) {
           <button
             class="table-tab-add"
             title="Add a new editable table"
+            aria-label="Add a new editable table"
             onClick={() => {
               const name = nextTableName(untrack(views), store)
               store.createTable(name)
@@ -606,7 +607,7 @@ function TablePanelView(props: PanelProps) {
               bump()
             }}
           >
-            <Icon name="plus" /> table
+            <Icon name="plus" />
           </button>
           <input
             class="table-filter"
