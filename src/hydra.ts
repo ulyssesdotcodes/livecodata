@@ -10,8 +10,11 @@
 // measure (halfway through). Each row's `event` says what it does. Two kinds
 // carry the sketch and its inputs:
 //   - "setCode"     : `code` becomes the hydra sketch string, e.g.
-//                      "src(s0).modulate(noise(2)).out()" (s0 is the rendered
-//                      Three.js scene; o0 is the output).
+//                      "src(s0).modulate(noise(2))" (s0 is the rendered Three.js
+//                      scene). The terminal `.out(oN)` is appended for you from
+//                      the `out` column (o0 by default), so the code needn't
+//                      write it — an explicit `.out(...)` is normalised to the
+//                      column's output.
 //   - "setVariable" : `name`/`value` sets one variable in scope while the
 //                      sketch runs (freq, amount, …). Reference one as a
 //                      function, e.g. `osc((props) => props.freq)` — hydra-ts
@@ -79,14 +82,16 @@
 //                      `.out(oN)` (see the `output` column) so the before and
 //                      after composite cleanly.
 //
-// The `output` column names the hydra output a row drives — o0 (the visible
-// output) by default, or o1/o2/… to build a multi-output program. Events fold
-// PER OUTPUT: each output's rows evolve their own running code string, wholly
-// independent of the other outputs', and the sampled sketch is every output's
-// program concatenated (each ending in its own `.out(oN)`). So a transition on
-// o0 blends only o0's before/after, an osc rendered to o1 can be read back as
-// src(o1) from o0, and the single-output tables that predate the column keep
-// folding exactly as before (everything defaults to o0).
+// The `out` column names the hydra output a row drives — o0 (the visible output)
+// by default, or o1/o2/… to build a multi-output program. It is also the
+// terminal `.out(oN)` the fold appends to each output's program, so no event's
+// code has to write its own `.out(...)`. Events fold PER OUTPUT: each output's
+// rows evolve their own running code string, wholly independent of the other
+// outputs', and the sampled sketch is every output's program concatenated (each
+// ending in its own `.out(oN)`). So a transition on o0 blends only o0's
+// before/after, an osc rendered to o1 can be read back as src(o1) from o0, and
+// the single-output tables that predate the column keep folding as before
+// (everything defaults to o0).
 //
 // Sampling at a frame folds every event seen at/before it in order: setCode/
 // setSource/append/replace/layer/transition evolve one running code string per
@@ -201,12 +206,14 @@ function amountExpr(value: unknown): string {
   return s.includes('=>') ? `(${s})` : `(props) => (${s})`
 }
 
-// The hydra output a row drives: o0 (the visible output) unless the `output`
-// cell names another (o1, o2, …). Anything that isn't an `o`+digits token falls
-// back to o0, so a blank or malformed cell behaves like the default.
+// The hydra output a row drives: o0 (the visible output) unless the `out` cell
+// names another (o1, o2, …). Anything that isn't an `o`+digits token falls back
+// to o0, so a blank or malformed cell behaves like the default. This is also the
+// terminal `.out(oN)` the fold appends, so a setCode's code never has to write
+// its own `.out(...)`.
 const OUTPUT_RE = /^o\d+$/
 function outputOf(row: Row): string {
-  const o = typeof row.output === 'string' ? row.output.trim() : ''
+  const o = typeof row.out === 'string' ? row.out.trim() : ''
   return OUTPUT_RE.test(o) ? o : 'o0'
 }
 
@@ -319,12 +326,13 @@ function foldOutput(
     }
   }
   if (code == null) return null
-  if (transitions.length === 0) return code
 
   // Apply the wipes from the innermost (latest) out: the final program is the
   // last transition's "after", and each earlier transition blends its own
   // frozen "before" over the wipe that follows it — so nested transitions
-  // compose in beat order, the earliest wrapping all the later ones.
+  // compose in beat order, the earliest wrapping all the later ones. Strip any
+  // `.out(...)` the code carries first (chainOf); the terminal output is
+  // (re)appended once below from the `out` column.
   let result = chainOf(code)
   for (let i = transitions.length - 1; i >= 0; i--) {
     const t = transitions[i]
@@ -341,6 +349,8 @@ function foldOutput(
       result = `${t.before}.blend((${result}), (props) => (${posFn})(props.time))`
     }
   }
+  // Terminate on the `out` column's output, so a setCode's code never needs its
+  // own `.out(...)` (and an explicit one is normalised to the column's choice).
   return `${result}.out(${output})`
 }
 
