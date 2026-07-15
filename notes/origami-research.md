@@ -478,6 +478,42 @@ history. Details in the section referenced.
   closed-form single-valued branch over root-picking whenever the
   structure provides one.
 
+## 12b. Paper-clearance metric and motion routing gates (2026-07-15)
+
+"Paper doesn't go through paper" became a measurable contract
+(src/tri-clearance.ts + test/util/clearance.ts + test/paper-clearance.test.ts):
+
+- **Depth, not length, is the mess discriminator.** Crossing length
+  conflates long thin grazes (a flap sliding into an interleave — reads
+  fine) with plunges. Penetration depth in units of the rendered stack
+  thickness separates them perfectly: rigid interleave transits ≤ 0.3×,
+  page-brushes ~4×, relaxation failures ~9×.
+- **Compile-time routing gate** (fold-engine bakeMotion): every bake is
+  probed; relax gets 2× stack budget, the mechanism 4.5×, failures fall
+  back relax → mechanism (+page escalation) → rigid. Found by this gate:
+  collapse4/tuck1/tuck2 relaxation plunged ~9× (never visible in
+  screenshots at speed!); collapse4 now takes its mechanism, the tucks
+  the rigid swing.
+- **Layer offsets must ride the paper.** zOff along world z shears
+  through vertical plies (apex shear 1.7–2.2 area units on the deep
+  steps). Mechanism bakes now carry per-face offset directions (the
+  assembly-rotated ẑ) and a sign-corrected scalar so endpoints still
+  land exactly; shear fell 25–40× and exact-coincidence shear is zero.
+- **Page-brush crossings are a modeling floor, not a solver bug**: faces
+  that span the opening spine WITHOUT a crease there (flatten/turn
+  material) cannot avoid brushing through the opposite cover's overhang
+  in any rigid decomposition — they'd need to bend (the deferred
+  bend-ruling work: split such faces geometrically and hinge the
+  overhang). Freed *creased* pages fan at half the book angle
+  (fold-mech pageLines); the uncreased pentagons bound the depth at
+  ~1.9× stack (world), ~4.3× in display.
+- **Stable layer linearization**: topological ties are now broken by the
+  carried previous ranks, so faces never swap display layers without a
+  solved reason (gratuitous swaps made offset paths cross mid-swing).
+  Genuine overtakes (a flap crossing a layer to land beneath it) remain
+  single-instant coincidences; the test allows them transiently, never
+  persistently.
+
 ## 13. Testing methodology (what actually catches things)
 
 The verification stack, cheapest first. Every layer caught real bugs the

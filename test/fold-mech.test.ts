@@ -59,8 +59,15 @@ test('deep reverse folds (neck, tail, head) get an exact rigid mechanism', () =>
     const { out, history } = craneAt(idx)
     const mech = buildReverseMech(out, history)
     assert.ok(mech, `step ${idx + 1} builds a mechanism`)
-    const frames = mech.frames(16)
+    const { pos: frames, zdir } = mech.frames(16)
     assert.equal(frames.length, 16, `step ${idx + 1} bakes all frames`)
+    assert.equal(zdir.length, 16, `step ${idx + 1} bakes offset directions`)
+    // offset directions are exact world z at both flat endpoints
+    for (const f of [zdir[0], zdir[15]]) {
+      for (let fi = 0; fi * 3 < f.length; ++fi) {
+        assert.ok(Math.abs(Math.abs(f[fi * 3 + 2]) - 1) < 1e-9, `step ${idx + 1} endpoint zdir vertical`)
+      }
+    }
 
     // first frame is the flat pre-fold state, last the exact solved state
     out.anim.Vfrom.forEach((p, vi) => {
@@ -102,7 +109,8 @@ test('the mechanism is deterministic', () => {
   const { out, history } = craneAt(13)
   const a = buildReverseMech(out, history)!.frames(9)
   const b = buildReverseMech(out, history)!.frames(9)
-  assert.deepEqual(a, b)
+  assert.deepEqual(a.pos, b.pos)
+  assert.deepEqual(a.zdir, b.zdir)
 })
 
 test('compiled crane bakes the deep reverses and keeps flat states exact', () => {

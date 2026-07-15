@@ -107,7 +107,11 @@ interface Pair {
 }
 
 export interface ReverseMech {
-  frames: (n: number) => number[][]   // world [x,y,z]*V per frame
+  // per frame: vertex positions (world [x,y,z]*V) and each face's layer-
+  // offset direction ([x,y,z]*F) — the world ẑ carried by the face's
+  // rigid assembly, so display stacking rides the paper instead of
+  // shearing through it when the assemblies stand up
+  frames: (n: number) => { pos: number[][]; zdir: number[][] }
   betaStar: number
 }
 
@@ -115,8 +119,14 @@ const sameLine = (p: Line, q: Line): boolean =>
   (Math.abs(p[0][0] - q[0][0]) < LINE_TOL && Math.abs(p[0][1] - q[0][1]) < LINE_TOL && Math.abs(p[1] - q[1]) < LINE_TOL) ||
   (Math.abs(p[0][0] + q[0][0]) < LINE_TOL && Math.abs(p[0][1] + q[0][1]) < LINE_TOL && Math.abs(p[1] + q[1]) < LINE_TOL)
 
+// pageLines: fold lines of earlier steps whose pressed creases may be cut
+// to free "pages" — one-sided assemblies (no mirror partner) that would
+// otherwise overhang the opening spine and sweep through the opposite
+// cover. A freed page counter-rotates half the book angle about its own
+// hinge, fanning like the inner pages of an opening book. The caller
+// escalates pageLines until the baked motion passes its clearance gate.
 export const buildReverseMech = (
-  out: FoldOutcome, history: ReverseRecord[],
+  out: FoldOutcome, history: ReverseRecord[], pageLines: Line[] = [],
 ): ReverseMech | undefined => {
   const { FV, sheet } = out.state
   const { EV, angleFrom, angleTo, Vfrom, moving, layersFrom, line } = out.anim
@@ -128,9 +138,10 @@ export const buildReverseMech = (
   const pressed = EV.map((_, ei) => !changed[ei] && Math.abs(angleFrom[ei]) > FLAT)
 
   // seam-type lines keep mirror pairs apart; hinge-type lines are what the
-  // pairs swing about. Older reverse folds join the escalation only when
-  // the model stays welded without them.
-  interface CutLine { line: Line; kind: 'seam' | 'hinge' }
+  // pairs swing about; page-type lines free one-sided assemblies. Older
+  // reverse folds join the escalation only when the model stays welded
+  // without them.
+  interface CutLine { line: Line; kind: 'seam' | 'hinge' | 'page' }
   const addLine = (list: CutLine[], cand: CutLine): void => {
     if (!list.some((c) => sameLine(c.line, cand.line))) list.push(cand)
   }
@@ -152,8 +163,17 @@ export const buildReverseMech = (
     : undefined
 
   const attempt = (): ReverseMech | undefined => {
-    const cutEdge = EV.map((e, ei) => changed[ei] ||
-      (pressed[ei] && cuts.some((c) => onLine(c.line, Vfrom[e[0]], Vfrom[e[1]]))))
+    // page-line cuts only apply between two static faces — a moving
+    // point's plies stay welded to their slab
+    const cutEdge = EV.map((e, ei) => {
+      if (changed[ei]) return true
+      if (!pressed[ei]) return false
+      const cl = cuts.find((c) => onLine(c.line, Vfrom[e[0]], Vfrom[e[1]]))
+      if (!cl) return false
+      if (cl.kind !== 'page') return true
+      const fs = EF[ei]
+      return fs.length === 2 && !moving[fs[0]] && !moving[fs[1]]
+    })
 
     const parent = FV.map((_, fi) => fi)
     const find = (x: number): number => (parent[x] === x ? x : (parent[x] = find(parent[x])))
@@ -217,7 +237,13 @@ export const buildReverseMech = (
     })
     const nComp = roots.size
     dbg?.(`cuts=${cuts.length} nComp=${nComp}`)
-    if (nComp < 4 || nComp % 2 !== 0) return undefined
+    if (dbg) {
+      const stats = Array.from({ length: nComp }, () => ({ faces: 0, moving: 0 }))
+      FV.forEach((_, fi) => { stats[compOf[fi]].faces++; if (moving[fi]) stats[compOf[fi]].moving++ })
+      dbg(`  comps: ${stats.map((s, i) => `${i}:${s.faces}f${s.moving ? '/mv' + s.moving : ''}`).join(' ')}`)
+      dbg(`  cutLines: ${cuts.map((c) => `${c.kind}[${c.line[0].map((x) => x.toFixed(3))};${c.line[1].toFixed(3)}]`).join(' ')}`)
+    }
+    if (nComp < 4) return undefined
 
     const compArea = Array.from({ length: nComp }, () => 0)
     const compLayer = Array.from({ length: nComp }, () => 0)
@@ -231,7 +257,7 @@ export const buildReverseMech = (
     })
 
     // comp-graph edges grouped by the cut line they lie on
-    interface CEdge { a: number; b: number; line: Line; kind: 'seam' | 'hinge'; flip: boolean }
+    interface CEdge { a: number; b: number; line: Line; kind: 'seam' | 'hinge' | 'page'; flip: boolean }
     const cedges: CEdge[] = []
     EV.forEach((e, ei) => {
       if (!cutEdge[ei]) return
@@ -258,9 +284,47 @@ export const buildReverseMech = (
       seamLine[e.a] = e.line
       seamLine[e.b] = e.line
     }
-    if (seamOf.some((s) => s === -1)) {
-      dbg?.(`unpaired comps: seamOf=${JSON.stringify(seamOf)} edges=${JSON.stringify(cedges.map((e) => `${e.a}-${e.b}:${e.kind}${e.flip ? '!' : ''}`))}`)
+    // pages: one-sided static assemblies freed by a page-line cut — every
+    // cut connection is a pressed crease on one page line to one parent.
+    // They fan at half the book angle instead of sweeping through the
+    // opposite cover.
+    interface Page { comp: number; parent: number; line: Line }
+    const pages: Page[] = []
+    for (let c = 0; c < nComp; ++c) {
+      if (seamOf[c] !== -1 || compMoving[c]) continue
+      const own = cedges.filter((e) => e.a === c || e.b === c)
+      if (own.length === 0 || !own.every((e) => e.kind === 'page' && sameLine(e.line, own[0].line))) continue
+      const parents = new Set(own.map((e) => (e.a === c ? e.b : e.a)))
+      if (parents.size !== 1) continue
+      pages.push({ comp: c, parent: [...parents][0], line: own[0].line })
+    }
+    const isPage = Array.from({ length: nComp }, () => false)
+    for (const p of pages) isPage[p.comp] = true
+    // a page's parent must not itself be a page, and nothing else may hang
+    // off a page
+    for (const p of pages) {
+      if (isPage[p.parent]) return undefined
+    }
+    for (const e of cedges) {
+      if (e.kind === 'page') continue
+      if (isPage[e.a] || isPage[e.b]) return undefined
+    }
+
+    // comps with no seam creases of their own: allowed only as the two
+    // book covers — flanks whose joining stretch of the spine has been
+    // claimed by an earlier fold's point, so they couple through it
+    const unpaired = [...Array(nComp).keys()].filter((c) => seamOf[c] === -1 && !isPage[c])
+    if (unpaired.length !== 0 && unpaired.length !== 2) {
+      dbg?.(`unpaired comps: seamOf=${JSON.stringify(seamOf)} pages=${pages.length} edges=${JSON.stringify(cedges.map((e) => `${e.a}-${e.b}:${e.kind}${e.flip ? '!' : ''}`))}`)
       return undefined
+    }
+    let seamlessRoot: number = -1
+    if (unpaired.length === 2) {
+      const [a, b] = unpaired
+      if (compMoving[a] || compMoving[b]) return undefined
+      seamOf[a] = b
+      seamOf[b] = a
+      seamlessRoot = a
     }
 
     // one pair per seam link; hinge edges connect pairs (mirror-matched:
@@ -269,7 +333,7 @@ export const buildReverseMech = (
     const pairId = Array.from({ length: nComp }, () => -1)
     const pairComps: [number, number][] = []
     for (let c = 0; c < nComp; ++c) {
-      if (pairId[c] !== -1) continue
+      if (pairId[c] !== -1 || isPage[c]) continue
       pairId[c] = pairComps.length
       pairId[seamOf[c]] = pairComps.length
       pairComps.push([c, seamOf[c]])
@@ -300,12 +364,18 @@ export const buildReverseMech = (
     const rootLinks = plinks.filter((l) => l.pi === activeId || l.pj === activeId)
     if (rootLinks.length !== 1) { dbg?.(`active pair has ${rootLinks.length} hinge links`); return undefined }
     // root at the biggest pair: every rooting drives the same 1-DOF shape
-    // curve, but anchoring the bulk keeps the model steady on screen
+    // curve, but anchoring the bulk keeps the model steady on screen. A
+    // seamless cover pair must root (children need their own seam creases)
     let rootId = -1
-    pairComps.forEach(([a, b], pi) => {
-      if (pi === activeId) return
-      if (rootId < 0 || compArea[a] + compArea[b] > compArea[pairComps[rootId][0]] + compArea[pairComps[rootId][1]]) rootId = pi
-    })
+    if (seamlessRoot >= 0) {
+      rootId = pairId[seamlessRoot]
+      if (rootId === activeId) return undefined
+    } else {
+      pairComps.forEach(([a, b], pi) => {
+        if (pi === activeId) return
+        if (rootId < 0 || compArea[a] + compArea[b] > compArea[pairComps[rootId][0]] + compArea[pairComps[rootId][1]]) rootId = pi
+      })
+    }
     if (rootId < 0) return undefined
 
     // + side opens up: the flank stacked higher
@@ -360,7 +430,15 @@ export const buildReverseMech = (
       if (!grew) { dbg?.(`tree stuck at ${pairs.length} pairs of ${pairComps.length}`); return undefined }
     }
     const active = byId[activeId]!
-    dbg?.(`pairs=${pairs.length} root=${rootId} active=${activeId}`)
+    dbg?.(`pairs=${pairs.length} pages=${pages.length} root=${rootId} active=${activeId}`)
+
+    // which mirror side each comp sits on (+1 = the pair's `a`)
+    const sideOf = Array.from({ length: nComp }, () => 0)
+    for (const pair of pairs) {
+      sideOf[pair.a] = 1
+      sideOf[pair.b] = -1
+    }
+    for (const pg of pages) sideOf[pg.comp] = sideOf[pg.parent]
 
     // ── kinematics ────────────────────────────────────────────────────────
     const idX: Xform = (x) => x
@@ -368,8 +446,11 @@ export const buildReverseMech = (
     // stored phi, the active pair's angle is supplied by the caller
     const place = (beta: number, phiActive: number | undefined, commit: boolean): Xform[] | undefined => {
       const T: Xform[] = Array.from({ length: nComp }, () => idX)
-      const spinUp = rotLine(seamLine[root.a]!, beta)
-      const spinDn = rotLine(seamLine[root.a]!, -beta)
+      // a seamless cover pair has no joining creases of its own — it
+      // opens about the spine the flipping seam sits on
+      const rootAxis = seamLine[root.a] ?? seamNow
+      const spinUp = rotLine(rootAxis, beta)
+      const spinDn = rotLine(rootAxis, -beta)
       T[root.a] = spinUp
       T[root.b] = spinDn
       for (const pair of pairs) {
@@ -426,6 +507,14 @@ export const buildReverseMech = (
         const TpB = T[pair.parent!.b]
         T[pair.a] = (x): V3 => TpA(rotA(x))
         T[pair.b] = (x): V3 => TpB(rotB(x))
+      }
+      // pages fan at half the book angle, counter-rotating about their own
+      // hinge so they neither sweep through the opposite cover nor pinch
+      // against their parent
+      for (const pg of pages) {
+        const Tp = T[pg.parent]
+        const rot = rotLine(pg.line, -sideOf[pg.parent] * beta / 2)
+        T[pg.comp] = (x): V3 => Tp(rot(x))
       }
       return T
     }
@@ -488,9 +577,10 @@ export const buildReverseMech = (
       }
     })
 
-    const frames = (n: number): number[][] => {
+    const frames = (n: number): { pos: number[][]; zdir: number[][] } => {
       for (const p of pairs) p.phi = 0
-      const outFrames: number[][] = []
+      const outPos: number[][] = []
+      const outDir: number[][] = []
       let prevPhi = 0
       for (let k = 0; k < n; ++k) {
         const t = k / (n - 1)
@@ -498,7 +588,7 @@ export const buildReverseMech = (
         let phiA = 0
         if (t > 0.5) {
           const raw = foldBranch(beta)
-          if (raw === undefined) return outFrames
+          if (raw === undefined) return { pos: outPos, zdir: outDir }
           phiA = raw
           for (const cand of [raw - 2 * Math.PI, raw + 2 * Math.PI]) {
             if (Math.abs(cand - prevPhi) < Math.abs(phiA - prevPhi)) phiA = cand
@@ -506,7 +596,7 @@ export const buildReverseMech = (
           prevPhi = phiA
         }
         const T = place(beta, phiA, true)
-        if (!T) return outFrames
+        if (!T) return { pos: outPos, zdir: outDir }
         dbg?.(`frame ${k} beta=${(beta * 180 / Math.PI).toFixed(1)} phis=${pairs.map((p) => (p.phi * 180 / Math.PI).toFixed(1)).join(',')}${pairs.map((p) => (p.active ? '*' : '')).join('')}`)
         const pos: number[] = []
         Vfrom.forEach((p, vi) => {
@@ -522,9 +612,18 @@ export const buildReverseMech = (
           }
           pos.push(x, y, z)
         })
-        outFrames.push(pos)
+        outPos.push(pos)
+        // each assembly carries its ẑ: rotation part applied to (0,0,1)
+        const compDir = [...Array(nComp).keys()].map((c) => {
+          const o = T[c]([0, 0, 0])
+          const zc = T[c]([0, 0, 1])
+          return [zc[0] - o[0], zc[1] - o[1], zc[2] - o[2]]
+        })
+        const zdir: number[] = []
+        FV.forEach((_, fi) => zdir.push(...compDir[compOf[fi]]))
+        outDir.push(zdir)
       }
-      return outFrames
+      return { pos: outPos, zdir: outDir }
     }
 
     // sanity: closure at a probe frame — mirror seams must not tear
@@ -548,6 +647,7 @@ export const buildReverseMech = (
     return { frames, betaStar }
   }
 
+  for (const pl of pageLines) addLine(cuts, { line: pl, kind: 'page' })
   for (let i = 0; i <= escalation.length; ++i) {
     if (i > 0) {
       addLine(cuts, { line: escalation[i - 1].seam, kind: 'seam' })
