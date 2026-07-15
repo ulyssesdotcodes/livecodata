@@ -8,6 +8,7 @@
 
 import { createSignal, Show, type Accessor } from 'solid-js'
 import { listenGlobal } from './dom.js'
+import { Icon } from './icon.js'
 import { createPlaybackEngine } from '../playback.js'
 import type { PlaybackEngine, PlaybackOptions, PlaybackViewState, TapControl } from '../playback.js'
 import { FRAMES_PER_BEAT, DEFAULT_LOOP_BEATS } from '../constants.js'
@@ -81,8 +82,8 @@ export function PlaybackControls(props: {
               Tap
             </button>
             <span id="tap-bpm">{`${vs().bpm != null ? vs().bpm!.toFixed(1) : 120} BPM`}</span>
-            <button id="tap-clear-btn" title="Clear taps" onClick={() => tap().clear()}>
-              Clear
+            <button id="tap-clear-btn" title="Clear taps" aria-label="Clear taps" onClick={() => tap().clear()}>
+              <Icon name="trash-2" />
             </button>
           </div>
         )}

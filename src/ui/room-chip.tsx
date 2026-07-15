@@ -10,6 +10,7 @@
 
 import { createSignal, type Accessor } from 'solid-js'
 import type { MultiplayerStatus } from '../multiplayer.js'
+import { Icon } from './icon.js'
 
 export type RoomChipState =
   | { kind: 'solo' }
@@ -98,7 +99,7 @@ export function RoomChip(props: { ctl: RoomChipController }) {
         popoverTarget={ctl.state().kind === 'solo' ? popoverId : undefined}
         onClick={() => { if (ctl.state().kind === 'room') ctl.onLeave() }}
       >
-        {text()}
+        <Icon name="users" /> {text()}
       </button>
       <div
         id={popoverId}
