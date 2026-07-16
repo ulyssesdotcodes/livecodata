@@ -90,6 +90,10 @@ function TablePanelView(props: PanelProps) {
   // current table); an outside mousedown cancels it, mirroring the old
   // closeActiveEdit behavior.
   const [editingCell, setEditingCell] = createSignal<string | null>(null)
+  // A cell whose editor was just opened by Tab navigation and must survive the
+  // asynchronous panel refresh that follows a store write (see advanceEdit /
+  // guardFocus). Null unless a guard is active.
+  let focusGuardKey: string | null = null
   // Same one-at-a-time pattern for a column header's settings popover.
   const [openColMenu, setOpenColMenu] = createSignal<string | null>(null)
   // …and for a row's "compiled code at this event" info popover (hydra rows).
@@ -147,6 +151,61 @@ function TablePanelView(props: PanelProps) {
     const data = store.get(name)
     return data ? { name, data } : null
   })
+
+  // Keep a just-opened editor focused across the asynchronous panel refresh
+  // that a store write triggers (editableStore.onChange re-renders these rows on
+  // the next animation frame, which blurs the editor — and its blur handler
+  // would then close it). While the guard is live, a spurious blur is ignored
+  // (see commit's viaBlur guard); here we simply restore focus once the refresh
+  // has settled, then release the guard.
+  function guardFocus(key: string): void {
+    focusGuardKey = key
+    const restore = (): void => {
+      if (editingCell() !== key) return
+      const el = scrollEl?.querySelector<HTMLInputElement>('.editable-cell.editing input, .editable-cell.editing select')
+      if (el && document.activeElement !== el) el.focus()
+    }
+    requestAnimationFrame(() => {
+      restore()
+      requestAnimationFrame(() => {
+        restore()
+        if (focusGuardKey === key) focusGuardKey = null
+      })
+    })
+  }
+
+  // Tab / Shift+Tab out of an open cell editor: the caller commits the current
+  // value first, then this moves the editor to the adjacent column in the same
+  // row, wrapping to the next/previous display row at a row's edge. Code cells
+  // open in the main editor (exactly like a click); every other type opens its
+  // inline editor in place.
+  function advanceEdit(rowIndex: number, colName: string, dir: 1 | -1): void {
+    const ed = editableData()
+    if (!ed) return
+    const { name: table, data } = ed
+    const cols = data.columns
+    const cIdx = cols.findIndex((c) => c.name === colName)
+    if (cIdx < 0) return
+    let nextRow = rowIndex
+    let nextIdx = cIdx + dir
+    if (nextIdx < 0 || nextIdx >= cols.length) {
+      const order = displayOrder(data.rows, cols)
+      const pos = order.indexOf(rowIndex)
+      const nextPos = pos + dir
+      if (pos < 0 || nextPos < 0 || nextPos >= order.length) return
+      nextRow = order[nextPos]
+      nextIdx = dir > 0 ? 0 : cols.length - 1
+    }
+    const target = cols[nextIdx]
+    if (target.type === 'code') {
+      const v = data.rows[nextRow]?.[target.name]
+      props.onEditCell?.(table, nextRow, target.name, v == null ? '' : String(v))
+      return
+    }
+    const nextKey = `${nextRow}::${target.name}`
+    setEditingCell(nextKey)
+    guardFocus(nextKey)
+  }
 
   const roTable = createMemo(() => {
     const name = current()
@@ -409,15 +468,28 @@ function TablePanelView(props: PanelProps) {
     const raw = () => editableData()?.data.rows[rowIndex]?.[col.name]
     const invalid = () => !cellValid(raw(), col)
 
-    const commit = (value: unknown): void => {
+    const commit = (value: unknown, viaBlur = false): void => {
       // Guard the Enter-then-blur double fire: only the open editor commits.
       if (editingCell() !== key) return
+      // A blur on a cell Tab just moved into is spurious — the async panel
+      // refresh (see guardFocus) blurred it, not the user. Leave it open; the
+      // guard restores focus.
+      if (viaBlur && key === focusGuardKey) return
       store.setCell(table, rowIndex, col.name, value)
       setEditingCell(null)
       bump()
     }
 
     const keyHandler = (e: KeyboardEvent, commitNow: () => void): void => {
+      // Tab moves to the next column (Shift+Tab the previous), saving the
+      // current edit on the way out. preventDefault so the browser doesn't also
+      // shift focus and fight our editor placement.
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        commitNow()
+        advanceEdit(rowIndex, col.name, e.shiftKey ? -1 : 1)
+        return
+      }
       if (e.key === 'Enter') commitNow()
       if (e.key === 'Enter' && e.ctrlKey && props.onCtrlEnter) props.onCtrlEnter()
     }
@@ -478,16 +550,24 @@ function TablePanelView(props: PanelProps) {
               checked={!!raw()}
               ref={(el) => queueMicrotask(() => el.focus())}
               onChange={(e) => commit(e.currentTarget.checked)}
+              onKeyDown={(e) => {
+                // A checkbox commits on toggle, so there's nothing to save here
+                // — Tab just advances to the next/previous column.
+                if (e.key !== 'Tab') return
+                e.preventDefault()
+                setEditingCell(null)
+                advanceEdit(rowIndex, col.name, e.shiftKey ? -1 : 1)
+              }}
             />
           </Show>
           <Show when={col.type === 'number'}>
             {(() => {
               const cur = Number(raw()) || 0
               let num: HTMLInputElement | undefined
-              const commitNum = (): void => {
+              const commitNum = (viaBlur = false): void => {
                 if (!num) return
                 const v = Number(num.value)
-                commit(Number.isFinite(v) && num.value.trim() !== '' ? v : cur)
+                commit(Number.isFinite(v) && num.value.trim() !== '' ? v : cur, viaBlur)
               }
               return (
                 <input
@@ -497,20 +577,30 @@ function TablePanelView(props: PanelProps) {
                   step="any"
                   ref={(el) => { num = el; focusInput(el) }}
                   onKeyDown={(e) => keyHandler(e, commitNum)}
-                  onBlur={commitNum}
+                  onBlur={() => commitNum(true)}
                 />
               )
             })()}
           </Show>
           <Show when={col.type === 'string' || col.type === 'code'}>
-            <input
-              type="text"
-              class="cell-text"
-              value={raw() == null ? '' : String(raw())}
-              ref={(el) => focusInput(el)}
-              onKeyDown={(e) => keyHandler(e, () => (e.currentTarget as HTMLInputElement).blur())}
-              onBlur={(e) => commit(e.currentTarget.value)}
-            />
+            {(() => {
+              let txt: HTMLInputElement | undefined
+              // Commit the field's value directly rather than via blur(): Tab
+              // needs to commit and then move the editor in the same handler,
+              // and a synchronous blur() unmounts this input mid-flight, which
+              // strands focus before the next cell can take it.
+              const commitTxt = (viaBlur = false): void => { if (txt) commit(txt.value, viaBlur) }
+              return (
+                <input
+                  type="text"
+                  class="cell-text"
+                  value={raw() == null ? '' : String(raw())}
+                  ref={(el) => { txt = el; focusInput(el) }}
+                  onKeyDown={(e) => keyHandler(e, commitTxt)}
+                  onBlur={() => commitTxt(true)}
+                />
+              )
+            })()}
           </Show>
         </Show>
       </td>
