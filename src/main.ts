@@ -1194,19 +1194,23 @@ async function bootRoom(room: string): Promise<void> {
   })
 }
 
-function firstRun(): void {
+async function firstRun(): Promise<void> {
   if (sessionLength()) {
     // Rejoined a room whose store we already had locally: resume it, don't
     // append a new run.
-    scrubSession(sessionLength() - 1)
+    await scrubSession(sessionLength() - 1)
   } else {
     // Speculative: nothing here yet, show the default program. If a room
     // snapshot merges in while this first cook boots the worker, yield to it
     // (see obsoleteIfProgramChanged) instead of clobbering the room.
-    evaluate(editor.getCode(), { setError: editor.setError, persist: false, obsoleteIfProgramChanged: true, seeds: defaultTables })
+    await evaluate(editor.getCode(), { setError: editor.setError, persist: false, obsoleteIfProgramChanged: true, seeds: defaultTables })
   }
   syncSessionBar()
   refreshSelector()
+  // Start the transport itself once the first program is on screen, so
+  // opening the page shows it already playing rather than sitting on the
+  // first frame waiting for a manual Play press.
+  playback.play()
 }
 
 // Physics (jolt's WASM) now loads inside the cook worker, which holds the
@@ -1216,7 +1220,7 @@ function firstRun(): void {
 async function boot(): Promise<void> {
   if (roomName) await bootRoom(roomName)
   else chipSolo()
-  firstRun()
+  await firstRun()
 }
 
 void boot()
