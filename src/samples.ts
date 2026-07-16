@@ -601,6 +601,73 @@ editable("hydra", schemas.hydra)
     },
   },
   {
+    name: "Bauble Sketch",
+    code: `// livecodata — a 3D SDF sketch with bauble (ianthehenry's bauble.studio)
+// Where hydra post-processes 2D textures, bauble raymarches a 3D scene written
+// in Janet — shapes composed as signed distance functions and compiled to a
+// GLSL shader. No 3D scene or hydra table involved: the bauble render shows
+// directly. Press "Run" (or Cmd/Ctrl-Enter), then hit Play.
+//
+// The bauble table is the same event format as the hydra one — rows placed on
+// the loop by \`beat\` (1-indexed: beat 1 is the top of the loop), two kinds:
+//   - setCode:     \`code\` becomes the sketch — a Janet shape expression like
+//                  "(union (box 60) (sphere 75))". \`t\` is the playback clock
+//                  in seconds, so pausing/scrubbing the timeline freezes/
+//                  scrubs the raymarch too. The dialect is bauble.studio's:
+//                  box/sphere/torus/cone…, union/intersect/subtract (\`:r\` for
+//                  smooth blends), rotate/move/scale, twist/bend/morph,
+//                  shade/color and friends.
+//   - setVariable: \`name\`/\`value\` binds a variable the sketch reads — it's
+//                  compiled in as \`(def name value)\` ahead of the code. A
+//                  string value is any Janet expression: value "(sin t)" makes
+//                  the variable a live wave. NOTE the difference from hydra:
+//                  hydra reads variables per frame through props with no
+//                  recompile, but bauble BAKES them into the shader — each
+//                  change recompiles the sketch. Changing on the beat grid
+//                  (like size at beat 9 below) is exactly what that's for;
+//                  just don't drive one from something that sweeps every frame.
+//
+// The exception is the camera: "camera-x" / "camera-y" (orbit, in turns of a
+// full revolution) and "camera-zoom" (distance multiplier, 1 = default) are
+// reserved names the renderer consumes as live uniforms — never compiled in —
+// so a camera move costs nothing. The beat-5 row below steps the orbit around
+// the scene with no recompile at all.
+//
+// The rows are seeded into the "bauble" tab on the right — the code here
+// declares only the schema, and \`schemas.bauble\` is the canonical one (hover
+// it to see the columns). \`event\` is a dropdown; \`code\` cells open in this
+// editor as Janet (each row's ⓘ shows the full compiled script, defs
+// included); check \`disabled\` to mute a row without deleting it.
+//
+// Want to post-process the raymarch? The bauble render is also hydra's s1
+// source — add a hydra table reading src(s1) and its output takes over the
+// display: try
+//   editable("hydra", schemas.hydra)
+// with a row { beat: 1, event: "setCode", code: "src(s1).kaleid(3)" }.
+editable("bauble", schemas.bauble)
+`,
+    tables: {
+      bauble: [
+        // A box spinning inside a sphere, smoothly blended (:r 15) and shaded
+        // blue. \`size\` and \`t\` are free in the code — size comes from the
+        // setVariable rows, t is the playback clock.
+        { beat: 1, event: "setCode",
+          code: "(shade (union :r 15 (rotate (box size) :y t) (sphere 70)) [0.29 0.62 1])" },
+        { beat: 1, event: "setVariable", name: "size", value: 55 },
+        // beat 5: orbit the camera a third of a turn — a live uniform, no
+        // recompile (camera-x tilts, camera-zoom dollies, the same way).
+        { beat: 5, event: "setVariable", name: "camera-y", value: 0.35 },
+        // beat 9: grow the box through the sphere — a (def size …) change,
+        // so this one recompiles the sketch, right on the beat.
+        { beat: 9, event: "setVariable", name: "size", value: 85 },
+        // beat 13: a new sketch for the loop's tail — a golden box twisting
+        // back and forth on its y axis until the loop wraps.
+        { beat: 13, event: "setCode",
+          code: "(shade (twist (box 70) :y (* 0.03 (sin t))) [1 0.83 0.23])" },
+      ],
+    },
+  },
+  {
     name: "House of Cards",
     code: `// livecodata — House of Cards
 // A triangular pyramid of playing cards collapses when a ball drops on it.
