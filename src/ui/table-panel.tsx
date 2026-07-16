@@ -27,6 +27,7 @@ import {
 } from '../table-panel.js'
 import { listenGlobal, focusInput } from './dom.js'
 import { isHydraRow, hydraCodeUpToRow } from '../hydra.js'
+import { isBaubleRow, baubleCodeUpToRow } from '../bauble.js'
 import { Icon } from './icon.js'
 import type { Table } from '../dsl.js'
 import { DISABLED_COL, cellValid, invalidColumns, type EditableTableStore, type ColumnType, type EditableColumn } from '../editable-tables.js'
@@ -517,10 +518,12 @@ function TablePanelView(props: PanelProps) {
     )
   }
 
-  // A per-row info button (hydra rows only): opens a popover showing the sketch
-  // compiled up to and including this event — the running program the fold has
-  // built at this point (see hydraCodeUpToRow). Mirrors ColHeader's popover: a
-  // fixed-position menu measured from the button so it doesn't clip.
+  // A per-row info button (hydra/bauble rows only): opens a popover showing the
+  // sketch compiled up to and including this event — the running program the
+  // fold has built at this point (see hydraCodeUpToRow / baubleCodeUpToRow;
+  // the two tables share event names, so the table's name picks the fold).
+  // Mirrors ColHeader's popover: a fixed-position menu measured from the
+  // button so it doesn't clip.
   function RowInfo(rowProps: { table: string; rowIndex: number }) {
     const { table, rowIndex } = rowProps
     const infoKey = `${table}::${rowIndex}`
@@ -535,7 +538,8 @@ function TablePanelView(props: PanelProps) {
       tick(); views()
       if (!open()) return null
       const data = store.get(table)
-      return data ? hydraCodeUpToRow(data.rows, rowIndex) : null
+      if (!data) return null
+      return table === 'bauble' ? baubleCodeUpToRow(data.rows, rowIndex) : hydraCodeUpToRow(data.rows, rowIndex)
     })
 
     createEffect(() => {
@@ -800,7 +804,7 @@ function TablePanelView(props: PanelProps) {
                           }}
                         >
                           <td class="row-actions">
-                            <Show when={isHydraRow(ed().data.rows[i])}>
+                            <Show when={ed().name === 'bauble' ? isBaubleRow(ed().data.rows[i]) : isHydraRow(ed().data.rows[i])}>
                               <RowInfo table={ed().name} rowIndex={i} />
                             </Show>
                             <button

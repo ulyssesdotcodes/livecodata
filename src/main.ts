@@ -3,7 +3,9 @@ import { createSignal } from 'solid-js'
 import { initThree } from './three-scene.js'
 import { initHydra } from './hydra-scene.js'
 import { isHydraRow } from './hydra.js'
-import { createSceneVisualizer, createHydraVisualizer } from './visualizer.js'
+import { isBaubleRow } from './bauble.js'
+import { initBauble } from './bauble-scene.js'
+import { createSceneVisualizer, createHydraVisualizer, createBaubleVisualizer } from './visualizer.js'
 import { mountApp } from './ui/app.js'
 import { createEditor, defaultProgram, defaultTables, PROGRAM_CELL } from './ui/editor.js'
 import { createTablePanel } from './ui/table-panel.js'
@@ -145,11 +147,13 @@ const tablePanel = createTablePanel(editableStore, {
     // { code: { type: "code", language: "hydra" } }) — the only signal that
     // survives the rows being mapped/renamed into the "hydra" view by code).
     // Tables declared before language existed fall back to sniffing the row:
-    // a hydra event row's `code` cell is a sketch.
+    // a hydra event row's `code` cell is a sketch — unless the table is the
+    // bauble one, whose events share hydra's names but hold Janet.
     const data = editableStore.get(table)
     const colSpec = data?.columns.find((c) => c.name === col)
     const declaredLang = colSpec?.type === 'code' ? colSpec.language : undefined
     const lang = declaredLang
+      ?? (col === 'code' && table === 'bauble' && isBaubleRow(data?.rows[rowIndex]) ? 'bauble' as const : undefined)
       ?? (col === 'code' && isHydraRow(data?.rows[rowIndex]) ? 'hydra' as const : 'dsl' as const)
     editor.editCell(`${table}[${rowIndex}].${col}`, value, (text) => {
       editableStore.setCell(table, rowIndex, col, text)
@@ -405,6 +409,7 @@ interface CookedData {
   sceneRows: Row[]
   timelineRows: Row[]
   hydraRows: Row[]
+  baubleRows: Row[]
 }
 
 // The views shown in the table panel, plus:
@@ -449,25 +454,26 @@ function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   return display
 }
 
-// Signature of one cooked output, to detect which of scene/timeline/hydra a
-// run actually changed. Functions on rows (easings, streaming bindings) hash
-// by their source text — every cook builds fresh closures, so identity would
-// always differ while the content is the same.
+// Signature of one cooked output, to detect which of scene/timeline/hydra/
+// bauble a run actually changed. Functions on rows (easings, streaming
+// bindings) hash by their source text — every cook builds fresh closures, so
+// identity would always differ while the content is the same.
 function cookedSig(rows: Row[]): string {
   return JSON.stringify(rows, (_k, v: unknown) => (typeof v === 'function' ? String(v) : v))
 }
 
-const lastCookedSigs = { scene: '', timeline: '', hydra: '' }
+const lastCookedSigs = { scene: '', timeline: '', hydra: '', bauble: '' }
 
 // Which cooked outputs differ from what's currently showing (and re-baseline
 // the signatures for the next diff) — the determination stamped onto the apply
 // pulse so the whole room resets the same multi-loop sequences.
-function diffCooked({ sceneRows, timelineRows, hydraRows }: CookedData): { scene: boolean; timeline: boolean; hydra: boolean } {
-  const sigs = { scene: cookedSig(sceneRows), timeline: cookedSig(timelineRows), hydra: cookedSig(hydraRows) }
+function diffCooked({ sceneRows, timelineRows, hydraRows, baubleRows }: CookedData): { scene: boolean; timeline: boolean; hydra: boolean; bauble: boolean } {
+  const sigs = { scene: cookedSig(sceneRows), timeline: cookedSig(timelineRows), hydra: cookedSig(hydraRows), bauble: cookedSig(baubleRows) }
   const changed = {
     scene: sigs.scene !== lastCookedSigs.scene,
     timeline: sigs.timeline !== lastCookedSigs.timeline,
     hydra: sigs.hydra !== lastCookedSigs.hydra,
+    bauble: sigs.bauble !== lastCookedSigs.bauble,
   }
   Object.assign(lastCookedSigs, sigs)
   return changed
@@ -485,6 +491,10 @@ function applyCooked(cooked: CookedData): void {
   updateSliderDefs(cooked.views)
   tablePanel.setTables(tablesForDisplay(cooked.views))
   tablePanel.setGraphs(cooked.graphs)
+  // The bauble canvas is shown directly only when there's a bauble sketch and
+  // no hydra sketch to composite it — with hydra rows present, hydra's output
+  // is the display and it reads the bauble render as s1 (src(s1)).
+  mounts.baubleCanvas.classList.toggle('visible', cooked.baubleRows.length > 0 && cooked.hydraRows.length === 0)
   playback.load({ ...cooked, loopEpochs: loopEpochsFromApplies(editableStore.get(ACTIVITY_TABLE)?.events ?? []) })
 }
 
@@ -666,7 +676,7 @@ const editor = createEditor({
     if (enabled) ensureMidiSubscription()
     tablePanel.setTables(tablesForDisplay(lastViews))
   },
-  onResetHydra: () => hydraAPI.reinit(),
+  onResetHydra: () => { hydraAPI.reinit(); baubleAPI.reinit() },
   onCursor: (cell, head) => {
     const cellChanged = cell !== localCell
     localCell = cell
@@ -1083,9 +1093,12 @@ const mounts = mountApp(document.getElementById('app') as HTMLElement, {
   onClearRuns: clearRuns,
 })
 const sceneAPI = initThree(mounts.threeCanvas, mounts.canvasPane)
-const hydraAPI = initHydra(mounts.hydraCanvas, mounts.threeCanvas)
+const baubleAPI = initBauble(mounts.baubleCanvas)
+// The bauble canvas rides along as hydra source s1, so a hydra sketch can
+// composite the SDF render: src(s1).modulate(…).
+const hydraAPI = initHydra(mounts.hydraCanvas, mounts.threeCanvas, mounts.baubleCanvas)
 const playbackController = createPlaybackController(
-  [createSceneVisualizer(sceneAPI), createHydraVisualizer(hydraAPI)],
+  [createSceneVisualizer(sceneAPI), createHydraVisualizer(hydraAPI), createBaubleVisualizer(baubleAPI)],
   playbackOptions,
 )
 setPlaybackCtl(playbackController)

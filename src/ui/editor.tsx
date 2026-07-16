@@ -22,7 +22,8 @@ import {
   type RemoteCursor, type SymbolCardData, type SigCardFactory,
 } from '../editor-support.js'
 import { createLangClient, type LangClient } from '../lang-client.js'
-import type { LangSignatureHelp, EditorLang } from '../lang-service.js'
+import type { LangSignatureHelp } from '../lang-service.js'
+import type { CodeLanguage } from '../editable-tables.js'
 import { buildTablePreview } from './table-preview.js'
 import { DocsPopover } from './docs-popover.js'
 import type { Table } from '../dsl.js'
@@ -141,8 +142,9 @@ export interface EditorAPI {
   // with the current text instead of running the program. The "Back" button
   // (or an external setCode) returns to the program. `lang` picks which
   // surface completions/hover run against — 'hydra' for hydra sketch cells,
-  // default 'dsl'.
-  editCell(label: string, code: string, onCommit: (text: string) => void, opts?: { lang?: EditorLang }): void
+  // 'bauble' for bauble (Janet) cells (which just switches the JS tooling
+  // off), default 'dsl'.
+  editCell(label: string, code: string, onCommit: (text: string) => void, opts?: { lang?: CodeLanguage }): void
   // Multiplayer presence: draw collaborators' carets (only cursors for the
   // cell currently open here — the caller filters; see main.ts).
   setRemoteCursors(cursors: RemoteCursor[]): void
@@ -176,11 +178,11 @@ export function createEditor(
 
   // When set, the editor is a window onto one table cell rather than the
   // program: Run commits the text back to the cell (an event append upstream).
-  let cellTarget: { label: string; lang: EditorLang; onCommit: (text: string) => void } | null = null
+  let cellTarget: { label: string; lang: CodeLanguage; onCommit: (text: string) => void } | null = null
   let stashedProgram = ''
 
   const cellLabel = (): string => cellTarget ? cellTarget.label : PROGRAM_CELL
-  const cellLang = (): EditorLang => cellTarget ? cellTarget.lang : 'dsl'
+  const cellLang = (): CodeLanguage => cellTarget ? cellTarget.lang : 'dsl'
 
   function run(): void {
     const text = view.state.doc.toString()
@@ -210,7 +212,7 @@ export function createEditor(
     if (restoreProgram) setDoc(stashedProgram)
   }
 
-  function editCell(label: string, code: string, onCommit: (text: string) => void, { lang = 'dsl' }: { lang?: EditorLang } = {}): void {
+  function editCell(label: string, code: string, onCommit: (text: string) => void, { lang = 'dsl' }: { lang?: CodeLanguage } = {}): void {
     if (!cellTarget) stashedProgram = view.state.doc.toString()
     cellTarget = { label, lang, onCommit }
     setTitle(label)

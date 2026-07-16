@@ -77,9 +77,12 @@ export type ColumnType = 'number' | 'string' | 'boolean' | 'code' | 'enum'
 
 // What language a 'code' column's cells are written in — it decides which
 // surface the main editor's completions/hover/signature help run against when
-// a cell opens there. Kept in sync with lang-service.ts's EditorLang (the
-// same union, named from the editor's side); add new languages to both.
-export type CodeLanguage = 'dsl' | 'hydra'
+// a cell opens there. lang-service.ts's EditorLang is the subset the
+// TypeScript language service can analyze ('dsl' and 'hydra' — both JS);
+// 'bauble' cells are Janet, so the editor opens them with the service
+// switched off (see editor-support.ts's guards) rather than offering JS
+// completions on lisp.
+export type CodeLanguage = 'dsl' | 'hydra' | 'bauble'
 
 // A column's spec as a program passes it to editable(name, schema). A bare
 // ColumnType is the common case; a string array is shorthand for an enum over

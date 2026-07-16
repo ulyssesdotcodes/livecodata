@@ -1,4 +1,4 @@
-// livecodata replay — cook a program to its scene/timeline/hydra outputs
+// livecodata replay — cook a program to its scene/timeline/hydra/bauble outputs
 // ----------------------------------------------------------------------------
 // Pure orchestration over the runtime: turn a program (code + seed) into the
 // rows the scene, timeline and hydra panels consume. This is the one cook
@@ -11,6 +11,7 @@
 
 import { rasterizeRows } from './rasterize.js'
 import { hydraRows } from './hydra.js'
+import { baubleRows } from './bauble.js'
 import type { Table } from './dsl.js'
 import type { Row } from './lineage.js'
 import type { ResolvedGraph, RunOptions, RuntimeResult } from './runtime.js'
@@ -21,6 +22,7 @@ export interface CookedResult {
   sceneRows: Row[]
   timelineRows: Row[]
   hydraRows: Row[]
+  baubleRows: Row[]
 }
 
 // The slice of createRuntime's return value cookProgram needs — typed from
@@ -38,5 +40,10 @@ export function cookProgram(runtime: Runtime, code: string, seed: number, dataCa
   const timelineRows = timeline ? timeline.rows : []
   const hydra = result.views.get('hydra')
   const hydraSketchRows = hydra ? hydraRows(hydra.rows) : hydraRows(events?.rows)
-  return { views: result.views, graphs: result.graphs, sceneRows, timelineRows, hydraRows: hydraSketchRows }
+  // Bauble rows come only from a view literally named "bauble" — its events
+  // share hydra's names (setCode/setVariable), so sniffing a generic events
+  // table (the hydra fallback above) would claim the same rows twice.
+  const bauble = result.views.get('bauble')
+  const baubleSketchRows = bauble ? baubleRows(bauble.rows) : []
+  return { views: result.views, graphs: result.graphs, sceneRows, timelineRows, hydraRows: hydraSketchRows, baubleRows: baubleSketchRows }
 }

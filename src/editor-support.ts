@@ -13,12 +13,16 @@ import { isExprDot, isThreeDot, cmCompletionType, completionBoost } from './comp
 import { SAMPLES } from './samples.js'
 import type { Table } from './dsl.js'
 import type { LangClient } from './lang-client.js'
-import type { LangSignatureHelp, EditorLang } from './lang-service.js'
+import type { LangSignatureHelp } from './lang-service.js'
+import type { CodeLanguage } from './editable-tables.js'
 
 // Which language surface the editor is currently a window onto: the DSL
-// program, or a hydra sketch cell (see editor.tsx's cell-target mode). The
-// view owns the state; sources read it per query.
-export type GetLang = () => EditorLang
+// program, a hydra sketch cell, or a bauble (Janet) sketch cell (see
+// editor.tsx's cell-target mode). The view owns the state; sources read it
+// per query. Only 'dsl' and 'hydra' reach the TypeScript language service
+// (lang-service.ts's EditorLang) — 'bauble' cells hold Janet, so every source
+// below goes quiet for them instead of offering JS answers on lisp.
+export type GetLang = () => CodeLanguage
 
 export interface DocEntry {
   sig: string
@@ -54,7 +58,7 @@ export const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
   beats:      { sig: 'beats(count, { fit }?)',       detail: 'beat timeline',     info: 'A timeline that loops every `count` beats. Tempo is automatic — the playhead always runs at the tapped tempo (Tap) — so this is a RETIME: define("timeline", () => beats(16)) just loops every 16 beats; { fit: beats } stretches a span of source beats across the window (e.g. beats(16, { fit: 8 }) plays 8 beats of content at half speed).' },
   tempo:      { sig: 'tempo(fallback?)',             detail: 'beat length (s)',   info: 'Seconds per beat derived from the tap-beat table (Tap), or `fallback` (default 0.5s = 120 BPM) until two taps are recorded.' },
   taps:       { sig: 'taps()',                       detail: 'tap-beat table',    info: 'The tap-beat table: one row per wall-time button press ({ beat, time }, time as an absolute UTC epoch ms).' },
-  schemas:    { sig: 'schemas.hydra / .sliders / .path / .steps', detail: 'canonical table schemas', info: 'The column schemas of the tables the runtime knows by name, ready to pass to editable() — right columns, enum dropdowns, and code languages included: editable("hydra", schemas.hydra). Frozen; spread to extend: { ...schemas.hydra, extra: "string" }.' },
+  schemas:    { sig: 'schemas.hydra / .bauble / .sliders / .path / .steps', detail: 'canonical table schemas', info: 'The column schemas of the tables the runtime knows by name, ready to pass to editable() — right columns, enum dropdowns, and code languages included: editable("hydra", schemas.hydra). Frozen; spread to extend: { ...schemas.hydra, extra: "string" }.' },
   linear:     { sig: 'linear',                       detail: 'easing curve',     info: 'Linear easing (t → t). Pass as the ease field of a color-pulse row.' },
   easeIn:     { sig: 'easeIn',                       detail: 'easing curve',     info: 'Quadratic ease-in (t → t²). Starts slow, ends fast.' },
   easeOut:    { sig: 'easeOut',                      detail: 'easing curve',     info: 'Quadratic ease-out (t → 1-(1-t)²). Starts fast, ends slow.' },
@@ -243,6 +247,7 @@ export function codeCompletions(
     const node = syntaxTree(context.state).resolveInner(context.pos, -1)
     if (/String|Comment/.test(node.name)) return null
     const lang = getLang()
+    if (lang === 'bauble') return null // Janet — no JS surface applies
 
     if (client && client.status() === 'ready') {
       const word = context.matchBefore(/[\w$]+/)
@@ -289,6 +294,7 @@ export function typeHover(client: LangClient, makeSymbolCard: SymbolCardFactory,
   return hoverTooltip(async (view, pos) => {
     if (client.status() !== 'ready') return null
     const lang = getLang()
+    if (lang === 'bauble') return null // Janet — no JS surface applies
     const text = view.state.doc.toString()
     const info = await client.quickInfo(text, pos, lang)
     if (!info || !info.display) return null
@@ -346,11 +352,13 @@ export function signatureHelp(client: LangClient, makeSigCard: SigCardFactory, g
       return // cursor moves only re-query (or clear) an open tooltip
     }
     if (client.status() !== 'ready') return
+    const lang = getLang()
+    if (lang === 'bauble') return // Janet — no JS surface applies
     const id = ++epoch
     const { view } = update
     const text = update.state.doc.toString()
     const head = update.state.selection.main.head
-    void client.signatureHelp(text, head, trigger, getLang()).then((sig) => {
+    void client.signatureHelp(text, head, trigger, lang).then((sig) => {
       if (id !== epoch) return
       const value = sig ? { pos: Math.min(sig.argumentStart, head), sig } : null
       if (value === null && view.state.field(field, false) == null) return // nothing to clear

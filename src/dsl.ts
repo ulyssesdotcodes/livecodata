@@ -1025,6 +1025,27 @@ export const SCHEMAS = deepFreeze({
     disabled: 'boolean',
   },
   /**
+   * The bauble view's event stream: one row per event, placed on the loop by
+   * `beat` (1-indexed) — the same table-of-events format as hydra, for 3D SDF
+   * sketches instead of 2D post-processing. `event` picks what it does —
+   * "setCode" (`code` = the whole sketch, a Janet shape expression like
+   * "(rotate (box 50) :y t)"), "setVariable" (`name`/`value` = a (def name
+   * value) compiled ahead of the sketch; changing one recompiles the shader,
+   * except the reserved camera-x/camera-y/camera-zoom names, which orbit the
+   * camera as live uniforms). The render shows directly when no hydra sketch
+   * is live, and is hydra's s1 source either way — composite it with
+   * src(s1). `code` cells open in the editor as Janet (no JS completions);
+   * check `disabled` to mute a row without deleting it.
+   */
+  bauble: {
+    beat: 'number',
+    event: ['setCode', 'setVariable'],
+    code: { type: 'code', language: 'bauble' },
+    name: 'string',
+    value: 'number',
+    disabled: 'boolean',
+  },
+  /**
    * The "sliders" view: one on-screen control per row — `id` names it (and is
    * what slider(id) reads), `min`/`max` its range, `default` its initial
    * value. Check `disabled` to pull the control off screen without losing
