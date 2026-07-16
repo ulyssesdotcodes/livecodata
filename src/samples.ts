@@ -12,11 +12,16 @@ export interface Sample {
   name: string
   code: string
   tables?: Record<string, Row[]>
+  // The tab to show when the example is opened — its most relevant table (the
+  // editable one you tweak, or the primary data/graph view). The panel falls
+  // back to its default tab when omitted (see main's openExample).
+  table?: string
 }
 
 export const SAMPLES: Sample[] = [
   {
     name: "Editable Table",
+    table: "path",
     code: `// livecodata — a sphere moved by an editable table
 // Unlike every other example here, the path below isn't computed by code —
 // it's data you edit directly, live, in the table panel on the right.
@@ -62,6 +67,7 @@ define("scene", (rand, table) => table("events").rasterize(8))
   },
   {
     name: "Text",
+    table: "events",
     code: `// livecodata — text in the 3D scene
 // A \`shape: "text"\` object is real extruded 3D text (three.js TextGeometry): it
 // has depth, catches the scene's lights, and moves, spins and scales like any
@@ -93,6 +99,7 @@ define("scene", (rand, table) => table("events").rasterize(16))
   },
   {
     name: "Primitives",
+    table: "things",
     code: `// livecodata — building 3D objects the easy way
 // box/sphere/cylinder/cone/torus/text each build a ready-made "create" row for
 // a scene object: beat 1, at the origin, no rotation — you set only the fields
@@ -128,6 +135,7 @@ define("scene", (rand, table) =>
   },
   {
     name: "Camera Move",
+    table: "cubes",
     code: `// livecodata — moving the camera from the DSL
 // The camera is just another scene object: \`camera([...])\` emits one keyframe
 // per row (id "camera", shape "camera") that rides events → rasterize like
@@ -165,6 +173,7 @@ define("scene", (rand, table) =>
   },
   {
     name: "Origami Crane",
+    table: "steps",
     code: `// livecodata — Origami Crane: a table of fold steps, solved exactly
 // A square of paper folds itself into the traditional crane. Every row of
 // the "steps" table is ONE FOLD, and each is solved exactly when the code
@@ -276,6 +285,7 @@ define("hydra", () => rows([
   },
   {
     name: "Origami Cicada",
+    table: "steps",
     code: `// livecodata — Origami Cicada: the traditional model, nine simple folds
 // The classic cicada (semi), folded for nearly two centuries: halve the
 // square, fold both corners up, sweep the tips back out past the edges
@@ -327,6 +337,7 @@ define("scene", (rand, table) => table("events").rasterize(12))
   },
   {
     name: "Hydra Sketch",
+    table: "hydra",
     code: `// livecodata — a video-synth sketch with hydra (hydra-ts, a port of ojack's hydra)
 // A generative hydra sketch — no 3D scene involved (src(s0) can equally post-
 // process a rendered scene, sourcing whatever the 3D view draws). Press "Run"
@@ -384,6 +395,7 @@ editable("hydra", schemas.hydra)
   },
   {
     name: "Square + Hydra",
+    table: "hydra",
     code: `// livecodata — a flat square spun by three.js, echoed by a two-part hydra sketch
 // The square is the plainest possible 3D object: a "box" squashed thin on one
 // axis. This example is really about the hydra half — a sketch that changes
@@ -424,6 +436,7 @@ editable("hydra", schemas.hydra)
   },
   {
     name: "Sliders",
+    table: "sliders",
     code: `// livecodata — on-screen sliders (the twin of MIDI)
 // Sliders are labelled controls drawn over the visual. Press "Run", then Play,
 // then drag a slider on the top-left of the scene.
@@ -477,6 +490,7 @@ define("hydra", () => rows([
   },
   {
     name: "Hydra Sketch Swap",
+    table: "hydra sketch",
     code: `// livecodata — swapping between two hydra sketches, with a flicker
 // See "Hydra Sketch" first for the setCode/setVariable basics. Here the base
 // table (\`code\`, below) just swaps scenes with a plain setCode at beat 9 (and
@@ -527,6 +541,7 @@ define("hydra", (rand, table) =>
   },
   {
     name: "Hydra Meta",
+    table: "hydra",
     code: `// livecodata — a hydra sketch that rewrites ITSELF as the loop plays
 // See "Hydra Sketch" first for setCode/setVariable. On top of those, a hydra
 // table has META-PROGRAMMING events — each transforms the code built up so far
@@ -602,6 +617,7 @@ editable("hydra", schemas.hydra)
   },
   {
     name: "House of Cards",
+    table: "ball_height",
     code: `// livecodata — House of Cards
 // A triangular pyramid of playing cards collapses when a ball drops on it.
 // Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
@@ -721,6 +737,7 @@ define("ball_height", (rand, table) =>
   },
   {
     name: "CO2 (Mauna Loa)",
+    table: "co2_monthly",
     code: `// Mauna Loa CO2 — monthly atmospheric measurements by NOAA/Scripps, 1958–2026.
 // The seasonal swing (~6 ppm) reflects northern-hemisphere plant growth;
 // the long-run rise tracks fossil-fuel emissions.
@@ -742,6 +759,7 @@ define("co2_annual", (rand, table) =>
   },
   {
     name: "Global temperature",
+    table: "temp_chart",
     code: `// Global surface temperature anomaly — GCAG dataset, 1850–2026.
 // Values are mean °C deviation from the 1901–2000 baseline.
 // The sharp uptick from ~1980 is the clearest signal of anthropogenic warming.
@@ -764,6 +782,7 @@ define("temp_smooth", (rand, table) =>
   },
   {
     name: "HadCRUT5 (global)",
+    table: "anomaly_monthly",
     code: `// HadCRUT5 global surface temperature anomaly — Met Office / CRU, monthly 1850–present.
 // Values are °C deviation from the 1961–1990 baseline with 95 % confidence bounds.
 // Run \`npm run fetch-data\` once to download src/data/hadcrut5-monthly.csv.

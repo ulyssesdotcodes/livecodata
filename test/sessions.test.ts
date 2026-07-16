@@ -57,6 +57,16 @@ test('save then head round-trips the branch head; absent reads as null', async (
   assert.equal(await store.head('missing'), null)
 })
 
+test('save then table round-trips the shown tab; absent reads as null', async () => {
+  const store = createSessionStore(fakeStorage())
+  await store.save('a', { events: 'e', table: 'path' })
+  assert.equal(await store.table('a'), 'path')
+
+  await store.save('b', { events: 'e' }) // no table — legacy session
+  assert.equal(await store.table('b'), null)
+  assert.equal(await store.table('missing'), null)
+})
+
 test('save upserts: same id updates in place and preserves createdAt', async () => {
   const store = createSessionStore(fakeStorage())
   const first = await store.save('a', { events: 'v0', tables: ['x'] })

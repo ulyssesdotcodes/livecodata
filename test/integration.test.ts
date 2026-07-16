@@ -50,6 +50,18 @@ define("joined", () => table("cities").join(rows([{ id: "a", note: "hit" }]), "i
   assert.ok(tables.has('base'), 'flashed frame traces to the base object')
 })
 
+test('every sample.table names a table the sample declares', () => {
+  // The example's default tab (see main's openExample) must be a real view or
+  // editable table the code produces — a typo would silently fall back to the
+  // default tab. Guard it statically: the name has to be a define()/editable()
+  // target in that sample's own code.
+  for (const s of SAMPLES) {
+    if (s.table == null) continue
+    const decl = new RegExp(`(define|editable)\\(\\s*"${s.table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`)
+    assert.ok(decl.test(s.code), `sample "${s.name}" declares its table "${s.table}"`)
+  }
+})
+
 test('Origami Crane sample: 17 exact fold steps, wings held half-raised', () => {
   const sample = SAMPLES.find((s) => s.name === 'Origami Crane')!
   // materialize seed rows exactly like the app does (cook-service): the sample's

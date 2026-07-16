@@ -58,6 +58,8 @@ interface PanelProps extends TablePanelOptions {
   graphs: Accessor<Map<string, GraphSpec>>
   current: Accessor<string | null>
   setCurrent: Setter<string | null>
+  desiredTable: Accessor<string | null>
+  setDesiredTable: Setter<string | null>
   playIndex: Accessor<number>
   playActive: Accessor<Map<string, Set<number>> | null>
   userScrolled: Accessor<boolean>
@@ -122,8 +124,18 @@ function TablePanelView(props: PanelProps) {
 
   // Keep the selected tab valid as the tab set changes (same policy the old
   // rebuildTabs applied): hold the current one, else prefer "events", else last.
+  // A pending restore (desiredTable, set on session/example resume) wins the
+  // moment its table appears among the tabs — it may not exist yet when the
+  // restore is requested, since cooked-view tabs only show up after the cook —
+  // and is cleared once honored so it never fights a later manual tab switch.
   createEffect(() => {
     const ns = names()
+    const want = props.desiredTable()
+    if (want != null && ns.includes(want)) {
+      props.setDesiredTable(null)
+      setCurrent(want)
+      return
+    }
     setCurrent((cur) => fallbackTab(ns, cur))
   })
 
@@ -954,6 +966,7 @@ export function createTablePanel(
   const [views, setViews] = createSignal<Map<string, Table>>(new Map())
   const [graphs, setGraphs] = createSignal<Map<string, GraphSpec>>(new Map())
   const [current, setCurrent] = createSignal<string | null>(null)
+  const [desiredTable, setDesiredTable] = createSignal<string | null>(null)
   const [playIndex, setPlayIndex] = createSignal(0)
   const [playActive, setPlayActive] = createSignal<Map<string, Set<number>> | null>(null)
   const [userScrolled, setUserScrolled] = createSignal(false)
@@ -965,6 +978,8 @@ export function createTablePanel(
     graphs,
     current,
     setCurrent,
+    desiredTable,
+    setDesiredTable,
     playIndex,
     playActive,
     userScrolled,
@@ -978,6 +993,9 @@ export function createTablePanel(
       if (name != null && (views().has(name) || editableStore.has(name)) && name !== current()) {
         setCurrent(name)
       }
+    },
+    restoreTable(name: string | null): void {
+      setDesiredTable(name)
     },
     setTables(newStore: Map<string, Table>): void {
       setViews(newStore)

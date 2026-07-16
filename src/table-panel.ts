@@ -58,6 +58,12 @@ export interface PeerPresence {
 
 export interface TablePanel {
   selectTable(name: string | null): void
+  // Request `name` be shown once it exists among the tabs, overriding the
+  // default tab choice. Unlike selectTable (a no-op if the table isn't present
+  // yet), this remembers the wish and applies it when the table appears — used
+  // to restore the last-shown tab on session resume, before the cook that
+  // produces cooked-view tabs has run.
+  restoreTable(name: string | null): void
   setTables(newStore: Map<string, Table>): void
   setGraphs(newSpecs: GraphSpec[] | null): void
   // idx: the playhead's source position as a *beat* — the same unit rows'
