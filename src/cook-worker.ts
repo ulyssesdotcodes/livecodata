@@ -1,8 +1,6 @@
-// Cook worker — the humble Web Worker shell around cook-service.ts.
-// ----------------------------------------------------------------------------
-// Owns the physics engine (jolt's WASM loads here, not on the main thread) and
-// forwards each CookRequest to the service once physics has settled. Requests
-// are answered in arrival order — all messages await the same settled init
+// Cook worker — the Web Worker shell around cook-service.ts. Owns the physics
+// engine (jolt's WASM loads here, not on the main thread). Requests are
+// answered in arrival order — all messages await the same settled init
 // promise, so then-callbacks run in registration order.
 
 import { initPhysics, type PhysicsEngineInstance } from './physics.js'

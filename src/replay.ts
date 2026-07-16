@@ -1,13 +1,7 @@
-// livecodata replay — cook a program to its scene/timeline/hydra/bauble outputs
-// ----------------------------------------------------------------------------
-// Pure orchestration over the runtime: turn a program (code + seed) into the
-// rows the scene, timeline and hydra panels consume. This is the one cook
-// helper both a live Run and a scrubbed session replay share — replaying a past
-// run is "restore every editable table to that run (editableStore.setReplayView
-// in main.ts) then cook the program that was live then" — so replay no longer
-// treats the "code" table specially; it's just another editable table folded to
-// the run's index like the rest.
-// ----------------------------------------------------------------------------
+// Cook a program (code + seed) into the rows the scene/timeline/hydra/bauble
+// panels consume — the one cook helper shared by a live Run and a scrubbed
+// session replay, so replay treats the "code" table like any other editable
+// table folded to the run's index.
 
 import { rasterizeRows } from './rasterize.js'
 import { hydraRows } from './hydra.js'
@@ -25,8 +19,7 @@ export interface CookedResult {
   baubleRows: Row[]
 }
 
-// The slice of createRuntime's return value cookProgram needs — typed from
-// runtime.ts's own exports so it can't drift from the real contract.
+// The slice of createRuntime's return value cookProgram needs.
 interface Runtime {
   run(code: string, opts?: RunOptions): RuntimeResult
 }
@@ -40,9 +33,8 @@ export function cookProgram(runtime: Runtime, code: string, seed: number, dataCa
   const timelineRows = timeline ? timeline.rows : []
   const hydra = result.views.get('hydra')
   const hydraSketchRows = hydra ? hydraRows(hydra.rows) : hydraRows(events?.rows)
-  // Bauble rows come only from a view literally named "bauble" — its events
-  // share hydra's names (setCode/setVariable), so sniffing a generic events
-  // table (the hydra fallback above) would claim the same rows twice.
+  // No events-table fallback for bauble: its events share hydra's names, so
+  // sniffing the generic events table would claim the same rows twice.
   const bauble = result.views.get('bauble')
   const baubleSketchRows = bauble ? baubleRows(bauble.rows) : []
   return { views: result.views, graphs: result.graphs, sceneRows, timelineRows, hydraRows: hydraSketchRows, baubleRows: baubleSketchRows }

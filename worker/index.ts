@@ -1,14 +1,7 @@
-// livecodata Cloudflare Worker entry point
-// ----------------------------------------------------------------------------
-// The Workers/Durable-Objects twin of server/server.ts: serves the built app
-// from the [assets] binding (populated by `npm run build` before deploy) and
-// routes /ws?room=<name> to that room's Durable Object instance — one per
-// room name, via idFromName — which speaks the same protocol as the Node
-// server's WebSocket relay (see room.ts / src/multiplayer.ts). The room name
-// has to be resolvable from the request itself, before any upgrade happens,
-// so the client puts it on the URL (?room=) as well as in its first "join"
-// message.
-// ----------------------------------------------------------------------------
+// Cloudflare Worker entry: serves the built app from the [assets] binding and
+// routes /ws?room=<name> to that room's Durable Object (worker/room.ts). The
+// room name rides on the URL because it must be resolvable from the request
+// itself, before the websocket upgrade — not just in the first "join" message.
 
 export { Room } from './room.js'
 

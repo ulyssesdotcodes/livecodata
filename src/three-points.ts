@@ -1,20 +1,8 @@
-// three.js primitives ⇄ tables of points
-// ----------------------------------------------------------------------------
-// The bridge between a three.js primitive (a BufferGeometry) and the DSL's data
-// model (a table of plain rows). It goes both ways:
-//
-//   primitive → points table   pointsFromGeometry(geo)   — one row per vertex,
-//                                                           { i, px,py,pz, nx,ny,nz }
-//   points table → primitive    geometryFromPoints(rows)  — a BufferGeometry with
-//                                                           position (+ normal) attrs
-//
-// Both are pure geometry math — no WebGL, no DOM — so they run in the cook
-// worker (where user programs are evaluated) just as happily as on the render
-// thread. That's why the primitive builder lives here rather than in
-// three-scene.ts: it stays dependency-light (no fonts / TextGeometry), and the
-// renderer imports it, so a box sampled by points("box") is the SAME geometry
-// the renderer draws for box() — same shared SHAPE_DEFAULTS, same tessellation.
-// ----------------------------------------------------------------------------
+// three.js primitives ⇄ tables of points. Pure geometry math — no WebGL, no
+// DOM — so it runs in the cook worker as well as the render thread. The
+// primitive builder lives here (not three-scene.ts) and the renderer imports
+// it, so a box sampled by points("box") is the SAME geometry the renderer
+// draws for box().
 
 import {
   BufferGeometry,
@@ -30,25 +18,16 @@ import type { Row } from './lineage.js'
 
 export interface GeometryDims { hx: number; hy: number; hz: number; r: number; h: number }
 
-// The subset of a row's fields that determine geometry size, merged with the
-// shape's defaults — used to build the geometry and (in three-scene) to detect a
-// size change that means the geometry must be rebuilt. Lives here so both the
-// renderer and the points sampler read one definition.
 export function geometryDims(shape: string, dims: Record<string, unknown>): GeometryDims {
   const d = { ...(SHAPE_DEFAULTS[shape] ?? SHAPE_DEFAULTS.box), ...dims }
   return { hx: d.hx as number, hy: d.hy as number, hz: d.hz as number, r: d.r as number, h: d.h as number }
 }
 
-// How finely to tessellate a primitive when sampling it. Omitted, each shape
-// uses the renderer's own segment counts, so the sampled points land exactly on
-// the mesh the renderer draws; a `segments` bumps the density up (more rows) for
-// a denser point cloud without changing the silhouette.
+// With `segments` omitted, each shape uses the renderer's own segment counts,
+// so sampled points land exactly on the drawn mesh; setting it raises density
+// without changing the silhouette.
 export interface PrimitiveOptions { segments?: number }
 
-// Build the primitive BufferGeometry for a named shape from a size row. With no
-// options this reproduces three-scene's renderer geometry byte-for-byte (the
-// renderer delegates here), so the two never drift; a `segments` override raises
-// the tessellation for a denser sampling.
 export function primitiveGeometry(
   shape: string,
   dims: Record<string, unknown>,
@@ -66,11 +45,8 @@ export function primitiveGeometry(
   }
 }
 
-// A three.js primitive → a table of its vertices with normals: one row per
-// vertex in the geometry's position attribute, `i` its index, px/py/pz the
-// position, nx/ny/nz the normal (present only if the geometry carries a normal
-// attribute — every primitive above does). Coordinates are in the geometry's own
-// local space (centered on the origin, like the meshes the renderer builds).
+// One row per vertex: { i, px..pz, nx..nz }. Normals only when the geometry
+// carries them; coordinates are in the geometry's local, origin-centered space.
 export function pointsFromGeometry(geometry: BufferGeometry): Row[] {
   const pos = geometry.getAttribute('position')
   if (!pos) return []
@@ -88,12 +64,8 @@ export function pointsFromGeometry(geometry: BufferGeometry): Row[] {
   return out
 }
 
-// A table of points → a three.js primitive: a BufferGeometry whose `position`
-// attribute is the rows' px/py/pz. If every row carries a full nx/ny/nz normal
-// the `normal` attribute is set too; otherwise it's left off (three can derive
-// face normals, or a caller can computeVertexNormals()). Missing coordinates
-// read as 0. The inverse of pointsFromGeometry: sampling a primitive and feeding
-// the rows back here round-trips to an equivalent geometry.
+// Inverse of pointsFromGeometry. The `normal` attribute is set only when every
+// row carries a full nx/ny/nz; missing coordinates read as 0.
 export function geometryFromPoints(rows: Row[]): BufferGeometry {
   const positions: number[] = []
   const normals: number[] = []

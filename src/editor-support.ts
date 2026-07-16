@@ -1,8 +1,6 @@
 // Editor support — the non-view half of the code editor: DSL documentation
-// tables, completion sources, and the hover-preview tooltip logic. Anything
-// that builds actual DOM (completion info cards, the preview card) is
-// injected by the view (ui/editor.tsx) as a factory, keeping this module
-// free of rendering concerns.
+// tables, completion sources, and hover-tooltip logic. Anything that builds
+// DOM is injected by the view (ui/editor.tsx) as a factory.
 
 import { EditorView, hoverTooltip, showTooltip, Decoration, WidgetType, type DecorationSet, type Tooltip } from '@codemirror/view'
 import { StateField, StateEffect, type Extension } from '@codemirror/state'
@@ -16,12 +14,9 @@ import type { LangClient } from './lang-client.js'
 import type { LangSignatureHelp } from './lang-service.js'
 import type { CodeLanguage } from './editable-tables.js'
 
-// Which language surface the editor is currently a window onto: the DSL
-// program, a hydra sketch cell, or a bauble (Janet) sketch cell (see
-// editor.tsx's cell-target mode). The view owns the state; sources read it
-// per query. Only 'dsl' and 'hydra' reach the TypeScript language service
-// (lang-service.ts's EditorLang) — 'bauble' cells hold Janet, so every source
-// below goes quiet for them instead of offering JS answers on lisp.
+// The language surface the editor currently shows; sources read it per query.
+// 'bauble' cells hold Janet, so every source below goes quiet for them instead
+// of offering JS answers on lisp.
 export type GetLang = () => CodeLanguage
 
 export interface DocEntry {
@@ -99,17 +94,12 @@ export const TABLE_METHOD_DOCS: Record<string, DocEntry> = {
   save:        { sig: '.save(name)',                          detail: 'save as view',     info: 'Sugar for define(name, () => this) — register the current Table as a named view.' },
 }
 
-// Methods on the object returned by a table's `.three` accessor — offered after
-// `.three.` (see dslCompletions). Each returns a Table, so the chain continues
-// with ordinary table methods (including `.three` again).
 export const THREE_METHOD_DOCS: Record<string, DocEntry> = {
   rotate: { sig: '.three.rotate({ amount, dur, axis, ease, at })', detail: 'spin over time',  info: 'For every `create` row, add `amount` radians to its rotation about `axis` (\'x\'|\'y\'|\'z\', default y; default amount a full turn) over `dur` beats. `ease` shapes the segment; `at` overrides the start beat (default the create row\'s beat).' },
   scale:  { sig: '.three.scale({ amount, dur, ease, at })',       detail: 'grow over time',   info: 'For every `create` row, multiply its scale (sx/sy/sz, default 1) by the `amount` factor (default 2×) over `dur` beats, uniformly on all axes. `ease` shapes the segment; `at` overrides the start beat.' },
   move:   { sig: '.three.move({ amount, dur, axis, ease, at })',  detail: 'slide over time',  info: 'For every `create` row, add `amount` world units to its position along `axis` (\'x\'|\'y\'|\'z\', default x; default amount 1) over `dur` beats. `ease` shapes the segment; `at` overrides the start beat.' },
 }
 
-// Methods offered after a dot on an Expr (field("x").add(1).gt(2)…). Every Expr
-// method returns an Expr, so a chain rooted at field()/lit()/idx() stays Expr.
 export const EXPR_METHOD_DOCS: Record<string, DocEntry> = {
   add:  { sig: '.add(x)',           detail: 'expr  +',   info: 'Add. x is another Expr or a number.' },
   sub:  { sig: '.sub(x)',           detail: 'expr  −',   info: 'Subtract x (Expr or number).' },
@@ -131,9 +121,8 @@ export const EXPR_METHOD_DOCS: Record<string, DocEntry> = {
 export const DSL_BUILTINS = Object.keys(DSL_BUILTIN_DOCS)
 
 export const defaultProgram = SAMPLES[0].code
-// The default program is the "Editable Table" example, whose row data lives
-// with the sample rather than inline in the code — so a fresh session/first run
-// must seed the store with it, exactly as opening the example does.
+// The default example's row data lives with the sample, not in the code, so a
+// fresh session must seed the store with it.
 export const defaultTables = SAMPLES[0].tables
 // …and the tab it opens on, so a fresh session shows the same relevant table
 // the example would (see main's newSession / openExample).
@@ -150,12 +139,8 @@ export function viewAtPos(text: string, pos: number): string | null {
   return name
 }
 
-// The view supplies how a completion's info card is *built* (it owns DOM);
-// this module decides *when* and with which docs it appears.
 export type InfoNodeFactory = (sig: string, info: string) => () => { dom: HTMLElement; destroy?: () => void }
 
-// A resolved symbol's card: the full type from the language service plus the
-// curated DSL prose when the name is surface API. The view owns the DOM.
 export interface SymbolCardData {
   display: string | null
   docs: string
@@ -163,10 +148,9 @@ export interface SymbolCardData {
 }
 export type SymbolCardFactory = (data: SymbolCardData) => { dom: HTMLElement; destroy?: () => void }
 
-// Curated docs for `name` completed/hovered at `start`: member access picks
-// the method table by the chain's root (the same heuristic the fallback
-// completions use), a bare identifier is a DSL builtin or nothing. The
-// language service supplies exact types either way; this only adds prose.
+// Curated prose for `name` at `start`: member access picks the method table by
+// the chain's root (the same heuristic the fallback completions use), a bare
+// identifier is a DSL builtin or nothing.
 export function curatedDocFor(text: string, start: number, name: string): DocEntry | null {
   let i = start - 1
   while (i >= 0 && /\s/.test(text[i])) i--
@@ -179,8 +163,7 @@ export function curatedDocFor(text: string, start: number, name: string): DocEnt
   return DSL_BUILTIN_DOCS[name] ?? null
 }
 
-// Completing view names inside table("…") / define("…" quotes. DSL-only:
-// those calls don't exist in a hydra sketch.
+// Complete view names inside table("…") / define("…" quotes (DSL-only).
 export function viewNameCompletions(getViews: (() => Map<string, Table> | undefined) | undefined, getLang: GetLang) {
   return (context: CompletionContext): CompletionResult | null => {
     if (getLang() !== 'dsl') return null
@@ -196,10 +179,9 @@ export function viewNameCompletions(getViews: (() => Map<string, Table> | undefi
   }
 }
 
-// The pre-language-service completions, retained as the fallback while the
-// worker loads (or if it never does): the chain-root heuristic picks a method
-// table after a dot; bare words offer the DSL builtins plus whatever locals
-// the syntax tree knows about.
+// Fallback completions while the language-service worker loads (or if it
+// never does): chain-root heuristic after a dot, DSL builtins plus locals on
+// bare words.
 function heuristicCompletions(context: CompletionContext, makeInfoNode: InfoNodeFactory): CompletionResult | null {
   const dot = context.matchBefore(/\.\w*/)
   if (dot) {
@@ -234,10 +216,7 @@ function heuristicCompletions(context: CompletionContext, makeInfoNode: InfoNode
 }
 
 // The main completion source: the TypeScript language service when its worker
-// is ready (real type-aware completions — "what follows this dot" answered by
-// the checker against the DSL's actual types), the heuristics otherwise. Each
-// option's info card resolves lazily: full signature from the service, plus
-// curated DSL prose when the name is surface API.
+// is ready, the heuristics otherwise.
 export function codeCompletions(
   client: LangClient | null,
   makeInfoNode: InfoNodeFactory,
@@ -245,8 +224,8 @@ export function codeCompletions(
   getLang: GetLang,
 ) {
   return async (context: CompletionContext): Promise<CompletionResult | null> => {
-    // Strings and comments never complete here — view names inside quotes
-    // have their own source (viewNameCompletions).
+    // No completions in strings/comments — quoted view names have their own
+    // source (viewNameCompletions).
     const node = syntaxTree(context.state).resolveInner(context.pos, -1)
     if (/String|Comment/.test(node.name)) return null
     const lang = getLang()
@@ -285,14 +264,12 @@ export function codeCompletions(
       }
       // No answer (e.g. the parse is too broken mid-edit) — fall through.
     }
-    // The heuristic fallback knows only the DSL surface; in a hydra cell
-    // wrong suggestions are worse than none.
+    // The heuristic fallback knows only the DSL surface; in a hydra cell wrong
+    // suggestions are worse than none.
     return lang === 'dsl' ? heuristicCompletions(context, makeInfoNode) : null
   }
 }
 
-// Hovering an identifier shows its complete type from the language service
-// (and the curated DSL prose when it's surface API).
 export function typeHover(client: LangClient, makeSymbolCard: SymbolCardFactory, getLang: GetLang) {
   return hoverTooltip(async (view, pos) => {
     if (client.status() !== 'ready') return null
@@ -312,9 +289,8 @@ export function typeHover(client: LangClient, makeSymbolCard: SymbolCardFactory,
 }
 
 // ── Signature help ───────────────────────────────────────────────────────────
-// Typing "(" or "," inside a call pops a tooltip with the callee's signature,
-// the active parameter highlighted; it follows re-queries as the arguments
-// evolve and clears when the cursor leaves the call (or on Escape).
+// Typing "(" or "," inside a call pops a tooltip with the callee's signature
+// and the active parameter highlighted.
 
 export interface SigHelpState {
   pos: number
@@ -382,10 +358,8 @@ export function signatureHelp(client: LangClient, makeSigCard: SigCardFactory, g
 }
 
 // ── Remote cursors (multiplayer presence) ────────────────────────────────────
-// Collaborators editing the same code cell as this editor show up as colored
-// carets with a name flag. Positions are plain doc offsets from the remote
-// replica; the two docs can drift between Applies (program text only syncs on
-// a Run), so offsets are clamped rather than trusted to line up exactly.
+// Remote offsets are clamped rather than trusted: the two docs can drift
+// between Applies (program text only syncs on a Run).
 
 export interface RemoteCursor {
   client: string
@@ -394,8 +368,8 @@ export interface RemoteCursor {
   head: number
 }
 
-// The cell label of the main program itself — the "code" table's single row
-// (see main.ts's CODE_SCHEMA), in the same table[row].col form editCell uses.
+// The main program's cell label — the "code" table's single row, in the same
+// table[row].col form editCell uses.
 export const PROGRAM_CELL = 'code[0].code'
 
 class RemoteCursorWidget extends WidgetType {
@@ -441,8 +415,7 @@ export const remoteCursorField = StateField.define<DecorationSet>({
   provide: (f) => EditorView.decorations.from(f),
 })
 
-// Hovering a quoted view name pops a data preview of that view. The card
-// itself comes from the injected builder (see ui/table-preview.tsx).
+// Hovering a quoted view name pops a data preview of that view.
 export function dslHover(
   getViews: (() => Map<string, Table> | undefined) | undefined,
   getPlayIndex: (() => number) | undefined,

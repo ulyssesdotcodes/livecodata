@@ -1,18 +1,8 @@
-// livecodata multiplayer server — Node adapter
-// ----------------------------------------------------------------------------
-// All room behavior (merge, relay, peer-join/leave authoring) lives in the
-// transport-agnostic src/room-core.ts, shared with the Cloudflare Durable
-// Object twin (worker/room.ts). This file only owns what is Node-specific:
-// the ws sockets, which room each socket joined, and serving the built app
-// from public/ so a jam needs exactly one process:
-//   npm run build && npm run serve   →   http://host:8787/?room=yourroom
-//
-// Rooms live in memory; clients re-upload their full logs on every join, so a
-// restarted server heals from whoever connects next.
-//
-// See src/protocol.ts for the message shapes and src/multiplayer.ts for the
-// client.
-// ----------------------------------------------------------------------------
+// livecodata multiplayer server — Node adapter. Room behavior lives in the
+// transport-agnostic src/room-core.ts (shared with the Durable Object twin in
+// worker/room.ts); this file owns the ws sockets and serving the built app
+// from public/. Rooms live in memory: clients re-upload their full logs on
+// every join, so a restarted server heals from whoever connects next.
 
 import http from 'node:http'
 import { readFile } from 'node:fs/promises'
@@ -26,7 +16,7 @@ import { handleEvents, handleJoin, handleLeave, type Outbound, type RoomLogs } f
 interface Room {
   name: string
   logs: RoomLogs
-  // socket → the client id it joined with (for its eventual peer-leave event).
+  // socket → the client id it joined with (for its eventual peer-leave event)
   clients: Map<WebSocket, string>
 }
 
@@ -46,7 +36,7 @@ const MIME: Record<string, string> = {
 export interface MultiplayerServer {
   port: number
   close(): Promise<void>
-  // Test/inspection access to a room's merged log.
+  // Test/inspection access to a room's merged log
   roomLog(room: string, log: string): StampedEvent[]
 }
 
@@ -54,7 +44,6 @@ export function startMultiplayerServer(
   { port = 8787, root = 'public' }: { port?: number; root?: string } = {},
 ): Promise<MultiplayerServer> {
   const rooms = new Map<string, Room>()
-  // socket → the room it joined (set by its join message).
   const memberships = new Map<WebSocket, Room>()
 
   function getRoom(name: string): Room {
@@ -88,9 +77,8 @@ export function startMultiplayerServer(
     if (msg.type === 'join' && typeof msg.room === 'string' && msg.room) {
       leave(ws)
       const room = getRoom(msg.room)
-      // room.clients is the live membership (this socket isn't added until
-      // below), so an empty map means the joiner is the only one here — its
-      // session initializes the room rather than merging onto stale logs.
+      // This socket isn't in room.clients yet, so an empty map means the joiner
+      // is alone and initializes the room rather than merging onto stale logs.
       const result = handleJoin(room.logs, msg, undefined, room.clients.size > 0)
       room.clients.set(ws, result.clientId)
       memberships.set(ws, room)
@@ -112,12 +100,8 @@ export function startMultiplayerServer(
     const clientId = room.clients.get(ws) ?? null
     room.clients.delete(ws)
     deliver(room, ws, handleLeave(room.logs, clientId).outbound)
-    // The last client just left: drop the room's log entirely rather than
-    // let it sit in memory for nobody. Each client already persisted its own
-    // copy locally (see main.ts's sessionStore under the room's session id),
-    // so whoever reconnects first re-seeds the room from their own history —
-    // same as a server restart healing from the next joiner (see the module
-    // comment above).
+    // Last client left: drop the room. Each client persisted its own copy
+    // locally (main.ts sessionStore), so the next joiner re-seeds it.
     if (room.clients.size === 0) rooms.delete(room.name)
   }
 

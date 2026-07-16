@@ -1,23 +1,9 @@
-// livecodata multi-session store
-// ----------------------------------------------------------------------------
-// Persists *multiple* authoring sessions so past sessions can be browsed and
-// reopened from the session selector. A session is the editable-table store's
-// serialized event log (see editable-tables.ts) — the program ("code") and
-// every other editable table all ride that one log — plus the list of runs
-// (Apply bookmarks) the session bar scrubs, each a per-table index into that
-// log. Together they are the *entire* durable state; the generated view names
-// are kept alongside purely to label the session in the dropdown, and users
-// can also give a session an explicit name and archive it (archived sessions
-// sink below the examples in the selector, out of the everyday list).
-//
-// The primary backend is IndexedDB: one record per session id, so a save
-// writes only that session (localStorage previously held every session in a
-// single JSON blob, rewritten wholesale on each save — which both hit the
-// ~5MB quota as logs grew and made every session's data hostage to one key).
-// Existing localStorage data is migrated into IndexedDB once, on first open.
-// A storage-backed fallback (createSessionStore) remains for tests and for
-// environments without IndexedDB; both backends share the same async API.
-// ----------------------------------------------------------------------------
+// Persists multiple authoring sessions (serialized event log + runs) so past
+// sessions can be browsed and reopened. Primary backend is IndexedDB, one
+// record per session — the old single-key localStorage blob was rewritten
+// wholesale on every save and hit the ~5MB quota — with a one-time migration
+// on first open. A storage-blob fallback remains for tests and environments
+// without IndexedDB; both backends share the same async API.
 
 import type { SessionRun } from './editable-tables.js'
 import { defaultStorage, type MinimalStorage } from './storage.js'
@@ -29,11 +15,6 @@ const DB_NAME = 'livecodata'
 const DB_VERSION = 1
 const DB_STORE = 'sessions'
 
-// A stored session: the whole editable-table store's serialized event log
-// (`events`) plus the list of runs (`runs`) — the "latest event table data + a
-// list of runs" a session is (see main.ts). `tables` are just view names for
-// the dropdown label; `name` is the user's own label (empty until they set
-// one) and `archived` moves it under the examples in the selector.
 export interface SessionRecord {
   id: string
   createdAt: number
@@ -43,10 +24,8 @@ export interface SessionRecord {
   tables: string[]
   events: string
   runs: SessionRun[]
-  // The branch head (apply id) the session was on when last saved — local
-  // working state like `runs`, so a reload reopens on the same branch rather
-  // than snapping to the newest. Null/absent for a legacy or single-branch
-  // session (the store re-derives the newest apply as head on load).
+  // Branch head (apply id) at last save, so a reload reopens on the same
+  // branch. Null for a legacy/single-branch session (the store re-derives it).
   head: string | null
   // The table tab shown when the session was last saved — like `head`, purely
   // local working state, so resuming reopens on the table the user was looking
@@ -75,19 +54,16 @@ export interface SessionSaveData {
 export interface SessionStore {
   newId(): string
   list(): Promise<SessionSummary[]>
-  // Upsert the session's data. Preserves createdAt/name/archived across
-  // updates — saving is orthogonal to naming/archiving.
+  // Upsert; preserves createdAt/name/archived across updates.
   save(id: string, data: SessionSaveData): Promise<SessionRecord>
   load(id: string): Promise<string | null>
-  // The saved run list (empty for a legacy session that predates runs).
   runs(id: string): Promise<SessionRun[]>
-  // The saved branch head (null for a legacy/single-branch session).
   head(id: string): Promise<string | null>
   // The saved shown-table tab (null for a legacy session that predates it).
   table(id: string): Promise<string | null>
-  // Set the user-facing name. A no-op for an id that was never saved.
+  // No-op for an id that was never saved.
   rename(id: string, name: string): Promise<void>
-  // Archive/unarchive. A no-op for an id that was never saved.
+  // No-op for an id that was never saved.
   setArchived(id: string, archived: boolean): Promise<void>
   remove(id: string): Promise<void>
 }
@@ -96,8 +72,7 @@ function newSessionId(): string {
   return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
 }
 
-// A record as loaded from storage may predate `name`/`archived` (or come from
-// the pre-IndexedDB blob) — normalize so every consumer sees the full shape.
+// Stored records may predate newer fields — normalize to the full shape.
 function normalizeRecord(s: Partial<SessionRecord> & { id: string }): SessionRecord {
   return {
     id: s.id,
@@ -113,8 +88,6 @@ function normalizeRecord(s: Partial<SessionRecord> & { id: string }): SessionRec
   }
 }
 
-// The upsert both backends share: fresh data fields, identity/label fields
-// carried over from the existing record when there is one.
 function upsertRecord(existing: SessionRecord | null, id: string, { events, tables = [], runs = [], head = null, table = null }: SessionSaveData): SessionRecord {
   const now = Date.now()
   return {
@@ -151,17 +124,12 @@ function sortedSummaries(records: SessionRecord[]): SessionSummary[] {
 }
 
 // ── Storage-blob backend ─────────────────────────────────────────────────────
-// The original single-key localStorage layout, kept as the fallback for tests
-// and for environments without IndexedDB. Same async surface as the IndexedDB
-// store so callers never branch.
 
 interface StoredData {
   version: number
   sessions: SessionRecord[]
 }
 
-// Parse the single-key blob into records — shared with the one-time IndexedDB
-// migration below.
 function parseStoredSessions(raw: string | null): SessionRecord[] {
   try {
     if (!raw) return []
@@ -184,9 +152,8 @@ export function createSessionStore(storage: MinimalStorage = defaultStorage()): 
     }
   }
 
-  // Unlike the old fire-and-forget writeAll, a failed write (quota, no
-  // storage) REJECTS — silent save failures are exactly how session data got
-  // lost before, so the caller must get to surface them.
+  // A failed write (quota, no storage) must propagate — silent save failures
+  // are how session data got lost before.
   function writeAll(sessions: SessionRecord[]): void {
     storage.setItem(STORAGE_KEY, JSON.stringify({ version: STORAGE_VERSION, sessions }))
   }
@@ -257,10 +224,9 @@ function idbRequest<T>(r: IDBRequest<T>): Promise<T> {
   })
 }
 
-// One-time import of the legacy single-key localStorage blob. Records whose id
-// already exists in the db are left alone (add() fails per-record without
-// aborting the transaction); the blob is removed only after the transaction
-// commits, so an interrupted migration just retries next open.
+// One-time import of the legacy localStorage blob. Existing ids are left
+// alone, and the blob is removed only after the transaction commits, so an
+// interrupted migration just retries next open.
 function migrateFromStorage(db: IDBDatabase, storage: MinimalStorage | undefined): Promise<void> {
   let raw: string | null = null
   try {
@@ -268,8 +234,8 @@ function migrateFromStorage(db: IDBDatabase, storage: MinimalStorage | undefined
   } catch {
     return Promise.resolve()
   }
-  // A corrupt blob parses to no records: nothing migrates and — importantly —
-  // nothing is deleted, so possibly-recoverable data is never thrown away.
+  // A corrupt blob parses to no records, so possibly-recoverable data is
+  // never deleted.
   const legacy = parseStoredSessions(raw)
   if (!legacy.length) return Promise.resolve()
   return new Promise((resolve) => {
@@ -289,8 +255,7 @@ function migrateFromStorage(db: IDBDatabase, storage: MinimalStorage | undefined
       } catch { /* the copy staying behind is harmless — ids dedupe next open */ }
       resolve()
     }
-    // A failed migration must not block the store: the blob stays in
-    // localStorage and the next open retries.
+    // A failed migration must not block the store — the next open retries.
     tx.onerror = () => resolve()
     tx.onabort = () => resolve()
   })
@@ -387,8 +352,6 @@ export function createIdbSessionStore(storage: MinimalStorage | undefined = defa
   }
 }
 
-// The store the app uses: IndexedDB wherever it exists (all modern browsers),
-// the storage-blob fallback otherwise (tests, unusual embedders).
 export function defaultSessionStore(): SessionStore {
   return typeof indexedDB !== 'undefined' ? createIdbSessionStore() : createSessionStore()
 }

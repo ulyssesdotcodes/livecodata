@@ -39,12 +39,9 @@ import type { PeerPresence } from './ui/table-panel.js'
 const dataCache = new Map<string, string>()
 const editableStore = createEditableTableStore()
 
-// The main program lives here too, as an editable table named "code" —
-// columns `code` (type "code", so the table panel hands clicks on it to the
-// editor) and `seed`, always exactly one row. Every Run sets that row in one
-// atomic event (setCodeRow); "code·events" (surfaced generically, like any
-// other editable table's history) *is* the run history, and a session is
-// nothing more than this whole store's serialized events — see sessions.ts.
+// The program is itself an editable table "code" (one row: code + seed);
+// "code·events" *is* the run history, and a session is just the store's
+// serialized events — see sessions.ts.
 const CODE_SCHEMA: Record<string, ColumnType> = { code: 'code', seed: 'number' }
 
 function setCodeRow(code: string, seed: number): void {
@@ -52,26 +49,16 @@ function setCodeRow(code: string, seed: number): void {
     editableStore.ensure('code', CODE_SCHEMA, [{ code, seed }])
     return
   }
-  // Skip an identical write so re-applying an unchanged program (e.g. a code-cell
-  // Apply, which re-cooks against edited table data but leaves the program text
-  // alone) doesn't spam "code·events" with duplicate rows — the run is still
-  // recorded, it just carries no new code event.
+  // Skip identical writes so re-applying an unchanged program doesn't spam
+  // "code·events" with duplicate rows.
   const cur = editableStore.get('code')?.rows[0]
   if (cur && cur.code === code && cur.seed === seed) return
   editableStore.setRow('code', 0, { code, seed })
 }
 
-// Multiplayer's own pseudo-table (see EditableTableStore.record): an Apply
-// commit per successful evaluate() and a peer-join/peer-leave per connection
-// change (the latter authored by the room server — see server/server.ts and
-// worker/room.ts), so both ride the exact same store log — and therefore the
-// exact same multiplayer sync/replay-on-connect path — as any editable table.
-// ACTIVITY_TABLE is exported from editable-tables so the apply node the branch
-// tree folds and its consumers here name the same table.
-
-// Who's currently in the room, per the "activity" table's peer-join/leave
-// history (net per client id — last event wins). Includes this replica once
-// its own peer-join round-trips back from the server.
+// Net room membership per the "activity" table's peer-join/leave history
+// (server-authored; rides the same store log as any editable table). Includes
+// this replica once its own peer-join round-trips back from the server.
 function onlinePeers(): Set<string> {
   const online = new Set<string>()
   for (const e of editableStore.get(ACTIVITY_TABLE)?.events ?? []) {
@@ -84,13 +71,9 @@ function onlinePeers(): Set<string> {
 }
 
 // --- multiplayer identity & presence ----------------------------------------
-// The room and this player's display name both ride the URL (?room=x&user=me),
-// so a reload rejoins the same room as the same person; the name is also
-// remembered (settings.ts) to prefill the join popover next time. Presence —
-// which table tab each player has open, which code cell their editor is on
-// and where their cursor sits — rides its own synced log (see presence.ts),
-// deliberately separate from the store log so cursor chatter never lands in
-// the persisted session or its scrubbable history.
+// Room and display name ride the URL so a reload rejoins as the same person.
+// Presence rides its own synced log (presence.ts), deliberately separate from
+// the store log so cursor chatter never lands in the persisted session.
 const urlParams = new URLSearchParams(location.search)
 const roomName = urlParams.get('room')
 const userName = (urlParams.get('user') ?? '').trim() || getUsername()
@@ -103,16 +86,11 @@ const exampleSlug = urlParams.get('example')
 
 const presence = roomName ? createPresenceChannel({ user: userName }) : null
 
-// A peer's display name (their announced username, or a short replica id for
-// the anonymous) and stable color, keyed by name so it survives reloads.
 const peerLabel = (client: string, user: string): string => user || client.slice(0, 6)
 const peerColor = (client: string, user: string): string => userColor(user || client)
 
-// How many applies the current branch has — the session bar's scrub range. An
-// apply (Ctrl-Enter) commits a batch of edits spanning *every* editable table
-// (see editableStore.recordApply). A branching session scrubs its current
-// branch path; a legacy session with no apply nodes falls back to its linear
-// run list, exactly as before.
+// The session bar's scrub range; a legacy session with no apply nodes falls
+// back to its linear run list.
 function sessionLength(): number {
   return editableStore.currentHead() === null
     ? editableStore.runs().length
@@ -125,10 +103,8 @@ function extractDataUrls(code: string): string[] {
   return urls
 }
 
-// The playback engine, assigned once the app has mounted (it needs the
-// scene/hydra APIs, which need the canvases the app render creates — see the
-// mountApp call below). Everything that touches it does so from callbacks
-// that can only fire after this module has finished evaluating.
+// Assigned once the app has mounted (it needs the canvas-backed scene APIs);
+// only touched from callbacks that fire after this module finishes evaluating.
 let playback: PlaybackAPI
 
 // The table tab currently shown — mirrored from the panel's onSelectTable so
@@ -137,27 +113,17 @@ let currentTable: string | null = null
 
 const tablePanel = createTablePanel(editableStore, {
   onEditCell: (table, rowIndex, col, value) => {
-    // The "code" cell is the program itself, not a side table: clicking it
-    // just syncs the main editor back to the stored value (handy if you've
-    // been typing without running yet and want to see/return to what's
-    // actually live) — no cell-target mode, no back button.
+    // The "code" cell is the program itself: clicking it just syncs the main
+    // editor back to the stored value — no cell-target mode.
     if (table === 'code' && col === 'code') {
       if (editor.getCode() !== value) editor.setCode(value)
       return
     }
-    // Any other code-typed cell (e.g. a hydra-style sketch column) edits in
-    // the main editor via cell-target mode. Its "Apply" (Ctrl-Enter) is an
-    // explicit apply: commit the cell, then re-cook the program against the
-    // edited tables and record a run — keeping the current seed so tweaking a
-    // sketch doesn't re-randomize the scene. (Plain inline edits stay pending
-    // until an apply; this one is the apply.)
-    // Which language surface the editor should run completions/hover against
-    // for this cell: the code column's declared language wins (editable(name,
-    // { code: { type: "code", language: "hydra" } }) — the only signal that
-    // survives the rows being mapped/renamed into the "hydra" view by code).
-    // Tables declared before language existed fall back to sniffing the row:
-    // a hydra event row's `code` cell is a sketch — unless the table is the
-    // bauble one, whose events share hydra's names but hold Janet.
+    // Other code-typed cells edit via cell-target mode; committing re-cooks
+    // with the current seed so tweaking a sketch doesn't re-randomize the scene.
+    // Editor language: the column's declared language wins (the only signal
+    // that survives rows being mapped into views); older tables fall back to
+    // sniffing the row — bauble rows share hydra's shape but hold Janet.
     const data = editableStore.get(table)
     const colSpec = data?.columns.find((c) => c.name === col)
     const declaredLang = colSpec?.type === 'code' ? colSpec.language : undefined
@@ -179,13 +145,9 @@ const tablePanel = createTablePanel(editableStore, {
   },
 })
 
-// Tap-beat: event-sourced like any other table (see tap-log.ts), so it's
-// synced over multiplayer the same way. The tap-beat *table* and any tempo are
-// derived from the log's fold (see the DSL's taps()/tempo()/beats()). Taps are
-// stamped with wall-clock Date.now() (see tap-log.ts), which is what lets
-// playback anchor "beat 0" to the tap itself (see Playback.wallAlignedTick
-// and TapLog.anchor()) instead of to whenever Play was pressed — that's what
-// keeps independently-started (or multiplayer-synced) clients in phase.
+// Taps are stamped with wall-clock time (tap-log.ts), letting playback anchor
+// "beat 0" to the tap rather than to when Play was pressed — which keeps
+// independently-started (or multiplayer-synced) clients in phase.
 const tapLog = createTapLog()
 const tapRows = (): Row[] => tapLog.rows()
 const tapAnchor = (): number | null => tapLog.anchor()
@@ -203,35 +165,22 @@ function clearTaps(): void {
 
 let currentPlayIndex = 0
 
-// Live MIDI: exactly the same wiring as sliders below — an append-only event
-// stream riding the shared editable-table store (a thin MidiStore adapter over
-// editableStore.record('midi', …)), so recorded MIDI syncs over multiplayer
-// and persists in the session like any other table. Each event is stamped
-// with wall time (by the log), the current loop iteration, and the playhead's
-// content/source position (Playback.currentSourceBeats) — the coordinate the
-// baked scene is keyed to, so a recorded sweep's speed follows the timeline
-// mapping. The folded "midi" table (per note, the latest loop's take) is what
-// midi("c4") bindings resolve against each frame; the raw log shows as
-// "midi·events".
-//
-// Only the *hardware* side is opt-in (see settings.ts): requesting Web MIDI
-// access pops a browser permission prompt, so subscribeWebMidi only runs once
-// the user enables the toggle in the editor's settings popover. The input
-// itself (fold + playback bindings) always exists, so MIDI recorded by a room
-// peer — or loaded from a saved session — plays back regardless of the toggle.
+// Live MIDI rides the shared editable-table store, so recordings sync and
+// persist like any other table; events are stamped with the playhead's source
+// position so a recorded sweep follows the timeline mapping. Only the
+// *hardware* side is opt-in (Web MIDI pops a browser permission prompt) — the
+// fold always exists, so peer- or session-recorded MIDI plays back regardless.
 let loopCount = 0
-// Whether the reset button's rewind is armed — see toggleRewind/stopRewind
-// below. Stepping itself happens in onTick, every REWIND_STEP_BEATS of
-// playhead beats (see lastTick/rewindBaseline).
+// Whether the reset button's rewind is armed; stepping happens in onTick every
+// REWIND_STEP_BEATS of playhead beats.
 let rewinding = false
 const REWIND_STEP_BEATS = 2
-// The playhead beat (onTick's `tick`, pre-timeline) last reported — kept live
-// regardless of rewinding so arming always steps from "now", not from 0.
+// Last reported playhead beat — kept live regardless of rewinding so arming
+// steps from "now", not from 0.
 let lastTick = 0
-// The playhead beat rewindBaseline was last reset to; stepRewind fires once
-// tick has advanced REWIND_STEP_BEATS past it. A loop wrap (tick dropping
-// below the baseline) just re-bases here rather than tracking cross-wrap
-// distance — worst case that delays one step by less than a loop.
+// Beat the baseline was last reset to; stepRewind fires once tick advances
+// REWIND_STEP_BEATS past it. A loop wrap just re-bases here — worst case that
+// delays one step by less than a loop.
 let rewindBaseline = 0
 let midiEnabled = getMidiEnabled()
 
@@ -247,7 +196,6 @@ const midiInput: MidiInput = createMidiInput({
   getLoop: () => loopCount,
 })
 
-// Attach the hardware exactly once, however the toggle is flipped around.
 let midiSubscribed = false
 function ensureMidiSubscription(): void {
   if (midiSubscribed) return
@@ -257,16 +205,10 @@ function ensureMidiSubscription(): void {
 
 if (midiEnabled) ensureMidiSubscription()
 
-// On-screen sliders: the twin of MIDI, but the "controller" is drawn over the
-// visual (see ui/slider-panel.tsx). Which sliders exist and their min/max come
-// from the program (a view named "sliders", rows { id, min, max, default? }); a
-// slider's value changes ride an event log stamped with the source position, so
-// a recorded move replays every loop and slider("id") bindings resolve against
-// it each frame. Unlike MIDI, that log is the shared editable-table store, not a
-// private one — slider moves are ordinary "slider" store events, so they sync
-// over multiplayer and persist in the session like any other table (this adapter
-// is the whole of that wiring). And unlike MIDI there's no browser permission to
-// request, so the input is created the moment a program defines a slider.
+// On-screen sliders: the twin of MIDI, defined by the program's "sliders"
+// view. Moves are ordinary "slider" store events, so they sync and persist
+// like any table; with no browser permission to request, the input is created
+// the moment a program defines a slider.
 const sliderStore: SliderStore = {
   record: (kind, payload) => editableStore.record('slider', kind, payload),
   events: () => editableStore.log.all().filter((e) => e.table === 'slider'),
@@ -285,30 +227,21 @@ function ensureSliderInput(): SliderInput {
   return sliderInput
 }
 
-// The slider overlay controller. Its callbacks drive the log: grabbing a slider
-// clears its old take (record anew), each move records a value at the current
-// playhead, and releasing hands the thumb back to the recorded automation.
-// Recording through the store means the generic store onChange handler already
-// refreshes the "slider"/"slider·events" tables and persists the session — no
-// separate refresh needed. Created before mountApp (which renders it); the
-// callbacks only fire on user interaction, well after `playback` lands.
+// The slider overlay. Recording through the store means the generic onChange
+// handler already refreshes the tables and persists — no separate refresh.
+// The callbacks only fire on user interaction, well after `playback` lands.
 const sliderPanel = createSliderPanel({
   onGrab: (id) => ensureSliderInput().clearId(id),
   onInput: (id, value) => ensureSliderInput().set(id, value),
   onRelease: () => {},
 })
 
-// Push the slider definitions (the "sliders" table) to both the overlay and the
-// streaming input, on every cook. Prefer the cooked view — a program that
-// computes it or declares it with editable("sliders", …) — but fall back to the
-// editable store so a "sliders" table created by hand in the table panel (which
-// the program never references, so the cook doesn't surface it as a view) still
-// drives the sliders. Empty when neither exists — the overlay hides and the
-// input goes dormant.
+// Push slider definitions to the overlay and input on every cook. Prefer the
+// cooked "sliders" view, but fall back to the store so a table created by hand
+// in the table panel (never surfaced as a view) still drives the sliders.
 function updateSliderDefs(views: Map<string, Table>): void {
-  // The cooked view (if any) already reflects ensure()'s filtering; the raw
-  // fallback (a table-panel-only "sliders" table) needs it applied here too,
-  // so a row disabled via its own `disabled` column doesn't drive a live slider.
+  // The cooked view already reflects ensure()'s disabled-row filtering; the
+  // raw fallback needs it applied here.
   const rows = views.get('sliders')?.rows ?? (editableStore.get('sliders')?.rows ?? []).filter((r) => r[DISABLED_COL] !== true)
   const defs = sliderDefs(rows)
   sliderPanel.setDefs(defs)
@@ -316,18 +249,14 @@ function updateSliderDefs(views: Map<string, Table>): void {
   else sliderInput?.setDefs(defs)
 }
 
-// Options for the playback engine created after mount (see mountApp below);
-// the controller lands in this signal, which the app render watches to show
-// the transport controls.
 const [playbackCtl, setPlaybackCtl] = createSignal<PlaybackController | null>(null)
 const playbackOptions: PlaybackOptions = {
   onTick: (tick, active, srcBeats) => {
     currentPlayIndex = srcBeats
     tablePanel.highlightIndex(srcBeats)
     tablePanel.highlightLineage(active)
-    // Move each slider's thumb to its recorded value at the playhead (skipping
-    // any the user is currently dragging — see SliderPanel), so the loop's
-    // automation is visible on the controls, not just in the visual.
+    // Show recorded automation on the slider thumbs (skipping any being
+    // dragged — see SliderPanel).
     if (sliderInput && sliderInput.defs().length) {
       sliderPanel.showValues(sliderInput.valuesAt(beatToFrame(srcBeats)))
     }
@@ -345,33 +274,23 @@ const playbackOptions: PlaybackOptions = {
   },
   onLoop: () => { loopCount++ },
   tapControl: { tap: recordTap, clear: clearTaps, rows: tapRows, anchor: tapAnchor },
-  // Recorded MIDI drives bindings whenever any exists — the recording may be a
-  // peer's (synced through the store) or a saved session's, so this doesn't
-  // gate on the local hardware toggle, mirroring sliders below.
+  // Not gated on the local hardware toggle: the recording may be a peer's or
+  // a saved session's.
   midiCtxAt: (srcFrame) => (midiInput.rows().length ? midiInput.ctxAt(srcFrame) : null),
   sliderCtxAt: (srcFrame) => (sliderInput && sliderInput.defs().length ? sliderInput.ctxAt(srcFrame) : null),
 }
 
-// (A new MIDI event needs no dedicated display refresh: it's a store event
-// now, so the generic store onChange handler below already refreshes the
-// "midi"/"midi·events" tables — coalesced per animation frame, which matters
-// for a knob sweep firing 100+ messages/sec. The scene itself updates live
-// every rAF tick via the per-frame bindings regardless.)
-
-// The cook — DSL evaluation, materialize, physics baking, rasterize — runs in
-// a Web Worker (see cook-worker.ts) so a heavy Apply, local or from a room
-// peer, never blocks this thread's rendering and input. Jolt's WASM loads in
-// the worker too; this thread never touches it. The store stays here: each
-// cook request carries a rows snapshot (read through any active replay view,
-// exactly what ensure() would serve), and editable() declarations come back as
-// data that the real ensure() below turns into store events as always.
+// The cook runs in a Web Worker (cook-worker.ts) so a heavy Apply never blocks
+// this thread; Jolt's WASM loads there too. The store stays here — each cook
+// request carries a rows snapshot, and editable() declarations come back as
+// data that the real ensure() below turns into store events.
 const cookClient = createCookClient(new Worker(new URL('cook-worker.js', import.meta.url), { type: 'module' }))
 
 async function cookInWorker(code: string, seed: number, seeds?: Record<string, Row[]>): Promise<{ cooked: CookedData; declaredNames: string[] }> {
   const editables = editableStore.listNames().map((name) => ({
     name,
-    // Match ensure()'s own filtering: a row whose own `disabled` column is
-    // true stays in the table but is omitted from what the program sees.
+    // Match ensure()'s filtering: disabled rows stay in the table but are
+    // hidden from the program.
     rows: (editableStore.get(name)?.rows ?? []).filter((r) => r[DISABLED_COL] !== true),
   }))
   const { cooked, declared } = await cookClient.cook({ code, seed, dataCache, tapRows: tapRows(), editables, seeds })
@@ -383,35 +302,30 @@ const sessionStore = defaultSessionStore()
 let currentSessionId = sessionStore.newId()
 
 // --- multiplayer -----------------------------------------------------------
-// A shared room is named in the URL (?room=x). Everyone in it syncs the store
-// — one event log covering "code" (the program), its run history, and every
-// other editable table — over a WebSocket (see multiplayer.ts); all visible
-// state follows from the fold. A room's log is also persisted locally under a
-// stable session id, so rejoining resumes the jam even before the server
-// answers.
+// A room (?room=x) syncs the whole store log over a WebSocket (multiplayer.ts).
+// The log is also persisted locally under a stable session id, so rejoining
+// resumes the jam even before the server answers.
 let multiplayer: MultiplayerConnection | null = null
 
 const roomSessionId = (room: string): string => 'room:' + room
 
-// The server that serves the app also carries the room socket at /ws;
-// ?server= overrides for dev setups where the page comes from esbuild.
+// The app server carries the room socket at /ws; ?server= overrides for dev
+// setups where the page comes from esbuild.
 function multiplayerUrl(): string {
   const override = urlParams.get('server')
   if (override) return override
   return (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'
 }
 
-// The room's locally-persisted log is restored in boot() (the session store
-// is async) — only the id needs pinning before anything could save under it.
+// The room's log is restored in boot() (the session store is async) — only
+// the id needs pinning before anything could save under it.
 if (roomName) currentSessionId = roomSessionId(roomName)
-// ---------------------------------------------------------------------------
 
 import type { GraphSpec } from './graph-panel.js'
 
 let lastViews = new Map<string, Table>()
-// The program + seed currently on screen (may be a scrubbed historical run,
-// not necessarily "code"'s latest row — see scrubSession), so a tap can
-// re-cook in place.
+// The program + seed on screen — possibly a scrubbed historical run, not
+// "code"'s latest row — so a tap can re-cook in place.
 let liveCode: string | null = null
 let liveSeed = 0
 
@@ -424,40 +338,29 @@ interface CookedData {
   baubleRows: Row[]
 }
 
-// The views shown in the table panel, plus:
-//  - a live "taps" table of wall-time button presses
-//  - a live "midi"/"midi·events" pair (streaming input, not an editable table)
-//  - every editable table's "name·events" history (this generically covers
-//    "code·events" too, now that the program is just another editable table)
-//  - a log table's (e.g. "activity") own events, shown directly under its bare
-//    name instead of a "name·events" companion — it has no fold state worth a
-//    separate interactive tab (see EditableTableStore.isLog).
-// (each only when the program doesn't define a view of that name itself).
+// The views shown in the table panel, plus synthetic tables: "taps", the
+// midi/slider folds and event logs, and every editable table's "name·events"
+// history (a log table shows under its bare name instead — see isLog). Each
+// only when the program doesn't define a view of that name itself.
 function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   const display = new Map(views)
   if (!display.has('taps')) display.set('taps', new Table(tapRows()))
-  // The folded MIDI take ("midi") and its raw log ("midi·events"), once
-  // anything has been recorded — locally, by a peer (synced through the
-  // store), or in the loaded session. The "midi" store log table itself is
-  // suppressed below, same as "slider": these are its only surface.
+  // Folded MIDI take + raw log, once anything has been recorded — locally, by
+  // a peer, or in the loaded session.
   if (midiInput.rows().length) {
     if (!display.has('midi')) display.set('midi', new Table(midiInput.rows()))
     if (!display.has('midi' + EVENTS_SUFFIX)) display.set('midi' + EVENTS_SUFFIX, new Table(midiInput.eventRows()))
   }
-  // The folded slider automation ("slider") and its raw log ("slider·events"),
-  // but only once something has actually been recorded — an empty pair just
-  // clutters the panel (and can't be deleted, being synthetic). The "slider"
-  // store log table is suppressed below so it never leaks as a raw tab; these
-  // are its only surface, and they come and go with the recorded automation.
+  // Folded slider automation + raw log, only once something is recorded — an
+  // empty pair just clutters the panel and can't be deleted, being synthetic.
   // ("sliders" itself is the definitions table, shown like any other view.)
   if (sliderInput && sliderInput.rows().length) {
     display.set('slider', new Table(sliderInput.rows()))
     display.set('slider' + EVENTS_SUFFIX, new Table(sliderInput.eventRows()))
   }
   for (const name of editableStore.listNames()) {
-    // The "slider" and "midi" log tables are the backing stores for recorded
-    // automation, an implementation detail — each is surfaced (folded) above,
-    // or not at all.
+    // The "slider"/"midi" log tables back recorded automation — surfaced
+    // (folded) above, or not at all.
     if (name === 'slider' || name === 'midi') continue
     const key = editableStore.isLog(name) ? name : name + EVENTS_SUFFIX
     if (display.has(key)) continue
@@ -466,19 +369,16 @@ function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   return display
 }
 
-// Signature of one cooked output, to detect which of scene/timeline/hydra/
-// bauble a run actually changed. Functions on rows (easings, streaming
-// bindings) hash by their source text — every cook builds fresh closures, so
-// identity would always differ while the content is the same.
+// Signature of one cooked output. Functions on rows hash by their source text
+// — every cook builds fresh closures, so identity would always differ.
 function cookedSig(rows: Row[]): string {
   return JSON.stringify(rows, (_k, v: unknown) => (typeof v === 'function' ? String(v) : v))
 }
 
 const lastCookedSigs = { scene: '', timeline: '', hydra: '', bauble: '' }
 
-// Which cooked outputs differ from what's currently showing (and re-baseline
-// the signatures for the next diff) — the determination stamped onto the apply
-// pulse so the whole room resets the same multi-loop sequences.
+// Which cooked outputs changed (re-baselining for the next diff) — stamped
+// onto the apply pulse so the whole room resets the same multi-loop sequences.
 function diffCooked({ sceneRows, timelineRows, hydraRows, baubleRows }: CookedData): { scene: boolean; timeline: boolean; hydra: boolean; bauble: boolean } {
   const sigs = { scene: cookedSig(sceneRows), timeline: cookedSig(timelineRows), hydra: cookedSig(hydraRows), bauble: cookedSig(baubleRows) }
   const changed = {
@@ -491,29 +391,23 @@ function diffCooked({ sceneRows, timelineRows, hydraRows, baubleRows }: CookedDa
   return changed
 }
 
-// Render a cooked program and hand its rows to playback. The loop epochs ride
-// along from the activity table's apply stamps (loopEpochsFromApplies) — the
-// author's absolute clock, NOT this replica's — so every client in the room,
-// including one that joins later and replays the same events, lands on the
-// same pass of a multi-loop sequence.
+// Render a cooked program and hand its rows to playback. Loop epochs come from
+// the activity table's apply stamps — the author's clock, NOT this replica's —
+// so late joiners land on the same pass of a multi-loop sequence.
 function applyCooked(cooked: CookedData): void {
   lastViews = cooked.views
-  // Refresh slider defs before load(): load() reconciles the scene and fires
-  // onTick, which reads the slider input for the thumb values.
+  // Before load(): load() fires onTick, which reads the slider input.
   updateSliderDefs(cooked.views)
   tablePanel.setTables(tablesForDisplay(cooked.views))
   tablePanel.setGraphs(cooked.graphs)
-  // The bauble canvas is shown directly only when there's a bauble sketch and
-  // no hydra sketch to composite it — with hydra rows present, hydra's output
-  // is the display and it reads the bauble render as s1 (src(s1)).
+  // With hydra rows present, hydra's output is the display and it reads the
+  // bauble render as s1 — only a bauble-only sketch shows this canvas directly.
   mounts.baubleCanvas.classList.toggle('visible', cooked.baubleRows.length > 0 && cooked.hydraRows.length === 0)
   playback.load({ ...cooked, loopEpochs: loopEpochsFromApplies(editableStore.get(ACTIVITY_TABLE)?.events ?? []) })
 }
 
-// A tap changed the tempo: refresh the "taps" table and re-anchor playback to
-// the new tempo. Nothing re-cooks — content sits on a fixed beat grid, so the
-// timeline (a tempo-independent beat remap) is unaffected; only the rate the
-// playhead sweeps the loop changes.
+// A tap changed the tempo. Nothing re-cooks — content sits on a fixed beat
+// grid; only the rate the playhead sweeps the loop changes.
 function onTap(): void {
   tablePanel.setTables(tablesForDisplay(lastViews))
   playback.retempo()
@@ -521,11 +415,9 @@ function onTap(): void {
 
 function persistSession(): void {
   if (!editableStore.has('code')) return
-  // The session is the whole store's event data plus the run list — see
-  // sessions.ts. Serialize the *head* log (a scrubbed replay view mustn't leak
-  // into what's saved); editableStore.runs() is always the full run list.
-  // A failed save is surfaced on the editor's error strip — a save silently
-  // failing is exactly how session data gets lost.
+  // Serialize the *head* log — a scrubbed replay view mustn't leak into the
+  // save. Failed saves surface on the error strip; silent failure is exactly
+  // how session data gets lost.
   void sessionStore.save(currentSessionId, {
     events: editableStore.serialize(),
     runs: editableStore.runs(),
@@ -545,44 +437,31 @@ function refreshSelector(): void {
 
 interface EvaluateOptions {
   setError?: ((msg: string | null) => void) | null
-  // Persist the session after applying. Off for the initial cook of a fresh
-  // session/example, which shouldn't be saved until the user actually edits or
-  // runs; the run itself is always recorded either way.
+  // Off for the initial cook of a fresh session/example, which shouldn't be
+  // saved until the user actually edits or runs.
   persist?: boolean
   seed?: number
-  // Announce this apply on the "activity" table (see ACTIVITY_TABLE below).
-  // Off for the multiplayer reactive call — it's already reacting to someone
-  // else's pulse, so echoing our own would round-trip forever between
-  // replicas.
+  // Announce this apply on the "activity" table. Off for the multiplayer
+  // reactive call — echoing someone else's pulse would round-trip forever.
   broadcast?: boolean
-  // Drop the cooked result (write nothing, render nothing) if the store's
-  // program changed while the cook was in flight. The cook awaits a worker
-  // (whose first run also boots jolt's WASM), so a fresh client joining a room
-  // can have the room's snapshot merge in mid-cook — and firstRun's
-  // speculative cook of the default program must NOT then write that default
-  // over the room's program (its post-merge event would win the fold on every
-  // replica). The merge's own apply reaction renders the room program instead.
+  // Drop the cooked result if the store's program changed mid-cook: a room
+  // snapshot can merge in while firstRun's speculative cook of the default
+  // program awaits the worker, and that default must not then win the fold
+  // over the room's program.
   obsoleteIfProgramChanged?: boolean
-  // Seed rows for editable tables the store hasn't seen yet, keyed by table
-  // name — passed through to the cook so a program's editable(name, schema)
-  // call can carry its column schema only, with the row data seeded from here
-  // (see openExample: an example's table data lives with the sample, not inline
-  // in the code). Only takes effect on the first cook of a fresh store; once a
-  // table exists its own rows win, so user edits are never overwritten.
+  // Seed rows for editable tables the store hasn't seen yet (e.g. an example's
+  // table data lives with the sample, not inline in the code). Only the first
+  // cook of a fresh store uses them; an existing table's own rows win.
   seeds?: Record<string, Row[]>
 }
 
-// True while a cook — or a store operation we're about to react to ourselves
-// (recording a run, loading/clearing a session) — is in progress: editable()
-// appends create/schema events during the cook itself, and reacting to those
-// (or to our own bookkeeping writes) would loop or double-cook. A counter
-// rather than a boolean because cooks now await the worker, so two can
-// overlap — the guard must hold until the last one finishes.
+// Held while a cook or our own store writes are in flight — reacting to our
+// own changes would loop or double-cook. A counter, not a boolean: cooks
+// await the worker, so two can overlap.
 let cooking = 0
 
-// Run `fn` with the "don't react to my own store changes" guard held, and
-// return its result. Used around session load/clear, which notify like any
-// other edit but are always immediately followed by an explicit re-cook here.
+// Run `fn` with the self-change guard held. Used around session load/clear,
+// which notify like any edit but are always followed by an explicit re-cook.
 function quietly<T>(fn: () => T): T {
   cooking++
   try {
@@ -592,9 +471,8 @@ function quietly<T>(fn: () => T): T {
   }
 }
 
-// Apply a program: cook it against the current (head) table state, record a run,
-// render, and (unless told otherwise) persist. This is the *only* thing that
-// applies pending table edits — inline edits just accumulate until an apply.
+// Apply a program: cook, record a run, render, persist. The *only* thing that
+// applies pending table edits — inline edits accumulate until an apply.
 async function evaluate(code: string, { setError, persist = true, seed = randomSeed(), broadcast = true, obsoleteIfProgramChanged = false, seeds }: EvaluateOptions = {}): Promise<void> {
   const pending = extractDataUrls(code).filter((u) => !dataCache.has(u))
   if (pending.length) {
@@ -613,12 +491,10 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
   stopRewind()
   cooking++
   try {
-    // Applying while scrubbed back forks: promote the scrubbed branch to a live
-    // (forked) head *now*, so the cook's ensure()/setRow appends land on it and
-    // recordApply commits a forking child of the scrubbed apply. A reactive
-    // evaluate (broadcast:false, reacting to a peer's apply) must not fork — it
-    // returns to the head the merge already moved us to. At the live head both
-    // are no-ops (no replay active).
+    // Applying while scrubbed back forks: promote the scrubbed branch to a
+    // live head *now*, so the cook's appends land on it. A reactive evaluate
+    // (broadcast:false) must not fork — it returns to the head the merge
+    // already moved us to. At the live head both are no-ops.
     if (broadcast) editableStore.forkFromReplay()
     else editableStore.setReplayView(null)
     let cooked: CookedData
@@ -637,26 +513,19 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
     liveCode = code
     liveSeed = seed
 
-    // A table the program used to declare with editable() but no longer does
-    // should stop being editable — drop it so a computed view of the same name
-    // (or nothing) takes over. Only in the real apply path: a scrubbed replay
-    // is a read-only preview and retainDeclared no-ops there anyway.
+    // Drop tables the program no longer declares editable(), so a computed
+    // view of the same name (or nothing) takes over.
     editableStore.retainDeclared(declaredNames)
 
-    // Write the "code" table row (if the program changed) — *before* applyCooked
-    // renders the table panel below, so its first render already sees "code"
-    // (otherwise the onChange reaction that would normally pick up a newly-
-    // created table is itself suppressed by `cooking` right now).
+    // *Before* applyCooked renders the table panel, so its first render sees
+    // "code" — the onChange reaction that would normally pick up a new table
+    // is suppressed by `cooking` right now.
     setCodeRow(code, seed)
-    // Commit this batch of edits as an apply node — the branch commit that *is*
-    // the run (recordApply supersedes recordRun + the separate apply pulse). It
-    // claims every pending edit (the "code" row just written, any table the cook
-    // created via ensure), stamps which cooked outputs changed and the instant,
-    // and — BEFORE applyCooked — so the loop epochs it folds
-    // (loopEpochsFromApplies) already include this apply, re-basing this replica
-    // from the very stamp its peers will. A reactive evaluate (broadcast:false)
-    // commits nothing: the author's apply is already merged into the fold, and
-    // the store's onMerge has already followed it to become our head.
+    // recordApply commits every pending edit as the apply node that *is* the
+    // run — BEFORE applyCooked, so the loop epochs it folds already include
+    // this apply, re-basing this replica from the very stamp its peers will.
+    // A reactive evaluate commits nothing: the author's apply is already
+    // merged, and onMerge has already made it our head.
     const changed = diffCooked(cooked)
     if (broadcast) {
       const changedKinds = Object.keys(changed).filter((k) => changed[k as keyof typeof changed])
@@ -670,9 +539,8 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
   }
 }
 
-// The code cell this editor is a window onto right now (ui/editor.tsx's
-// onCursor labels; "code[0].code" is the main program) — peers' cursors are
-// drawn only when they're on this same cell.
+// The code cell this editor is a window onto ("code[0].code" is the main
+// program) — peers' cursors are drawn only when on this same cell.
 let localCell: string = PROGRAM_CELL
 
 const editor = createEditor({
@@ -698,19 +566,15 @@ const editor = createEditor({
     // cursor moves only change what peers see of us.
     if (cellChanged) schedulePresenceRefresh()
   },
-  // Live typing: announce the in-progress buffer (throttled in presence.ts)
-  // so peers watching this cell can mirror it before it is ever Run.
+  // Announce the in-progress buffer (throttled in presence.ts) so peers can
+  // mirror it before it is ever Run.
   onEdit: (cell, code) => presence?.setLiveCode(cell, code),
 })
 
 // --- presence indicators -----------------------------------------------------
-// Fold the presence log + the store log into per-peer indicators and hand them
-// to the table panel (a color ring on the tab each peer has open, an outline
-// on the last cell they edited when it's on the shown table) and the editor
-// (remote cursors, for peers on the same code cell). Only peers currently
-// online (per the "activity" table's join/leave history) are shown. Coalesced
-// per animation frame — cursor announcements and merges arrive much faster
-// than a redraw is worth.
+// Fold the presence + store logs into per-peer indicators for the table panel
+// and editor. Only currently-online peers show. Coalesced per animation frame
+// — announcements and merges arrive much faster than a redraw is worth.
 let presenceRefreshScheduled = false
 function schedulePresenceRefresh(): void {
   if (!presence || presenceRefreshScheduled) return
@@ -722,15 +586,10 @@ function schedulePresenceRefresh(): void {
 }
 
 // --- live typing view --------------------------------------------------------
-// Mirror a collaborator's in-progress buffer (their throttled 'live-code'
-// announcements — see presence.ts) into our editor, so watching a peer type
-// doesn't wait for their Run. Strictly display: nothing cooks until an Apply
-// pulse arrives (the onMerge reaction below), and we only mirror while our own
-// buffer is pristine — equal to the last applied program or to the last text
-// we mirrored — so a local edit in progress is never clobbered. Only the main
-// program cell mirrors: a cell editor (editCell) owns its buffer until
-// committed. With several people typing at once the newest announcement wins,
-// same last-wins rule as every other presence fold.
+// Mirror a peer's in-progress buffer into our editor. Strictly display —
+// nothing cooks until an Apply pulse — and only while our own buffer is
+// pristine (equal to the last applied program or the last text we mirrored),
+// so a local edit in progress is never clobbered. Newest announcement wins.
 let mirroredLiveCode: string | null = null
 function followLiveCode(): void {
   if (!presence || localCell !== PROGRAM_CELL) return
@@ -777,17 +636,11 @@ function refreshPresenceUI(): void {
 
 presence?.onChange(schedulePresenceRefresh)
 
-// A table-change event landed (cell edit, add row, slider move, MIDI note, …).
-// Edits are *pending*: they are NOT applied to the running program here — the
-// cooked views and the scene keep their last state until the user presses
-// Run/Apply (Ctrl-Enter), which re-cooks against the edited tables and records
-// a run. Live edits ride the log — so they sync over multiplayer instantly —
-// but are deliberately NOT persisted here: a session on disk only advances on
-// Apply (see evaluate's persistSession), so what's saved is always an applied
-// state, never a half-finished edit batch. We only refresh the table panel so
-// the edit shows in its own editable tab (and name·events history). Coalesced
-// per animation frame, and ignored while a cook (or our own recording/session
-// load) is in flight.
+// A table-change event landed. Edits are *pending* — nothing re-cooks until
+// Run/Apply — and deliberately NOT persisted here: a session on disk only
+// advances on Apply, so what's saved is always an applied state, never a
+// half-finished edit batch. Just refresh the table panel, coalesced per
+// animation frame and ignored while a cook is in flight.
 let storeRefreshScheduled = false
 editableStore.onChange(() => {
   if (cooking || storeRefreshScheduled) return
@@ -800,17 +653,14 @@ editableStore.onChange(() => {
   })
 })
 
-// Disarm the reset button's rewind, if armed — called wherever the user takes
-// back control of the timeline (a manual scrub, or applying new code).
+// Disarm the rewind — called wherever the user takes back control of the
+// timeline (a manual scrub, or applying new code).
 function stopRewind(): void {
   if (!rewinding) return
   rewinding = false
   sessionBar.setRewinding(false)
 }
 
-// One rewind step: called every REWIND_STEP_BEATS beats of playback while
-// armed (see onTick). Steps back one run and stops once run 1 (the
-// beginning) is reached.
 function stepRewind(): void {
   const pos = sessionBar.position()
   const next = Math.max(0, pos - 1)
@@ -819,9 +669,8 @@ function stepRewind(): void {
   if (next <= 0) stopRewind()
 }
 
-// The reset button was clicked: arm the rewind (starting playback if it isn't
-// already running, so beats actually pass) or disarm it if already armed.
-// Does nothing if there's nowhere to go back to.
+// Arm or disarm the reset button's rewind. Starts playback so beats actually
+// pass.
 function toggleRewind(): void {
   if (rewinding) {
     stopRewind()
@@ -832,29 +681,22 @@ function toggleRewind(): void {
   sessionBar.setRewinding(true)
   playback.play()
   // Baseline from wherever the playhead now sits (play() may have just reset
-  // it) so the first step is REWIND_STEP_BEATS beats from arming, not from 0.
+  // it) so the first step counts from arming, not from 0.
   rewindBaseline = lastTick
 }
 
-// Scrub to run `pos` — a non-destructive preview that restores *every* editable
-// table to its state at that run (editableStore.setReplayView folds the shared
-// log up to the run's index) and re-cooks the program that was live then (the
-// "code" row at that run). It touches nothing in the head log and records no
-// run, so pressing Run afterward forks forward from head as a new run rather
-// than rewriting history. The newest position is the live head (replay view
-// off), so any edits made since the last Apply stay visible there.
-// Dragging the session scrubber fires cooks faster than the worker returns
-// them; each result checks it is still the newest request before applying, so
-// a stale run's tables never flash over the one the thumb is resting on.
+// Scrub to run `pos` — a non-destructive preview: setReplayView refolds every
+// editable table to that run and the program live then is re-cooked. Nothing
+// is recorded, so pressing Run afterward forks forward rather than rewriting
+// history; the newest position is the live head, so post-Apply edits stay
+// visible there. Dragging fires cooks faster than the worker returns them;
+// stale results are dropped via scrubEpoch.
 let scrubEpoch = 0
 
 async function scrubSession(pos: number): Promise<void> {
-  // The scrub axis is the current branch path (apply nodes), or — for a legacy
-  // session with no apply nodes — the flat run list, exactly as before. An empty
-  // axis isn't necessarily "nothing to show": a Clear leaves the "code" table's
-  // history (and head row) untouched, just with no bookmarks left to scrub to.
-  // Treat it as "show head"; the codeRow check below still no-ops for a
-  // genuinely empty session (no "code" table yet).
+  // An empty axis isn't necessarily "nothing to show": a Clear leaves the
+  // "code" history untouched, just with no bookmarks — treat it as "show
+  // head". The codeRow check below still no-ops for a genuinely empty session.
   const head = editableStore.currentHead()
   const path = head === null ? editableStore.runs() : editableStore.branchPath()
   const clamped = path.length ? Math.max(0, Math.min(pos, path.length - 1)) : 0
@@ -862,17 +704,15 @@ async function scrubSession(pos: number): Promise<void> {
   const epoch = ++scrubEpoch
   cooking++
   // Legacy runs replay by log-prefix (SessionRun); a branch path replays by
-  // apply id (branch-aware — a mid-branch node shows only its committed history).
+  // apply id.
   const target = atLatest ? null : head === null ? (path[clamped] as SessionRun) : (path[clamped] as ApplyNode).id
   editableStore.setReplayView(target)
-  // Warn (bar tint) when the thumb rests on an earlier apply of a branching
-  // session: an edit/apply here forks a new branch rather than extending. At the
-  // tip, or on a legacy linear session, editing just extends — no warning.
+  // Tint the bar when resting on an earlier apply of a branching session —
+  // an edit/apply here forks a new branch rather than extending.
   sessionBar.setForking(head !== null && !atLatest)
-  // Keep the cook *and* the render inside one try: a program restored from a
-  // saved session can fail either when it's cooked or when its cooked output is
-  // applied, and both must surface on the editor's error strip rather than
-  // vanishing as an unhandled rejection.
+  // Cook *and* render inside one try: a restored program can fail at either
+  // stage, and both must surface on the error strip rather than vanishing as
+  // an unhandled rejection.
   try {
     const codeRow = editableStore.get('code')?.rows[0]
     if (!codeRow || typeof codeRow.code !== 'string') return
@@ -884,8 +724,8 @@ async function scrubSession(pos: number): Promise<void> {
     liveSeed = seed
     editor.setCode(code)
     editor.setError(null)
-    // Re-baseline the changed-detection at what's now showing, so the next Run's
-    // apply pulse reports its diff against the scrubbed view the user sees.
+    // Re-baseline changed-detection so the next Run's apply pulse diffs
+    // against the scrubbed view the user sees.
     diffCooked(cooked)
     applyCooked(cooked)
   } catch (err) {
@@ -895,8 +735,8 @@ async function scrubSession(pos: number): Promise<void> {
   }
 }
 
-// Switching sessions while in a room would union the newly-loaded log into the
-// room — leave the room first so sessions stay what they were.
+// Switching sessions while in a room would union the loaded log into the room
+// — leave first.
 function exitRoomMode(): void {
   if (!multiplayer) return
   multiplayer.close()
@@ -923,9 +763,8 @@ function setExampleParam(slug: string | null): void {
 async function openSession(id: string): Promise<void> {
   exitRoomMode()
   setExampleParam(null)
-  // Only a genuinely unreadable session aborts the switch: its stored data may
-  // be missing, or editableStore.load may reject/throw on a corrupt log. A
-  // session whose *program* errors is not corrupt — it still opens (below).
+  // Only a genuinely unreadable session aborts the switch; a session whose
+  // *program* errors is not corrupt — it still opens (below).
   try {
     const events = await sessionStore.load(id)
     if (events == null) throw new Error('saved session data is missing')
@@ -936,18 +775,16 @@ async function openSession(id: string): Promise<void> {
     return
   }
   currentSessionId = id
-  // A branching session's scrub axis is its branch path (load() already adopted
-  // the newest apply as head), so its legacy run list is unused — restore/derive
-  // runs only for a session with no apply nodes (a legacy linear session, or one
-  // Cleared to none; deriveRunsFromCode stops at the clear marker either way).
+  // Restore/derive legacy runs only for a session with no apply nodes — a
+  // branching session scrubs its branch path instead.
   const savedRuns = await sessionStore.runs(id).catch(() => [])
   quietly(() => {
     if (editableStore.currentHead() !== null) return
     if (savedRuns.length) editableStore.setRuns(savedRuns)
     else editableStore.deriveRunsFromCode()
   })
-  // Reopen on the branch the session was last on (load() defaulted head to the
-  // newest apply). Only when the saved head is a real, different branch node.
+  // Reopen on the branch the session was last on (load() defaulted head to
+  // the newest apply).
   const savedHead = await sessionStore.head(id).catch(() => null)
   if (savedHead && savedHead !== editableStore.currentHead() && editableStore.branchTree().nodes.has(savedHead)) {
     quietly(() => editableStore.checkout(savedHead))
@@ -955,28 +792,23 @@ async function openSession(id: string): Promise<void> {
   syncSessionBar()
   refreshSelector()
 
-  // Reopen on the table the session was last showing (the panel applies it once
-  // that tab exists — an editable table is present immediately, a cooked view
-  // appears after the cook below). A legacy session with no saved table leaves
-  // the panel on its default tab.
+  // Reopen on the table the session was last showing (the panel applies it
+  // once that tab exists); a legacy session with no saved table keeps the
+  // panel's default tab.
   const savedTable = await sessionStore.table(id).catch(() => null)
   tablePanel.restoreTable(savedTable)
 
-  // Open the session for editing *before* running it: show its program and make
-  // its tables editable now, so that if the program errors when cooked below the
-  // session still ends up genuinely open — the editor holds its code and the
-  // table panel its editable tables — exactly as if the user had been sitting on
-  // this session and pressed Run to a failure. Editability reads the store
-  // directly (see table-panel), so an empty view map is enough; a successful
-  // cook replaces it via applyCooked, a failed one leaves just these tables.
+  // Open for editing *before* running: if the program errors when cooked, the
+  // session still ends up genuinely open — editor holding its code, table
+  // panel its editable tables. Editability reads the store directly, so an
+  // empty view map is enough.
   const codeRow = editableStore.get('code')?.rows[0]
   if (codeRow && typeof codeRow.code === 'string') editor.setCode(codeRow.code)
   lastViews = new Map<string, Table>()
   updateSliderDefs(lastViews)
   tablePanel.setTables(tablesForDisplay(lastViews))
 
-  // The run (cook + render) of the restored program surfaces its own errors on
-  // the editor's error strip without disturbing the opened tables above.
+  // The run surfaces its own errors without disturbing the opened tables.
   scrubSession(Math.max(0, sessionLength() - 1))
 }
 
@@ -995,13 +827,9 @@ function newSession(): void {
   refreshSelector()
 }
 
-// The "Clear" button: wipe the run list a session bar scrubs over, without
-// touching a single table's own event history — the program text, every
-// editable table's rows, all of it stay exactly as they are. Records a
-// CLEAR_RUNS_KIND marker (on the "activity" table, alongside 'apply' and
-// 'session-start') rather than deleting anything, so deriveRunsFromCode()
-// knows not to resurrect these runs on a later reload/session-switch (see
-// its doc comment in editable-tables.ts).
+// The "Clear" button: wipe the run list without touching any table's event
+// history. Records a CLEAR_RUNS_KIND marker rather than deleting anything, so
+// deriveRunsFromCode() won't resurrect these runs on a later reload.
 function clearRuns(): void {
   stopRewind()
   quietly(() => {
@@ -1018,12 +846,6 @@ const sessionBar = createSessionBar({
   onCheckout: (headId) => checkoutBranch(headId),
 })
 
-// Refresh the session bar's branch switcher from the store's tree: the heads
-// (branches), each labeled by apply count and marked if it's the current one.
-// The chip only shows when there's more than one, so a linear session is
-// unchanged. Called wherever the tree or head can move (apply, scrub, checkout,
-// load). Labels stay deliberately light — apply count and a "(current)" mark;
-// a richer diff hint is a later polish.
 function refreshBranches(): void {
   const tree = editableStore.branchTree()
   const head = editableStore.currentHead()
@@ -1034,18 +856,15 @@ function refreshBranches(): void {
   sessionBar.setBranches(branches)
 }
 
-// Refresh the whole session bar after the branch structure or head moves: the
-// scrub range (jumps the thumb to latest), the branch switcher, and — since
-// "latest" is never a fork point — clear the fork tint. scrubSession sets the
-// fork tint itself while replaying an earlier apply.
+// Refresh the session bar after the branch structure or head moves. Jumps the
+// thumb to latest — never a fork point, so clear the fork tint (scrubSession
+// sets it itself while replaying an earlier apply).
 function syncSessionBar(): void {
   sessionBar.setLog({ length: sessionLength() })
   sessionBar.setForking(false)
   refreshBranches()
 }
 
-// Check out another branch: refold to its tip, re-cook the program that was
-// live there, jump the scrubber to its tip, and persist the new head.
 function checkoutBranch(headId: string): void {
   stopRewind()
   quietly(() => editableStore.checkout(headId))
@@ -1065,12 +884,10 @@ async function loadExample(index: number): Promise<void> {
   quietly(() => editableStore.clear())
   editor.setCode(sample.code)
   // Show the example's most relevant table once its tabs exist (like session
-  // resume — the panel applies it after the cook produces cooked-view tabs).
-  // Falls back to the default tab when the sample names none.
+  // resume); falls back to the default tab when the sample names none.
   tablePanel.restoreTable(sample.table ?? null)
-  // The sample's editable table data (if any) seeds the freshly-cleared store,
-  // so the example's editable(name, schema) calls carry column schemas only —
-  // the row data lives with the sample, and populates the table panel on open.
+  // The sample's table data seeds the cleared store — its editable() calls
+  // carry column schemas only; the row data lives with the sample.
   await evaluate(sample.code, { setError: editor.setError, persist: false, seeds: sample.tables })
   syncSessionBar()
   refreshSelector()
@@ -1086,15 +903,12 @@ const sessionSelector = createSessionSelector({
   onNew: newSession,
   onExample: openExample,
   examples: SAMPLES.map((s) => ({ label: s.name })),
-  // Naming and archiving act on the stored record only — the open session's
-  // log is untouched, so neither needs a re-cook, just a re-listed dropdown.
+  // Naming/archiving act on the stored record only — no re-cook needed, just
+  // a re-listed dropdown.
   onRename: (id, name) => void sessionStore.rename(id, name).then(refreshSelector).catch(() => {}),
   onArchive: (id, archived) => void sessionStore.setArchived(id, archived).then(refreshSelector).catch(() => {}),
 })
 
-// The room chip: solo it opens a join popover (room name + username, seeding
-// the room with the current session and reloading into it); in a room it
-// shows status/peers and leaves on click.
 const roomChip = createRoomChip({
   initialUser: getUsername(),
   onJoin: (name, user) => {
@@ -1105,9 +919,8 @@ const roomChip = createRoomChip({
     else u.searchParams.delete('user')
     const go = (): void => { location.href = u.toString() }
     // Seed the room with what's on screen: park the store under the room's
-    // session id so the reload (and then the server) picks it up. Navigation
-    // waits for the save (it's async now) — and proceeds even if it fails,
-    // since the room join itself will still sync whatever peers hold.
+    // session id so the reload picks it up. Navigation waits for the async
+    // save but proceeds on failure — the join sync covers it.
     if (editableStore.has('code')) {
       void sessionStore.save(roomSessionId(name), {
         events: editableStore.serialize(),
@@ -1126,13 +939,10 @@ const roomChip = createRoomChip({
   },
 })
 
-// Mount the whole layout in one Solid render — every pane except the canvas
-// *contents* is created there from the controllers above (see ui/app.tsx).
-// The render hands back the canvas elements; three.js renders the 3D scene
-// into three-canvas, and hydra takes that as a source texture and
-// post-processes it onto the visible hydra-canvas. The playback engine rides
-// on those APIs, so it's built last and pushed into the signal the app
-// render is watching.
+// Mount the whole layout in one Solid render (ui/app.tsx), which hands back
+// the canvas elements: three.js renders into three-canvas, hydra post-
+// processes it onto the visible hydra-canvas. The playback engine rides on
+// those APIs, so it's built last and pushed into the watched signal.
 const mounts = mountApp(document.getElementById('app') as HTMLElement, {
   editor,
   tablePanel,
@@ -1145,8 +955,8 @@ const mounts = mountApp(document.getElementById('app') as HTMLElement, {
 })
 const sceneAPI = initThree(mounts.threeCanvas, mounts.canvasPane)
 const baubleAPI = initBauble(mounts.baubleCanvas)
-// The bauble canvas rides along as hydra source s1, so a hydra sketch can
-// composite the SDF render: src(s1).modulate(…).
+// The bauble canvas rides along as hydra source s1, so a sketch can composite
+// the SDF render.
 const hydraAPI = initHydra(mounts.hydraCanvas, mounts.threeCanvas, mounts.baubleCanvas)
 const playbackController = createPlaybackController(
   [createSceneVisualizer(sceneAPI), createHydraVisualizer(hydraAPI), createBaubleVisualizer(baubleAPI)],
@@ -1159,13 +969,9 @@ function chipSolo(): void {
   roomChip.set({ kind: 'solo' })
 }
 
-// Redraws the chip for `status` at the *current* peer fold (re-folded from
-// the "activity" table and the presence log each time, not pushed) — called
-// on a connection status change and again whenever a peer-join/leave lands.
-// Takes status as a plain argument rather than reading `multiplayer` because
-// connectMultiplayer's onStatus can fire synchronously during its own call,
-// before the `multiplayer = connectMultiplayer(...)` assignment below has
-// completed.
+// Redraws the chip at the current peer fold. Takes status as an argument
+// rather than reading `multiplayer`: connectMultiplayer's onStatus can fire
+// synchronously, before the `multiplayer = ...` assignment completes.
 function chipStatus(status: MultiplayerStatus): void {
   if (status === 'closed' || !roomName) return
   const online = onlinePeers()
@@ -1179,9 +985,8 @@ function chipStatus(status: MultiplayerStatus): void {
 }
 
 async function bootRoom(room: string): Promise<void> {
-  // A room's log is also persisted locally under its stable session id, so
-  // rejoining resumes the jam even before the server answers — restore that
-  // copy first, then connect (the join snapshot carries it up).
+  // Restore the locally-persisted copy of the room's log first, then connect
+  // (the join snapshot carries it up).
   try {
     const saved = await sessionStore.load(currentSessionId)
     if (saved) {
@@ -1195,29 +1000,17 @@ async function bootRoom(room: string): Promise<void> {
     }
   } catch { /* no local copy — the join sync seeds us from peers instead */ }
 
-  // Guarantee "activity" exists locally before we ever join: the room server
-  // authors peer-join/leave events referencing it (see server/server.ts and
-  // worker/room.ts), and if this replica were the very first to create the
-  // table — which would otherwise only happen on the first Apply's pulse,
-  // well after physics has loaded — the server's peer-join for *this very*
-  // connection could arrive canonically before any replica's "create" for
-  // the table and get silently dropped by the fold (see editable-tables.ts's
-  // applyEvent: a non-create event for an unknown table is a no-op).
+  // Guarantee "activity" exists before joining: the server authors peer-join/
+  // leave events referencing it, and its peer-join for this very connection
+  // could otherwise arrive before any replica's "create" and be silently
+  // dropped by the fold.
   editableStore.record(ACTIVITY_TABLE, 'session-start')
 
   editableStore.log.onMerge((added) => {
-    // Newly-merged events on "activity": an Apply pulse (see evaluate()'s
-    // `broadcast` — recordRun is a *local* bookmark, so this pulse is the
-    // only shared-log trace of an Apply happening) means treat it like they
-    // pressed Apply for us too — re-sync the editor to the (possibly
-    // unchanged) "code" row, then evaluate() against the now-merged tables,
-    // whatever changed — the code text, some other table, or both.
-    // broadcast:false so reacting to their pulse doesn't emit one of our own
-    // back at them (that would round-trip forever). A peer-join/leave just
-    // needs the chip's count refreshed. A remote edit to any *real* table
-    // (including "code", short of an Apply pulse) needs nothing here: the
-    // generic onChange reaction above already refreshes the table panel and
-    // persists, matching how a local pending edit behaves.
+    // A merged Apply pulse means treat it like they pressed Apply for us too:
+    // evaluate() against the now-merged tables, broadcast:false so we don't
+    // echo a pulse back (that would round-trip forever). Remote edits to real
+    // tables need nothing here — the generic onChange reaction covers them.
     let applied = false
     let presenceChanged = false
     for (const e of added) {
@@ -1228,10 +1021,8 @@ async function bootRoom(room: string): Promise<void> {
     if (applied) {
       const latest = editableStore.get('code')?.rows[0] as { code: string; seed: number } | undefined
       if (latest) {
-        // evaluate() assumes the editor is already showing the code it's
-        // given (true for a local Run) — a remote program needs pushing into
-        // the editor ourselves, the same way scrubSession() does for a
-        // historical run.
+        // evaluate() assumes the editor already shows the code it's given —
+        // a remote program needs pushing into the editor ourselves.
         if (latest.code !== liveCode) editor.setCode(latest.code)
         void evaluate(latest.code, { setError: editor.setError, seed: latest.seed, broadcast: false })
       }
@@ -1243,11 +1034,8 @@ async function bootRoom(room: string): Promise<void> {
       schedulePresenceRefresh()
     }
   })
-  // A collaborator's tap arrived: refresh the "taps" table and retime the
-  // tempo, same as a local tap (see onTap).
   tapLog.log.onMerge(() => onTap())
-  // Announce ourselves before joining (the join snapshot carries it): which
-  // cell the editor starts on, plus our username riding along.
+  // Announce ourselves before joining — the join snapshot carries it.
   presence?.set({ cell: localCell })
   chipStatus('connecting')
   multiplayer = connectMultiplayer({
@@ -1260,29 +1048,23 @@ async function bootRoom(room: string): Promise<void> {
 
 async function firstRun(): Promise<void> {
   if (sessionLength()) {
-    // Rejoined a room whose store we already had locally: resume it, don't
-    // append a new run.
+    // Resume the existing store; don't append a new run.
     await scrubSession(sessionLength() - 1)
   } else {
-    // Speculative: nothing here yet, show the default program on its relevant
-    // table (the "Editable Table" example's "path"), same as opening it would.
-    // If a room snapshot merges in while this first cook boots the worker, yield
-    // to it (see obsoleteIfProgramChanged) instead of clobbering the room.
+    // Speculative default. If a room snapshot merges in while this first cook
+    // boots the worker, yield (obsoleteIfProgramChanged) instead of
+    // clobbering the room.
     tablePanel.restoreTable(defaultTable)
     await evaluate(editor.getCode(), { setError: editor.setError, persist: false, obsoleteIfProgramChanged: true, seeds: defaultTables })
   }
   syncSessionBar()
   refreshSelector()
-  // Start the transport itself once the first program is on screen, so
-  // opening the page shows it already playing rather than sitting on the
-  // first frame waiting for a manual Play press.
+  // Opening the page shows the program already playing, not waiting on Play.
   playback.play()
 }
 
-// Physics (jolt's WASM) now loads inside the cook worker, which holds the
-// first cook until it settles — nothing to wait for here. A room boot first
-// awaits the locally-persisted copy of the room's log (bootRoom), so
-// firstRun's "resume or speculative default" decision sees the restored runs.
+// A room boot awaits the locally-persisted room log first, so firstRun's
+// "resume or speculative default" decision sees the restored runs.
 async function boot(): Promise<void> {
   if (roomName) {
     await bootRoom(roomName)

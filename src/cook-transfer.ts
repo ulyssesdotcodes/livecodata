@@ -1,21 +1,9 @@
 // Cook transfer — (de)serializing cooked results across the worker boundary.
-// ----------------------------------------------------------------------------
-// The cook runs in a Web Worker (see cook-worker.ts); its product must survive
-// postMessage's structured clone. Three things in cooked rows don't:
-//
-//   - functions (easings written as `ease: easeInOut`, or user lambdas in
-//     templates) — packed as { $fn: source } and rehydrated with new Function.
-//     The whole program is already evaluated from source (the app is a live
-//     coder), so this is the same trust domain — but a lambda that closes over
-//     program-scope variables loses its captures; named EASINGS and literal
-//     lambdas round-trip fine.
-//   - row lineage — stored under a Symbol key (structured clone silently drops
-//     symbol keys), carried as a $lineage field and restored on unpack.
-//   - Table instances — views travel as { name, rows } and are rebuilt with
-//     new Table(rows) on the main thread.
-//
-// Streaming bindings ({ $expr: node }) are already plain JSON by design (see
-// dsl.ts) and pass through untouched.
+// Three things in cooked rows don't survive structured clone: functions —
+// packed as { $fn: source }, rehydrated with new Function (same trust domain
+// as the already-evaluated program, but a lambda loses its closure captures);
+// symbol-keyed row lineage — carried as a $lineage field; and Table instances
+// — sent as { name, rows }.
 
 import { Table } from './dsl.js'
 import { getLineage, withLineage, type Row } from './lineage.js'
@@ -75,8 +63,8 @@ export function unpackRows(rows: Row[]): Row[] {
 
 export interface PackedCook {
   views: Array<{ name: string; rows: Row[] }>
-  // A graph either points at a packed view by name (rows: null) or carries its
-  // own rows (an anonymous .graph(table) target).
+  // rows: null points at a packed view by name; an anonymous .graph(table)
+  // target carries its own rows.
   graphs: Array<{ viewName: string | null; columns: string[]; rows: Row[] | null }>
   sceneRows: Row[]
   timelineRows: Row[]

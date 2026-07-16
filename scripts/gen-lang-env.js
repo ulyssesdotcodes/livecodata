@@ -1,31 +1,11 @@
 #!/usr/bin/env node
 // Build the editor language-service environment: the virtual file system the
 // in-browser TypeScript language service (src/lang-service.ts) analyzes user
-// programs against. Written as JSON to public/assets/lang-env.json by
-// build.js/watch.js so the lang worker can fetch it, and importable directly
-// (buildLangEnv) so node tests can run the real service without a browser.
-//
-// The env contains:
-//   /dts/*.d.ts           — declarations emitted from src/dsl.ts and its
-//                           imports (the DSL's real types: Table, Expr, …)
-//   /globals.d.ts         — every DSLSurface property as an ambient global,
-//                           exactly mirroring how the runtime injects the
-//                           surface (new Function(...keys, code) — runtime.ts)
-//   /hydra-globals.d.ts   — the hydra sketch surface (osc, src, chain methods,
-//                           s0…/o0…), generated from hydra-ts's transform
-//                           definition tables — hydra-ts builds those methods
-//                           at runtime, so its shipped .d.ts carries no names
-//                           or parameters; the definitions do
-//   /lib.*.d.ts           — the ES2022 standard-library closure
-//
-// The two ambient-globals files describe different languages (the program vs a
-// hydra sketch cell), so they must never share a program: env.langs gives each
-// its user file and root set, and lang-service.ts builds one service per lang.
-//
-// Enumerating DSLSurface with the type checker (rather than a hand-kept list)
-// keeps the ambient globals in lockstep with dsl.ts: add a method to the
-// surface and the editor knows it on the next build. Same for hydra: the
-// generated surface tracks whatever transforms the installed hydra-ts defines.
+// programs against. The DSL and hydra surfaces are enumerated with the type
+// checker rather than hand-kept lists, so the editor tracks dsl.ts / hydra-ts
+// automatically. The two ambient-globals files describe different languages
+// and must never share a program (env.langs gives each its own user file and
+// roots).
 
 import ts from 'typescript'
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -39,13 +19,10 @@ const tsLibDir = path.dirname(require.resolve('typescript/lib/typescript.js'))
 
 export const DEFAULT_LIB = '/lib.es2022.d.ts'
 
-// ── hydra sketch surface ─────────────────────────────────────────────────────
-// hydra-ts describes every generator (osc, noise, …) and chain method
-// (modulate, kaleid, …) as data: { name, type, inputs: [{ name, type,
-// default }] }. Render that into ambient declarations. Signature conventions
-// follow hydra: every argument is optional (defaults apply), floats also
-// accept an array (cycled per frame) or a function of the per-frame props
-// ("dynamic" arguments), and the combine/combineCoord methods take the other
+// hydra-ts describes every generator and chain method as data ({ name, type,
+// inputs }); render that into ambient declarations. Hydra's conventions: every
+// argument is optional, floats also accept an array (cycled per frame) or a
+// function of the per-frame props, and combine/combineCoord take the other
 // texture first.
 
 /** @param {{ type: string, default?: unknown }} input */
@@ -117,10 +94,6 @@ function buildHydraGlobals() {
   ].join('\n')
 }
 
-// Compiler options for the *user program* — mirrored by src/lang-service.ts.
-// JS with checkJs off: completions and hover, no type-error noise on the
-// untyped livecode programs.
-
 export function buildLangEnv() {
   const dslEntry = path.join(root, 'src/dsl.ts')
   const program = ts.createProgram([dslEntry], {
@@ -145,10 +118,9 @@ export function buildLangEnv() {
   }
   if (!files['/dts/dsl.d.ts']) throw new Error('gen-lang-env: /dts/dsl.d.ts missing from emit')
 
-  // Ambient globals: one const per DSLSurface property, typed by indexing into
-  // the surface so overloads survive — and each member's JSDoc copied onto the
-  // generated const, so hovering the bare global in the editor shows the doc
-  // (the indexed-access type alone wouldn't carry it).
+  // One const per DSLSurface property, typed by indexing into the surface so
+  // overloads survive; each member's JSDoc is copied onto the const because
+  // the indexed-access type alone wouldn't carry it into editor hovers.
   const checker = program.getTypeChecker()
   const sf = program.getSourceFile(dslEntry)
   /** @type {{ name: string, doc: string }[]} */
@@ -168,9 +140,8 @@ export function buildLangEnv() {
   const jsdocLines = (doc) =>
     doc ? [`  /** ${doc.replace(/\*\//g, '*\\/').split('\n').join('\n   * ')} */`] : []
 
-  // The programs run in a browser, but only console is worth offering from
-  // the host environment — pulling in lib.dom would drown the DSL surface
-  // in hundreds of irrelevant globals.
+  // Only console from the host environment — pulling in lib.dom would drown
+  // the DSL surface in hundreds of irrelevant globals.
   const consoleDecl = '  const console: { log(...args: unknown[]): void; warn(...args: unknown[]): void; error(...args: unknown[]): void; debug(...args: unknown[]): void };'
 
   files['/globals.d.ts'] = [
@@ -202,9 +173,7 @@ export function buildLangEnv() {
   return {
     files,
     defaultLib: DEFAULT_LIB,
-    // One language per kind of code cell the editor opens: the main program
-    // (DSL) and hydra sketch cells. Each pairs a user file with the ambient
-    // globals that describe its surface; lang-service.ts builds a separate
+    // One language per kind of code cell; lang-service.ts builds a separate
     // program per language so the surfaces never bleed into each other.
     langs: {
       dsl: { userFile: '/main.js', roots: ['/globals.d.ts'] },

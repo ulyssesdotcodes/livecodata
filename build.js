@@ -8,8 +8,8 @@ mkdirSync('public/assets', { recursive: true })
 cpSync('src/data', 'public/data', { recursive: true })
 cpSync('static', 'public', { recursive: true })
 
-// The language-service environment (DSL declarations + ES libs) the lang
-// worker fetches at startup — see scripts/gen-lang-env.js.
+// The language-service environment the lang worker fetches at startup — see
+// scripts/gen-lang-env.js.
 writeLangEnv('public/assets/lang-env.json')
 
 await esbuild.build({
@@ -22,11 +22,9 @@ await esbuild.build({
   plugins: [solidPlugin()],
 })
 
-// The cook worker: its own bundle, loaded by the main bundle via
-// new Worker(new URL('cook-worker.js', import.meta.url)). Jolt (whose
-// emscripten glue has a node-only `await import("module")` branch — kept
-// external so it isn't resolved at build time; the browser never reaches
-// that node-detection path) now lives in here, not in the main bundle.
+// The cook worker bundle. 'module' stays external because Jolt's emscripten
+// glue has a node-only `await import("module")` branch that must not be
+// resolved at build time; the browser never reaches it.
 await esbuild.build({
   entryPoints: ['src/cook-worker.ts'],
   bundle: true,
@@ -36,9 +34,8 @@ await esbuild.build({
   external: ['module'],
 })
 
-// The language-service worker: TypeScript itself, bundled for the browser
-// (~3.5 MB minified), loaded lazily by the editor via
-// new Worker(new URL('lang-worker.js', import.meta.url)).
+// The language-service worker: TypeScript itself bundled for the browser
+// (~3.5 MB minified), loaded lazily by the editor.
 await esbuild.build({
   entryPoints: ['src/lang-worker.ts'],
   bundle: true,
