@@ -51,8 +51,7 @@ test('serialized version is the base plus the number of registered migrations', 
 })
 
 test('load upgrades old data by running the tail of the migration chain', () => {
-  // v1 → v2 tags each event; v2 → v3 tags again. A log at the current version
-  // (3) runs neither; older data runs only the migrations it is missing.
+  // v1 → v2 tags each event; v2 → v3 tags again.
   const migrations = [
     (evs: StampedEvent[]) => evs.map((e) => ({ ...e, via: [...(e.via as string[] ?? []), 'v2'] })),
     (evs: StampedEvent[]) => evs.map((e) => ({ ...e, via: [...(e.via as string[] ?? []), 'v3'] })),
@@ -116,7 +115,6 @@ test('mergeEvents unions, dedups by (src, seq), and drops malformed events', () 
   const { events, added } = mergeEvents(a, incoming)
   assert.deepEqual(added.map((e) => e.kind), ['y'])
   assert.deepEqual(events.map((e) => `${e.src}${e.seq}`), ['a0', 'b0'])
-  // No new events → same array back, nothing added.
   const again = mergeEvents(events, incoming)
   assert.equal(again.events, events)
   assert.equal(again.added.length, 0)
@@ -129,7 +127,6 @@ test('merge interleaves remote events deterministically and bumps the clock', ()
   a.append({ kind: 'a1' })
   b.append({ kind: 'b0' })
 
-  // Cross-merge both ways: replicas converge on the same order.
   assert.equal(a.merge(b.all()).length, 1)
   assert.equal(b.merge(a.all()).length, 2)
   const order = a.all().map((e) => e.kind)
@@ -204,7 +201,6 @@ test('compactLatestPerSrcKind keeps only the newest event per (src, kind)', () =
   ]
   const compacted = compactLatestPerSrcKind(events)
   assert.deepEqual(compacted.map((e) => e.seq), [1, 3, 4])
-  // Already-compact input comes back as-is (same array, no copy).
   assert.equal(compactLatestPerSrcKind(compacted), compacted)
 })
 
@@ -212,13 +208,10 @@ test('a compact policy prunes superseded events on append and merge, seq stays m
   const log = createEventLog({ src: 'a', compact: compactLatestPerSrcKind })
   for (let h = 0; h < 10; h++) log.append({ kind: 'presence', head: h })
   log.append({ kind: 'live-code', code: 'x' })
-  // Only the latest of each kind survives…
   assert.deepEqual(log.all().map((e) => [e.kind, e.seq]), [['presence', 9], ['live-code', 10]])
-  // …and the clock never re-mints a pruned seq.
   assert.equal(log.append({ kind: 'presence', head: 99 }).seq, 11)
 
-  // Merging older remote events: a superseded one is pruned right back out,
-  // a fresh one (new src) folds in; the local clock still bumps past all seen.
+  // A superseded remote event is pruned right back out; a fresh src folds in.
   const b = createEventLog({ src: 'b', compact: compactLatestPerSrcKind })
   b.append({ kind: 'presence', head: 5 })
   log.merge(b.all())

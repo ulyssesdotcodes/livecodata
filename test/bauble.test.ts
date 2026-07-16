@@ -25,7 +25,7 @@ test('isBaubleRow / baubleRows recognise setCode/setVariable events (and nothing
     { beat: 1, event: 'setCode', code: '(sphere 100)' },
     { beat: b(1), event: 'setVariable', name: 'size', value: 2 },
     { beat: b(2), event: 'append', code: '(box 50)' }, // a hydra meta event — not bauble
-    { beat: b(2) }, // no event kind
+    { beat: b(2) },
   ]
   assert.equal(isBaubleRow(rows[0]), true)
   assert.equal(isBaubleRow(rows[1]), true)
@@ -98,8 +98,6 @@ test('rows without a beat default to beat 1 (frame 0); empty/negative inputs yie
   assert.equal(frameAt([{ beat: 1, event: 'setCode', code: '(sphere 100)' }], -1), null)
 })
 
-// --- multi-loop sequences: the `loop` column next to `beat` ------------------
-
 test('baubleFrameAt samples the pass named by `loop`, folding earlier passes in full', () => {
   const index = buildBaubleIndex([
     { beat: 1, loop: 0, event: 'setCode', code: 'a' },
@@ -123,8 +121,6 @@ test('buildBaubleIndex orders rows by (loop, frame); baubleLoops counts the pass
   assert.equal(baubleLoops(buildBaubleIndex([{ beat: 1, event: 'setCode', code: 'x' }])), 1)
   assert.equal(baubleFrameAt(index, 99)!.code, 'first', 'no loop argument behaves as pass 0')
 })
-
-// --- baubleScript: the compiled Janet script ---------------------------------
 
 test('baubleScript compiles variables as (def …) forms ahead of the code, in fold order', () => {
   assert.equal(
@@ -163,8 +159,6 @@ test('the reserved camera variables never reach the script (the renderer owns th
   )
 })
 
-// --- baubleCodeUpToRow: the compiled script as of one table row ---------------
-
 test('baubleCodeUpToRow folds up to and including the given row (in raw table order)', () => {
   const rows: Row[] = [
     { beat: 1, event: 'setCode', code: '(sphere size)' },
@@ -172,9 +166,7 @@ test('baubleCodeUpToRow folds up to and including the given row (in raw table or
     { beat: 5, event: 'setVariable', name: 'size', value: 90 },
     { beat: 9, event: 'setCode', code: '(box size)' },
   ]
-  // The first setCode row: no variable folded yet.
   assert.equal(baubleCodeUpToRow(rows, 0), '(sphere size)')
-  // At the setVariable rows the def appears with the value as of that row.
   assert.equal(baubleCodeUpToRow(rows, 1), '(def size 50)\n(sphere size)')
   assert.equal(baubleCodeUpToRow(rows, 2), '(def size 90)\n(sphere size)')
   assert.equal(baubleCodeUpToRow(rows, 3), '(def size 90)\n(box size)')
@@ -183,7 +175,7 @@ test('baubleCodeUpToRow folds up to and including the given row (in raw table or
 test('baubleCodeUpToRow returns null for a non-bauble row or before any setCode', () => {
   assert.equal(baubleCodeUpToRow([{ beat: 1, foo: 'bar' }], 0), null, 'not a bauble row')
   assert.equal(baubleCodeUpToRow([
-    { beat: 1, event: 'setVariable', name: 'size', value: 1 }, // no setCode yet
+    { beat: 1, event: 'setVariable', name: 'size', value: 1 },
     { beat: 5, event: 'setCode', code: '(box 50)' },
   ], 0), null, 'nothing compiled yet at that row')
   assert.equal(baubleCodeUpToRow([], 0), null)

@@ -5,8 +5,6 @@ import { getLineage, withLineage, type Row } from '../src/lineage.js'
 
 const t = (rows: Row[]): Table => new Table(rows)
 
-// ── Expr (chainable expression nodes) ───────────────────────────────────────
-
 test('map(template) builds rows from Expr + literals', () => {
   const out = t([{ a: 1 }, { a: 2 }]).map({ b: field('a').add(10), c: 5 })
   assert.deepEqual(out.rows, [{ b: 11, c: 5 }, { b: 12, c: 5 }])
@@ -52,8 +50,6 @@ test('Expr verbs carry lineage forward', () => {
   assert.deepEqual(getLineage(out.rows[0]), [{ table: 'src', index: 0 }])
 })
 
-// ── Content hashing (Merkle dataflow) ───────────────────────────────────────
-
 test('identical op-graphs hash equal; differing specs hash differently', () => {
   const a = t([{ v: 1 }]).filter(field('v').gt(1))
   const b = t([{ v: 1 }]).filter(field('v').gt(1))
@@ -67,8 +63,6 @@ test('a changed input changes the hash (Merkle propagation)', () => {
   const b = t([{ v: 2 }]).map({ v: field('v') })
   assert.notEqual(hashOf(a), hashOf(b))
 })
-
-// ── Tap-beat / tempo builders (derived from the taps table) ─────────────────
 
 // time is an absolute UTC epoch ms (see tap-log.ts), not time-since-first-tap —
 // pick an arbitrary base instant and space rows beatSeconds apart from it.

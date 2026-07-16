@@ -76,7 +76,6 @@ test('single flap of a stack moves alone when its sheet marker is used', () => {
   st = foldStep(st, { line: lineThrough([0.5, 0.5], [0, 1]), move: [[0.05, 0.05]] }).state
   const out = foldStep(st, { line: lineThrough([0.25, 0.75], [0.5, 0.5]), move: [[0.02, 0.02]] })
   assert.equal(out.nStates, 1)
-  // only faces containing the marked sheet region moved
   assert.ok(out.anim.moving.some(Boolean) && !out.anim.moving.every(Boolean))
 })
 
@@ -179,8 +178,6 @@ test('swing direction follows the target stacking (both picks of a fold)', () =>
   const outs = [0, 1].map((pick) => foldStep(st, {
     line: lineThrough([0, 0], [1, 1]), move: [[0.9, 0.1]], pick,
   }))
-  // the two valid states put the flap on opposite sides — and the swing
-  // must go out on the side the flap lands on
   for (const out of outs) {
     const mover = out.anim.moving.findIndex(Boolean)
     const still = out.anim.moving.findIndex((m) => !m)
@@ -353,8 +350,6 @@ test('held folds (to < 1) keep the rigid swing — the pose stays exact', () => 
   ]
   const program = compileFoldTable(rows)
   assert.equal(program.steps[1].soft, undefined)
-  // the held pose is the exact rigid mid-swing: rigid rotation preserves
-  // every edge length
   const held = foldTablePositions(program, 1.5)
   const step = program.steps[1]
   for (const F of step.FV) {
@@ -375,13 +370,10 @@ test('crease rows: cut every ply, fold nothing, take no timeline slot', () => {
   ]
   const program = compileFoldTable(rows)
   const plain = compileFoldTable(rows.filter((r) => r.kind !== 'crease'))
-  // two folding steps on the timeline; the crease takes no slot
   assert.equal(program.steps.length, 2)
   assert.equal(program.steps[1].t0, 2, 'crease rows do not shift the schedule')
   assert.ok(program.steps[1].FV.length > plain.steps[1].FV.length,
     'the pre-crease subdivided the sheet')
-  // geometry unchanged by the crease itself: state after step 1 is still
-  // the folded triangle, flat
   const { pos } = foldTablePositions(program, 1)
   for (const p of pos) assert.ok(Math.abs(p[2]) < 1e-9)
 })

@@ -38,7 +38,6 @@ test('duplicateRow inserts a copy of the row right after it, with its own identi
   store.duplicateRow('t1', 0)
   assert.deepEqual(store.get('t1')!.rows, [{ beat: 3, loop: 0 }, { beat: 3, loop: 0 }, { beat: 9, loop: 0 }])
 
-  // The duplicate is independent — editing it doesn't touch the original.
   store.setCell('t1', 1, 'beat', 5)
   assert.deepEqual(store.get('t1')!.rows, [{ beat: 3, loop: 0 }, { beat: 5, loop: 0 }, { beat: 9, loop: 0 }])
 
@@ -54,10 +53,7 @@ test('every edit is stored as an event; the visible table is the fold', () => {
   store.setCell('t1', 0, 'beat', 3)
   store.setCell('t1', 0, 'beat', 7)
 
-  // The current state reflects only the latest value…
   assert.deepEqual(store.get('t1')!.rows, [{ beat: 7, loop: 0 }])
-
-  // …but the history keeps both writes, in order, with stamps.
   const events = store.get('t1')!.events
   assert.deepEqual(events.map((e) => e.kind), ['create', 'add-row', 'set-cell', 'set-cell'])
   assert.deepEqual(events.slice(2).map((e) => e.value), [3, 7])
@@ -80,15 +76,12 @@ test('a boolean column named "disabled" hides a row from ensure() without deleti
   store.addColumn('kf', 'disabled', 'boolean')
   store.setCell('kf', 1, 'disabled', true)
 
-  // The table panel still sees every row…
   assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [1, 2, 3])
-  // …but the program (ensure()'s return) sees the middle row omitted.
   assert.deepEqual(
     store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }, { v: 3 }]).map((r) => r.v),
     [1, 3],
   )
 
-  // Unchecking it brings the row back for the program.
   store.setCell('kf', 1, 'disabled', false)
   assert.deepEqual(
     store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }, { v: 3 }]).map((r) => r.v),
@@ -119,8 +112,6 @@ test('toggling "disabled" dirties the row like any other edit — it stops follo
   store.addColumn('kf', 'disabled', 'boolean')
   store.setCell('kf', 0, 'disabled', true)
 
-  // Same rule as any other cell edit: touching the row claims it from the
-  // program, so a later re-seed leaves its value alone.
   store.ensure('kf', { v: 'number' }, [{ v: 100 }, { v: 200 }])
   assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [1, 200])
 })
@@ -143,7 +134,6 @@ test('renameTable moves state (and its event history) and rejects collisions', (
   assert.ok(store.renameTable('t1', 'scores'))
   assert.ok(!store.has('t1'))
   assert.ok(store.has('scores'))
-  // The history rides along through the rename.
   assert.deepEqual(store.get('scores')!.events.map((e) => e.kind), ['create', 'add-row', 'rename-table'])
   assert.ok(!store.renameTable('scores', 't2'), 'refuses to clobber an existing table')
 })
@@ -153,12 +143,9 @@ test('ensure creates on first use (with seed rows), and later re-declares grow/s
   const rows = store.ensure('scores', { name: 'string', score: 'number' }, [{ name: 'ada', score: 100 }])
   assert.deepEqual(rows, [{ name: 'ada', score: 100 }])
 
-  // Re-declaring with an extra column keeps existing data and defaults the new field.
   const rows2 = store.ensure('scores', { name: 'string', score: 'number', bonus: 'boolean' })
   assert.deepEqual(rows2, [{ name: 'ada', score: 100, bonus: false }])
 
-  // Dropping columns from the declared schema drops them too — nothing the
-  // user did explicitly claimed them, so they're purely the program's to decide.
   const rows3 = store.ensure('scores', { name: 'string' })
   assert.deepEqual(rows3, [{ name: 'ada' }])
 })
@@ -166,12 +153,9 @@ test('ensure creates on first use (with seed rows), and later re-declares grow/s
 test('a column added via the table panel survives even after the program stops declaring the table at all', () => {
   const store = createEditableTableStore()
   store.ensure('scores', { name: 'string' }, [{ name: 'ada' }])
-  // Simulates "+ column" in the table panel — not declared in the program's code.
   store.addColumn('scores', 'extra', 'number')
   assert.deepEqual(store.get('scores')!.rows, [{ name: 'ada', extra: 0 }])
 
-  // Apply/Run again with the same code-declared schema (extra isn't mentioned):
-  // the table-panel column must survive.
   const rows = store.ensure('scores', { name: 'string' })
   assert.deepEqual(rows, [{ name: 'ada', extra: 0 }])
 })
@@ -179,12 +163,9 @@ test('a column added via the table panel survives even after the program stops d
 test('re-seeding replaces the code rows the user has not touched, and keeps the ones they edited', () => {
   const store = createEditableTableStore()
   store.ensure('kf', { beat: 'number', v: 'number' }, [{ beat: 1, v: 10 }, { beat: 2, v: 20 }, { beat: 3, v: 30 }])
-  // The user tweaks the middle row.
   store.setCell('kf', 1, 'v', 999)
   assert.deepEqual(store.get('kf')!.rows, [{ beat: 1, v: 10 }, { beat: 2, v: 999 }, { beat: 3, v: 30 }])
 
-  // The program's seed changes (every row) and re-runs: the two untouched rows
-  // follow the new seed, the edited row stays pinned to the user's value.
   store.ensure('kf', { beat: 'number', v: 'number' }, [{ beat: 1, v: 11 }, { beat: 2, v: 22 }, { beat: 3, v: 33 }])
   assert.deepEqual(store.get('kf')!.rows, [{ beat: 1, v: 11 }, { beat: 2, v: 999 }, { beat: 3, v: 33 }])
 })
@@ -196,7 +177,6 @@ test('re-seeding leaves everything alone when the seed is unchanged (no event, n
   store.setCell('kf', 0, 'v', 5)
   const before = store.get('kf')!.events.length
 
-  // Same seed literal on the next Run: no seed-rows event, edit preserved.
   store.ensure('kf', { beat: 'number', v: 'number' }, seed)
   assert.equal(store.get('kf')!.events.length, before, 'an unchanged seed appends nothing')
   assert.deepEqual(store.get('kf')!.rows, [{ beat: 1, v: 5 }, { beat: 2, v: 20 }])
@@ -209,8 +189,7 @@ test('re-seeding keeps user-added rows, and never overwrites/drops them', () => 
   store.setCell('kf', 2, 'v', 7) // the user's own row
   assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [1, 2, 7])
 
-  // Seed shrinks to one row: the surviving code slot re-seeds, the extra
-  // pristine code row drops, the user's added row stays put.
+  // Seed shrinks: the surviving code slot re-seeds, the extra pristine code row drops.
   store.ensure('kf', { v: 'number' }, [{ v: 100 }])
   assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [100, 7])
 
@@ -222,21 +201,18 @@ test('re-seeding keeps user-added rows, and never overwrites/drops them', () => 
 test('a code row the user deleted is not resurrected by a later re-seed', () => {
   const store = createEditableTableStore()
   store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }, { v: 3 }])
-  store.removeRow('kf', 1) // delete the pristine middle code row
+  store.removeRow('kf', 1)
   assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [1, 3])
 
-  // Re-run with a fully changed seed: slot 1 stays gone; the others re-seed.
   store.ensure('kf', { v: 'number' }, [{ v: 10 }, { v: 20 }, { v: 30 }])
   assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [10, 30])
 })
 
 test('a table-panel table is never re-seeded by a later editable() seed (the program never owned its rows)', () => {
   const store = createEditableTableStore()
-  store.createTable('t') // "+ table": beat/loop columns, user-owned
+  store.createTable('t')
   store.addRow('t')
   store.setCell('t', 0, 'beat', 5)
-  // The program now declares the same name with a seed. Its columns reconcile,
-  // but its rows are the user's — the seed must not add or replace anything.
   store.ensure('t', { beat: 'number', loop: 'number' }, [{ beat: 9, loop: 0 }])
   assert.deepEqual(store.get('t')!.rows, [{ beat: 5, loop: 0 }])
 })
@@ -248,20 +224,18 @@ test('re-seeding survives serialize/load — provenance is rebuilt purely from t
 
   const b = createEditableTableStore()
   assert.ok(b.load(a.serialize()))
-  // The reloaded store must apply a re-seed with the same edited/pristine split.
   b.ensure('kf', { v: 'number' }, [{ v: 10 }, { v: 20 }])
   assert.deepEqual(b.get('kf')!.rows.map((r) => r.v), [99, 20])
 })
 
 test('retainDeclared prunes a code-created table the program stopped declaring, and only that', () => {
   const store = createEditableTableStore()
-  store.ensure('code', { code: 'code' }, [{ code: 'x' }]) // the program itself — never pruned
-  store.ensure('a', { v: 'number' }, [{ v: 1 }])          // code-created editable table
-  store.ensure('b', { v: 'number' }, [{ v: 2 }])          // code-created editable table
-  store.createTable('u')                                   // user "+ table"
-  store.record('activity', 'apply')                        // a log stream
+  store.ensure('code', { code: 'code' }, [{ code: 'x' }])
+  store.ensure('a', { v: 'number' }, [{ v: 1 }])
+  store.ensure('b', { v: 'number' }, [{ v: 2 }])
+  store.createTable('u')
+  store.record('activity', 'apply')
 
-  // The program's next Run declares only "a": "b" should stop being editable.
   const removed = store.retainDeclared(['a'])
   assert.deepEqual(removed, ['b'])
   assert.ok(store.has('a'), 'still-declared table stays')
@@ -287,11 +261,11 @@ test('re-declaring retypes a purely-declared column in place; a column the user 
   const store = createEditableTableStore()
   store.ensure('t', { a: 'string' })
   store.addColumn('t', 'b', 'number')
-  store.ensure('t', { a: 'number' }) // "a" was never touched via the table panel — follows the declare
+  store.ensure('t', { a: 'number' })
   assert.deepEqual(store.get('t')!.columns, [{ name: 'a', type: 'number' }, { name: 'b', type: 'number' }])
 
-  store.setColumnType('t', 'b', 'string') // table panel retype "claims" b
-  store.ensure('t', { a: 'number', b: 'number' }) // code still thinks b is a number
+  store.setColumnType('t', 'b', 'string')
+  store.ensure('t', { a: 'number', b: 'number' })
   assert.deepEqual(store.get('t')!.columns, [{ name: 'a', type: 'number' }, { name: 'b', type: 'string' }], 'the table-panel retype wins')
 })
 
@@ -301,7 +275,6 @@ test('removing a column via the table panel keeps it gone even if the program ke
   store.removeColumn('t', 'b')
   assert.deepEqual(store.get('t')!.columns.map((c) => c.name), ['a'])
 
-  // Re-declaring the SAME schema (still mentioning "b") does not resurrect it.
   store.ensure('t', { a: 'string', b: 'number' })
   assert.deepEqual(store.get('t')!.columns.map((c) => c.name), ['a'])
 })
@@ -331,10 +304,8 @@ test('serialize/load round-trips the whole store — the unit a session persists
 })
 
 test('migrates a v1 session whose create event stored the editable() schema object as columns', () => {
-  // Before v2, a create event serialized its `columns` as the raw editable()
-  // schema ({ name: type }) — a specification produced by running the program —
-  // rather than today's [{ name, type }] array. The v1→v2 migration recovers
-  // the columns on load so a session with table data always opens.
+  // Before v2, a create event serialized `columns` as the raw editable() schema
+  // ({ name: type }) rather than today's [{ name, type }] array.
   const legacyV1 = JSON.stringify({
     version: 1, start: 1,
     events: [{
@@ -353,8 +324,6 @@ test('migrates a v1 session whose create event stored the editable() schema obje
     { beat: 1, px: 5, disabled: false }, { beat: 2, px: 9, disabled: false },
   ], 'the table data is intact')
 
-  // Re-serializing writes the current version with columns already in array
-  // form, so a later load needs no migration.
   const reSaved = JSON.parse(store.serialize())
   assert.equal(reSaved.version, 2)
   assert.ok(Array.isArray(reSaved.events[0].columns))
@@ -449,11 +418,9 @@ test('a code column language rides events, survives serialize/load, and tracks r
   store.ensure('sketches', { beat: 'number', code: { type: 'code', language: 'hydra' } })
   const col = () => store.get('sketches')!.columns.find((c) => c.name === 'code')!
   assert.equal(col().language, 'hydra')
-  // round-trip
   const store2 = createEditableTableStore()
   assert.ok(store2.load(store.serialize()))
   assert.equal(store2.get('sketches')!.columns.find((c) => c.name === 'code')!.language, 'hydra')
-  // the program re-declares without a language → the column tracks the schema
   store.ensure('sketches', { beat: 'number', code: 'code' })
   assert.equal(col().language, undefined)
 })
@@ -473,7 +440,6 @@ test('an enum column defaults a new row to its first option, and rides serialize
   store.ensure('h', { beat: 'number', event: ['setCode', 'layer'] })
   store.addRow('h')
   assert.deepEqual(store.get('h')!.rows, [{ beat: 0, event: 'setCode' }])
-  // options survive the round-trip (they're plain fields on the column events)
   const store2 = createEditableTableStore()
   assert.ok(store2.load(store.serialize()))
   const evCol = store2.get('h')!.columns.find((c) => c.name === 'event')!
@@ -486,14 +452,11 @@ test('cellValid: blanks pass; a non-blank value must fit its type; enum must be 
   // blank/unset is always allowed (these event tables are sparse)
   assert.equal(cellValid('', num), true)
   assert.equal(cellValid(null, en), true)
-  // numbers
   assert.equal(cellValid(3, num), true)
   assert.equal(cellValid('3', num), false)
   assert.equal(cellValid(NaN, num), false)
-  // enums
   assert.equal(cellValid('a', en), true)
   assert.equal(cellValid('c', en), false)
-  // string/code accept any non-blank
   assert.equal(cellValid('anything', { name: 's', type: 'string' }), true)
 })
 
@@ -504,7 +467,6 @@ test('invalidColumns names the cells that do not fit — empty when the row conf
     value: 'number',
   })
   assert.deepEqual(invalidColumns({ beat: 1, event: 'layer', value: 5 }, cols), [])
-  // a misspelled enum and text-in-a-number cell are both flagged
   assert.deepEqual(
     invalidColumns({ beat: 1, event: 'laayer', value: 'oops' }, cols),
     ['event', 'value'],
@@ -513,9 +475,9 @@ test('invalidColumns names the cells that do not fit — empty when the row conf
 
 test('recordRun snapshots every table\'s log index as one Apply bookmark', () => {
   const store = createEditableTableStore()
-  store.ensure('code', { code: 'code' }, [{ code: 'a' }]) // 1 event
-  store.createTable('nums')                               // 1 event
-  store.addRow('nums')                                    // 1 event
+  store.ensure('code', { code: 'code' }, [{ code: 'a' }])
+  store.createTable('nums')
+  store.addRow('nums')
   const run = store.recordRun()
 
   assert.equal(run.tables.code, 1, 'one code event so far')
@@ -532,22 +494,18 @@ test('setReplayView restores every table to its state at a past run', () => {
   store.setCell('nums', 0, 'beat', 10)
   const run1 = store.recordRun()
 
-  // A second batch of edits, then a second run.
   store.setRow('code', 0, { code: 'v2' })
   store.setCell('nums', 0, 'beat', 99)
   store.addRow('nums')
   store.recordRun()
 
-  // Head shows the latest state.
   assert.equal(store.get('code')!.rows[0].code, 'v2')
   assert.deepEqual(store.get('nums')!.rows, [{ beat: 99, loop: 0 }, { beat: 0, loop: 0 }])
 
-  // Scrub back to run 1 — reads serve the historical fold.
   store.setReplayView(run1)
   assert.equal(store.get('code')!.rows[0].code, 'v1')
   assert.deepEqual(store.get('nums')!.rows, [{ beat: 10, loop: 0 }])
 
-  // Returning to head restores the latest state.
   store.setReplayView(null)
   assert.equal(store.get('code')!.rows[0].code, 'v2')
   assert.deepEqual(store.get('nums')!.rows, [{ beat: 99, loop: 0 }, { beat: 0, loop: 0 }])
@@ -560,8 +518,7 @@ test('ensure is read-only while replaying — a scrubbed cook appends nothing', 
   const lenBefore = store.get('code')!.events.length
 
   store.setReplayView(run)
-  // A table the historical program references but that didn't exist then:
-  // returns the seed without mutating the log.
+  // 'ghost' didn't exist at the replayed run: the seed comes back, the log stays put.
   assert.deepEqual(store.ensure('ghost', { v: 'number' }, [{ v: 5 }]), [{ v: 5 }])
   store.setReplayView(null)
   assert.ok(!store.has('ghost'), 'no create event leaked from the replay cook')
@@ -579,7 +536,6 @@ test('an edit while replaying returns to head, never rewriting history', () => {
 
   store.setReplayView(run1)
   assert.equal(store.get('nums')!.rows[0].beat, 1, 'viewing the past')
-  // Editing lands on the head (beat 2 → 3), not on the replayed past.
   store.setCell('nums', 0, 'beat', 3)
   assert.equal(store.get('nums')!.rows[0].beat, 3)
   assert.equal(store.runs().length, 2, 'no new run recorded by a plain edit')
@@ -595,8 +551,6 @@ test('deriveRunsFromCode reconstructs one run per recorded program Run (legacy s
   const runs = store.runs()
   assert.equal(runs.length, 2, 'one run per code event')
 
-  // Replaying the derived first run shows the program as it was at Run 1,
-  // before "nums" existed.
   store.setReplayView(runs[0])
   assert.equal(store.get('code')!.rows[0].code, 'r1')
   assert.ok(!store.has('nums'), 'nums was created after Run 1')
@@ -616,8 +570,6 @@ test('deriveRunsFromCode stops at the latest clear-runs marker, leaving the code
   const runs = store.runs()
   assert.equal(runs.length, 1, 'runs before the clear marker are not resurrected')
 
-  // The clear only touched the run bookmarks — the program's own history (and
-  // therefore its current text) is exactly as if nothing had been cleared.
   assert.equal(store.get('code')!.rows[0].code, 'r3')
   assert.equal(store.get('code')!.events.length, 3, 'all three code events survive the clear')
 })
@@ -645,12 +597,10 @@ test('record() auto-creates a columnless table and appends the event to its hist
   const t = store.get('activity')!
   assert.deepEqual(t.columns, [])
   assert.deepEqual(t.rows, [], 'not a row-editable table — just an event stream')
-  // events[0] is the auto-create itself (same as any other table's history).
   assert.equal(t.events.length, 2)
   assert.equal(t.events[0].kind, 'create')
   assert.equal(t.events[1].kind, 'apply')
 
-  // A payload rides alongside kind/table, same as any other event.
   store.record('activity', 'peer-join', { client: 'abc' })
   assert.equal(store.get('activity')!.events.length, 3)
   assert.equal(store.get('activity')!.events[2].client, 'abc')
@@ -668,8 +618,6 @@ test('record() rides the same log multiplayer syncs — merges in on another rep
   assert.equal(b.get('activity')?.events.length, 2)
   assert.equal(b.get('activity')?.events[1].kind, 'apply')
 })
-
-// ── Branches: recordApply, fork-on-edit, checkout ────────────────────────────
 
 test('recordApply commits the pending edits as an apply node and grows the branch path', () => {
   const store = createEditableTableStore()
@@ -698,11 +646,9 @@ test('editing while scrubbed to an apply forks a new branch, leaving the old one
   store.setCell('t', 0, 'beat', 2)
   const a2 = store.recordApply()!
 
-  // Scrub back to a1 — a read-only preview of the state then.
   store.setReplayView(a1.id)
   assert.equal(store.get('t')!.rows[0].beat, 1)
 
-  // Edit while scrubbed → fork-on-edit: the edit lands on what we were looking at.
   store.setCell('t', 0, 'beat', 9)
   assert.equal(store.get('t')!.rows[0].beat, 9, 'edit hit the scrubbed state, not the head')
 
@@ -728,12 +674,10 @@ test('checkout switches the live fold to another branch and continues it', () =>
   const a3 = store.recordApply()!
   assert.equal(store.get('t')!.rows[0].beat, 9)
 
-  // Get back to the old branch.
   store.checkout(a2.id)
   assert.equal(store.currentHead(), a2.id)
   assert.equal(store.get('t')!.rows[0].beat, 2, 'a2 branch restored')
 
-  // Continuing it is just applying — the next apply extends a2, not a3.
   store.setCell('t', 0, 'beat', 3)
   const a4 = store.recordApply()!
   assert.equal(a4.parent, a2.id)
@@ -749,7 +693,7 @@ test('un-applied edits overlay the live head only, not a scrubbed-back run', () 
   const a1 = store.recordApply()!
   store.setCell('t', 0, 'beat', 2)
   store.recordApply()
-  store.setCell('t', 0, 'beat', 5) // pending — not applied
+  store.setCell('t', 0, 'beat', 5)
 
   assert.equal(store.get('t')!.rows[0].beat, 5, 'pending edit shows at the live head')
   store.setReplayView(a1.id)
@@ -786,14 +730,13 @@ test('a reload mid-edit reattaches the working tail so the next apply claims it'
   store.addRow('t')
   store.setCell('t', 0, 'beat', 1)
   store.recordApply()
-  store.setCell('t', 0, 'beat', 7) // pending, never applied
+  store.setCell('t', 0, 'beat', 7)
 
   const reopened = createEditableTableStore()
   assert.ok(reopened.load(store.serialize()))
   assert.equal(reopened.get('t')!.rows[0].beat, 7, 'working tail overlays after reload')
   const a2 = reopened.recordApply()!
   assert.ok(a2.edits.length > 0, 'the next apply claims the reattached working tail')
-  // Once claimed, the edit is committed history on this branch.
   reopened.setReplayView(null)
   assert.equal(reopened.get('t')!.rows[0].beat, 7)
 })
@@ -807,7 +750,6 @@ test('concurrent applies at the same tip linearize onto one branch across replic
   b.log.merge(a.log.all())
   b.checkout(base.id)
 
-  // Both edit disjoint-ish and apply at the same tip, before seeing each other.
   a.setCell('t', 0, 'beat', 1)
   const aApply = a.recordApply()!
   b.setCell('t', 0, 'loop', 2)
@@ -815,7 +757,6 @@ test('concurrent applies at the same tip linearize onto one branch across replic
   assert.equal(aApply.seen, base.id)
   assert.equal(bApply.seen, base.id)
 
-  // Merge both ways; both replicas fold to the same single-branch tree.
   a.log.merge(b.log.all())
   b.log.merge(a.log.all())
   assert.deepEqual(a.branchTree().heads, b.branchTree().heads)

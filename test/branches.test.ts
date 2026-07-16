@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import { buildBranchTree, branchEvents, APPLY_KIND } from '../src/branches.js'
 import type { StampedEvent } from '../src/event-log.js'
 
-// ── Builders ─────────────────────────────────────────────────────────────────
 // Raw stamped events with explicit seq/src so a scenario reads like a log.
 
 let clock = 0
@@ -22,8 +21,6 @@ function apply(
 }
 const key = (e: StampedEvent): string => `${e.src ?? ''}#${e.seq}`
 const ids = (events: StampedEvent[]): string[] => events.map((e) => (e.kind === APPLY_KIND ? (e.id as string) : key(e)))
-
-// ── Tree fold ────────────────────────────────────────────────────────────────
 
 test('an empty log folds to an empty tree', () => {
   const tree = buildBranchTree([])
@@ -92,11 +89,8 @@ test('a cycle in the parent chain is cut at the repeat', () => {
   const tree = buildBranchTree([apply(1, 'a1', 'a2', []), apply(2, 'a2', 'a1', [])])
   const path = tree.pathTo('a2')
   assert.ok(path.length >= 1 && path.length <= 2)
-  // pathTo terminates (no infinite loop) and every id is distinct.
   assert.equal(new Set(path.map((n) => n.id)).size, path.length)
 })
-
-// ── Linearization of concurrent applies ──────────────────────────────────────
 
 test('racing same-parent applies (seen == parent) chain into one line', () => {
   const log = [
@@ -129,16 +123,14 @@ test('a fork racing a tip apply keeps its own branch', () => {
   assert.equal(tree.nodes.get('a3')!.parent, 'a1', 'a fork is not chained onto the racer')
 })
 
-// ── Membership (branchEvents) ────────────────────────────────────────────────
-
 test('the motivating case: each branch folds exactly its claimed edits plus the shared prefix', () => {
   // apply1 -> edit -> apply2 ; scrub to apply1, edit, apply3
   const log = [
-    edit(0), // A#0 — claimed by a1
+    edit(0),
     apply(1, 'a1', null, ['A#0']),
-    edit(2), // A#2 — claimed by a2
+    edit(2),
     apply(3, 'a2', 'a1', ['A#2']),
-    edit(4), // A#4 — claimed by a3, authored after scrubbing back to a1
+    edit(4),
     apply(5, 'a3', 'a1', ['A#4'], 'a2'),
   ]
   const tree = buildBranchTree(log)
@@ -171,17 +163,14 @@ test('head null (legacy/fresh) returns the whole log in order', () => {
   assert.deepEqual(ids(branchEvents(log, null, tree)), ['A#0', 'A#1', 'A#2'])
 })
 
-// ── Working tail overlay ─────────────────────────────────────────────────────
-
 test('unclaimed edits after the newest apply overlay the live (leaf) head only', () => {
   const log = [
     edit(0),
     apply(1, 'a1', null, ['A#0']),
-    apply(3, 'a2', 'a1', []), // newest apply
-    edit(4), // A#4 — pending, unclaimed, after the newest apply
+    apply(3, 'a2', 'a1', []),
+    edit(4),
   ]
   const tree = buildBranchTree(log)
-  // a2 is the leaf/live tip → the pending edit overlays it.
   assert.deepEqual(ids(branchEvents(log, 'a2', tree)), ['A#0', 'a1', 'a2', 'A#4'])
   // a1 is a scrubbed-back, non-leaf node → no overlay.
   assert.deepEqual(ids(branchEvents(log, 'a1', tree)), ['A#0', 'a1'])
@@ -191,14 +180,12 @@ test('an unclaimed edit before the newest apply does not overlay (it was abandon
   const log = [
     edit(0),
     apply(1, 'a1', null, ['A#0']),
-    edit(2), // A#2 — abandoned: unclaimed but BEFORE the newest apply
+    edit(2),
     apply(3, 'a2', 'a1', []),
   ]
   const tree = buildBranchTree(log)
   assert.deepEqual(ids(branchEvents(log, 'a2', tree)), ['A#0', 'a1', 'a2'])
 })
-
-// ── Merge determinism ────────────────────────────────────────────────────────
 
 test('two logs forked from a common prefix fold to the same tree once merged', () => {
   const shared = [edit(0), apply(1, 'a1', null, ['A#0'])]

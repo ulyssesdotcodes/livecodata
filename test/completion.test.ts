@@ -2,7 +2,6 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { chainRoot, isExprDot, isThreeDot } from '../src/completion.js'
 
-// Helper: build a snippet ending in a "." and return chainRoot at that dot.
 const rootAt = (s: string): string | null => {
   const dot = s.lastIndexOf('.')
   return chainRoot(s, dot)
@@ -35,7 +34,6 @@ test('isExprDot distinguishes Expr from Table receivers', () => {
 })
 
 test('an Expr nested inside call args is detected at its own dot', () => {
-  // The dot right after the inner field("type") chain is an Expr dot.
   const s = 'table("sim").filter(field("type").'
   assert.equal(exprAt(s), true)
 })

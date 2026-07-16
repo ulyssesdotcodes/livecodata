@@ -137,8 +137,6 @@ test('no answers inside an unparseable mess still return gracefully', () => {
   assert.equal(qi, null)
 })
 
-// ── the hydra sketch surface (lang: 'hydra') ─────────────────────────────────
-
 const hydraSvc = createLangService(env, 'hydra')
 
 test('hydra: generators, sources, and outputs are globals; the DSL is not', () => {

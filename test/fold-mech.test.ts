@@ -69,7 +69,6 @@ test('deep reverse folds (neck, tail, head) get an exact rigid mechanism', () =>
       }
     }
 
-    // first frame is the flat pre-fold state, last the exact solved state
     out.anim.Vfrom.forEach((p, vi) => {
       assert.ok(Math.hypot(frames[0][vi * 3] - p[0], frames[0][vi * 3 + 1] - p[1], frames[0][vi * 3 + 2]) < 1e-8,
         `step ${idx + 1} starts flat`)
@@ -80,7 +79,6 @@ test('deep reverse folds (neck, tail, head) get an exact rigid mechanism', () =>
         `step ${idx + 1} lands on the solved state`)
     })
 
-    // rigid all the way through: no edge stretches or tears mid-motion
     const edges = edgeSet(out.state.FV)
     const rest = edges.map(([a, b]) => {
       const p = out.anim.Vfrom[a]
@@ -95,8 +93,6 @@ test('deep reverse folds (neck, tail, head) get an exact rigid mechanism', () =>
       })
     }
 
-    // the motion actually leaves the plane (it is not a fade between
-    // flat states)
     let maxZ = 0
     for (const f of frames) {
       for (let vi = 0; vi * 3 < f.length; ++vi) maxZ = Math.max(maxZ, Math.abs(f[vi * 3 + 2]))
@@ -134,7 +130,6 @@ test('compiled crane bakes the deep reverses and keeps flat states exact', () =>
   for (const s of deep) {
     assert.ok(s.soft, `step ${s.name} bakes motion`)
   }
-  // integer folds stay exactly flat
   for (let k = 0; k <= program.steps.length; ++k) {
     const { pos } = foldTablePositions(program, k)
     for (const p of pos) assert.ok(Math.abs(p[2]) < 1e-6, `fold ${k} is flat`)
