@@ -4,7 +4,7 @@ import { TextGeometry } from 'three/addons/geometries/TextGeometry.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import helvetiker from 'three/examples/fonts/helvetiker_regular.typeface.json'
 import { foldTablePositions, type FoldTableProgram } from './fold-engine.js'
-import { SHAPE_DEFAULTS } from './shapes.js'
+import { geometryDims, primitiveGeometry, type GeometryDims } from './three-points.js'
 
 export interface SceneAPI {
   createObject(row: Record<string, unknown>): void
@@ -17,15 +17,10 @@ export interface SceneAPI {
   readonly camera: THREE.PerspectiveCamera
 }
 
-export interface GeometryDims { hx: number; hy: number; hz: number; r: number; h: number }
-
-// The subset of a row's fields that determine geometry size, merged with the
-// shape's defaults — used both to build the geometry and, on later frames, to
-// detect a size change that means the geometry must be rebuilt.
-export function geometryDims(shape: string, dims: Record<string, unknown>): GeometryDims {
-  const d = { ...(SHAPE_DEFAULTS[shape] ?? SHAPE_DEFAULTS.box), ...dims }
-  return { hx: d.hx as number, hy: d.hy as number, hz: d.hz as number, r: d.r as number, h: d.h as number }
-}
+// geometryDims (and the primitive builder) live in three-points.ts, shared with
+// the DSL's points() sampler so a sampled box lands on the drawn box. Re-exported
+// here because that's where geometry decisions have always been imported from.
+export { geometryDims, type GeometryDims }
 
 function sameDims(a: GeometryDims, b: GeometryDims): boolean {
   return a.hx === b.hx && a.hy === b.hy && a.hz === b.hz && a.r === b.r && a.h === b.h
@@ -40,17 +35,10 @@ export function geometryChanged(prevShape: string, prevDims: GeometryDims, row: 
   return shape !== prevShape || !sameDims(geometryDims(shape, row), prevDims)
 }
 
-function makeGeometry(shape: string, dims: Record<string, unknown>): THREE.BufferGeometry {
-  const { hx, hy, hz, r, h } = geometryDims(shape, dims)
-  switch (shape) {
-    case 'sphere':   return new THREE.SphereGeometry(r, 32, 32)
-    case 'cylinder': return new THREE.CylinderGeometry(r, r, h * 2, 32)
-    case 'cone':     return new THREE.ConeGeometry(r, h * 2, 32)
-    case 'torus':    return new THREE.TorusGeometry(r, 0.08, 16, 64)
-    case 'box':
-    default:         return new THREE.BoxGeometry(hx * 2, hy * 2, hz * 2)
-  }
-}
+// The renderer's primitive geometry is built by the shared builder in
+// three-points.ts (same one the DSL's points() sampler uses), so the mesh drawn
+// for box() and the vertices returned by points("box") never drift apart.
+const makeGeometry = primitiveGeometry
 
 const PALETTE = [0x4a9eff, 0xff6b6b, 0x51cf66, 0xffd43b, 0xcc5de8, 0xff922b]
 
