@@ -14,6 +14,16 @@ export interface Sample {
   tables?: Record<string, Row[]>
 }
 
+// A URL-safe id for an example, derived from its display name (e.g. "CO2
+// (Mauna Loa)" -> "co2-mauna-loa"), so a link can open a specific example
+// directly (?example=<slug>) without needing a separate id field to keep in
+// sync with `name`.
+export const slugify = (name: string): string =>
+  name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+
+export const sampleIndexForSlug = (slug: string): number =>
+  SAMPLES.findIndex((s) => slugify(s.name) === slug)
+
 export const SAMPLES: Sample[] = [
   {
     name: "Editable Table",
