@@ -135,6 +135,9 @@ export const defaultProgram = SAMPLES[0].code
 // with the sample rather than inline in the code — so a fresh session/first run
 // must seed the store with it, exactly as opening the example does.
 export const defaultTables = SAMPLES[0].tables
+// …and the tab it opens on, so a fresh session shows the same relevant table
+// the example would (see main's newSession / openExample).
+export const defaultTable = SAMPLES[0].table ?? null
 
 export function viewAtPos(text: string, pos: number): string | null {
   const re = /\bdefine\(\s*"([^"]+)"/g

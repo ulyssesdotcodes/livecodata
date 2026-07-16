@@ -7,7 +7,7 @@ import { isBaubleRow } from './bauble.js'
 import { initBauble } from './bauble-scene.js'
 import { createSceneVisualizer, createHydraVisualizer, createBaubleVisualizer } from './visualizer.js'
 import { mountApp } from './ui/app.js'
-import { createEditor, defaultProgram, defaultTables, PROGRAM_CELL } from './ui/editor.js'
+import { createEditor, defaultProgram, defaultTables, defaultTable, PROGRAM_CELL } from './ui/editor.js'
 import { createTablePanel } from './ui/table-panel.js'
 import { EVENTS_SUFFIX } from './table-panel.js'
 import { createPlaybackController, type PlaybackController } from './ui/playback-controls.js'
@@ -131,6 +131,10 @@ function extractDataUrls(code: string): string[] {
 // that can only fire after this module has finished evaluating.
 let playback: PlaybackAPI
 
+// The table tab currently shown — mirrored from the panel's onSelectTable so
+// persistSession can record it, restoring the last-shown table on resume.
+let currentTable: string | null = null
+
 const tablePanel = createTablePanel(editableStore, {
   onEditCell: (table, rowIndex, col, value) => {
     // The "code" cell is the program itself, not a side table: clicking it
@@ -167,6 +171,9 @@ const tablePanel = createTablePanel(editableStore, {
   },
   onCtrlEnter: () => editor.run(),
   onSelectTable: (name) => {
+    // Remember the shown tab so a save records it and a resume reopens on it
+    // (see persistSession / openSession).
+    currentTable = name
     presence?.set({ table: name })
     schedulePresenceRefresh()
   },
@@ -523,6 +530,7 @@ function persistSession(): void {
     events: editableStore.serialize(),
     runs: editableStore.runs(),
     head: editableStore.currentHead(),
+    table: currentTable,
     tables: [...lastViews.keys()],
   })
     .then(refreshSelector)
@@ -947,6 +955,13 @@ async function openSession(id: string): Promise<void> {
   syncSessionBar()
   refreshSelector()
 
+  // Reopen on the table the session was last showing (the panel applies it once
+  // that tab exists — an editable table is present immediately, a cooked view
+  // appears after the cook below). A legacy session with no saved table leaves
+  // the panel on its default tab.
+  const savedTable = await sessionStore.table(id).catch(() => null)
+  tablePanel.restoreTable(savedTable)
+
   // Open the session for editing *before* running it: show its program and make
   // its tables editable now, so that if the program errors when cooked below the
   // session still ends up genuinely open — the editor holds its code and the
@@ -970,6 +985,10 @@ function newSession(): void {
   setExampleParam(null)
   currentSessionId = sessionStore.newId()
   quietly(() => editableStore.clear())
+  // A fresh session runs the default program (the "Editable Table" example) —
+  // open it on that example's relevant table, not whatever a prior resume left
+  // pending.
+  tablePanel.restoreTable(defaultTable)
   editor.setCode(defaultProgram)
   evaluate(defaultProgram, { setError: editor.setError, persist: false, seeds: defaultTables })
   syncSessionBar()
@@ -1045,6 +1064,10 @@ async function loadExample(index: number): Promise<void> {
   currentSessionId = sessionStore.newId()
   quietly(() => editableStore.clear())
   editor.setCode(sample.code)
+  // Show the example's most relevant table once its tabs exist (like session
+  // resume — the panel applies it after the cook produces cooked-view tabs).
+  // Falls back to the default tab when the sample names none.
+  tablePanel.restoreTable(sample.table ?? null)
   // The sample's editable table data (if any) seeds the freshly-cleared store,
   // so the example's editable(name, schema) calls carry column schemas only —
   // the row data lives with the sample, and populates the table panel on open.
@@ -1241,9 +1264,11 @@ async function firstRun(): Promise<void> {
     // append a new run.
     await scrubSession(sessionLength() - 1)
   } else {
-    // Speculative: nothing here yet, show the default program. If a room
-    // snapshot merges in while this first cook boots the worker, yield to it
-    // (see obsoleteIfProgramChanged) instead of clobbering the room.
+    // Speculative: nothing here yet, show the default program on its relevant
+    // table (the "Editable Table" example's "path"), same as opening it would.
+    // If a room snapshot merges in while this first cook boots the worker, yield
+    // to it (see obsoleteIfProgramChanged) instead of clobbering the room.
+    tablePanel.restoreTable(defaultTable)
     await evaluate(editor.getCode(), { setError: editor.setError, persist: false, obsoleteIfProgramChanged: true, seeds: defaultTables })
   }
   syncSessionBar()

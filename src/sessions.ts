@@ -48,6 +48,11 @@ export interface SessionRecord {
   // than snapping to the newest. Null/absent for a legacy or single-branch
   // session (the store re-derives the newest apply as head on load).
   head: string | null
+  // The table tab shown when the session was last saved — like `head`, purely
+  // local working state, so resuming reopens on the table the user was looking
+  // at rather than the default. Null/absent for a legacy session (the panel
+  // falls back to its default tab).
+  table: string | null
 }
 
 export interface SessionSummary {
@@ -64,6 +69,7 @@ export interface SessionSaveData {
   tables?: string[]
   runs?: SessionRun[]
   head?: string | null
+  table?: string | null
 }
 
 export interface SessionStore {
@@ -77,6 +83,8 @@ export interface SessionStore {
   runs(id: string): Promise<SessionRun[]>
   // The saved branch head (null for a legacy/single-branch session).
   head(id: string): Promise<string | null>
+  // The saved shown-table tab (null for a legacy session that predates it).
+  table(id: string): Promise<string | null>
   // Set the user-facing name. A no-op for an id that was never saved.
   rename(id: string, name: string): Promise<void>
   // Archive/unarchive. A no-op for an id that was never saved.
@@ -101,12 +109,13 @@ function normalizeRecord(s: Partial<SessionRecord> & { id: string }): SessionRec
     events: typeof s.events === 'string' ? s.events : '',
     runs: Array.isArray(s.runs) ? s.runs : [],
     head: typeof s.head === 'string' ? s.head : null,
+    table: typeof s.table === 'string' ? s.table : null,
   }
 }
 
 // The upsert both backends share: fresh data fields, identity/label fields
 // carried over from the existing record when there is one.
-function upsertRecord(existing: SessionRecord | null, id: string, { events, tables = [], runs = [], head = null }: SessionSaveData): SessionRecord {
+function upsertRecord(existing: SessionRecord | null, id: string, { events, tables = [], runs = [], head = null, table = null }: SessionSaveData): SessionRecord {
   const now = Date.now()
   return {
     id,
@@ -118,6 +127,7 @@ function upsertRecord(existing: SessionRecord | null, id: string, { events, tabl
     events,
     runs,
     head,
+    table,
   }
 }
 
@@ -217,6 +227,11 @@ export function createSessionStore(storage: MinimalStorage = defaultStorage()): 
     async head(id: string): Promise<string | null> {
       const s = readAll().find((s) => s.id === id)
       return s ? s.head : null
+    },
+
+    async table(id: string): Promise<string | null> {
+      const s = readAll().find((s) => s.id === id)
+      return s ? s.table : null
     },
 
     async rename(id: string, name: string): Promise<void> {
@@ -350,6 +365,11 @@ export function createIdbSessionStore(storage: MinimalStorage | undefined = defa
     async head(id: string): Promise<string | null> {
       const db = await open()
       return (await get(db, id))?.head ?? null
+    },
+
+    async table(id: string): Promise<string | null> {
+      const db = await open()
+      return (await get(db, id))?.table ?? null
     },
 
     async rename(id: string, name: string): Promise<void> {

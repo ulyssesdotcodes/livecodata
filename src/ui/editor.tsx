@@ -17,7 +17,7 @@ import { Prec, Compartment } from '@codemirror/state'
 import { vim } from '@replit/codemirror-vim'
 import {
   viewNameCompletions, codeCompletions, typeHover, signatureHelp, dslHover,
-  viewAtPos, defaultProgram, defaultTables,
+  viewAtPos, defaultProgram, defaultTables, defaultTable,
   remoteCursorField, setRemoteCursorsEffect, PROGRAM_CELL,
   type RemoteCursor, type SymbolCardData, type SigCardFactory,
 } from '../editor-support.js'
@@ -28,7 +28,7 @@ import { buildTablePreview } from './table-preview.js'
 import { DocsPopover } from './docs-popover.js'
 import type { Table } from '../dsl.js'
 
-export { defaultProgram, defaultTables, PROGRAM_CELL }
+export { defaultProgram, defaultTables, defaultTable, PROGRAM_CELL }
 export type { RemoteCursor }
 
 // The TypeScript language service, in its own worker (see lang-worker.ts):
