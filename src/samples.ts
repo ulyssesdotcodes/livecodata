@@ -627,6 +627,7 @@ editable("hydra", schemas.hydra)
   },
   {
     name: "Bauble Sketch",
+    table: "bauble",
     code: `// livecodata — a 3D SDF sketch with bauble (ianthehenry's bauble.studio)
 // Where hydra post-processes 2D textures, bauble raymarches a 3D scene written
 // in Janet — shapes composed as signed distance functions and compiled to a
