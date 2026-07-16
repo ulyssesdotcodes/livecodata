@@ -4,9 +4,8 @@ import { rasterizeRows, buildFrameIndex, stateAtFrame, sampleFrame } from '../sr
 import { frameToBeat, framesToBeats } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
 
-// A target cache frame → the 1-indexed `beat` that lands on it, and → the beats
-// *span* (for the maxBeats arg). Beats are the input unit now; frames stay the
-// internal baking grid these assertions read.
+// b: the 1-indexed beat landing on a cache frame; mb: a frame count as a beats
+// span (for maxBeats). Beats are the input unit; frames are the baking grid.
 const b = (frame: number): number => frameToBeat(frame)
 const mb = (frame: number): number => framesToBeats(frame)
 

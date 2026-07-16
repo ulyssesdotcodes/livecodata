@@ -10,7 +10,6 @@ import { frameToBeat } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
 
 const t = (rows: Row[]): Table => new Table(rows)
-// The 1-indexed source `beat` that maps to a given cache frame (30 frames/beat).
 const b = (frame: number): number => frameToBeat(frame)
 const nodeOf = (e: Expr): import('../src/dsl.js').ExprNode => e.node
 
@@ -107,7 +106,6 @@ test('a note recorded at frame 60 drives the field every time the loop passes it
     midi: (note, ch) => sampleMidiAt(idx, note, ch, frame),
   })
 
-  // The baked scene with a midi-bound field, as rasterize produces it.
   const baked = rasterizeRows(
     t([{ id: 's', type: 'create', beat: 1, shape: 'box', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
       .derive({ amount: midi('c4') }).rows,

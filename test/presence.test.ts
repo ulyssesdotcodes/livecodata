@@ -1,8 +1,5 @@
 // Presence: ephemeral who's-doing-what indicators riding their own synced
-// event log (see src/presence.ts). Covers the per-client last-wins fold, the
-// throttled announcer, deriving "last cell edited" straight from the store
-// log's src stamps, and a real round-trip through the room server (which
-// needs no changes — it merges and relays any named log).
+// event log (see src/presence.ts).
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -32,7 +29,6 @@ test('presence folds to the latest announcement per client', async () => {
   b.set({ table: 'notes' })
   await sleep(10)
 
-  // Exchange logs both ways; both sides agree on everyone's latest state.
   b.log.merge(a.log.all())
   a.log.merge(b.log.all())
   for (const chan of [a, b]) {
@@ -48,7 +44,6 @@ test('presence announcements are throttled and coalesce to the final state', asy
   // Inside the window: one immediate announcement, the rest pending.
   assert.equal(a.log.length, 1)
   await sleep(80)
-  // The trailing announcement carries the *final* coalesced state.
   const last = a.log.last()!
   assert.equal(last.head, 20)
   assert.ok(a.log.length <= 3, `expected coalesced announcements, got ${a.log.length}`)
@@ -92,8 +87,7 @@ test('lastCellEdits reads each replica\'s last edit off the store log', () => {
   assert.deepEqual(edits.get('a'), { table: 'notes', row: 0, col: 'pitch', seq: edits.get('a')!.seq })
   assert.deepEqual(edits.get('b'), { table: 'notes', row: 0, col: 'on', seq: edits.get('b')!.seq })
 
-  // A later set-row (e.g. a Run writing the "code" row) becomes that
-  // replica's last edit, attributed to its first written column.
+  // A set-row counts as an edit, attributed to its first written column.
   a.ensure('code', { code: 'code', seed: 'number' })
   a.addRow('code')
   a.setRow('code', 0, { code: 'view("x")', seed: 7 })
@@ -123,12 +117,10 @@ test('presence syncs through the room server as its own named log', async () => 
     conns.push(connectMultiplayer({ url, room: 'jam', logs: { presence: a.log } }))
     await until(() => server.roomLog('jam', 'presence').length > 0, 'a to seed presence')
 
-    // b joins later and still sees a's pre-join announcement via the sync.
     conns.push(connectMultiplayer({ url, room: 'jam', logs: { presence: b.log } }))
     await until(() => b.peers().has('a'), 'b to learn a\'s presence')
     assert.deepEqual(b.peers().get('a'), { client: 'a', user: 'alice', table: 'scene', cell: 'code[0].code', head: 4 })
 
-    // Live updates relay: a moves, b follows.
     a.set({ table: 'notes', head: 9 })
     await until(() => b.peers().get('a')?.table === 'notes', 'a\'s move to reach b')
     assert.equal(b.peers().get('a')!.head, 9)
@@ -152,7 +144,6 @@ test('live-code announcements fold to the latest buffer per client, separate fro
   const live = b.liveCodes().get('a')!
   assert.equal(live.cell, 'code[0].code')
   assert.equal(live.code, 'view("x").grid()')
-  // Cursor state rides its own events and is unaffected.
   assert.equal(b.peers().get('a')!.head, 16)
   // Re-announcing an identical buffer is a no-op.
   const len = a.log.length
@@ -172,7 +163,6 @@ test('the presence log stays bounded: superseded announcements compact away', as
   assert.ok(a.log.length <= 2, `expected a compacted log, got ${a.log.length} events`)
   const kinds = a.log.all().map((e) => e.kind).sort()
   assert.deepEqual(kinds, ['live-code', 'presence'])
-  // The survivors carry the *final* state.
   assert.equal(a.log.all().find((e) => e.kind === 'presence')!.head, 49)
   assert.equal(a.log.all().find((e) => e.kind === 'live-code')!.code, 'v49')
 })
@@ -193,9 +183,8 @@ test('live code syncs through the room server and the room copy stays compacted'
     }
     await until(() => b.liveCodes().get('a')?.code === 'view("x19")', 'a\'s typing to reach b')
 
-    // However many announcements were published, the room holds at most the
-    // latest per (replica, kind) — the join sync a latecomer downloads is
-    // O(replicas), not O(keystrokes).
+    // The room holds at most the latest event per (replica, kind) — the join
+    // sync a latecomer downloads is O(replicas), not O(keystrokes).
     await until(() => server.roomLog('jam', 'presence').length > 0, 'room to hold presence')
     const room = server.roomLog('jam', 'presence')
     const perSrcKind = new Set(room.map((e) => `${e.src}#${e.kind}`))

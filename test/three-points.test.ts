@@ -96,7 +96,6 @@ test('DSL points() returns a chainable table of point rows', () => {
   const rows = table.rows
   assert.equal(rows.length, 24) // a box's 6 faces × 4 corners
   assert.equal(typeof rows[0].nx, 'number')
-  // chains like any other table
   const shifted = table.map((r) => ({ px: (r.px as number) + 10 }))
   assert.equal(shifted.rows[0].px, (rows[0].px as number) + 10)
 })

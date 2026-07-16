@@ -28,17 +28,14 @@ test('two independent "clients" sharing an anchor land on the same phase at the 
   const anchorMs = 123456
   const loopSeconds = 2
   const nowMs = anchorMs + 7777
-  // Client A "started" a while ago, client B just started — irrelevant to the
-  // wall-aligned phase, which only depends on the shared anchor + now.
+  // When each client "started" is irrelevant: phase depends only on anchor + now.
   const phaseA = wallAlignedTick(nowMs, anchorMs, loopSeconds)
   const phaseB = wallAlignedTick(nowMs, anchorMs, loopSeconds)
   assert.equal(phaseA, phaseB)
 })
 
-// ---------------------------------------------------------------------------
-// Engine tests — the timing/loop/scrub state machine, driven deterministically
-// through the injectable clock (see PlaybackClock in playback.ts).
-// ---------------------------------------------------------------------------
+// --- Engine tests: the timing/loop/scrub state machine, driven through the
+// injectable clock (see PlaybackClock in playback.ts) ------------------------
 
 import { createPlaybackEngine, type PlaybackEngine, type TapControl } from '../src/playback.js'
 import { createSceneVisualizer, createHydraVisualizer } from '../src/visualizer.js'
@@ -83,9 +80,7 @@ function fakeTime(startMs: number) {
   }
 }
 
-// A hydra-only program: content exists (so playback runs) and the loop length
-// comes from loopBeats (DEFAULT_LOOP_BEATS unless set), with no scene rows to
-// stage.
+// Hydra-only program: content exists (so playback runs) with no scene rows to stage.
 const HYDRA_ROWS: Row[] = [{ event: 'setCode', code: 'osc().out()', beat: 1 }]
 
 function makeEngine(time: ReturnType<typeof fakeTime>, extra: { tapControl?: TapControl; onLoop?: () => void } = {}): PlaybackEngine {

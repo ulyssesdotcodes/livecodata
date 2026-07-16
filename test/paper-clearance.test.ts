@@ -3,20 +3,12 @@ import assert from 'node:assert/strict'
 import { compileFoldTable, foldTablePositions } from '../src/fold-engine.js'
 import { clearanceAt } from './util/clearance.js'
 
-// Paper must not pass through paper — and where zero-thickness folding
-// makes contact unavoidable, it must stay too shallow to read as mess:
-//
-//  - depth cap: no face pair may interpenetrate deeper than 4.5 stack
-//    thicknesses at any point of any swing. Thin grazes (a flap sliding
-//    into an interleave, pages brushing past each other while the model
-//    opens) live well below this; a solver that plunges (the failure mode
-//    this test exists to catch) measures ~9 stack thicknesses.
-//  - shimmer cap: faces may only be exactly coincident (within 0.5% of a
-//    layer gap) while overlapping for a moment — a flap overtaking a
-//    display layer on its way into the stack — never persistently.
-//
-// The sweep measures exactly what the renderer draws: solved positions
-// plus each face's layer offset along its carried direction.
+// Paper must not pass through paper — where zero-thickness folding makes
+// contact unavoidable it must stay too shallow to read as mess: no face pair
+// deeper than 4.5 stack thicknesses (grazes sit well below; a plunging solver
+// measures ~9), and exactly-coincident faces only momentarily, never
+// persistently. The sweep measures what the renderer draws: solved positions
+// plus each face's layer offset.
 
 const CRANE_ROWS = [
   { step: 'diag', p1: '0,0', p2: '1,1', move: '0.667,0.333', at: 1 },
@@ -82,9 +74,8 @@ test('cicada playback keeps paper out of paper', () => {
 })
 
 test('the deep reverse folds keep their baked mechanism motion', () => {
-  // the depth cap alone would pass if everything silently fell back to
-  // rigid swings; pin the routing so the paper-true motion cannot regress
-  // unnoticed
+  // the depth cap alone would pass if everything silently fell back to rigid
+  // swings; pin the routing so paper-true motion cannot regress unnoticed
   const program = compileFoldTable(CRANE_ROWS, { size: 1 })
   for (const name of ['collapse1', 'collapse2', 'collapse3', 'collapse4', 'neck', 'tail', 'head']) {
     const step = program.steps.find((s) => s.name === name)!
@@ -155,12 +146,9 @@ const displayedStrain = (rows: Record<string, unknown>[], name: string): number 
 }
 
 test('mechanism swings are smooth and clear (the beat-5.5 class of artifact)', () => {
-  // two artifacts the coarse sweep missed, both user-reported on
-  // collapse4's swing: keyframe-lerp wobble (paper visibly shivers — the
-  // dense-keyframe bake keeps displayed strain near zero) and persistent
-  // grazing crossings from display offsets shearing along different
-  // assembly directions (damped mid-swing; must stay in the invisible
-  // interleave-graze range)
+  // two user-reported artifacts on collapse4's swing that the coarse sweep
+  // missed: keyframe-lerp wobble (visible shiver) and persistent grazing
+  // crossings from display offsets shearing along different assembly directions
   const program = compileFoldTable(CRANE_ROWS, { size: 1 })
   const stack = program.gap * program.maxLayer
   for (const name of ['collapse4', 'neck']) {

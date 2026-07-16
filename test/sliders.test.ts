@@ -10,11 +10,9 @@ import type { Row } from '../src/lineage.js'
 import type { StampedEvent } from '../src/event-log.js'
 import type { SliderStore } from '../src/sliders.js'
 
-// The 1-indexed source `beat` that maps to a given cache frame (30 frames/beat).
 const b = (frame: number): number => frameToBeat(frame)
 
-// A minimal in-memory SliderStore, standing in for the editable-table store the
-// app backs sliders with — appends events, replays them, fires onChange.
+// In-memory stand-in for the editable-table store the app backs sliders with.
 function fakeStore(): SliderStore {
   const events: StampedEvent[] = []
   let seq = 0
@@ -78,7 +76,6 @@ test('sliderDefs keeps one def per id, last row wins', () => {
 // ── Index + sampling (most recent at-or-before; jump to first value at loop top) ─
 
 test('sampleSliderAt returns the most recent value at-or-before the frame', () => {
-  // brightness set to 1 at frame 60, dropped to 0 at frame 120.
   const rows: Row[] = [
     { type: 'slider', id: 'brightness', value: 1, beat: b(60) },
     { type: 'slider', id: 'brightness', value: 0, beat: b(120) },
@@ -91,9 +88,8 @@ test('sampleSliderAt returns the most recent value at-or-before the frame', () =
 })
 
 test('before the first move, sampleSliderAt jumps to the first recorded value (loop start)', () => {
-  // First move value 1 at frame 60, then 0 at frame 120. At the top of the loop
-  // (frames before 60) the slider should sit at the FIRST value, not carry over
-  // the loop-end value (0).
+  // At the loop top the slider must sit at the FIRST value, not carry over the
+  // loop-end value.
   const rows: Row[] = [
     { type: 'slider', id: 'x', value: 1, beat: b(60) },
     { type: 'slider', id: 'x', value: 0, beat: b(120) },
@@ -130,7 +126,6 @@ test('a fresh take (clearId then record) replaces the old one; untouched sliders
 
   src = 2; input.set('a', 0.1)
   src = 3; input.set('b', 0.2)
-  // Grab a again: clear its take, then record anew from a new position.
   input.clearId('a')
   src = 1.5; input.set('a', 0.7)
 
@@ -217,8 +212,6 @@ test('clear() empties the whole fold', () => {
   assert.equal(input.rows().length, 0)
 })
 
-// The store gives sync + persistence: any two replicas folding the same event
-// list get the same table (the fold is pure and order-deterministic).
 test('the fold is deterministic over a shared event list (multiplayer/session replay)', () => {
   const events: StampedEvent[] = [
     { seq: 0, t: 0, kind: 'slider', id: 'x', value: 0.3, beat: b(30) },
