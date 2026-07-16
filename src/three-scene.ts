@@ -1,4 +1,4 @@
-import * as THREE from 'three'
+import * as THREE from 'three/webgpu'
 import { FontLoader, type Font } from 'three/addons/loaders/FontLoader.js'
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
@@ -433,7 +433,10 @@ function disposeOrigami(obj: OrigamiObject): void {
 // hydra-scene.ts) takes it as a source texture and post-processes it onto the
 // visible canvas.
 export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): SceneAPI {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
+  // WebGPU when the browser has it, with an automatic WebGL2 fallback baked
+  // into WebGPURenderer — so the same code path drives both backends. The
+  // backend is chosen during renderer.init(), which the render loop awaits.
+  const renderer = new THREE.WebGPURenderer({ canvas, antialias: true })
   renderer.setPixelRatio(window.devicePixelRatio)
 
   const scene = new THREE.Scene()
@@ -522,7 +525,12 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
     renderer.render(scene, camera)
     requestAnimationFrame(animate)
   }
-  requestAnimationFrame(animate)
+  // WebGPURenderer must finish backend init before the first render() (it
+  // picks WebGPU, or falls back to a WebGL2 backend, during init). Gate the
+  // loop on that; a rejected init would leave the scene un-drawn, so surface it.
+  renderer.init().then(() => requestAnimationFrame(animate)).catch((e) => {
+    console.error('three-scene: renderer init failed', e)
+  })
 
   return {
     camera,
