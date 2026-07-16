@@ -949,17 +949,26 @@ export const SCHEMAS = deepFreeze({
    * "(rotate (box 50) :y t)"), "setVariable" (`name`/`value` = a (def name
    * value) compiled ahead of the sketch; changing one recompiles the shader,
    * except the reserved camera-x/camera-y/camera-zoom names, which orbit the
-   * camera as live uniforms). The render shows directly when no hydra sketch
-   * is live, and is hydra's s1 source either way — composite it with
-   * src(s1). `code` cells open in the editor as Janet (no JS completions);
-   * check `disabled` to mute a row without deleting it.
+   * camera as live uniforms) — plus the meta-programming events that rewrite
+   * the accumulated code in place: "transform" (`code` = a form wrapped
+   * around the shape, a standalone `_` marking the hole or the shape inserted
+   * as first argument), "duplicate" (combine the shape with a copy of itself
+   * run through `code`, via `mode` + smoothing `value`), "combine" (`code` =
+   * another whole shape composited via `mode` — union/intersect/subtract take
+   * `value` as the :r blend radius, morph as its blend amount), and "replace"
+   * (swap substring `find` for `value`). The render shows directly when no
+   * hydra sketch is live, and is hydra's s1 source either way — composite it
+   * with src(s1). `code` cells open in the editor as Janet (no JS
+   * completions); check `disabled` to mute a row without deleting it.
    */
   bauble: {
     beat: 'number',
-    event: ['setCode', 'setVariable'],
+    event: ['setCode', 'transform', 'duplicate', 'combine', 'replace', 'setVariable'],
     code: { type: 'code', language: 'bauble' },
+    find: 'string',
     name: 'string',
     value: 'number',
+    mode: ['union', 'intersect', 'subtract', 'morph'],
     disabled: 'boolean',
   },
   /**
