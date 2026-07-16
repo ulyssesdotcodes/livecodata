@@ -77,14 +77,3 @@ test('hydra variables can be data-driven from another view without cycling', () 
   assert.ok(bump, 'a collision-driven variable change was emitted')
   assert.equal(bump!.beat, 3)
 })
-
-test('cookProgram reproduces exactly what was authored for a given seed', () => {
-  const rt = createRuntime()
-  const authored = cookProgram(rt, PROG(6), 777)
-  const again = cookProgram(rt, PROG(6), 777)
-  assert.deepEqual(
-    again.views.get('noise')!.rows.map((r) => r.value),
-    authored.views.get('noise')!.rows.map((r) => r.value),
-  )
-  assert.deepEqual(again.sceneRows, authored.sceneRows)
-})

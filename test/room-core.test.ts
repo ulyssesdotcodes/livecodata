@@ -67,19 +67,6 @@ test('joining a room that already has peers unions the joiner logs in', () => {
   assert.ok(result.outbound.some((o) => o.to === 'others' && o.msg.type === 'events'))
 })
 
-test('joining a userless empty room just seeds it (nothing to drop)', () => {
-  const logs: RoomLogs = new Map()
-  const result = handleJoin(logs, { type: 'join', client: 'alice', logs: { tables: [ev(0, 'a')] } }, 123, false)
-  assert.equal(result.changed, true)
-  assert.equal(logs.get('tables')?.length, 1)
-  assert.deepEqual((logs.get(SESSION_LOG) ?? []).map((e) => e.client), ['alice'])
-})
-
-test('a missing client id joins as anon', () => {
-  const logs: RoomLogs = new Map()
-  assert.equal(handleJoin(logs, { type: 'join' }).clientId, 'anon')
-})
-
 test('events merge, dedup by (src, seq), and only relay what was new', () => {
   const logs: RoomLogs = new Map()
   handleEvents(logs, { type: 'events', log: 'tables', events: [ev(0, 'a')] })

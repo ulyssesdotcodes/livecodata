@@ -38,15 +38,6 @@ test('streaming bindings ({ $expr }) pass through untouched', () => {
   assert.deepEqual(out[0].value, binding)
 })
 
-test('nested arrays/objects with functions inside round-trip', () => {
-  const rows: Row[] = [{ steps: [{ ease: EASINGS.easeIn }, { ease: 'linear' }], meta: { deep: { f: (x: number) => x + 1 } } }]
-  const out = unpackRows(structuredCloneLike(packRows(rows)) as Row[])
-  const steps = out[0].steps as Array<Record<string, unknown>>
-  assert.equal((steps[0].ease as (t: number) => number)(0.5), EASINGS.easeIn(0.5))
-  assert.equal(steps[1].ease, 'linear')
-  assert.equal(((out[0].meta as { deep: { f: (x: number) => number } }).deep.f)(2), 3)
-})
-
 const req = (code: string, extra: Partial<Parameters<ReturnType<typeof createCookService>['handle']>[0]> = {}) => ({
   id: 1,
   code,

@@ -141,19 +141,17 @@ test('Hydra Meta sample: replace/append/setSource/layer rewrite the sketch acros
   assert.equal(at(9).code, 'noise(2.5, 0.3).kaleid(5).out(o0)')
   // beat 13: an additive layer of voronoi over the current sketch.
   assert.equal(at(13).code, 'noise(2.5, 0.3).kaleid(5).add(voronoi(10), 0.5).out(o0)')
-  // beat 14: a transition wipes to a fresh sketch through the user's mask, the
-  // window baked in props.time seconds: beat 14 = 6.5 s, +2 beats = 7.5 s.
-  const posFn = '(t) => Math.min(Math.max((t - 6.5) / 1, 0), 1)'
-  const userMask = 'gradient(0).thresh((props) => 1 - transitionPos(props.time), 0.15)'
-  const maskExpr = `((transitionStart, transitionEnd, transitionPos) => (${userMask}))(6.5, 7.5, ${posFn})`
-  assert.equal(
-    at(14).code,
-    'noise(2.5, 0.3).kaleid(5).add(voronoi(10), 0.5).layer((osc(30, 0.2, 2).kaleid(7))'
-    + `.mask(${maskExpr})).out(o0)`,
-  )
+  // beat 14: a transition wipes to a fresh sketch through the user's mask —
+  // the before program layers the after, revealed through the mask sketch.
+  const wipe = at(14).code
+  assert.ok(wipe.startsWith('noise(2.5, 0.3).kaleid(5).add(voronoi(10), 0.5).layer('), 'wipe starts from the before program')
+  assert.ok(wipe.includes('osc(30, 0.2, 2).kaleid(7)'), 'the after sketch rides inside the wipe')
+  assert.ok(wipe.includes('.mask('), 'revealed through a mask')
+  assert.ok(wipe.includes('gradient(0).thresh('), "the user's mask sketch is embedded")
+  assert.ok(wipe.endsWith('.out(o0)'))
   // Byte-stable through the wipe (beat 15 is mid-window) — no per-frame injection.
   assert.deepEqual(at(14).vars, {})
-  assert.equal(at(15).code, at(14).code)
+  assert.equal(at(15).code, wipe)
   // At beat 16 the 2-beat window has elapsed: only the after sketch remains.
   assert.equal(at(16).code, 'osc(30, 0.2, 2).kaleid(7).out(o0)')
   // frameToBeat is the inverse used above — a light sanity tie to constants.

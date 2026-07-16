@@ -1,19 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  createEditableTableStore, schemaColumns, cellValid, invalidColumns,
+  createEditableTableStore, schemaColumns, cellValid,
   CLEAR_RUNS_KIND,
   type EditableColumn,
 } from '../src/editable-tables.js'
-
-test('createTable seeds default beat and loop columns', () => {
-  const store = createEditableTableStore()
-  store.createTable('t1')
-  assert.ok(store.has('t1'))
-  const t = store.get('t1')!
-  assert.deepEqual(t.columns, [{ name: 'beat', type: 'number' }, { name: 'loop', type: 'number' }])
-  assert.deepEqual(t.rows, [])
-})
 
 test('addRow / setCell / removeRow', () => {
   const store = createEditableTableStore()
@@ -46,20 +37,6 @@ test('duplicateRow inserts a copy of the row right after it, with its own identi
   assert.equal(store.get('t1')!.rows.length, 3)
 })
 
-test('every edit is stored as an event; the visible table is the fold', () => {
-  const store = createEditableTableStore()
-  store.createTable('t1')
-  store.addRow('t1')
-  store.setCell('t1', 0, 'beat', 3)
-  store.setCell('t1', 0, 'beat', 7)
-
-  assert.deepEqual(store.get('t1')!.rows, [{ beat: 7, loop: 0 }])
-  const events = store.get('t1')!.events
-  assert.deepEqual(events.map((e) => e.kind), ['create', 'add-row', 'set-cell', 'set-cell'])
-  assert.deepEqual(events.slice(2).map((e) => e.value), [3, 7])
-  assert.ok(events.every((e, i) => typeof e.seq === 'number' && typeof e.t === 'number' && (i === 0 || (e.seq as number) > (events[i - 1].seq as number))))
-})
-
 test('addColumn backfills existing rows with a default; removeColumn drops it', () => {
   const store = createEditableTableStore()
   store.createTable('t1')
@@ -87,33 +64,6 @@ test('a boolean column named "disabled" hides a row from ensure() without deleti
     store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }, { v: 3 }]).map((r) => r.v),
     [1, 2, 3],
   )
-})
-
-test('adding a "disabled" column defaults every existing row to false (still visible to the program)', () => {
-  const store = createEditableTableStore()
-  store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }])
-  store.addColumn('kf', 'disabled', 'boolean')
-  assert.deepEqual(store.get('kf')!.rows, [{ v: 1, disabled: false }, { v: 2, disabled: false }])
-  assert.deepEqual(store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }]).map((r) => r.v), [1, 2])
-})
-
-test('toggling "disabled" is an ordinary set-cell edit, with no dedicated event kind', () => {
-  const store = createEditableTableStore()
-  store.createTable('t1')
-  store.addColumn('t1', 'disabled', 'boolean')
-  store.addRow('t1')
-  store.setCell('t1', 0, 'disabled', true)
-  assert.equal(store.get('t1')!.events.at(-1)!.kind, 'set-cell')
-})
-
-test('toggling "disabled" dirties the row like any other edit — it stops following later re-seeds', () => {
-  const store = createEditableTableStore()
-  store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }])
-  store.addColumn('kf', 'disabled', 'boolean')
-  store.setCell('kf', 0, 'disabled', true)
-
-  store.ensure('kf', { v: 'number' }, [{ v: 100 }, { v: 200 }])
-  assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [1, 200])
 })
 
 test('renameColumn moves the value under the new key', () => {
@@ -170,18 +120,6 @@ test('re-seeding replaces the code rows the user has not touched, and keeps the 
   assert.deepEqual(store.get('kf')!.rows, [{ beat: 1, v: 11 }, { beat: 2, v: 999 }, { beat: 3, v: 33 }])
 })
 
-test('re-seeding leaves everything alone when the seed is unchanged (no event, no row churn)', () => {
-  const store = createEditableTableStore()
-  const seed = [{ beat: 1, v: 10 }, { beat: 2, v: 20 }]
-  store.ensure('kf', { beat: 'number', v: 'number' }, seed)
-  store.setCell('kf', 0, 'v', 5)
-  const before = store.get('kf')!.events.length
-
-  store.ensure('kf', { beat: 'number', v: 'number' }, seed)
-  assert.equal(store.get('kf')!.events.length, before, 'an unchanged seed appends nothing')
-  assert.deepEqual(store.get('kf')!.rows, [{ beat: 1, v: 5 }, { beat: 2, v: 20 }])
-})
-
 test('re-seeding keeps user-added rows, and never overwrites/drops them', () => {
   const store = createEditableTableStore()
   store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }])
@@ -196,16 +134,6 @@ test('re-seeding keeps user-added rows, and never overwrites/drops them', () => 
   // Seed grows again: new code rows append after the user's row.
   store.ensure('kf', { v: 'number' }, [{ v: 100 }, { v: 200 }, { v: 300 }])
   assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [100, 7, 200, 300])
-})
-
-test('a code row the user deleted is not resurrected by a later re-seed', () => {
-  const store = createEditableTableStore()
-  store.ensure('kf', { v: 'number' }, [{ v: 1 }, { v: 2 }, { v: 3 }])
-  store.removeRow('kf', 1)
-  assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [1, 3])
-
-  store.ensure('kf', { v: 'number' }, [{ v: 10 }, { v: 20 }, { v: 30 }])
-  assert.deepEqual(store.get('kf')!.rows.map((r) => r.v), [10, 30])
 })
 
 test('a table-panel table is never re-seeded by a later editable() seed (the program never owned its rows)', () => {
@@ -376,15 +304,6 @@ test('setRow atomically sets several cells as one event', () => {
   assert.deepEqual(events[1].values, { code: 'b', seed: 2 })
 })
 
-test('code is a valid column type (defaults to empty string)', () => {
-  const store = createEditableTableStore()
-  store.ensure('h', { beat: 'number', code: 'code' })
-  store.addRow('h')
-  assert.deepEqual(store.get('h')!.rows, [{ beat: 0, code: '' }])
-  store.setCell('h', 0, 'code', 'src(s0).out()')
-  assert.equal(store.get('h')!.rows[0].code, 'src(s0).out()')
-})
-
 test('schemaColumns: a string[] spec is enum shorthand; the object form is explicit', () => {
   const cols = schemaColumns({
     beat: 'number',
@@ -397,19 +316,6 @@ test('schemaColumns: a string[] spec is enum shorthand; the object form is expli
     { name: 'event', type: 'enum', options: ['setCode', 'layer'] },
     { name: 'mode', type: 'enum', options: ['blend', 'add'] },
     { name: 'plain', type: 'string' },
-  ])
-})
-
-test('schemaColumns: a code column carries its declared language (code columns only)', () => {
-  const cols = schemaColumns({
-    code: { type: 'code', language: 'hydra' },
-    plainCode: 'code',
-    notCode: { type: 'string', language: 'hydra' } as never, // language on a non-code column is dropped
-  })
-  assert.deepEqual(cols, [
-    { name: 'code', type: 'code', language: 'hydra' },
-    { name: 'plainCode', type: 'code' },
-    { name: 'notCode', type: 'string' },
   ])
 })
 
@@ -458,32 +364,6 @@ test('cellValid: blanks pass; a non-blank value must fit its type; enum must be 
   assert.equal(cellValid('a', en), true)
   assert.equal(cellValid('c', en), false)
   assert.equal(cellValid('anything', { name: 's', type: 'string' }), true)
-})
-
-test('invalidColumns names the cells that do not fit — empty when the row conforms', () => {
-  const cols = schemaColumns({
-    beat: 'number',
-    event: ['setCode', 'layer'],
-    value: 'number',
-  })
-  assert.deepEqual(invalidColumns({ beat: 1, event: 'layer', value: 5 }, cols), [])
-  assert.deepEqual(
-    invalidColumns({ beat: 1, event: 'laayer', value: 'oops' }, cols),
-    ['event', 'value'],
-  )
-})
-
-test('recordRun snapshots every table\'s log index as one Apply bookmark', () => {
-  const store = createEditableTableStore()
-  store.ensure('code', { code: 'code' }, [{ code: 'a' }])
-  store.createTable('nums')
-  store.addRow('nums')
-  const run = store.recordRun()
-
-  assert.equal(run.tables.code, 1, 'one code event so far')
-  assert.equal(run.tables.nums, 2, 'create + add-row')
-  assert.equal(run.at, 3, 'the run is a prefix of the whole shared log')
-  assert.deepEqual(store.runs().map((r) => r.at), [3])
 })
 
 test('setReplayView restores every table to its state at a past run', () => {

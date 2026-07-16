@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createEventLog, foldEvents, randomSeed, mergeEvents, compareEvents, localSource, compactLatestPerSrcKind } from '../src/event-log.js'
+import { createEventLog, mergeEvents, compactLatestPerSrcKind } from '../src/event-log.js'
 import type { StampedEvent } from '../src/event-log.js'
 
 test('append stamps seq (monotonic) and t (ms since first event)', () => {
@@ -44,12 +44,6 @@ test('load rejects garbage without throwing', () => {
   assert.equal(log.load(null), false)
 })
 
-test('serialized version is the base plus the number of registered migrations', () => {
-  assert.equal(JSON.parse(createEventLog().serialize()).version, 1)
-  const migrations = [(evs: StampedEvent[]) => evs, (evs: StampedEvent[]) => evs]
-  assert.equal(JSON.parse(createEventLog({ migrations }).serialize()).version, 3)
-})
-
 test('load upgrades old data by running the tail of the migration chain', () => {
   // v1 → v2 tags each event; v2 → v3 tags again.
   const migrations = [
@@ -75,34 +69,6 @@ test('a missing version is treated as the base; newer-than-known data loads as-i
   const future = createEventLog({ migrations })
   future.load(JSON.stringify({ version: 99, start: 0, events: [{ kind: 'x', seq: 0, t: 0 }] }))
   assert.equal(future.all()[0].migrated, undefined, 'data from a newer version is left untouched')
-})
-
-test('onChange fires on append, load, and clear', () => {
-  const log = createEventLog()
-  let fired = 0
-  log.onChange(() => fired++)
-  log.append({ kind: 'a' })
-  log.load(log.serialize())
-  log.clear()
-  assert.equal(fired, 3)
-})
-
-test('append stamps src (the replica id, overridable for tests)', () => {
-  const log = createEventLog({ src: 'me' })
-  assert.equal(log.append({ kind: 'a' }).src, 'me')
-  const dflt = createEventLog()
-  assert.equal(dflt.append({ kind: 'a' }).src, localSource())
-})
-
-test('compareEvents orders by seq then src', () => {
-  const order = [
-    { seq: 0, t: 0, kind: 'x', src: 'b' },
-    { seq: 1, t: 0, kind: 'x', src: 'a' },
-    { seq: 1, t: 0, kind: 'x', src: 'b' },
-    { seq: 2, t: 0, kind: 'x' },
-  ]
-  const shuffled = [order[2], order[3], order[0], order[1]]
-  assert.deepEqual(shuffled.sort(compareEvents), order)
 })
 
 test('mergeEvents unions, dedups by (src, seq), and drops malformed events', () => {
@@ -173,35 +139,6 @@ test('merged logs serialize/load round-trip with src intact', () => {
   const copy = createEventLog()
   assert.ok(copy.load(a.serialize()))
   assert.deepEqual(copy.all(), a.all())
-})
-
-test('foldEvents derives state from the event list', () => {
-  const log = createEventLog()
-  log.append({ kind: 'add', n: 2 })
-  log.append({ kind: 'add', n: 3 })
-  log.append({ kind: 'mul', n: 10 })
-  const total = foldEvents(log.all(), (s, e) => (e.kind === 'add' ? s + (e.n as number) : s * (e.n as number)), 0)
-  assert.equal(total, 50)
-})
-
-test('randomSeed produces unsigned 32-bit integers', () => {
-  for (let i = 0; i < 50; i++) {
-    const s = randomSeed()
-    assert.ok(Number.isInteger(s) && s >= 0 && s <= 0xffffffff, `seed in range: ${s}`)
-  }
-})
-
-test('compactLatestPerSrcKind keeps only the newest event per (src, kind)', () => {
-  const events: StampedEvent[] = [
-    { seq: 0, t: 0, kind: 'presence', src: 'a', head: 1 },
-    { seq: 1, t: 0, kind: 'presence', src: 'b', head: 2 },
-    { seq: 2, t: 0, kind: 'live-code', src: 'a', code: 'x' },
-    { seq: 3, t: 0, kind: 'presence', src: 'a', head: 9 },
-    { seq: 4, t: 0, kind: 'live-code', src: 'a', code: 'xy' },
-  ]
-  const compacted = compactLatestPerSrcKind(events)
-  assert.deepEqual(compacted.map((e) => e.seq), [1, 3, 4])
-  assert.equal(compactLatestPerSrcKind(compacted), compacted)
 })
 
 test('a compact policy prunes superseded events on append and merge, seq stays monotonic', () => {

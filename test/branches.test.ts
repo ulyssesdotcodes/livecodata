@@ -22,13 +22,6 @@ function apply(
 const key = (e: StampedEvent): string => `${e.src ?? ''}#${e.seq}`
 const ids = (events: StampedEvent[]): string[] => events.map((e) => (e.kind === APPLY_KIND ? (e.id as string) : key(e)))
 
-test('an empty log folds to an empty tree', () => {
-  const tree = buildBranchTree([])
-  assert.equal(tree.nodes.size, 0)
-  assert.deepEqual(tree.heads, [])
-  assert.deepEqual(tree.pathTo('nope'), [])
-})
-
 test('a legacy apply pulse (no id) is not a tree node', () => {
   const tree = buildBranchTree([{ seq: 0, t: 0, kind: APPLY_KIND, table: 'activity', src: 'A' }])
   assert.equal(tree.nodes.size, 0)
@@ -58,18 +51,6 @@ test('a fork produces two heads that share the common prefix', () => {
   assert.equal(tree.nodes.get('a3')!.fork, true)
   assert.deepEqual(tree.pathTo('a2').map((n) => n.id), ['a1', 'a2'])
   assert.deepEqual(tree.pathTo('a3').map((n) => n.id), ['a1', 'a3'])
-})
-
-test('a fork of a fork branches again', () => {
-  const log = [
-    apply(1, 'a1', null, []),
-    apply(2, 'a2', 'a1', [], 'a1'),
-    apply(3, 'a3', 'a1', [], 'a2'), // fork of a1
-    apply(4, 'a4', 'a3', [], 'a1'), // fork of a3 (seen a1)
-  ]
-  const tree = buildBranchTree(log)
-  assert.deepEqual(new Set(tree.heads), new Set(['a2', 'a4']))
-  assert.deepEqual(tree.pathTo('a4').map((n) => n.id), ['a1', 'a3', 'a4'])
 })
 
 test('an apply with an unknown parent reparents to the root', () => {

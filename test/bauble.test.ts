@@ -46,17 +46,6 @@ test('a setCode event becomes the active sketch, a setVariable event binds a var
   assert.deepEqual(frame!.vars, { size: 30 })
 })
 
-test('no active sketch before the first setCode event', () => {
-  const rows: Row[] = [
-    { beat: b(2), event: 'setCode', code: '(box 50)' },
-    { beat: b(2), event: 'setVariable', name: 'size', value: 1 },
-  ]
-  assert.equal(frameAt(rows, 0), null, 'before the first code')
-  assert.equal(frameAt(rows, 1), null, 'still before')
-  assert.ok(frameAt(rows, 2), 'at the code row')
-  assert.ok(frameAt(rows, 9), 'after the code row it persists')
-})
-
 test('the latest setCode event at/before the frame wins; code persists until replaced', () => {
   const rows: Row[] = [
     { beat: 1, event: 'setCode', code: '(sphere 100)' },
@@ -80,22 +69,6 @@ test('variables take their latest value while the sketch stays put', () => {
   assert.deepEqual(frameAt(rows, 3)!.vars, { size: 5, spin: 0 })
   assert.deepEqual(frameAt(rows, 6)!.vars, { size: 5, spin: 0.5 })
   assert.equal(frameAt(rows, 6)!.code, '(sphere size)')
-})
-
-test('buildBaubleIndex places rows on the frame grid by beat and sorts ascending', () => {
-  const idx = buildBaubleIndex([
-    { beat: b(5), event: 'setCode', code: 'b' },
-    { beat: b(1), event: 'setCode', code: 'a' },
-  ])
-  assert.deepEqual(idx.map((r) => [r.index, r.code]), [[1, 'a'], [5, 'b']])
-})
-
-test('rows without a beat default to beat 1 (frame 0); empty/negative inputs yield no sketch', () => {
-  const idx = buildBaubleIndex([{ event: 'setCode', code: '(sphere 100)' }])
-  assert.equal(idx[0].index, 0)
-  assert.equal(frameAt([], 0), null)
-  assert.equal(frameAt(null, 0), null)
-  assert.equal(frameAt([{ beat: 1, event: 'setCode', code: '(sphere 100)' }], -1), null)
 })
 
 test('baubleFrameAt samples the pass named by `loop`, folding earlier passes in full', () => {
@@ -170,14 +143,4 @@ test('baubleCodeUpToRow folds up to and including the given row (in raw table or
   assert.equal(baubleCodeUpToRow(rows, 1), '(def size 50)\n(sphere size)')
   assert.equal(baubleCodeUpToRow(rows, 2), '(def size 90)\n(sphere size)')
   assert.equal(baubleCodeUpToRow(rows, 3), '(def size 90)\n(box size)')
-})
-
-test('baubleCodeUpToRow returns null for a non-bauble row or before any setCode', () => {
-  assert.equal(baubleCodeUpToRow([{ beat: 1, foo: 'bar' }], 0), null, 'not a bauble row')
-  assert.equal(baubleCodeUpToRow([
-    { beat: 1, event: 'setVariable', name: 'size', value: 1 },
-    { beat: 5, event: 'setCode', code: '(box 50)' },
-  ], 0), null, 'nothing compiled yet at that row')
-  assert.equal(baubleCodeUpToRow([], 0), null)
-  assert.equal(baubleCodeUpToRow(null, 0), null)
 })

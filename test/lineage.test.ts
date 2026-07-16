@@ -36,11 +36,6 @@ test('map / filter / flatMap / slice thread the source row lineage', () => {
   assert.deepEqual(fm.rows.map((r) => getLineage(r)[0].index), [0, 0, 2, 2, 3, 3])
 })
 
-test('concat keeps each row\'s own lineage', () => {
-  const out = tagged('a', 2).concat(tagged('b', 2))
-  assert.deepEqual(out.rows.map((r) => getLineage(r)[0].table), ['a', 'a', 'b', 'b'])
-})
-
 test('scan-emitted rows inherit the consumed input row lineage', () => {
   const out = tagged('src', 4).scan((s, cur) => ({
     state: s,

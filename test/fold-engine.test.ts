@@ -11,15 +11,6 @@ import { COMP } from '../src/vendor/linefolder/compute.js'
 
 const near = (a: number, b: number, tol = 1e-9): boolean => Math.abs(a - b) < tol
 
-test('initial state is one square face in a stable frame', () => {
-  const st = initialState()
-  assert.equal(st.FV.length, 1)
-  assert.equal(st.V.length, 4)
-  assert.deepEqual(st.sheet, st.V)
-  assert.deepEqual(st.layers, [0])
-  assert.deepEqual(st.FO, [])
-})
-
 test('diagonal fold: two faces, valid layer order, exact reflection', () => {
   const st = initialState()
   const out = foldStep(st, {

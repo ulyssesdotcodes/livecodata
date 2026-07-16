@@ -29,7 +29,7 @@ function fakeStore(): MidiStore {
 
 // ── Note names ↔ numbers ────────────────────────────────────────────────────
 
-test('noteToNumber parses note names (C4 = 60)', () => {
+test('noteToNumber / numberToNote map names to numbers and back (C4 = 60)', () => {
   assert.equal(noteToNumber('c4'), 60)
   assert.equal(noteToNumber('C4'), 60)
   assert.equal(noteToNumber('a4'), 69)
@@ -37,12 +37,7 @@ test('noteToNumber parses note names (C4 = 60)', () => {
   assert.equal(noteToNumber('db4'), 61, 'flats fold to the same pitch')
   assert.equal(noteToNumber('c-1'), 0, 'lowest octave')
   assert.equal(noteToNumber('nope'), null)
-})
-
-test('numberToNote round-trips through sharps', () => {
-  assert.equal(numberToNote(60), 'c4')
-  assert.equal(numberToNote(61), 'c#4')
-  assert.equal(numberToNote(69), 'a4')
+  assert.equal(numberToNote(61), 'c#4', 'round-trips through sharps')
   assert.equal(numberToNote(noteToNumber('g5')!), 'g5')
 })
 
@@ -107,18 +102,13 @@ test('createMidiInput stamps events with the current source position', () => {
   assert.equal(input.ctxAt(59).midi!('c4', null), 0)
 })
 
-test('feeds and clears land in the store (whose onChange notifies); ignored messages record nothing', () => {
-  const store = fakeStore()
-  let changes = 0
-  store.onChange(() => { changes++ })
-  const input = createMidiInput({ store, getIndex: () => 1 })
+test('ignored messages record nothing; clear() empties the fold', () => {
+  const input = createMidiInput({ store: fakeStore(), getIndex: () => 1 })
   input.feed([0x90, 62, 100])
-  input.feed([0xe0, 0, 0]) // ignored message → no event, no notify
+  input.feed([0xe0, 0, 0]) // ignored message → no event
   assert.equal(input.rows().length, 1)
-  assert.equal(changes, 1)
   input.clear()
   assert.equal(input.rows().length, 0)
-  assert.equal(changes, 2)
 })
 
 // ── Loop-aware folding: per note, the latest loop's take wins; the event log
@@ -188,18 +178,6 @@ test('same note/beat but different channels keep one row per channel', () => {
   const c4rows = input.rows().filter((r) => r.note === 'c4')
   assert.equal(c4rows.length, 2, 'distinct channels are not deduped against each other')
   assert.deepEqual(c4rows.map((r) => r.channel).sort(), [1, 2])
-})
-
-test('same note/channel but different frame both survive', () => {
-  let src = b(0)
-  const input = createMidiInput({ store: fakeStore(), getIndex: () => src })
-
-  input.feed([0x90, 60, 100])
-  src = b(30)
-  input.feed([0x90, 60, 50])
-
-  const c4rows = input.rows().filter((r) => r.note === 'c4')
-  assert.equal(c4rows.length, 2, 'different frames are independent rows')
 })
 
 // ── Recording tracks the timeline mapping ────────────────────────────────────

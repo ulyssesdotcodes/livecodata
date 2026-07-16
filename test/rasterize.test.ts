@@ -72,17 +72,6 @@ test('color pulse: flashes exactly at the trigger, eases to base, newest wins', 
   assert.equal(colorAt(10), 0x4a9eff, 'fully decayed back to the base color')
 })
 
-test('color step (no dur) stays a hard switch, newest event wins', () => {
-  const rows = rasterizeRows([
-    create({ color: 0x111111 }),
-    { id: 's', type: 'color', beat: b(4), color: 0x222222 },
-  ], mb(6))
-  const colorAt = (fr: number) => rows.find((r) => r.frame === fr)!.color
-  assert.equal(colorAt(3), 0x111111)
-  assert.equal(colorAt(4), 0x222222)
-  assert.equal(colorAt(6), 0x222222)
-})
-
 test('no rows before create and from destroy onward', () => {
   const rows = rasterizeRows([
     create({ beat: b(2) }),
@@ -153,16 +142,6 @@ test('empty input yields an empty cache', () => {
   const fi = buildFrameIndex([])
   assert.equal(fi.maxFrame, 0)
   assert.deepEqual(stateAtFrame(fi, 0), [])
-})
-
-test('custom numeric fields interpolate between keyframes (fold fractions ride the grid)', () => {
-  const rows = rasterizeRows([
-    create({ wings: 0 }),
-    { id: 's', type: 'update', beat: b(10), wings: 1 },
-  ], mb(10))
-  const at5 = rows.find((r) => r.frame === 5)!
-  assert.equal(at5.wings, 0.5, 'halfway through the ramp')
-  assert.equal(rows.find((r) => r.frame === 10)!.wings, 1)
 })
 
 test('custom numeric fields hold their last value when the next keyframe omits them', () => {

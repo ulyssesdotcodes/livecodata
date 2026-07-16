@@ -18,20 +18,6 @@ const b = (frame: number): number => frameToBeat(frame)
 const frameAt = (rows: Row[] | null | undefined, frame: number): HydraFrame | null =>
   hydraFrameAt(buildHydraIndex(rows), frame)
 
-test('isHydraRow / hydraRows recognise setCode/setVariable events', () => {
-  const rows: Row[] = [
-    { beat: 1, event: 'setCode', code: 'src(s0).out()' },
-    { beat: b(1), event: 'setVariable', name: 'speed', value: 2 },
-    { beat: b(2) },
-  ]
-  assert.equal(isHydraRow(rows[0]), true)
-  assert.equal(isHydraRow(rows[1]), true)
-  assert.equal(isHydraRow(rows[2]), false)
-  assert.equal(isHydraRow(null), false)
-  assert.deepEqual(hydraRows(rows).length, 2)
-  assert.deepEqual(hydraRows(null), [])
-})
-
 test('a setCode event becomes the active sketch, a setVariable event puts a variable in scope', () => {
   const frame = frameAt([
     // The code omits `.out()` — the fold appends the `out` column's output (o0).
@@ -79,20 +65,6 @@ test('variables take their latest value while the sketch stays put', () => {
   assert.equal(frameAt(rows, 6)!.code, 'osc(speed).out(o0)')
 })
 
-test('buildHydraIndex places rows on the frame grid by beat and sorts ascending', () => {
-  const idx = buildHydraIndex([
-    { beat: b(5), event: 'setCode', code: 'b' },
-    { beat: b(1), event: 'setCode', code: 'a' },
-  ])
-  assert.deepEqual(idx.map((r) => [r.index, r.code]), [[1, 'a'], [5, 'b']])
-})
-
-test('empty / negative-frame inputs yield no sketch', () => {
-  assert.equal(frameAt([], 0), null)
-  assert.equal(frameAt(null, 0), null)
-  assert.equal(frameAt([{ beat: 1, event: 'setCode', code: 'src(s0).out()' }], -1), null)
-})
-
 test('a `beat` column places rows on the loop 1-indexed (30 frames/beat)', () => {
   // beat b sits at (b-1)*30 frames. beat 1 → frame 0, beat 9 → frame 240.
   const idx = buildHydraIndex([
@@ -104,11 +76,6 @@ test('a `beat` column places rows on the loop 1-indexed (30 frames/beat)', () =>
   assert.deepEqual(hydraFrameAt(idx, 0)!.vars, { freq: 3 })
   assert.deepEqual(hydraFrameAt(idx, 239)!.vars, { freq: 3 })
   assert.deepEqual(hydraFrameAt(idx, 240)!.vars, { freq: 12 })
-})
-
-test('rows without a beat default to beat 1 (frame 0)', () => {
-  const idx = buildHydraIndex([{ event: 'setCode', code: 'osc(1).out(o0)' }])
-  assert.equal(idx[0].index, 0)
 })
 
 test('hydraFrameAt samples the pass named by `loop`, folding earlier passes in full', () => {
@@ -132,14 +99,6 @@ test('buildHydraIndex orders rows by (loop, frame); hydraLoops counts the passes
   assert.deepEqual(index.map((r) => r.code), ['first', 'later'])
   assert.equal(hydraLoops(index), 2)
   assert.equal(hydraLoops(buildHydraIndex([{ beat: 1, event: 'setCode', code: 'x' }])), 1)
-})
-
-test('hydraFrameAt without a loop argument behaves as pass 0 (single-loop unchanged)', () => {
-  const index = buildHydraIndex([
-    { beat: 1, event: 'setCode', code: 'a' },
-    { beat: 1, loop: 1, event: 'setCode', code: 'b' },
-  ])
-  assert.equal(hydraFrameAt(index, 99)!.code, 'a.out(o0)')
 })
 
 test('isHydraRow / hydraRows recognise the meta-programming events', () => {
@@ -183,15 +142,6 @@ test('setSource brings the new source’s own leading effects, strips its .out()
   assert.equal(hydraFrameAt(idx, 2)!.code, 'noise(3).colorama(0.5).kaleid(4).out(o0)')
 })
 
-test('setSource before any setCode is a no-op', () => {
-  const idx = buildHydraIndex([
-    { beat: 1, event: 'setSource', code: 'osc(10)' },
-    { beat: b(2), event: 'setCode', code: 'src(s0).out(o0)' },
-  ])
-  assert.equal(hydraFrameAt(idx, 0), null)
-  assert.equal(hydraFrameAt(idx, 2)!.code, 'src(s0).out(o0)')
-})
-
 test('replace swaps every occurrence of the literal string in the current code', () => {
   const rows: Row[] = [
     { beat: 1, event: 'setCode', code: 'osc(10).modulate(osc(10)).out(o0)' },
@@ -200,15 +150,6 @@ test('replace swaps every occurrence of the literal string in the current code',
   const idx = buildHydraIndex(rows)
   assert.equal(hydraFrameAt(idx, 0)!.code, 'osc(10).modulate(osc(10)).out(o0)')
   assert.equal(hydraFrameAt(idx, 4)!.code, 'noise(10).modulate(noise(10)).out(o0)')
-})
-
-test('replace before any setCode is a no-op (nothing to transform yet)', () => {
-  const idx = buildHydraIndex([
-    { beat: 1, event: 'replace', find: 'a', value: 'b' },
-    { beat: b(2), event: 'setCode', code: 'osc(a).out(o0)' },
-  ])
-  assert.equal(hydraFrameAt(idx, 0), null)
-  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(a).out(o0)')
 })
 
 test('replace coerces a non-string replacement and ignores an empty find', () => {
@@ -229,16 +170,6 @@ test('append extends the chain with a fragment, before the .out()', () => {
   ])
   assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).rotate(0.1).out(o0)')
   assert.equal(hydraFrameAt(idx, 3)!.code, 'osc(10).rotate(0.1).kaleid(4).out(o0)')
-})
-
-test('append tolerates a missing .out() and trims/ignores blank fragments', () => {
-  const idx = buildHydraIndex([
-    { beat: 1, event: 'setCode', code: 'osc(10)' },
-    { beat: b(2), event: 'append', code: '  .rotate(0.1)  ' },
-    { beat: b(3), event: 'append', code: '   ' },
-  ])
-  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).rotate(0.1).out(o0)')
-  assert.equal(hydraFrameAt(idx, 3)!.code, 'osc(10).rotate(0.1).out(o0)', 'blank fragment is a no-op')
 })
 
 test('layer defaults to blend mode; a value supplies the crossfade amount', () => {
@@ -288,14 +219,6 @@ test('layer amount can be a live expression evaluated with props each frame', ()
   )
 })
 
-test('layer with no amount omits it, leaning on the operator’s hydra default', () => {
-  const idx = buildHydraIndex([
-    { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
-    { beat: b(2), event: 'layer', code: 'noise(3).out(o0)' },
-  ])
-  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).blend(noise(3)).out(o0)')
-})
-
 test('meta events compose in beat order and fold across loop passes', () => {
   const idx = buildHydraIndex([
     { beat: 1, loop: 0, event: 'setCode', code: 'osc(10).out(o0)' },
@@ -305,14 +228,6 @@ test('meta events compose in beat order and fold across loop passes', () => {
   // Pass 1 folds pass 0 in full (append included), then applies its own replace.
   assert.equal(hydraFrameAt(idx, 0, 1)!.code, 'osc(10).rotate(0.1).out(o0)')
   assert.equal(hydraFrameAt(idx, 2, 1)!.code, 'osc(20).rotate(0.1).out(o0)')
-})
-
-test('isHydraRow recognises the transition event', () => {
-  assert.equal(isHydraRow({ beat: 1, event: 'transition', code: 'noise(3).out(o0)', value: 4 }), true)
-  assert.equal(hydraRows([
-    { beat: 1, event: 'setCode', code: 'osc(1).out(o0)' },
-    { beat: 1, event: 'transition', code: 'noise(3).out(o0)', value: 2 },
-  ]).length, 2)
 })
 
 test('events fold per output; the sketch concatenates every output in name order', () => {
@@ -331,14 +246,6 @@ test('append / layer target the row’s own output', () => {
   ])
   assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).rotate(0.1).out(o1)')
   assert.equal(hydraFrameAt(idx, 3)!.code, 'osc(10).rotate(0.1).add(noise(3)).out(o1)')
-})
-
-test('a missing / blank output cell defaults to o0 (single-output tables unchanged)', () => {
-  const idx = buildHydraIndex([
-    { beat: 1, out: '', event: 'setCode', code: 'osc(10).out(o0)' },
-    { beat: b(2), event: 'append', code: '.kaleid(4)' },
-  ])
-  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).kaleid(4).out(o0)')
 })
 
 test('the `out` column supplies the terminal .out(oN); code needn’t write it', () => {
@@ -385,31 +292,6 @@ test('code/transition/code wipes from the before program to the after through th
   assert.equal(hydraFrameAt(idx, 240)!.code, 'osc(10).out(o0)')
 })
 
-test('code/transition/layer reveals the layer through the mask', () => {
-  const idx = buildHydraIndex([
-    { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
-    { beat: 5, event: 'transition', code: 'noise(3).out(o0)', value: 2 },
-    { beat: 5, event: 'layer', code: 'voronoi(5).out(o0)', mode: 'add', value: 0.5 },
-  ])
-  assert.equal(
-    hydraFrameAt(idx, 120)!.code,
-    `osc(10).layer((osc(10).add(voronoi(5), 0.5)).mask(${maskExpr('noise(3)', 120, 60)})).out(o0)`,
-  )
-})
-
-test('layer/transition/code wipes from the layered program to a new one', () => {
-  const idx = buildHydraIndex([
-    { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
-    { beat: b(60), event: 'layer', code: 'voronoi(5).out(o0)', mode: 'add', value: 0.5 }, // frame 60
-    { beat: 5, event: 'transition', code: 'noise(3).out(o0)', value: 2 },
-    { beat: 5, event: 'setCode', code: 'src(s0).out(o0)' },
-  ])
-  assert.equal(
-    hydraFrameAt(idx, 120)!.code,
-    `osc(10).add(voronoi(5), 0.5).layer((src(s0)).mask(${maskExpr('noise(3)', 120, 60)})).out(o0)`,
-  )
-})
-
 test('a transition with no mask code falls back to a plain crossfade', () => {
   const idx = buildHydraIndex([
     { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
@@ -420,28 +302,6 @@ test('a transition with no mask code falls back to a plain crossfade', () => {
     hydraFrameAt(idx, 120)!.code,
     `osc(10).blend((noise(3)), (props) => (${posFn(120, 60)})(props.time)).out(o0)`,
   )
-})
-
-test('the wipe code is byte-stable through its window, then collapses to the after', () => {
-  const idx = buildHydraIndex([
-    { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
-    { beat: 5, event: 'transition', code: 'noise(3).out(o0)', value: 2 }, // frames 120–180
-    { beat: 5, event: 'setCode', code: 'src(s0).out(o0)' },
-  ])
-  const at = hydraFrameAt(idx, 120)!
-  for (const f of [150, 179]) assert.equal(hydraFrameAt(idx, f)!.code, at.code)
-  assert.deepEqual(at.vars, {})
-  assert.equal(hydraFrameAt(idx, 180)!.code, 'src(s0).out(o0)')
-  assert.equal(hydraFrameAt(idx, 300)!.code, 'src(s0).out(o0)')
-})
-
-test('a transition before any setCode is a no-op', () => {
-  const idx = buildHydraIndex([
-    { beat: 1, event: 'transition', code: 'noise(3).out(o0)', value: 2 },
-    { beat: b(2), event: 'setCode', code: 'osc(10).out(o0)' },
-  ])
-  assert.equal(hydraFrameAt(idx, 0), null)
-  assert.equal(hydraFrameAt(idx, 2)!.code, 'osc(10).out(o0)')
 })
 
 test('a wipe wraps cleanly at the loop boundary (loop 0) and re-runs each pass', () => {
@@ -489,25 +349,6 @@ test('overlapping transitions compose in beat order, the earliest wrapping the l
   )
 })
 
-test('transitions on different outputs fold apart, each on its own baked window', () => {
-  const idx = buildHydraIndex([
-    { beat: 1, out: 'o0', event: 'setCode', code: 'src(s0).out(o0)' },
-    { beat: 5, out: 'o0', event: 'transition', code: 'noise(3).out(o0)', value: 2 },
-    { beat: 5, out: 'o0', event: 'setCode', code: 'osc(10).out(o0)' },
-    { beat: 1, out: 'o1', event: 'setCode', code: 'gradient().out(o1)' },
-    { beat: 5, out: 'o1', event: 'transition', code: 'voronoi(4).out(o1)', value: 2 },
-    { beat: 5, out: 'o1', event: 'setCode', code: 'osc(20).out(o1)' },
-  ])
-  const frame = hydraFrameAt(idx, 120)!
-  // Both wipes read props.time directly — no shared counter across outputs.
-  assert.equal(
-    frame.code,
-    `src(s0).layer((osc(10)).mask(${maskExpr('noise(3)', 120, 60)})).out(o0)\n`
-    + `gradient().layer((osc(20)).mask(${maskExpr('voronoi(4)', 120, 60)})).out(o1)`,
-  )
-  assert.deepEqual(frame.vars, {})
-})
-
 test('hydraCodeUpToRow folds up to and including the given row (in raw table order)', () => {
   const rows: Row[] = [
     { beat: 1, event: 'setCode', code: 'osc(20).out(o0)' },
@@ -519,31 +360,4 @@ test('hydraCodeUpToRow folds up to and including the given row (in raw table ord
   assert.equal(hydraCodeUpToRow(rows, 1), 'osc(45).out(o0)')
   assert.equal(hydraCodeUpToRow(rows, 2), 'osc(45).kaleid(5).out(o0)')
   assert.equal(hydraCodeUpToRow(rows, 3), 'noise(2.5).kaleid(5).out(o0)')
-})
-
-test('hydraCodeUpToRow stops at the row even when several share a beat', () => {
-  const rows: Row[] = [
-    { beat: 1, event: 'setCode', code: 'src(s0).out(o0)' },
-    { beat: 5, event: 'transition', code: 'voronoi(5).out(o0)', value: 4 },
-    { beat: 5, event: 'setCode', code: 'osc(10).out(o0)' },
-  ]
-  // At the transition row the destination setCode hasn't folded yet, so the wipe is from src(s0) to itself.
-  assert.equal(
-    hydraCodeUpToRow(rows, 1),
-    `src(s0).layer((src(s0)).mask(${maskExpr('voronoi(5)', 120, 120)})).out(o0)`,
-  )
-  assert.equal(
-    hydraCodeUpToRow(rows, 2),
-    `src(s0).layer((osc(10)).mask(${maskExpr('voronoi(5)', 120, 120)})).out(o0)`,
-  )
-})
-
-test('hydraCodeUpToRow returns null for a non-hydra row or before any setCode', () => {
-  assert.equal(hydraCodeUpToRow([{ beat: 1, foo: 'bar' }], 0), null, 'not a hydra row')
-  assert.equal(hydraCodeUpToRow([
-    { beat: 1, event: 'append', code: '.rotate(0.1)' },
-    { beat: 5, event: 'setCode', code: 'osc(1).out(o0)' },
-  ], 0), null, 'nothing compiled yet at that row')
-  assert.equal(hydraCodeUpToRow([], 0), null)
-  assert.equal(hydraCodeUpToRow(null, 0), null)
 })

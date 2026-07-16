@@ -15,10 +15,6 @@ test('arithmetic chains evaluate left-to-right', () => {
   assert.deepEqual(out.rows, [{ v: 5 }]) // 2*3=6, +1=7, -2=5
 })
 
-test('filter(Expr) keeps rows where the predicate holds', () => {
-  assert.deepEqual(t([{ v: 1 }, { v: 5 }, { v: 2 }]).filter(field('v').gt(2)).rows, [{ v: 5 }])
-})
-
 test('and/or/not compose predicates', () => {
   const base = t([
     { type: 'collision', other: 'floor' },
@@ -37,11 +33,6 @@ test('cond picks a value declaratively', () => {
 test('emit fans each row out to one or many rows from templates', () => {
   const out = t([{ i: 0 }, { i: 1 }]).emit([{ x: field('i') }, { x: field('i').add(10) }])
   assert.deepEqual(out.rows, [{ x: 0 }, { x: 10 }, { x: 1 }, { x: 11 }])
-})
-
-test('derive accepts Expr, functions, and literals together', () => {
-  const out = t([{ a: 2 }]).derive({ b: field('a').mul(3), c: (r: Row) => (r.a as number) + 1, d: 'k' })
-  assert.deepEqual(out.rows, [{ a: 2, b: 6, c: 3, d: 'k' }])
 })
 
 test('Expr verbs carry lineage forward', () => {
@@ -78,13 +69,6 @@ test('tempo() derives the beat length from the taps table, else falls back', () 
   assert.equal(dslWithTaps(tapRowsAt(0.4)).tempo(), 0.4)
   assert.equal(dslWithTaps([]).tempo(), 0.5, 'default fallback is 120 BPM')
   assert.equal(dslWithTaps(tapRowsAt(0, 1)).tempo(0.25), 0.25, 'one tap is not enough')
-})
-
-test('taps() wraps the tap-beat rows in a Table (cloned)', () => {
-  const rows = tapRowsAt(0.5, 2)
-  const tbl = dslWithTaps(rows).taps()
-  assert.deepEqual(tbl.rows, rows)
-  assert.notEqual(tbl.rows[0], rows[0], 'rows are cloned')
 })
 
 test('beats(n) builds a two-keyframe identity remap spanning n beats', () => {

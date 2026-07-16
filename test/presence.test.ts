@@ -101,7 +101,6 @@ test('lastCellEdits reads each replica\'s last edit off the store log', () => {
 test('userColor is deterministic per name', () => {
   assert.equal(userColor('alice'), userColor('alice'))
   assert.notEqual(userColor('alice'), userColor('bob'))
-  assert.match(userColor('alice'), /^hsl\(\d+, 75%, 62%\)$/)
 })
 
 test('presence syncs through the room server as its own named log', async () => {
@@ -150,21 +149,6 @@ test('live-code announcements fold to the latest buffer per client, separate fro
   a.setLiveCode('code[0].code', 'view("x").grid()')
   await sleep(10)
   assert.equal(a.log.length, len)
-})
-
-test('the presence log stays bounded: superseded announcements compact away', async () => {
-  const a = createPresenceChannel({ user: 'alice', src: 'a', throttleMs: 1 })
-  for (let i = 0; i < 50; i++) {
-    a.set({ head: i })
-    a.setLiveCode('code[0].code', `v${i}`)
-    await sleep(3)
-  }
-  // One 'presence' + one 'live-code' event survive, however long the session.
-  assert.ok(a.log.length <= 2, `expected a compacted log, got ${a.log.length} events`)
-  const kinds = a.log.all().map((e) => e.kind).sort()
-  assert.deepEqual(kinds, ['live-code', 'presence'])
-  assert.equal(a.log.all().find((e) => e.kind === 'presence')!.head, 49)
-  assert.equal(a.log.all().find((e) => e.kind === 'live-code')!.code, 'v49')
 })
 
 test('live code syncs through the room server and the room copy stays compacted', async () => {

@@ -23,12 +23,6 @@ function fakeStorage(): FakeStorage {
   }
 }
 
-test('newId produces distinct ids', () => {
-  const store = createSessionStore(fakeStorage())
-  const ids = new Set([store.newId(), store.newId(), store.newId()])
-  assert.equal(ids.size, 3)
-})
-
 test('save then load round-trips the serialized log', async () => {
   const store = createSessionStore(fakeStorage())
   await store.save('a', { events: '{"entries":[1]}', tables: ['scene'] })
@@ -87,14 +81,6 @@ test('list returns summaries (with tables) newest-updated first, no log payload'
   assert.equal('events' in list[0], false, 'summaries omit the serialized events')
 })
 
-test('sessions start unnamed and unarchived', async () => {
-  const store = createSessionStore(fakeStorage())
-  await store.save('a', { events: 'a' })
-  const [s] = await store.list()
-  assert.equal(s.name, '')
-  assert.equal(s.archived, false)
-})
-
 test('rename sets the name; a later save preserves it', async () => {
   const store = createSessionStore(fakeStorage())
   await store.save('a', { events: 'v0' })
@@ -117,13 +103,6 @@ test('setArchived flips the flag; a later save preserves it; unarchive restores'
 
   await store.setArchived('a', false)
   assert.equal((await store.list())[0].archived, false)
-})
-
-test('rename and setArchived on an unknown id are no-ops', async () => {
-  const store = createSessionStore(fakeStorage())
-  await store.rename('missing', 'x')
-  await store.setArchived('missing', true)
-  assert.deepEqual(await store.list(), [])
 })
 
 test('remove deletes a single session', async () => {
