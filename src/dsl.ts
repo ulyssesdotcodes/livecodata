@@ -32,7 +32,7 @@ import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS } from './constants.js'
 import { compileFoldTable, foldValueAt, type FoldTableProgram } from './fold-engine.js'
 import type { Schema } from './editable-tables.js'
 import { beatSecondsFromTaps } from './tap-log.js'
-import { primitiveGeometry, pointsFromGeometry, geometryFromPoints } from './three-points.js'
+import { primitiveGeometry, pointsFromGeometry, geometryFromPoints, pointCloudEvents } from './three-points.js'
 import type { BufferGeometry } from 'three'
 
 // ── Expr: a small, serializable, chainable expression over a row ─────────────
@@ -1189,10 +1189,12 @@ export type DSLSurface = Easings & {
   object(shape: string, props?: Row): Table
   // A three.js primitive → a table of its points. Tessellates the shape (the
   // SAME geometry the renderer draws for box()/sphere()/…, sized by the same
-  // hx/hy/hz | r | h fields) and returns one row per vertex: { i, px, py, pz,
-  // nx, ny, nz } — position and surface normal in the shape's local space. Pass
-  // `segments` to raise the tessellation for a denser cloud. The rows are plain
-  // numbers, so they chain and transform like any table:
+  // hx/hy/hz | r | h fields) and returns one row per vertex: { i, beat, px, py,
+  // pz, nx, ny, nz } — position and surface normal in the shape's local space,
+  // each stamped with `beat` (default 1, override via props.beat) so a cloud can
+  // be posed differently on different beats. Pass `segments` to raise the
+  // tessellation for a denser cloud. The rows are plain numbers, so they chain
+  // and transform like any table:
   //   points("sphere", { r: 1, segments: 48 }).map({ px: field("nx"), ... })
   points(shape: string, props?: Row): Table
   // A table of points → a three.js primitive: a BufferGeometry whose position
@@ -1200,6 +1202,16 @@ export type DSLSurface = Easings & {
   // px/py/pz (nx/ny/nz). The inverse of points(): geometry(points("box")) round-
   // trips to an equivalent box geometry.
   geometry(points: Table | Row[]): BufferGeometry
+  // A beat-keyed points table → a renderable point-cloud scene object. Groups
+  // the rows by `beat` into one object (shape "points"): the earliest beat is
+  // its create, each later beat an update, and the rendered geometry swaps its
+  // vertex buffer to that beat's points as the loop plays — so animating the
+  // points across beats animates the cloud. Every beat that defines points must
+  // define the SAME number of them (a fixed GPU buffer); a differing count
+  // throws. `props` sets the object (id, color, size, px/py/pz, rx/ry/rz).
+  // Concat it into your scene events and rasterize like any other object:
+  //   pointCloud(points("sphere").concat(morphed)).rasterize(8)
+  pointCloud(points: Table | Row[], props?: Row): Table
   physics(source: Table | Row[]): PhysicsBuilder
   // Folding paper: origami() is a bare sheet. Chain .steps(table) to fold it
   // by instructions — each row a fold/reflection along a line through two
@@ -1295,14 +1307,16 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     // primitive from such a table. `segments` (if a number) sets tessellation;
     // the remaining props size the shape (hx/hy/hz | r | h).
     points: (shape: string, props: Row = {}): Table => {
-      const { segments, ...dims } = props
+      const { segments, beat = 1, ...dims } = props
       const geo = primitiveGeometry(shape, dims, typeof segments === 'number' ? { segments } : {})
-      const rows = pointsFromGeometry(geo)
+      const rows = pointsFromGeometry(geo).map((r) => ({ ...r, beat }))
       geo.dispose()
       return new Table(rows, ctx)
     },
     geometry: (points: Table | Row[]): BufferGeometry =>
       geometryFromPoints(points instanceof Table ? points.rows : points ?? []),
+    pointCloud: (points: Table | Row[], props: Row = {}): Table =>
+      new Table(pointCloudEvents(points instanceof Table ? points.rows : points ?? [], props), ctx),
     box: (props: Row = {}) => sceneObject('box', props, ctx),
     sphere: (props: Row = {}) => sceneObject('sphere', props, ctx),
     cylinder: (props: Row = {}) => sceneObject('cylinder', props, ctx),

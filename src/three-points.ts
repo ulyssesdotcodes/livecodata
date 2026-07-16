@@ -98,11 +98,10 @@ export function geometryFromPoints(rows: Row[]): BufferGeometry {
   const positions: number[] = []
   const normals: number[] = []
   let haveNormals = rows.length > 0
-  const n = (v: unknown): number => (typeof v === 'number' ? v : 0)
   for (const r of rows) {
-    positions.push(n(r.px), n(r.py), n(r.pz))
+    positions.push(numOr0(r.px), numOr0(r.py), numOr0(r.pz))
     if (r.nx == null || r.ny == null || r.nz == null) haveNormals = false
-    else normals.push(n(r.nx), n(r.ny), n(r.nz))
+    else normals.push(numOr0(r.nx), numOr0(r.ny), numOr0(r.nz))
   }
   const geometry = new BufferGeometry()
   geometry.setAttribute('position', new Float32BufferAttribute(positions, 3))
@@ -110,4 +109,60 @@ export function geometryFromPoints(rows: Row[]): BufferGeometry {
     geometry.setAttribute('normal', new Float32BufferAttribute(normals, 3))
   }
   return geometry
+}
+
+const numOr0 = (v: unknown): number => (typeof v === 'number' ? v : 0)
+
+// ── Animated point cloud: a beat-keyed points table → scene events ───────────
+// A points table carries a `beat` column (see the DSL's points()), so different
+// beats can hold the object in different poses — a morphing / breathing cloud.
+// pointCloudEvents packs that table into the scene's event stream for ONE object
+// (shape "points"): the earliest beat becomes the `create`, each later beat an
+// `update`, and each event carries THAT beat's vertices as flat position/normal
+// buffers (ptPos/ptNrm) plus a discrete `ptKey` so the renderer re-uploads the
+// GPU buffer only when the beat actually changes.
+//
+// The rendered geometry holds a FIXED-SIZE buffer, so every beat that defines
+// points must define the SAME number of them — a differing count throws here (at
+// cook time), rather than silently truncating or reallocating mid-playback.
+export function pointCloudEvents(rows: Row[], props: Row = {}): Row[] {
+  const { id = 'points', ...rest } = props
+  const byBeat = new Map<number, Row[]>()
+  for (const r of rows) {
+    const b = typeof r.beat === 'number' ? r.beat : 1
+    let bucket = byBeat.get(b)
+    if (!bucket) byBeat.set(b, (bucket = []))
+    bucket.push(r)
+  }
+  const beats = [...byBeat.keys()].sort((a, b) => a - b)
+  if (!beats.length) return []
+
+  const count = byBeat.get(beats[0])!.length
+  for (const b of beats) {
+    const n = byBeat.get(b)!.length
+    if (n !== count) {
+      throw new Error(
+        `pointCloud: beat ${b} defines ${n} point(s) but beat ${beats[0]} defines ${count} — a rendered point cloud must keep the same number of points across every beat where points are defined`,
+      )
+    }
+  }
+
+  return beats.map((b, k) => {
+    const pts = byBeat.get(b)!
+    const position: number[] = []
+    const normal: number[] = []
+    let hasNormals = true
+    for (const p of pts) {
+      position.push(numOr0(p.px), numOr0(p.py), numOr0(p.pz))
+      if (p.nx == null || p.ny == null || p.nz == null) hasNormals = false
+      else normal.push(numOr0(p.nx), numOr0(p.ny), numOr0(p.nz))
+    }
+    const event: Row = k === 0
+      ? { id, type: 'create', beat: b, shape: 'points', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, ...rest }
+      : { id, type: 'update', beat: b }
+    event.ptKey = String(b)
+    event.ptPos = position
+    event.ptNrm = hasNormals && normal.length === position.length ? normal : null
+    return event
+  })
 }

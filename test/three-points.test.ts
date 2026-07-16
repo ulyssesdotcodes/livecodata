@@ -9,6 +9,7 @@ import {
   primitiveGeometry,
   pointsFromGeometry,
   geometryFromPoints,
+  pointCloudEvents,
 } from '../src/three-points.js'
 import { Table, createDSL } from '../src/dsl.js'
 import type { Row } from '../src/lineage.js'
@@ -89,16 +90,93 @@ test('round-trip: primitive → points → geometry reproduces the vertices', ()
   }
 })
 
-test('DSL points() returns a chainable table of point rows', () => {
+test('DSL points() returns a chainable table of point rows with a beat column', () => {
   const dsl = createDSL(null)
   const table = dsl.points('box', { hx: 1, hy: 1, hz: 1 })
   assert.ok(table instanceof Table)
   const rows = table.rows
   assert.equal(rows.length, 24) // a box's 6 faces × 4 corners
   assert.equal(typeof rows[0].nx, 'number')
+  assert.equal(rows[0].beat, 1) // stamped with the default beat
+  // beat is overridable, so a cloud can be posed on a later beat
+  assert.equal(dsl.points('box', { beat: 5 }).rows[0].beat, 5)
   // chains like any other table
   const shifted = table.map((r) => ({ px: (r.px as number) + 10 }))
   assert.equal(shifted.rows[0].px, (rows[0].px as number) + 10)
+})
+
+test('pointCloudEvents packs beats into create + update events carrying flat buffers', () => {
+  const beat1: Row[] = [
+    { beat: 1, px: 0, py: 0, pz: 0, nx: 0, ny: 1, nz: 0 },
+    { beat: 1, px: 1, py: 0, pz: 0, nx: 0, ny: 1, nz: 0 },
+  ]
+  const beat3: Row[] = [
+    { beat: 3, px: 0, py: 1, pz: 0, nx: 0, ny: 1, nz: 0 },
+    { beat: 3, px: 1, py: 1, pz: 0, nx: 0, ny: 1, nz: 0 },
+  ]
+  const events = pointCloudEvents([...beat3, ...beat1], { id: 'cloud', color: 0xff0000 })
+  assert.equal(events.length, 2)
+  // earliest beat is the create (shape "points"), later beats are updates
+  assert.equal(events[0].type, 'create')
+  assert.equal(events[0].beat, 1)
+  assert.equal(events[0].shape, 'points')
+  assert.equal(events[0].color, 0xff0000)
+  assert.equal(events[1].type, 'update')
+  assert.equal(events[1].beat, 3)
+  assert.equal(events[1].shape, undefined) // shape only on create
+  // each event carries its beat's flat position buffer + a discrete key
+  assert.deepEqual(events[0].ptPos, [0, 0, 0, 1, 0, 0])
+  assert.deepEqual(events[1].ptPos, [0, 1, 0, 1, 1, 0])
+  assert.deepEqual(events[0].ptNrm, [0, 1, 0, 0, 1, 0])
+  assert.equal(events[0].ptKey, '1')
+  assert.equal(events[1].ptKey, '3')
+})
+
+test('pointCloudEvents leaves ptNrm null when a beat lacks full normals', () => {
+  const events = pointCloudEvents([{ beat: 1, px: 0, py: 0, pz: 0 }])
+  assert.equal(events.length, 1)
+  assert.equal(events[0].ptNrm, null)
+  assert.deepEqual(events[0].ptPos, [0, 0, 0])
+})
+
+test('pointCloudEvents errors when the point count differs between beats', () => {
+  const rows: Row[] = [
+    { beat: 1, px: 0, py: 0, pz: 0 },
+    { beat: 1, px: 1, py: 0, pz: 0 },
+    { beat: 2, px: 0, py: 1, pz: 0 }, // only one point on beat 2
+  ]
+  assert.throws(() => pointCloudEvents(rows), /must keep the same number of points/)
+})
+
+test('DSL pointCloud() turns a beat-keyed points table into a scene object', () => {
+  const dsl = createDSL(null)
+  // a sphere held on beat 1 and a shifted copy on beat 5 → a 2-pose cloud
+  const b1 = dsl.points('sphere', { r: 1, segments: 8 })
+  const b5 = dsl.points('sphere', { r: 1, segments: 8, beat: 5 })
+  const cloud = dsl.pointCloud(b1.concat(b5), { id: 'ball' })
+  assert.ok(cloud instanceof Table)
+  const events = cloud.rows
+  assert.equal(events.length, 2)
+  assert.equal(events[0].type, 'create')
+  assert.equal(events[1].type, 'update')
+  // both beats carry the same number of points (same sphere tessellation)
+  assert.equal((events[0].ptPos as number[]).length, (events[1].ptPos as number[]).length)
+})
+
+test('a pointCloud rasterizes to per-frame rows that step the buffer by beat', () => {
+  const dsl = createDSL(null)
+  const b1 = dsl.points('box', { hx: 1, beat: 1 })
+  const b3 = dsl.points('box', { hx: 2, beat: 3 }) // a bigger box on beat 3
+  const scene = dsl.pointCloud(b1.concat(b3), { id: 'box' }).rasterize(4)
+  const rows = scene.rows
+  // the create beat's buffer holds until beat 3, then the update beat's takes over
+  const early = rows.find((r) => r.frame === 0)!
+  const late = rows[rows.length - 1]
+  assert.equal(early.ptKey, '1')
+  assert.equal(late.ptKey, '3')
+  // same point count throughout (box → 24 vertices), buffer just changes contents
+  assert.equal((early.ptPos as number[]).length, (late.ptPos as number[]).length)
+  assert.notDeepEqual(early.ptPos, late.ptPos)
 })
 
 test('DSL geometry() rebuilds a primitive from a points table (inverse of points)', () => {

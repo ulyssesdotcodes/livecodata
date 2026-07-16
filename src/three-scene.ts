@@ -157,6 +157,93 @@ function disposeText(obj: TextObject): void {
   obj.material.dispose()
 }
 
+// ── Point cloud ───────────────────────────────────────────────────────────────
+// A `shape: "points"` object is a THREE.Points whose position (and normal)
+// attribute is driven by a beat-keyed points table (see the DSL's pointCloud()).
+// Each event carries that beat's vertices as flat ptPos/ptNrm arrays plus a
+// discrete ptKey; the buffer is allocated DynamicDrawUsage at the create beat's
+// size and rewritten in place when ptKey changes, so an N-point cloud morphs
+// across beats without rebuilding geometry. The count is fixed at create: an
+// update whose buffer holds a different number of points is an error (the DSL's
+// pointCloud() already rejects a table with varying per-beat counts; this is the
+// same invariant enforced at the render seam).
+interface PointsObject {
+  points: THREE.Points
+  geometry: THREE.BufferGeometry
+  posAttr: THREE.BufferAttribute
+  normAttr: THREE.BufferAttribute | null
+  material: THREE.PointsMaterial
+  count: number
+  key: string | null
+}
+
+const POINTS_DEFAULT_SIZE = 0.05
+const asNums = (v: unknown): number[] => (Array.isArray(v) ? (v as number[]) : [])
+
+function applyPointsTransform(obj: THREE.Object3D, row: Record<string, unknown>): void {
+  obj.position.set(num(row.px, 0), num(row.py, 0), num(row.pz, 0))
+  obj.rotation.set(num(row.rx, 0), num(row.ry, 0), num(row.rz, 0))
+  applyScale(obj, row)
+}
+
+function makePoints(row: Record<string, unknown>): PointsObject {
+  const pos = asNums(row.ptPos)
+  const nrm = row.ptNrm == null ? null : asNums(row.ptNrm)
+  const count = Math.floor(pos.length / 3)
+
+  const posAttr = new THREE.BufferAttribute(Float32Array.from(pos), 3)
+  posAttr.setUsage(THREE.DynamicDrawUsage)
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', posAttr)
+
+  let normAttr: THREE.BufferAttribute | null = null
+  if (nrm && nrm.length === pos.length) {
+    normAttr = new THREE.BufferAttribute(Float32Array.from(nrm), 3)
+    normAttr.setUsage(THREE.DynamicDrawUsage)
+    geometry.setAttribute('normal', normAttr)
+  }
+
+  const material = new THREE.PointsMaterial({
+    color: row.color != null ? (row.color as number) : PALETTE[0],
+    size: typeof row.size === 'number' ? (row.size as number) : POINTS_DEFAULT_SIZE,
+    sizeAttenuation: true,
+  })
+  const points = new THREE.Points(geometry, material)
+  points.name = String(row.id)
+  applyPointsTransform(points, row)
+  return { points, geometry, posAttr, normAttr, material, count, key: (row.ptKey as string | undefined) ?? null }
+}
+
+function updatePoints(obj: PointsObject, row: Record<string, unknown>): void {
+  applyPointsTransform(obj.points, row)
+  if (row.color != null) obj.material.color.set(row.color as number)
+  // Only rewrite the buffer when the beat's point set actually changed — ptKey
+  // steps discretely per beat, so intra-beat frames (which re-carry the same
+  // buffer) don't re-upload to the GPU.
+  const key = (row.ptKey as string | undefined) ?? null
+  if (row.ptPos === undefined || key === obj.key) return
+  const pos = asNums(row.ptPos)
+  const incoming = Math.floor(pos.length / 3)
+  if (incoming !== obj.count) {
+    throw new Error(
+      `point cloud "${String(row.id)}": a beat carries ${incoming} points but the buffer holds ${obj.count} — the number of points must stay constant across beats`,
+    )
+  }
+  ;(obj.posAttr.array as Float32Array).set(pos)
+  obj.posAttr.needsUpdate = true
+  const nrm = row.ptNrm == null ? null : asNums(row.ptNrm)
+  if (obj.normAttr && nrm && nrm.length === pos.length) {
+    ;(obj.normAttr.array as Float32Array).set(nrm)
+    obj.normAttr.needsUpdate = true
+  }
+  obj.key = key
+}
+
+function disposePoints(obj: PointsObject): void {
+  obj.geometry.dispose()
+  obj.material.dispose()
+}
+
 // ── Camera ──────────────────────────────────────────────────────────────────
 // A `shape: "camera"` object doesn't add a mesh — it drives the scene camera.
 // px/py/pz place the eye and tx/ty/tz the look-at target (default origin);
@@ -351,6 +438,7 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
   const objects = new Map<unknown, THREE.Mesh>()
   const origamis = new Map<unknown, OrigamiObject>()
   const texts = new Map<unknown, TextObject>()
+  const pointClouds = new Map<unknown, PointsObject>()
   const cameras = new Set<unknown>()
   let colorIdx = 0
 
@@ -389,10 +477,16 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
     camera,
     createObject(row: Record<string, unknown>): void {
       const { id, shape, px, py, pz, rx, ry, rz, color } = row
-      if (objects.has(id) || origamis.has(id) || texts.has(id) || cameras.has(id)) return
+      if (objects.has(id) || origamis.has(id) || texts.has(id) || pointClouds.has(id) || cameras.has(id)) return
       if (shape === 'camera') {
         applyCamera(row)
         cameras.add(id)
+        return
+      }
+      if (shape === 'points') {
+        const obj = makePoints(row)
+        scene.add(obj.points)
+        pointClouds.set(id, obj)
         return
       }
       if (shape === 'origami' && row.program) {
@@ -443,6 +537,11 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
         if (textGeometryChanged(text.params, row)) rebuildTextGeometry(text, row)
         return
       }
+      const pointCloud = pointClouds.get(id)
+      if (pointCloud) {
+        updatePoints(pointCloud, row)
+        return
+      }
       const mesh = objects.get(id)
       if (!mesh) return
       mesh.position.set(px as number, py as number, pz as number)
@@ -479,6 +578,13 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
         texts.delete(id)
         return
       }
+      const pointCloud = pointClouds.get(id)
+      if (pointCloud) {
+        scene.remove(pointCloud.points)
+        disposePoints(pointCloud)
+        pointClouds.delete(id)
+        return
+      }
       const mesh = objects.get(id)
       if (!mesh) return
       scene.remove(mesh)
@@ -504,6 +610,11 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
         disposeText(text)
       }
       texts.clear()
+      for (const pc of pointClouds.values()) {
+        scene.remove(pc.points)
+        disposePoints(pc)
+      }
+      pointClouds.clear()
       cameras.clear()
       resetCamera()
       colorIdx = 0
