@@ -14,7 +14,7 @@ import { createPlaybackController, type PlaybackController } from './ui/playback
 import { createSessionBar } from './ui/session-bar.js'
 import { createSessionSelector } from './ui/session-selector.js'
 import { createRoomChip } from './ui/room-chip.js'
-import { SAMPLES } from './samples.js'
+import { SAMPLES, sampleIndexForSlug, slugify } from './samples.js'
 import { defaultSessionStore } from './sessions.js'
 import { getVimMode, setVimMode, getMidiEnabled, setMidiEnabled, getUsername, setUsername } from './settings.js'
 import { createCookClient } from './cook-client.js'
@@ -95,6 +95,11 @@ const urlParams = new URLSearchParams(location.search)
 const roomName = urlParams.get('room')
 const userName = (urlParams.get('user') ?? '').trim() || getUsername()
 if (roomName && (urlParams.get('user') ?? '').trim()) setUsername(userName)
+
+// An example can be deep-linked (?example=<slug>, see samples.ts's slugify)
+// so a shared link opens straight to that example rather than the default
+// program; only consulted on boot when there's no room to join instead.
+const exampleSlug = urlParams.get('example')
 
 const presence = roomName ? createPresenceChannel({ user: userName }) : null
 
@@ -895,8 +900,21 @@ function exitRoomMode(): void {
   chipSolo()
 }
 
+// Keeps the address bar's ?example= in sync with what's actually open, so a
+// reload or copied link lands back on the same example — set when one opens
+// (openExample), cleared when the user navigates away from it (newSession,
+// openSession).
+function setExampleParam(slug: string | null): void {
+  const u = new URL(location.href)
+  if (slug) u.searchParams.set('example', slug)
+  else if (u.searchParams.has('example')) u.searchParams.delete('example')
+  else return
+  history.replaceState(null, '', u)
+}
+
 async function openSession(id: string): Promise<void> {
   exitRoomMode()
+  setExampleParam(null)
   // Only a genuinely unreadable session aborts the switch: its stored data may
   // be missing, or editableStore.load may reject/throw on a corrupt log. A
   // session whose *program* errors is not corrupt — it still opens (below).
@@ -949,6 +967,7 @@ async function openSession(id: string): Promise<void> {
 
 function newSession(): void {
   exitRoomMode()
+  setExampleParam(null)
   currentSessionId = sessionStore.newId()
   quietly(() => editableStore.clear())
   editor.setCode(defaultProgram)
@@ -1015,7 +1034,11 @@ function checkoutBranch(headId: string): void {
   void scrubSession(sessionLength() - 1)
   persistSession()
 }
-function openExample(index: number): void {
+// The awaitable core behind opening an example: boot() (a direct ?example=
+// link) needs to know once the cook has actually landed, so it can start
+// playback the same way firstRun() does — everywhere else (the dropdown)
+// keeps firing this off without waiting, exactly as before.
+async function loadExample(index: number): Promise<void> {
   const sample = SAMPLES[index]
   if (!sample) return
   exitRoomMode()
@@ -1025,9 +1048,14 @@ function openExample(index: number): void {
   // The sample's editable table data (if any) seeds the freshly-cleared store,
   // so the example's editable(name, schema) calls carry column schemas only —
   // the row data lives with the sample, and populates the table panel on open.
-  void evaluate(sample.code, { setError: editor.setError, persist: false, seeds: sample.tables })
+  await evaluate(sample.code, { setError: editor.setError, persist: false, seeds: sample.tables })
   syncSessionBar()
   refreshSelector()
+  setExampleParam(slugify(sample.name))
+}
+
+function openExample(index: number): void {
+  void loadExample(index)
 }
 
 const sessionSelector = createSessionSelector({
@@ -1231,9 +1259,25 @@ async function firstRun(): Promise<void> {
 // awaits the locally-persisted copy of the room's log (bootRoom), so
 // firstRun's "resume or speculative default" decision sees the restored runs.
 async function boot(): Promise<void> {
-  if (roomName) await bootRoom(roomName)
-  else chipSolo()
-  await firstRun()
+  if (roomName) {
+    await bootRoom(roomName)
+    await firstRun()
+    return
+  }
+  chipSolo()
+  // A direct link to an example (?example=<slug>) opens it in place of the
+  // usual speculative-default boot; loadExample already syncs the session bar
+  // and selector itself, same as newSession/openSession do. Await it (via the
+  // awaitable core, not the fire-and-forget openExample the dropdown uses) so
+  // playback starts only once there's content — mirroring how firstRun
+  // autostarts playback after its own first cook lands.
+  const exampleIndex = exampleSlug ? sampleIndexForSlug(exampleSlug) : -1
+  if (exampleIndex >= 0) {
+    await loadExample(exampleIndex)
+    playback.play()
+  } else {
+    await firstRun()
+  }
 }
 
 void boot()
