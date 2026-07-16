@@ -338,19 +338,13 @@ export interface SimulateOptions {
   collisions?: boolean
 }
 
-// retime({ offset, scale }): shift a table's rows by `offset` beats and stretch
-// their spacing about the loop start (beat 1) by `scale`.
-export interface RetimeSpec {
-  offset?: number
-  scale?: number
-}
-
-// Options shared by the .three.* scene animators. `amount` is how far to go
-// (radians for rotate, world units for move, a multiplier for scale); `dur` how
-// many beats the move takes; `axis` picks x/y/z (rotate/move); `ease` shapes the
-// segment arriving at the target; `at` overrides the start beat (default: each
-// create row's own beat).
-export interface ThreeAnimOpts {
+// Options shared by the .three.* scene animators, kept internal so the public
+// ThreeChain methods can inline the shape (visible in hover) — `amount` is how
+// far to go (radians for rotate, world units for move, a multiplier for scale);
+// `dur` how many beats the move takes; `axis` picks x/y/z (rotate/move); `ease`
+// shapes the segment arriving at the target; `at` overrides the start beat
+// (default: each create row's own beat).
+interface ThreeAnimOpts {
   amount?: number
   dur?: number
   axis?: 'x' | 'y' | 'z'
@@ -362,16 +356,18 @@ export interface ThreeAnimOpts {
 // table's `create` rows and append the update keyframes carrying each object's
 // transform. Every method returns a Table (the base rows plus the new
 // keyframes), so they chain — box().three.rotate().three.scale().rasterize(8).
+// The option shape is inlined on each method so hovering rotate/scale/move shows
+// exactly what you can pass.
 export interface ThreeChain {
   // Spin each object by `amount` radians about `axis` (default a full turn about
   // y) over `dur` beats — adds to the object's current rotation.
-  rotate(opts?: ThreeAnimOpts): Table
+  rotate(opts?: { amount?: number; dur?: number; axis?: 'x' | 'y' | 'z'; ease?: (t: number) => number; at?: number }): Table
   // Grow/shrink each object by the `amount` factor (default 2×) over `dur` beats
   // — multiplies the object's current scale uniformly on all axes (sx/sy/sz).
-  scale(opts?: ThreeAnimOpts): Table
+  scale(opts?: { amount?: number; dur?: number; ease?: (t: number) => number; at?: number }): Table
   // Slide each object by `amount` along `axis` (default 1 unit along x) over
   // `dur` beats — adds to the object's current position.
-  move(opts?: ThreeAnimOpts): Table
+  move(opts?: { amount?: number; dur?: number; axis?: 'x' | 'y' | 'z'; ease?: (t: number) => number; at?: number }): Table
 }
 
 const TAU = Math.PI * 2
@@ -397,15 +393,6 @@ export interface DSLContext {
 }
 
 export type ViewFn = (rand: () => number, table: (name: string) => Table) => Table | Row[]
-
-type JoinOn = string | { left: string; right: string } | ((r: Row) => unknown)
-
-type DeriveSpec = Record<string, unknown | ((r: Row, i: number) => unknown)>
-
-interface GroupResult {
-  agg(spec: Record<string, (rows: Row[]) => unknown>): Table
-  count(as?: string): Table
-}
 
 interface TNode {
   op: string
@@ -490,8 +477,8 @@ export class Table {
   // map(fn) transforms each row; map(template) builds each row declaratively from
   // Expr/literals (diffable). Both carry the source row's lineage.
   map(fn: (r: Row, i: number) => Row): Table
-  map(template: Template): Table
-  map(arg: ((r: Row, i: number) => Row) | Template): Table {
+  map(template: Record<string, unknown>): Table
+  map(arg: ((r: Row, i: number) => Row) | Record<string, unknown>): Table {
     if (typeof arg === 'function') {
       const fn = arg
       return this._xf('map', { fn }, (ins) => ins[0].map((r, i) => tag(fn(r, i), carry(r))), true)
@@ -500,30 +487,35 @@ export class Table {
     return this._xf('mapT', { tmpl }, (ins) => ins[0].map((r, i) => tag(buildRow(tmpl, r, i), carry(r))), false)
   }
 
-  // filter(fn) or filter(Expr predicate).
-  filter(pred: ((r: Row, i: number) => unknown) | Expr): Table {
+  // Keep rows that match. Pass a { field: value, … } pattern to keep rows where
+  // every field strictly equals its value (multi-key = AND) — e.g.
+  // filter({ id: "ball", type: "update" }); or an Expr predicate for anything
+  // richer — filter(field("v").gt(3)). Both forms are data (no opaque closure),
+  // so the result is diffable and cheap to re-cook when unchanged.
+  filter(pred: Record<string, unknown> | Expr): Table {
     if (pred instanceof Expr) {
       const node = pred.node
       return this._xf('filterE', { pred }, (ins) => ins[0].filter((r, i) => evalExpr(node, r, i)).map(recarry), false)
     }
-    const fn = pred
-    return this._xf('filter', { fn }, (ins) => ins[0].filter((r, i) => fn(r, i)).map(recarry), true)
+    if (typeof pred === 'function') {
+      throw new Error('filter() takes a { field: value } pattern or an Expr (e.g. field("v").gt(3)), not a function')
+    }
+    const keys = Object.keys(pred)
+    return this._xf('filterMatch', { match: pred }, (ins) =>
+      ins[0].filter((r) => keys.every((k) => r[k] === pred[k])).map(recarry), false)
   }
 
-  filterMap(fn: (r: Row, i: number, rows: Row[]) => Row | Row[] | null | undefined): Table {
-    return this._xf('filterMap', { fn }, (ins) => ins[0].flatMap((r, i) => spread(fn(r, i, ins[0]), carry(r))), true)
-  }
-
-  // flatMap(fn) — fan out each row into zero, one, or many rows. Alias of
-  // filterMap with a name that matches the fan-out use case (Array.flatMap).
+  // flatMap(fn) — fan out each row into zero, one, or many rows (return null to
+  // drop, a row to keep, an array to expand), like Array.flatMap. The function
+  // form for fan-out; for a diffable version use filter(...).emit(template).
   flatMap(fn: (r: Row, i: number, rows: Row[]) => Row | Row[] | null | undefined): Table {
     return this._xf('flatMap', { fn }, (ins) => ins[0].flatMap((r, i) => spread(fn(r, i, ins[0]), carry(r))), true)
   }
 
   // emit(template | template[]) — declarative flatMap: produce one or many rows
   // per source row from Expr/literal templates. The diffable counterpart of
-  // filterMap (pair with filter() for "when X, emit Y").
-  emit(template: Template | Template[]): Table {
+  // flatMap (pair with filter() for "when X, emit Y").
+  emit(template: Record<string, unknown> | Record<string, unknown>[]): Table {
     return this._xf('emit', { template }, (ins) =>
       ins[0].flatMap((r, i) => {
         const built = Array.isArray(template)
@@ -565,27 +557,7 @@ export class Table {
     }, true)
   }
 
-  // mapAccum(fn, initialState) — like map(), but fn also threads extra state
-  // between rows; the final state is discarded and only the emitted rows are
-  // kept. Simpler sibling of scan(): fn always emits (no skipping) and
-  // returns [emit, nextState] instead of an {state, emit} object.
-  mapAccum<S>(
-    fn: (state: S, cur: Row, i: number, rows: Row[]) => [Row | Row[], S],
-    initialState: S,
-  ): Table {
-    return this._xf('mapAccum', { fn, initialState }, (ins) => {
-      const out: Row[] = []
-      let state = initialState
-      ins[0].forEach((cur, i) => {
-        const [emit, nextState] = fn(state, cur, i, ins[0])
-        state = nextState
-        out.push(...spread(emit, carry(cur)))
-      })
-      return out
-    }, true)
-  }
-
-  join(other: Table | Row[], on: JoinOn): Table {
+  join(other: Table | Row[], on: string | { left: string; right: string } | ((r: Row) => unknown)): Table {
     const leftOf: (r: Row) => unknown = typeof on === 'function' ? on : (r) => r[typeof on === 'object' ? on.left : on]
     const rightOf: (r: Row) => unknown = typeof on === 'function' ? on : (r) => r[typeof on === 'object' ? on.right : on]
     return this._xf('join', { on }, (ins) => {
@@ -628,9 +600,13 @@ export class Table {
     }, typeof key === 'function')
   }
 
-  // derive/assign: spec values are Expr (evaluated), functions (r,i)=>val, or
-  // literals. Expr/literal-only specs are diffable; function specs are seed-aware.
-  derive(spec: DeriveSpec): Table {
+  // Add or overwrite fields on every row. Each spec value is an Expr (evaluated
+  // against the row), a function (r, i) => val, or a plain literal. Expr/literal-
+  // only specs are diffable; function specs are seed-aware. A live Expr binds per
+  // frame: derive({ amount: midi("c4") }) or derive({ py: slider("height") })
+  // leaves a binding that follows the note/slider as the loop replays; a constant
+  // Expr is baked in immediately.
+  derive(spec: Record<string, Expr | ((r: Row, i: number) => unknown) | unknown>): Table {
     return this._xf('derive', { spec }, (ins) => ins[0].map((r, i) => {
       const next: Row = { ...r }
       for (const k in spec) {
@@ -641,21 +617,6 @@ export class Table {
       }
       return withLineage(next, carry(r))
     }), hasFn(spec))
-  }
-
-  assign(spec: DeriveSpec): Table { return this.derive(spec) }
-
-  // Set one field on every row from an Expr (or a plain value). The headline use
-  // is a live MIDI value: .setField("amount", midi("c4")) — a streaming Expr is
-  // left as a per-frame binding, so the field follows the note as the loop
-  // replays; a plain/constant Expr is baked in immediately. Sugar over derive.
-  setField(name: string, value: Expr | unknown): Table {
-    return this.derive({ [name]: value })
-  }
-
-  mapField(src: string, dst: string, fn: (val: unknown, row: Row, i: number) => unknown): Table {
-    return this._xf('mapField', { src, dst, fn }, (ins) =>
-      ins[0].map((r, i) => withLineage({ ...r, [dst]: fn(r[src], r, i) }, carry(r))), true)
   }
 
   rescale(src: string, [inLo, inHi]: [number, number], [outLo, outHi]: [number, number], dst: string = src): Table {
@@ -672,7 +633,7 @@ export class Table {
       ins[0].map((r, i) => withLineage({ ...r, [as]: i >= n ? ins[0][i - n][fieldName] : null }, carry(r))), false)
   }
 
-  groupBy(key: string | ((r: Row) => unknown)): GroupResult {
+  groupBy(key: string | ((r: Row) => unknown)): { agg(spec: Record<string, (rows: Row[]) => unknown>): Table; count(as?: string): Table } {
     const keyName = typeof key === 'function' ? 'key' : key
     const accessor = typeof key === 'function' ? key : (r: Row) => r[key]
     const self = this
@@ -710,14 +671,6 @@ export class Table {
     }
   }
 
-  trigger(
-    predicate: (r: Row, i: number, rows: Row[]) => unknown,
-    emit: (r: Row, i: number, rows: Row[]) => Row | Row[] | null | undefined,
-  ): Table {
-    return this._xf('trigger', { predicate, emit }, (ins) =>
-      ins[0].flatMap((r, i) => predicate(r, i, ins[0]) ? spread(emit(r, i, ins[0]), carry(r)) : []), true)
-  }
-
   triggerEach(
     predicate: (cur: Row, i: number, rows: Row[]) => unknown,
     objects: Table | Row[],
@@ -744,16 +697,18 @@ export class Table {
     }, false)
   }
 
-  // Pairs up the rows where row[fieldName] === value, cyclically: match k is
-  // "second" paired with match k-1 as "first" — so match 0 pairs with the
-  // LAST match, wrapping the sequence into a cycle. For each pair, fn(first,
-  // second) returns the row(s) that replace `second` in the output; rows that
-  // don't match (and unpaired rows generally) pass through unchanged.
-  pairBy(fieldName: string, value: unknown, fn: (first: Row, second: Row) => Row | Row[]): Table {
-    return this._xf('pairBy', { field: fieldName, value, fn }, (ins) => {
+  // Pairs up the rows matching a { field: value, … } pattern (every field
+  // strictly equal), cyclically: match k is "second" paired with match k-1 as
+  // "first" — so match 0 pairs with the LAST match, wrapping the sequence into a
+  // cycle. For each pair, fn(first, second) returns the row(s) that replace
+  // `second` in the output; rows that don't match (and unpaired rows generally)
+  // pass through unchanged. e.g. pairBy({ event: "setCode" }, flicker).
+  pairBy(match: Record<string, unknown>, fn: (first: Row, second: Row) => Row | Row[]): Table {
+    const keys = Object.keys(match)
+    return this._xf('pairBy', { match, fn }, (ins) => {
       const rows = ins[0]
       const matchIdx: number[] = []
-      rows.forEach((r, i) => { if (r[fieldName] === value) matchIdx.push(i) })
+      rows.forEach((r, i) => { if (keys.every((k) => r[k] === match[k])) matchIdx.push(i) })
       if (!matchIdx.length) return rows.map(recarry)
       const replacement = new Map<number, Row[]>()
       matchIdx.forEach((idx, k) => {
@@ -775,7 +730,7 @@ export class Table {
   // the common case. Function form retime(beat => newBeat) remaps each row's beat
   // arbitrarily (a closure, so hashed by source text, like map(fn)). Rows without
   // a `beat` are left untouched. shift(beats) is sugar for retime({ offset }).
-  retime(spec: RetimeSpec | ((beat: number) => number)): Table {
+  retime(spec: { offset?: number; scale?: number } | ((beat: number) => number)): Table {
     if (typeof spec === 'function') {
       const fn = spec
       return this._xf('retimeFn', { fn }, (ins) => ins[0].map((r) => {
@@ -877,7 +832,7 @@ class PhysicsBuilder {
     this._ctx = ctx
   }
 
-  simulate(opts: SimulateOptions = {}): Table {
+  simulate(opts: { steps?: number; gravity?: number; fps?: number; sampleEvery?: number; collisions?: boolean } = {}): Table {
     const src = this._source instanceof Table ? this._source : new Table(this._source ?? [], this._ctx)
     return Table._fromNode(this._ctx, {
       op: 'physics',

@@ -122,9 +122,9 @@ test('reproduces the zero-crossing events program end-to-end', () => {
     define("base", "events", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
     define("flash", "events", (rand, table) => {
-      const crossings = table("wave").filterMap((cur, i, rows) =>
+      const crossings = table("wave").flatMap((cur, i, rows) =>
         i > 0 && cur.value * rows[i - 1].value < 0 ? { beat: cur.beat } : null)
-      return table("base").filterMap(o =>
+      return table("base").flatMap(o =>
         o.type !== "create" ? null
           : crossings.rows.map(c => ({ id: o.id, type: "color", beat: c.beat, color: 0xffffff })))
     })

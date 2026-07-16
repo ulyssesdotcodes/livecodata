@@ -22,7 +22,7 @@ test('Expr chains resolve to their field/lit/idx root', () => {
 
 test('Table chains resolve to their table/rows/etc. root', () => {
   assert.equal(rootAt('table("sim").'), 'table')
-  assert.equal(rootAt('table("sim").filter(r => r.type === "x").'), 'table')
+  assert.equal(rootAt('table("sim").filter({ type: "x" }).'), 'table')
   assert.equal(rootAt('rows([{ a: 1 }]).map(r => r).'), 'rows')
   assert.equal(rootAt('physics(table("base")).simulate({ steps: 1 }).'), 'physics')
 })
