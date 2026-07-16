@@ -39,7 +39,7 @@ export function PlaybackControls(props: {
           aria-label={playing() ? 'Pause' : 'Play'}
           onClick={() => props.engine.toggle()}
         >
-          {playing() ? '⏸' : '▶'}
+          <Icon name={playing() ? 'pause' : 'play'} />
         </button>
         <button
           id="loop-btn"
