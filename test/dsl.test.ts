@@ -260,6 +260,20 @@ test('t is a shorthand alias for the three namespace', () => {
   assert.equal(t, three)
 })
 
+test('light builds a "light" create row without forcing a position', () => {
+  const { three } = createDSL(null)
+  // Unlike the mesh primitives, a light omits px/py/pz so the renderer can
+  // apply the kind's own default position; kind defaults to directional.
+  assert.deepEqual(three.light().rows[0], {
+    id: 'light', type: 'create', beat: 1, shape: 'light', kind: 'directional',
+  })
+  // Props override — kind and any light field pass straight through.
+  const row = three.light({ id: 'k', kind: 'point', px: 2, intensity: 4 }).rows[0]
+  assert.equal(row.kind, 'point')
+  assert.equal(row.px, 2)
+  assert.equal(row.intensity, 4)
+})
+
 test('three.translate/scale/rotate modify a scene table\'s create rows', () => {
   const { three } = createDSL(null)
   const base = three.box({ id: 'a', px: 1 })

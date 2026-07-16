@@ -157,6 +157,148 @@ export function cameraPose(row: Record<string, unknown>): CameraPose {
   }
 }
 
+// ── Lights ────────────────────────────────────────────────────────────────
+// A `shape: "light"` object adds a three.js light instead of a mesh, riding
+// events → rasterize like any object (so intensity/position/color animate as
+// keyframe tracks). The user-facing field docs live on the DSL surface (dsl.ts).
+// `kind` chooses the THREE.Light subclass; the rest resolve here.
+
+export type LightKind = 'ambient' | 'directional' | 'point' | 'spot' | 'hemisphere'
+
+const LIGHT_KINDS = new Set<LightKind>(['ambient', 'directional', 'point', 'spot', 'hemisphere'])
+
+export interface LightParams {
+  kind: LightKind
+  color: number
+  intensity: number
+  px: number; py: number; pz: number
+  tx: number; ty: number; tz: number
+  distance: number
+  decay: number
+  angle: number
+  penumbra: number
+  groundColor: number
+}
+
+export const LIGHT_DEFAULT: LightParams = {
+  kind: 'directional',
+  color: 0xffffff,
+  intensity: 1,
+  px: 2, py: 3, pz: 4,
+  tx: 0, ty: 0, tz: 0,
+  distance: 0,
+  decay: 2,
+  angle: Math.PI / 3,
+  penumbra: 0,
+  groundColor: 0x444444,
+}
+
+// Resolve a (possibly partial) light row to concrete parameters. An unknown or
+// missing `kind` reads as the default, so a bad kind never reaches THREE.
+export function lightParams(row: Record<string, unknown>): LightParams {
+  const d = LIGHT_DEFAULT
+  return {
+    kind: LIGHT_KINDS.has(row.kind as LightKind) ? (row.kind as LightKind) : d.kind,
+    color: row.color != null ? (row.color as number) : d.color,
+    intensity: num(row.intensity, d.intensity),
+    px: num(row.px, d.px), py: num(row.py, d.py), pz: num(row.pz, d.pz),
+    tx: num(row.tx, d.tx), ty: num(row.ty, d.ty), tz: num(row.tz, d.tz),
+    distance: num(row.distance, d.distance),
+    decay: num(row.decay, d.decay),
+    angle: num(row.angle, d.angle),
+    penumbra: num(row.penumbra, d.penumbra),
+    groundColor: row.groundColor != null ? (row.groundColor as number) : d.groundColor,
+  }
+}
+
+// A `kind` change is the one update that needs the THREE.Light rebuilt (a
+// different class); every other field mutates in place. A row omitting `kind`
+// (or naming an unknown one) keeps the current kind.
+export function lightKindChanged(prevKind: LightKind, row: Record<string, unknown>): boolean {
+  if (row.kind == null) return false
+  const kind = LIGHT_KINDS.has(row.kind as LightKind) ? (row.kind as LightKind) : prevKind
+  return kind !== prevKind
+}
+
+interface LightObject {
+  light: THREE.Light
+  // Directional/spot lights aim at this target, which must itself be added to
+  // the scene for the aim to take effect; other kinds have none.
+  target: THREE.Object3D | null
+  kind: LightKind
+}
+
+function buildLight(p: LightParams): LightObject {
+  switch (p.kind) {
+    case 'ambient':
+      return { light: new THREE.AmbientLight(p.color, p.intensity), target: null, kind: p.kind }
+    case 'hemisphere':
+      return { light: new THREE.HemisphereLight(p.color, p.groundColor, p.intensity), target: null, kind: p.kind }
+    case 'point': {
+      const l = new THREE.PointLight(p.color, p.intensity, p.distance, p.decay)
+      l.position.set(p.px, p.py, p.pz)
+      return { light: l, target: null, kind: p.kind }
+    }
+    case 'spot': {
+      const l = new THREE.SpotLight(p.color, p.intensity, p.distance, p.angle, p.penumbra, p.decay)
+      l.position.set(p.px, p.py, p.pz)
+      const target = new THREE.Object3D()
+      target.position.set(p.tx, p.ty, p.tz)
+      l.target = target
+      return { light: l, target, kind: p.kind }
+    }
+    case 'directional':
+    default: {
+      const l = new THREE.DirectionalLight(p.color, p.intensity)
+      l.position.set(p.px, p.py, p.pz)
+      const target = new THREE.Object3D()
+      target.position.set(p.tx, p.ty, p.tz)
+      l.target = target
+      return { light: l, target, kind: p.kind }
+    }
+  }
+}
+
+// Live-update an existing light (same kind) from a resolved row.
+function applyLight(obj: LightObject, p: LightParams): void {
+  const l = obj.light
+  l.color.set(p.color)
+  l.intensity = p.intensity
+  switch (obj.kind) {
+    case 'ambient':
+      break
+    case 'hemisphere':
+      (l as THREE.HemisphereLight).groundColor.set(p.groundColor)
+      break
+    case 'point': {
+      const pl = l as THREE.PointLight
+      pl.position.set(p.px, p.py, p.pz)
+      pl.distance = p.distance
+      pl.decay = p.decay
+      break
+    }
+    case 'spot': {
+      const sl = l as THREE.SpotLight
+      sl.position.set(p.px, p.py, p.pz)
+      sl.distance = p.distance
+      sl.decay = p.decay
+      sl.angle = p.angle
+      sl.penumbra = p.penumbra
+      if (obj.target) obj.target.position.set(p.tx, p.ty, p.tz)
+      break
+    }
+    case 'directional': {
+      (l as THREE.DirectionalLight).position.set(p.px, p.py, p.pz)
+      if (obj.target) obj.target.position.set(p.tx, p.ty, p.tz)
+      break
+    }
+  }
+}
+
+function disposeLight(obj: LightObject): void {
+  obj.light.dispose()
+}
+
 // Folding paper. `fold` drives playback: how many folds have landed, fractional
 // = the next flap mid-swing. Faces render as a per-face triangle soup so each
 // face can be nudged by its layer index; edges are lines from the same positions.
@@ -300,10 +442,19 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 100)
   camera.position.set(0, 0, 5)
 
+  // Default lighting so an unlit program still reads. Held on until the DSL
+  // adds a light of its own (see syncDefaultLights).
   const dirLight = new THREE.DirectionalLight(0xffffff, 2)
   dirLight.position.set(2, 3, 4)
-  scene.add(dirLight)
-  scene.add(new THREE.AmbientLight(0xffffff, 2))
+  const ambientLight = new THREE.AmbientLight(0xffffff, 2)
+  const defaultLights: THREE.Light[] = [dirLight, ambientLight]
+  let defaultLightsOn = false
+  function setDefaultLights(on: boolean): void {
+    if (on === defaultLightsOn) return
+    for (const l of defaultLights) on ? scene.add(l) : scene.remove(l)
+    defaultLightsOn = on
+  }
+  setDefaultLights(true)
 
   function resize(): void {
     const { clientWidth: w, clientHeight: h } = sizeFrom
@@ -319,8 +470,28 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
   const objects = new Map<unknown, THREE.Mesh>()
   const origamis = new Map<unknown, OrigamiObject>()
   const texts = new Map<unknown, TextObject>()
+  const lights = new Map<unknown, LightObject>()
   const cameras = new Set<unknown>()
   let colorIdx = 0
+
+  // Defaults on exactly while the program has no light of its own.
+  function syncDefaultLights(): void {
+    setDefaultLights(lights.size === 0)
+  }
+
+  function addLight(id: unknown, obj: LightObject): void {
+    scene.add(obj.light)
+    if (obj.target) scene.add(obj.target)
+    lights.set(id, obj)
+    syncDefaultLights()
+  }
+
+  function removeLight(id: unknown, obj: LightObject): void {
+    scene.remove(obj.light)
+    if (obj.target) scene.remove(obj.target)
+    disposeLight(obj)
+    lights.delete(id)
+  }
 
   function applyCamera(row: Record<string, unknown>): void {
     const p = cameraPose(row)
@@ -357,10 +528,14 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
     camera,
     createObject(row: Record<string, unknown>): void {
       const { id, shape, px, py, pz, rx, ry, rz, color } = row
-      if (objects.has(id) || origamis.has(id) || texts.has(id) || cameras.has(id)) return
+      if (objects.has(id) || origamis.has(id) || texts.has(id) || lights.has(id) || cameras.has(id)) return
       if (shape === 'camera') {
         applyCamera(row)
         cameras.add(id)
+        return
+      }
+      if (shape === 'light') {
+        addLight(id, buildLight(lightParams(row)))
         return
       }
       if (shape === 'origami' && row.program) {
@@ -411,6 +586,19 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
         if (textGeometryChanged(text.params, row)) rebuildTextGeometry(text, row)
         return
       }
+      const light = lights.get(id)
+      if (light) {
+        const p = lightParams(row)
+        // A kind change swaps the THREE.Light class — rebuild in place; anything
+        // else is a live property update on the existing light.
+        if (lightKindChanged(light.kind, row)) {
+          removeLight(id, light)
+          addLight(id, buildLight(p))
+        } else {
+          applyLight(light, p)
+        }
+        return
+      }
       const mesh = objects.get(id)
       if (!mesh) return
       mesh.position.set(px as number, py as number, pz as number)
@@ -447,6 +635,12 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
         texts.delete(id)
         return
       }
+      const light = lights.get(id)
+      if (light) {
+        removeLight(id, light)
+        syncDefaultLights()
+        return
+      }
       const mesh = objects.get(id)
       if (!mesh) return
       scene.remove(mesh)
@@ -472,6 +666,13 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
         disposeText(text)
       }
       texts.clear()
+      for (const light of lights.values()) {
+        scene.remove(light.light)
+        if (light.target) scene.remove(light.target)
+        disposeLight(light)
+      }
+      lights.clear()
+      syncDefaultLights()
       cameras.clear()
       resetCamera()
       colorIdx = 0

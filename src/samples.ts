@@ -180,6 +180,57 @@ define("scene", (rand, table) =>
 `,
   },
   {
+    name: "Lights",
+    table: "lights",
+    code: `// livecodata — lighting the scene from the DSL
+// A \`t.light(...)\` is just another scene object: no mesh, it adds a three.js
+// light. The moment you add one, the scene's default lights switch off, so the
+// program owns the lighting. Being ordinary keyframe tracks, a light's color,
+// intensity and position animate on the beat timeline like anything else.
+// Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
+
+// 1. Something to light: a row of pale spheres to catch the colored lights.
+define("balls", () =>
+  grid(5, 1, { spacing: 0.9 }).map((c, i) => ({
+    id: "b" + i, type: "create", beat: 1, shape: "sphere",
+    color: 0xdddddd, r: 0.35, px: c.px, py: 0, pz: 0, rx: 0, ry: 0, rz: 0,
+  }))
+)
+
+// 2. The static lights. \`kind\` picks the type:
+//    - a dim "ambient" fill so nothing is pure black,
+//    - a cool "directional" key from the upper left for shape,
+//    plus a camera pulled back to frame the row. color is a hex number; give
+//    each light a distinct id.
+define("lights", () =>
+  t.light({ id: "fill", kind: "ambient", color: 0x222233, intensity: 1 })
+    .concat(t.light({ id: "key", kind: "directional", color: 0x88aaff, intensity: 1.5, px: -3, py: 4, pz: 2 }))
+    .concat(t.camera([
+      { beat: 1, px: 0, py: 1.5, pz: 6, tx: 0, ty: 0, tz: 0 },
+    ]))
+)
+
+// 3. A moving colored point light: one create row plus update keyframes for
+//    px/pz (a circle) and intensity (brightest at the front of the loop). It's
+//    a plain "light" row, so it rides rasterize and interpolates like any object.
+define("bulb", () =>
+  rows([
+    { id: "bulb", type: "create", beat: 1, shape: "light", kind: "point",
+      color: 0xff6b6b, intensity: 5, distance: 12, px: 0, py: 1.5, pz: 2 },
+    { id: "bulb", type: "update", beat: 3, px: 3,  pz: 0, intensity: 2 },
+    { id: "bulb", type: "update", beat: 5, px: 0,  pz: -2, intensity: 5 },
+    { id: "bulb", type: "update", beat: 7, px: -3, pz: 0, intensity: 2 },
+    { id: "bulb", type: "update", beat: 9, px: 0,  pz: 2, intensity: 5 },
+  ])
+)
+
+// 4. Merge lights + moving bulb + spheres and bake the 8-beat cache.
+define("scene", (rand, table) =>
+  table("lights").concat(table("bulb")).concat(table("balls")).rasterize(8)
+)
+`,
+  },
+  {
     name: "Origami Crane",
     table: "steps",
     code: `// livecodata — Origami Crane: a table of fold steps, solved exactly
