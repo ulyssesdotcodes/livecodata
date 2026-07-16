@@ -68,11 +68,15 @@ html, body {
   min-height: 0;
 }
 
-/* Both canvases fill the pane and overlap. three-canvas is the Three.js render
+/* The canvases fill the pane and overlap. three-canvas is the Three.js render
    that hydra reads as a source; hydra-canvas sits on top as the visible output
-   (in passthrough it shows the scene unchanged). */
+   (in passthrough it shows the scene unchanged). bauble-canvas holds the
+   bauble SDF render, which hydra also reads (s1); it stays hidden under the
+   hydra output unless the program has a bauble sketch and no hydra sketch to
+   composite it — then main.ts marks it .visible and it shows directly. */
 #three-canvas,
-#hydra-canvas {
+#hydra-canvas,
+#bauble-canvas {
   display: block;
   position: absolute;
   inset: 0;
@@ -82,6 +86,15 @@ html, body {
 
 #hydra-canvas {
   z-index: 1;
+}
+
+#bauble-canvas {
+  visibility: hidden;
+}
+
+#bauble-canvas.visible {
+  visibility: visible;
+  z-index: 2;
 }
 
 /* ── Editor pane ── */

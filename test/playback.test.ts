@@ -274,5 +274,5 @@ test('loopEpochsFromApplies ignores non-apply events and unstamped (legacy) puls
 })
 
 test('a stamped apply without a changed list counts for every kind', () => {
-  assert.deepEqual(loopEpochsFromApplies([{ kind: 'apply', at: 7 }]), { scene: 7, timeline: 7, hydra: 7 })
+  assert.deepEqual(loopEpochsFromApplies([{ kind: 'apply', at: 7 }]), { scene: 7, timeline: 7, hydra: 7, bauble: 7 })
 })

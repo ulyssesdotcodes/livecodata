@@ -81,6 +81,7 @@ export interface PackedCook {
   sceneRows: Row[]
   timelineRows: Row[]
   hydraRows: Row[]
+  baubleRows: Row[]
 }
 
 export function packCooked(cooked: CookedResult): PackedCook {
@@ -96,6 +97,7 @@ export function packCooked(cooked: CookedResult): PackedCook {
     sceneRows: packRows(cooked.sceneRows),
     timelineRows: packRows(cooked.timelineRows),
     hydraRows: packRows(cooked.hydraRows),
+    baubleRows: packRows(cooked.baubleRows),
   }
 }
 
@@ -116,5 +118,7 @@ export function unpackCooked(packed: PackedCook): CookedResult {
     sceneRows: unpackRows(packed.sceneRows),
     timelineRows: unpackRows(packed.timelineRows),
     hydraRows: unpackRows(packed.hydraRows),
+    // ?? [] tolerates a stale worker bundle from before bauble existed.
+    baubleRows: unpackRows(packed.baubleRows ?? []),
   }
 }

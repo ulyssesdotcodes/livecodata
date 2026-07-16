@@ -41,7 +41,10 @@ export interface HydraAPI {
 // pass the rendered Three.js scene straight through to the output untouched.
 const PASSTHROUGH = 'src(s0).out(o0)'
 
-export function initHydra(canvas: HTMLCanvasElement, source: HTMLCanvasElement): HydraAPI {
+// `source` becomes hydra's s0 (the Three.js scene); each canvas in `extras`
+// becomes the next source in order (s1, s2, …) — main.ts wires the bauble
+// canvas in as s1 so a sketch can composite the SDF render: src(s1).
+export function initHydra(canvas: HTMLCanvasElement, source: HTMLCanvasElement, ...extras: HTMLCanvasElement[]): HydraAPI {
   const width = canvas.width || 1280
   const height = canvas.height || 720
   const regl = createREGL({ canvas, pixelRatio: 1 })
@@ -58,8 +61,10 @@ export function initHydra(canvas: HTMLCanvasElement, source: HTMLCanvasElement):
   const hydra = new Hydra({ regl, width, height, props: () => currentVars })
 
   // Wire the Three.js canvas in as source s0; `dynamic` re-uploads the texture
-  // every frame so the live 3D render keeps flowing through.
+  // every frame so the live 3D render keeps flowing through. Extra canvases
+  // (the bauble render) take the following slots the same way.
   hydra.sources[0].init({ src: source, dynamic: true })
+  extras.forEach((extra, i) => hydra.sources[i + 1]?.init({ src: extra, dynamic: true }))
 
   // The compiled sketch's scope: hydra's own generator functions (osc, src,
   // modulate, …, bound so `.out()` defaults to o0) plus each source/output by

@@ -39,12 +39,15 @@ export interface AppProps {
 }
 
 // The imperative islands the app render creates but does not draw into:
-// main.ts feeds these to initThree/initHydra (three-canvas renders the 3D
-// scene; hydra-canvas post-processes it, reading three-canvas as a texture,
-// and is the visible output).
+// main.ts feeds these to initThree/initHydra/initBauble (three-canvas renders
+// the 3D scene; hydra-canvas post-processes it, reading three-canvas as a
+// texture, and is the visible output; bauble-canvas holds the bauble SDF
+// render — hydra reads it as s1, and it's shown directly, on top, when the
+// program has a bauble sketch but no hydra sketch to composite it).
 export interface CanvasMounts {
   canvasPane: HTMLElement
   threeCanvas: HTMLCanvasElement
+  baubleCanvas: HTMLCanvasElement
   hydraCanvas: HTMLCanvasElement
 }
 
@@ -56,6 +59,7 @@ function App(props: AppProps & { mounts: CanvasMounts }) {
       <div id="canvas-pane" ref={(el) => (props.mounts.canvasPane = el)}>
         <canvas id="three-canvas" ref={(el) => (props.mounts.threeCanvas = el)} />
         <canvas id="hydra-canvas" ref={(el) => (props.mounts.hydraCanvas = el)} />
+        <canvas id="bauble-canvas" ref={(el) => (props.mounts.baubleCanvas = el)} />
         <SliderPanel ctl={props.sliderPanel} />
         <div id="playback-controls">
           <Show when={props.playback()}>

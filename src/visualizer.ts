@@ -3,8 +3,9 @@
 // ----------------------------------------------------------------------------
 // The playback engine (playback.ts) owns time: the beat clock, the loop, the
 // timeline remap, scrubbing. What actually shows up on screen is a list of
-// Visualizers — today the Three.js scene and the hydra post-processing layer,
-// tomorrow whatever else — each of which knows how to (1) pull its rows out of
+// Visualizers — today the Three.js scene, the hydra post-processing layer and
+// the bauble SDF layer, tomorrow whatever else — each of which knows how to
+// (1) pull its rows out of
 // a cooked program, (2) index them on the shared frame grid, and (3) reconcile
 // its display to a source frame. The engine never learns what a visualizer
 // draws; adding a new one is: add its rows to replay.ts's CookedResult,
@@ -18,11 +19,13 @@
 
 import { buildFrameIndex, sampleFrame } from './rasterize.js'
 import { buildHydraIndex, hydraFrameAt, hydraLoops } from './hydra.js'
+import { buildBaubleIndex, baubleFrameAt, baubleLoops } from './bauble.js'
 import { resolveBindings, type EvalCtx } from './dsl.js'
 import { FPS } from './constants.js'
 import type { Row } from './lineage.js'
 import type { SceneAPI } from './three-scene.js'
 import type { HydraAPI } from './hydra-scene.js'
+import type { BaubleAPI } from './bauble-scene.js'
 
 // Absolute wall-clock instants (ms) each content kind's multi-loop sequence
 // counts passes from — per kind, the `at` stamp of the newest apply that
@@ -32,6 +35,7 @@ export interface LoopEpochs {
   scene?: number
   timeline?: number
   hydra?: number
+  bauble?: number
 }
 
 // The row sets a cooked program feeds the visualizers — a subset of replay.ts's
@@ -42,6 +46,8 @@ export interface LoopEpochs {
 export interface CookedVisualRows {
   sceneRows: Row[]
   hydraRows: Row[]
+  // Optional so pre-bauble callers (and their test fixtures) stay assignable.
+  baubleRows?: Row[]
   loopEpochs?: LoopEpochs
 }
 
@@ -177,6 +183,46 @@ export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
     },
     blank(): void {
       hydraAPI.reset()
+    },
+  }
+}
+
+// The bauble layer: like hydra, the sampled sketch is absolute (setSketch
+// replaces the whole program) so there's no reconciliation state — and the
+// same recompile economics apply, so clear() must not reset. tick() drives the
+// raymarcher's clock from the source position, keeping the sketch on the
+// playback timeline.
+export function createBaubleVisualizer(baubleAPI: BaubleAPI): Visualizer {
+  let index: Row[] = buildBaubleIndex([])
+  let loops = 1
+  let epoch = 0
+
+  return {
+    load(cooked): void {
+      index = buildBaubleIndex(cooked.baubleRows ?? [])
+      loops = baubleLoops(index)
+      if (typeof cooked.loopEpochs?.bauble === 'number') epoch = cooked.loopEpochs.bauble
+    },
+    contentFrames: () => 0,
+    hasContent: () => index.length > 0,
+    applyFrame({ srcFrameF, ctx, passAt }): Row[] {
+      const pass = loops > 1 ? passAt(epoch) % loops : 0
+      const sketch = baubleFrameAt(index, Math.floor(srcFrameF), pass)
+      // Resolve any midi/slider bindings in the sketch's variables. NB: unlike
+      // hydra there is no props escape hatch — a resolved variable bakes into
+      // the compiled script, so a binding that sweeps every frame recompiles
+      // every frame. The reserved camera-x/-y/-zoom variables are the
+      // exception (renderer uniforms — see bauble-scene.ts), so bind sweeping
+      // inputs to those.
+      baubleAPI.setSketch(sketch && ctx ? { ...sketch, vars: resolveBindings(sketch.vars, ctx) } : sketch)
+      baubleAPI.tick(srcFrameF / FPS)
+      return []
+    },
+    clear(): void {
+      // setSketch is absolute — see the hydra visualizer's clear().
+    },
+    blank(): void {
+      baubleAPI.reset()
     },
   }
 }
