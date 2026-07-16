@@ -32,6 +32,8 @@ import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS } from './constants.js'
 import { compileFoldTable, foldValueAt, type FoldTableProgram } from './fold-engine.js'
 import type { Schema } from './editable-tables.js'
 import { beatSecondsFromTaps } from './tap-log.js'
+import { primitiveGeometry, pointsFromGeometry, geometryFromPoints } from './three-points.js'
+import type { BufferGeometry } from 'three'
 
 // ── Expr: a small, serializable, chainable expression over a row ─────────────
 // Each Expr wraps a plain-JSON `node` (no functions), so it serializes for
@@ -1185,6 +1187,19 @@ export type DSLSurface = Easings & {
   // The generic form behind box()/sphere()/… — build a create row for any
   // shape string, including future shapes without a named helper.
   object(shape: string, props?: Row): Table
+  // A three.js primitive → a table of its points. Tessellates the shape (the
+  // SAME geometry the renderer draws for box()/sphere()/…, sized by the same
+  // hx/hy/hz | r | h fields) and returns one row per vertex: { i, px, py, pz,
+  // nx, ny, nz } — position and surface normal in the shape's local space. Pass
+  // `segments` to raise the tessellation for a denser cloud. The rows are plain
+  // numbers, so they chain and transform like any table:
+  //   points("sphere", { r: 1, segments: 48 }).map({ px: field("nx"), ... })
+  points(shape: string, props?: Row): Table
+  // A table of points → a three.js primitive: a BufferGeometry whose position
+  // (and, when every row has nx/ny/nz, normal) attribute is read from the rows'
+  // px/py/pz (nx/ny/nz). The inverse of points(): geometry(points("box")) round-
+  // trips to an equivalent box geometry.
+  geometry(points: Table | Row[]): BufferGeometry
   physics(source: Table | Row[]): PhysicsBuilder
   // Folding paper: origami() is a bare sheet. Chain .steps(table) to fold it
   // by instructions — each row a fold/reflection along a line through two
@@ -1275,6 +1290,19 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     // origin (see sceneObject). object() is the generic; the named helpers are
     // sugar so autocomplete surfaces the available shapes.
     object: (shape: string, props: Row = {}) => sceneObject(shape, props, ctx),
+    // Primitive ⇄ points bridge (see three-points.ts). points() samples a
+    // shape's vertices+normals into a table; geometry() rebuilds a three.js
+    // primitive from such a table. `segments` (if a number) sets tessellation;
+    // the remaining props size the shape (hx/hy/hz | r | h).
+    points: (shape: string, props: Row = {}): Table => {
+      const { segments, ...dims } = props
+      const geo = primitiveGeometry(shape, dims, typeof segments === 'number' ? { segments } : {})
+      const rows = pointsFromGeometry(geo)
+      geo.dispose()
+      return new Table(rows, ctx)
+    },
+    geometry: (points: Table | Row[]): BufferGeometry =>
+      geometryFromPoints(points instanceof Table ? points.rows : points ?? []),
     box: (props: Row = {}) => sceneObject('box', props, ctx),
     sphere: (props: Row = {}) => sceneObject('sphere', props, ctx),
     cylinder: (props: Row = {}) => sceneObject('cylinder', props, ctx),
