@@ -1,16 +1,8 @@
-// The app shell: one Solid render tree for the whole layout. Every pane is
-// created here from the pure-logic controllers main.ts builds and passes in
-// (humble-object style — controllers hold signals and methods, components
-// only render them). The two exceptions are the three.js and hydra panes,
-// which are canvases drawn imperatively: this render creates the <canvas>
-// elements (and hands them back via CanvasMounts), but their contents are
-// driven outside Solid by initThree/initHydra.
-//
-// The playback controls need the playback engine, and the engine needs the
-// scene/hydra APIs — which need the canvases this render creates. So the
-// playback controller arrives as an accessor that main.ts fills in right
-// after mountApp returns; the controls render as soon as it lands (still
-// synchronously before anything is painted).
+// The app shell: one Solid render tree for the whole layout, rendering the
+// pure-logic controllers main.ts builds (humble-object style). The canvases
+// are created here but drawn imperatively outside Solid. Playback arrives as
+// an accessor main.ts fills in right after mountApp returns — the engine
+// needs the canvases this render creates.
 
 import { Show, type Accessor } from 'solid-js'
 import { render } from 'solid-js/web'
@@ -32,18 +24,12 @@ export interface AppProps {
   roomChip: RoomChipController
   sliderPanel: SliderPanelController
   playback: Accessor<PlaybackController | null>
-  // The session bar's "Clear" button: wipes the saved run list. The program
-  // text and every editable table's rows are untouched — see main.ts's
-  // clearRuns.
   onClearRuns: () => void
 }
 
-// The imperative islands the app render creates but does not draw into:
-// main.ts feeds these to initThree/initHydra/initBauble (three-canvas renders
-// the 3D scene; hydra-canvas post-processes it, reading three-canvas as a
-// texture, and is the visible output; bauble-canvas holds the bauble SDF
-// render — hydra reads it as s1, and it's shown directly, on top, when the
-// program has a bauble sketch but no hydra sketch to composite it).
+// Canvases this render creates but does not draw into — main.ts hands them
+// to initThree/initHydra/initBauble. Hydra reads the other two as textures
+// and is normally the visible output.
 export interface CanvasMounts {
   canvasPane: HTMLElement
   threeCanvas: HTMLCanvasElement
@@ -89,8 +75,8 @@ function App(props: AppProps & { mounts: CanvasMounts }) {
   )
 }
 
-// Solid's render is synchronous, so the returned mounts are populated (and
-// the full layout is in the DOM) by the time this returns.
+// Solid's render is synchronous, so the mounts are populated by the time
+// this returns.
 export function mountApp(root: HTMLElement, props: AppProps): CanvasMounts {
   const mounts = {} as CanvasMounts
   render(() => <App {...props} mounts={mounts} />, root)

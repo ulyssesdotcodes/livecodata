@@ -1,9 +1,6 @@
-// Playback engine — all timing/loop/scrub state, with zero DOM and zero
-// knowledge of what gets drawn. What renders is the list of Visualizers the
-// engine is constructed with (see visualizer.ts); the engine only tells each
-// one which source frame to reconcile to. The transport controls are a humble
-// SolidJS view (ui/playback-controls.tsx) that renders the PlaybackViewState
-// this engine emits and calls straight back into the methods below.
+// Playback engine — all timing/loop/scrub state, zero DOM. The engine only
+// tells each Visualizer which source frame to reconcile to; the transport view
+// (ui/playback-controls.tsx) is a humble renderer of PlaybackViewState.
 
 import { buildTimeline, type Timeline } from './timeline.js'
 import { activeLineage } from './lineage.js'
@@ -17,22 +14,15 @@ export interface TapControl {
   tap(): void
   clear(): void
   rows(): Row[]
-  // Wall-clock epoch (ms) of the first tap in the current sequence, once at
-  // least two taps have established a tempo — the instant "beat 0" is
-  // anchored to (a person tapping a tempo starts on beat 1, so that first tap
-  // is the one that actually landed on the grid). Null before that (no tempo
-  // yet), in which case phase anchors to the Unix epoch instead (see
-  // wallAlignedPhase) — still a shared absolute reference, just an arbitrary one.
+  // Wall-clock epoch (ms) of the first tap once two taps establish a tempo —
+  // the instant "beat 0" anchors to. Null before that, in which case phase
+  // anchors to the Unix epoch instead (see wallAlignedPhase).
   anchor?(): number | null
 }
 
-// The tick value "now" should show, if a tap-established tempo is locked to
-// the real-world clock: elapsed time since the anchor instant, wrapped into
-// one loop. Anchoring phase to an absolute instant (rather than to whenever
-// Play was pressed) means "beat 0" always falls at the same absolute moment —
-// which is what keeps independently-started clients (or repeated Play
-// presses, or a client joining a room mid-loop) in phase with each other,
-// purely from each machine's own system clock.
+// Elapsed time since the anchor instant, wrapped into one loop. Anchoring to
+// an absolute instant (not to when Play was pressed) keeps independently-
+// started clients in phase purely from their own system clocks.
 export function wallAlignedTick(nowMs: number, anchorMs: number, loopSeconds: number): number {
   if (loopSeconds <= 0) return 0
   let phase = ((nowMs - anchorMs) / 1000) % loopSeconds
@@ -40,13 +30,10 @@ export function wallAlignedTick(nowMs: number, anchorMs: number, loopSeconds: nu
   return phase
 }
 
-// Which pass of the loop "now" falls in on the same wall-aligned grid — the
-// quotient of the division wallAlignedTick keeps the remainder of. Multi-loop
-// sequences place content by the DIFFERENCE between this value now and at the
-// instant the content last changed (its loop epoch), so a re-cook restarts a
-// sequence at loop 0 while the phase within the loop stays exactly where it
-// was — and, like the phase, any two clients agree on the pass purely from
-// their own system clocks.
+// Which pass of the loop "now" falls in on the same wall-aligned grid.
+// Multi-loop sequences place content by the DIFFERENCE between this value now
+// and at the content's loop epoch, so a re-cook restarts a sequence at pass 0
+// while the phase within the loop stays put.
 export function wallAlignedLoop(nowMs: number, anchorMs: number, loopSeconds: number): number {
   if (loopSeconds <= 0) return 0
   return Math.floor((nowMs - anchorMs) / 1000 / loopSeconds)
@@ -54,15 +41,14 @@ export function wallAlignedLoop(nowMs: number, anchorMs: number, loopSeconds: nu
 
 export type PlayState = 'idle' | 'playing' | 'paused'
 
-// Everything the transport view needs to draw itself — pushed on every state
-// change and every animation frame. The view renders this verbatim (humble
-// object): no playback decisions live on the DOM side.
+// Pushed to the transport view on every state change and animation frame; the
+// view renders it verbatim — no playback decisions live on the DOM side.
 export interface PlaybackViewState {
   state: PlayState
-  // The playhead position the time display shows, in elapsed beats.
+  // Playhead position, in elapsed beats.
   pos: number
-  // What the scrubber thumb should sit at — frozen at the drag position while
-  // the user is scrubbing so the ticking engine doesn't fight the drag.
+  // Frozen at the drag position while scrubbing so the ticking engine doesn't
+  // fight the drag.
   scrubPos: number
   maxBeats: number
   // Source beat at `pos` (timeline-mapped; equals pos+1 with no timeline).
@@ -75,26 +61,21 @@ export interface PlaybackViewState {
 }
 
 export interface PlaybackOptions {
-  // srcBeats: the source/content position shown, as a 1-indexed beat (converted
-  // from the internal frame count) — the unit every table's `beat` column uses.
+  // srcBeats is a 1-indexed beat — the unit every table's `beat` column uses.
   onTick?: (tick: number, active: Map<string, Set<number>>, srcBeats: number) => void
   onPlay?: () => void
-  // Called each time the loop wraps (the playhead passes the end and jumps back).
+  // Called each time the loop wraps.
   onLoop?: () => void
   tapControl?: TapControl
-  // Streaming context for the frame being shown: resolves midi() bindings against
-  // the live MIDI table, sampled at the playhead's *source* frame — the same
-  // content-space coordinate events are recorded in (see currentSourceBeats).
+  // Resolves midi() bindings against the live MIDI table at the playhead's
+  // *source* frame — the same coordinate events are recorded in.
   midiCtxAt?: (srcFrame: number) => EvalCtx | null
-  // The same, for slider() bindings against the live slider table. Its ctx also
-  // carries sliders() — every defined slider's value — which each hydra sketch
-  // reads as `props.sliders` (see visualizer.ts).
+  // Same for slider() bindings; its ctx also carries sliders(), which each
+  // hydra sketch reads as `props.sliders`.
   sliderCtxAt?: (srcFrame: number) => EvalCtx | null
 }
 
-// The engine's clocks and frame scheduler, injectable so tests can drive the
-// whole timing state machine deterministically. Production omits this and
-// gets the real ones.
+// Injectable clocks/scheduler so tests can drive timing deterministically.
 export interface PlaybackClock {
   // Monotonic ms — the beat clock (performance.now).
   now?: () => number
@@ -109,16 +90,11 @@ export interface PlaybackEngineOptions extends PlaybackOptions {
   clock?: PlaybackClock
 }
 
-// Fold an activity event stream (main.ts's ACTIVITY_TABLE) into per-kind loop
-// epochs: the newest 'apply' event naming each kind in `changed`, by its
-// absolute `at` stamp. The stamp is the AUTHOR's clock at the instant they
-// applied, and every replica folds the same merged events — so all clients in
-// a room (including one that joins later and replays the history) derive
-// identical epochs, and therefore the same pass of a multi-loop sequence,
-// with no extra sync message. This is the same trick the tap log uses for
-// tempo: record the absolute instant once, let every clock-synced client
-// derive the rest. An apply without a `changed` list counts for every kind;
-// events without a stamp are ignored (legacy pulses).
+// Fold the activity event stream into per-kind loop epochs: the newest
+// 'apply' stamp naming each kind. Stamps are the author's absolute clock, so
+// every replica (including late joiners) derives identical epochs with no
+// extra sync message. An apply without `changed` counts for every kind;
+// unstamped events (legacy pulses) are ignored.
 export function loopEpochsFromApplies(events: Row[]): LoopEpochs {
   const out: LoopEpochs = {}
   for (const e of events ?? []) {
@@ -131,27 +107,20 @@ export function loopEpochsFromApplies(events: Row[]): LoopEpochs {
   return out
 }
 
-// What load() consumes: every visualizer's row sets plus the timeline's (the
-// timeline is the engine's own — it remaps time, it doesn't render). replay's
-// CookedResult is structurally assignable.
+// What load() consumes — the timeline is the engine's own (it remaps time, it
+// doesn't render). replay's CookedResult is structurally assignable.
 export type LoadedRows = CookedVisualRows & { timelineRows: Row[] }
 
 export interface PlaybackAPI {
   load(cooked: LoadedRows): void
-  // The tap tempo changed: re-anchor the beat clock so the playhead keeps its
-  // beat position (and the loop's wall-clock length follows the new tempo)
-  // without re-cooking anything — content sits on a fixed beat grid, so only the
-  // *rate* the playhead sweeps it changes.
+  // Re-anchor the beat clock after a tap-tempo change — content sits on a
+  // fixed beat grid, so only the playhead's rate changes; nothing re-cooks.
   retempo(): void
-  // The content/source position (as a 1-indexed beat) currently on screen —
-  // the playhead beat mapped through the (loop-wrapped) timeline. Live MIDI
-  // events are stamped here, so a recorded sweep's speed follows the timeline
-  // mapping: if it changes later (e.g. a slower fit), the sweep speeds up or
-  // slows down right along with everything else on screen.
+  // The content/source position (a 1-indexed beat) currently on screen. Live
+  // MIDI events are stamped here, so a recorded sweep's speed follows the
+  // timeline mapping.
   currentSourceBeats(): number
-  // Start playing if not already (same as pressing the play button once) — for
-  // a caller that needs the loop actually running, e.g. the reset button's
-  // measure-by-measure rewind. No-op if already playing.
+  // No-op if already playing.
   play(): void
 }
 
@@ -159,8 +128,7 @@ export interface PlaybackEngine extends PlaybackAPI {
   toggle(): void
   setLoop(on: boolean): void
   setLoopBeats(n: number): void
-  // Scrubber drag in progress: preview the dragged position without committing
-  // the playhead. endScrub (pointerup, wherever it lands) commits it.
+  // Preview a drag position without committing the playhead; endScrub commits.
   scrub(pos: number): void
   endScrub(): void
   viewState(): PlaybackViewState
@@ -175,36 +143,31 @@ export function createPlaybackEngine(
   const raf = clock?.raf ?? ((cb: () => void): void => { requestAnimationFrame(cb) })
 
   let state: PlayState = 'idle'
-  // The playhead is measured in BEATS. `startTime` is the wall epoch (ms) the
-  // beat clock is anchored to, and `anchorBeatSec` the tempo it was anchored at,
-  // so the live position is ((now - startTime)/1000)/anchorBeatSec beats.
-  // Re-anchoring (play, tempo change, loop wrap, scrub) is the only place the
-  // tapped tempo enters — between anchors a loop runs at one steady tempo.
+  // The playhead is measured in BEATS: live position is
+  // ((now - startTime)/1000)/anchorBeatSec. Re-anchoring (play, tempo change,
+  // loop wrap, scrub) is the only place the tapped tempo enters — between
+  // anchors a loop runs at one steady tempo.
   let startTime: number | null = null
   let anchorBeatSec = DEFAULT_BEAT_SECONDS
   let pausedBeat = 0
   let timeline: Timeline = buildTimeline([])
-  // Absolute instant the timeline's multi-loop pass counting is based on — its
-  // shared apply stamp (see loopEpochsFromApplies; each visualizer keeps its
-  // own kind's stamp the same way). 0 (the Unix epoch) until stamped — the
-  // same arbitrary-but-shared reference the no-tap phase anchor uses.
+  // Absolute instant the timeline's pass counting is based on — its shared
+  // apply stamp (see loopEpochsFromApplies). 0 (the Unix epoch) until stamped.
   let timelineEpoch = 0
-  let maxBeats = 0 // loop length in beats — the one unit the playhead counts in
+  let maxBeats = 0 // loop length in beats
   let isScrubbing = false
   let scrubPos = 0
-  let loop = true // when playback reaches the end, wrap back to the start
-  // How many beats one loop lasts when nothing else sizes it (no timeline, no
-  // 3D scene) — a pure hydra sketch. User-settable via the loop-length control,
-  // so the last sketch keyframe no longer has to sit exactly at the loop boundary
-  // (where it was invisible).
+  let loop = true
+  // Loop length when nothing else sizes it (a pure hydra sketch). User-settable
+  // so the last sketch keyframe no longer has to sit exactly at the loop
+  // boundary (where it was invisible).
   let loopBeats = DEFAULT_LOOP_BEATS
-  // The position most recently shown to the view (what emit() reports as pos).
+  // The position most recently shown to the view.
   let shownPos = 0
 
-  // Seconds per beat, live from the tapped tempo (see tap-log.ts's
-  // beatSecondsFromTaps) or the shared default until two taps set one. This is
-  // the whole of how tempo enters playback: it scales how fast the beat clock
-  // advances, never where content sits on the (fixed) beat grid.
+  // Seconds per beat, from the tapped tempo. The whole of how tempo enters
+  // playback: it scales how fast the beat clock advances, never where content
+  // sits on the (fixed) beat grid.
   function beatSeconds(): number {
     return beatSecondsFromTaps(tapControl?.rows()) ?? DEFAULT_BEAT_SECONDS
   }
@@ -233,26 +196,21 @@ export function createPlaybackEngine(
     onViewChange?.(viewState())
   }
 
-  // The content/source beat shown at playhead beat `pos` (0-based elapsed beats):
-  // the timeline remaps the 1-indexed playback beat to a 1-indexed source beat
-  // (identity when there is no timeline). A multi-loop timeline also remaps by
-  // which pass of the loop we're in.
+  // Source beat shown at playhead beat `pos` (0-based elapsed beats): the
+  // timeline remaps the 1-indexed playback beat to a 1-indexed source beat
+  // (identity with no timeline); a multi-loop timeline also remaps by pass.
   function sourceBeatAt(pos: number): number {
     return timeline.sourceBeatAt(pos + 1, timeline.loops > 1 ? passesSince(timelineEpoch) : 0)
   }
 
   function applyAt(pos: number): void {
-    // Source position as a fractional cache frame: the timeline maps this
-    // playhead beat to a source beat, which sits at (beat - 1) * FRAMES_PER_BEAT
-    // on the fixed grid. Fractional because the playhead sweeps continuously —
-    // each visualizer interpolates between cache frames however it needs to.
+    // Fractional cache frame: the playhead sweeps continuously — each
+    // visualizer interpolates between cache frames however it needs to.
     const srcBeat = sourceBeatAt(pos)
     const srcFrameF = (srcBeat - 1) * FRAMES_PER_BEAT
-    // Streaming context: midi()/slider() bindings resolve against the live MIDI
-    // and slider tables at the source frame — the same content coordinate events
-    // are recorded in, so a recorded sweep tracks the timeline (and the tempo)
-    // rather than wall time. Both sources merge into one ctx handed to every
-    // visualizer (midi supplies midi(), the slider source slider()/sliders()).
+    // midi()/slider() bindings resolve at the source frame — the same content
+    // coordinate events are recorded in — so a recorded sweep tracks the
+    // timeline and tempo rather than wall time.
     const srcFrame = Math.round(srcFrameF)
     const midiCtx = midiCtxAt ? midiCtxAt(srcFrame) : null
     const sliderCtx = sliderCtxAt ? sliderCtxAt(srcFrame) : null
@@ -263,9 +221,7 @@ export function createPlaybackEngine(
     onTick?.(pos, activeLineage(states), srcBeat)
   }
 
-  // Is there anything to play? A program can define a hydra sketch with no 3D
-  // scene at all (see the "Hydra Sketch" sample), so any one visualizer with
-  // content is enough.
+  // Any one visualizer with content is enough — a program can be hydra-only.
   function hasContent(): boolean {
     return visualizers.some((v) => v.hasContent())
   }
@@ -276,17 +232,13 @@ export function createPlaybackEngine(
     if (hasContent()) applyAt(pos)
   }
 
-  // Where the playhead currently sits, in beats, whatever the play state.
   function currentTime(): number {
     return state === 'playing' ? position() : pausedBeat
   }
 
-  // The wall-clock-aligned beat phase for right now, or null when there's
-  // nothing to loop over. Always anchored to an absolute instant — the first
-  // tap of the established tempo if there is one, else the Unix epoch — so
-  // any two clients (or a client joining a room mid-loop, with or without a
-  // tap tempo set yet) land on the same phase purely from their own system
-  // clock, with no extra sync message needed (see wallAlignedTick).
+  // Wall-aligned beat phase right now, or null with nothing to loop over.
+  // Anchored to an absolute instant (first tap, else the Unix epoch) so any
+  // two clients land on the same phase purely from their own system clocks.
   function wallAlignedPhase(): number | null {
     const anchorMs = tapControl?.anchor?.() ?? 0
     const bs = beatSeconds()
@@ -294,39 +246,29 @@ export function createPlaybackEngine(
     return wallAlignedTick(epochNow(), anchorMs, maxBeats * bs) / bs
   }
 
-  // How many wall-aligned loops have completed since the absolute instant
-  // `epochMs` — which pass of a multi-loop sequence to show right now (before
-  // wrapping by the sequence's own pass count): 0 within the loop the epoch
-  // falls in, incrementing once per loop-complete, on the same absolute grid
-  // as wallAlignedPhase — no per-wrap counter, and every clock-synced client
-  // agrees. This is the time half of multi-loop playback; the content half
-  // (how many passes, where each pass's rows sit) lives in each visualizer,
-  // which receives this function per frame (VisualizerFrame.passAt) and calls
-  // it with its own shared apply stamp.
+  // Wall-aligned loops completed since `epochMs` — which pass of a multi-loop
+  // sequence to show, with no per-wrap counter, so every clock-synced client
+  // agrees. The time half of multi-loop playback; the content half lives in
+  // each visualizer, which calls this with its own shared apply stamp.
   function passesSince(epochMs: number): number {
     const anchorMs = tapControl?.anchor?.() ?? 0
     const loopSec = maxBeats * beatSeconds()
     return Math.max(0, wallAlignedLoop(epochNow(), anchorMs, loopSec) - wallAlignedLoop(epochMs, anchorMs, loopSec))
   }
 
-  // The content/source position (a 1-indexed beat) currently on screen — the
-  // playhead beat wrapped by the loop exactly as rendering wraps it, then mapped
-  // through the timeline, exactly as applyAt computes it. This is where a live
-  // MIDI event gets stamped: recording this shared content coordinate (rather
-  // than raw wall-clock time) is what makes a recorded sweep follow the timeline
-  // and the tempo along with everything else on screen.
+  // The 1-indexed source beat on screen — wrapped and timeline-mapped exactly
+  // as applyAt computes it. Live MIDI events are stamped here: recording this
+  // shared content coordinate (not wall time) is what makes a recorded sweep
+  // follow the timeline and tempo along with everything else on screen.
   function currentSourceBeats(): number {
     let pos = currentTime()
     if (loop && maxBeats > 0 && pos >= maxBeats) pos %= maxBeats
     return sourceBeatAt(pos)
   }
 
-  // Loop length in beats. A timeline sizes it by its playback-beat span; else
-  // the longest visualizer content (a 3D scene's cache length); else — content
-  // that declines to size the loop, like a pure hydra sketch — the loop-length
-  // control (loopBeats). Sizing a hydra-only loop from the control rather than
-  // the sketch's last keyframe is what keeps that keyframe visible instead of
-  // landing exactly on the loop boundary.
+  // Loop length: the timeline's span, else the longest visualizer content,
+  // else the loop-length control — which keeps a hydra-only sketch's last
+  // keyframe visible instead of landing exactly on the loop boundary.
   function recomputeMax(): void {
     if (timeline.active) {
       maxBeats = timeline.beats
@@ -338,17 +280,16 @@ export function createPlaybackEngine(
     else maxBeats = 0
   }
 
-  // Anchor the beat clock so the live position reads `pos` beats right now, at
-  // the current tempo. The one place the tapped tempo is folded into the clock.
+  // Anchor the beat clock so the live position reads `pos` beats right now —
+  // the one place the tapped tempo is folded into the clock.
   function anchor(pos: number): void {
     anchorBeatSec = beatSeconds()
     startTime = now() - pos * anchorBeatSec * 1000
   }
 
-  // Re-anchor the clock + view to beat `pos` (clamped) and reconcile the
-  // scene there, keeping the current play state. Shared by load()/retempo() so a
-  // re-cook or a tempo change resumes from where we were rather than rewinding.
-  // applyAt diffs the scene, so swapping caches updates objects in place.
+  // Re-anchor clock + view to beat `pos` (clamped), keeping the play state, so
+  // a re-cook or tempo change resumes in place rather than rewinding. applyAt
+  // diffs the scene, so swapping caches updates objects in place.
   function retimeTo(pos: number): void {
     const top = maxBeats || 0
     pos = Math.min(Math.max(0, pos), top)
@@ -362,15 +303,10 @@ export function createPlaybackEngine(
     }
   }
 
-  // Swap in a freshly cooked frame cache (+ optional timeline). A re-evaluate
-  // does NOT move the playhead: keep the current position and play state, only
-  // replacing the baked data. (First load is at 0 because that's where we are.)
-  // `cooked.loopEpochs` rides along with the rows: the shared apply stamps
-  // each multi-loop sequence counts passes from. Each visualizer picks its own
-  // kind's stamp in its load(); the engine keeps the timeline's. A kind
-  // present re-bases its pass counting to that absolute instant (the phase
-  // within the loop stays put, only the pass count rewinds); a kind absent
-  // keeps its current epoch.
+  // Swap in a freshly cooked cache without moving the playhead. loopEpochs are
+  // the shared apply stamps multi-loop sequences count passes from: a kind
+  // present re-bases its pass counting (the phase within the loop stays put);
+  // a kind absent keeps its current epoch.
   function load(cooked: LoadedRows): void {
     for (const v of visualizers) v.load(cooked)
     timeline = buildTimeline(cooked.timelineRows ?? [])
@@ -379,11 +315,9 @@ export function createPlaybackEngine(
     retimeTo(currentTime())
   }
 
-  // The tap tempo changed. Content placement is tempo-independent, so nothing
-  // re-cooks — we only re-anchor the beat clock (keeping the playhead's beat, or
-  // snapping to the wall-aligned phase while playing so a new tap lines the grid
-  // up with itself immediately) and refresh the loop length, which now spans a
-  // different wall-clock duration.
+  // Tap tempo changed. Content placement is tempo-independent, so nothing
+  // re-cooks — just re-anchor the beat clock (snapping to the wall-aligned
+  // phase while playing) and refresh the loop length.
   function retempo(): void {
     recomputeMax()
     const aligned = state === 'playing' ? wallAlignedPhase() : null
@@ -439,15 +373,10 @@ export function createPlaybackEngine(
   }
 
   function startFresh(): void {
-    // Start already in phase with the wall-clock-anchored grid (tap-established
-    // tempo if any, else the epoch-anchored default tempo), instead of always
-    // at beat 0 — so pressing Play doesn't reset "beat 0" to this moment, it
-    // joins the beat grid wherever it currently is. `?? 0` only matters when
-    // there's nothing to loop over yet (maxBeats <= 0).
-    // Loop epochs are deliberately NOT touched here: like the phase, the pass
-    // of a multi-loop sequence is anchored to the shared apply stamps, so
-    // pressing Play joins the sequence wherever it currently is — a client
-    // hitting Play mid-jam lands on the same pass as everyone else.
+    // Join the wall-aligned beat grid wherever it currently is, rather than
+    // resetting "beat 0" to this moment. Loop epochs are deliberately NOT
+    // touched: a client hitting Play mid-jam lands on the same pass of a
+    // multi-loop sequence as everyone else.
     const aligned = wallAlignedPhase() ?? 0
     reset(aligned)
     pausedBeat = aligned
@@ -458,7 +387,6 @@ export function createPlaybackEngine(
     tick()
   }
 
-  // The live playhead, in beats, at the anchored tempo.
   function position(): number {
     return (now() - (startTime ?? 0)) / 1000 / anchorBeatSec
   }
@@ -468,11 +396,9 @@ export function createPlaybackEngine(
 
     let pos = position()
 
-    // Loop: once past the end, wrap back to the start and re-anchor so the beat
-    // clock stays bounded. Re-derives the wall-aligned phase (rather than just
-    // `pos %= maxBeats`) so a tap tempo stays locked to the real-world clock on
-    // every wrap — self-correcting drift and keeping independently-started
-    // clients in phase, not just internally consistent.
+    // On wrap, re-derive the wall-aligned phase (rather than `pos %= maxBeats`)
+    // so a tap tempo stays locked to the real-world clock — self-correcting
+    // drift and keeping independently-started clients in phase.
     if (loop && maxBeats > 0 && pos >= maxBeats) {
       pos = wallAlignedPhase() ?? (pos % maxBeats)
       anchor(pos)

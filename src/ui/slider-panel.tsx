@@ -1,28 +1,17 @@
-// Slider overlay — the humble view over the streaming slider table
-// (../sliders.ts). It draws one labelled range control per slider the program
-// defines (its "sliders" view), positioned over the visual output. Every
-// interaction forwards straight to a callback main.ts wires to the SliderInput;
-// no recording logic lives here.
-//
-// A slider is two-way. While the user is NOT touching it, playback pushes the
-// recorded value at the playhead into showValues() each tick and the thumb
-// follows the loop. The instant the user grabs it (the first input of a gesture)
-// that id is marked dragging: onGrab fires (clearing its old take so it records
-// anew), showValues skips it so the ticking playhead can't fight the drag, and
-// every move records via onInput. Releasing (pointerup anywhere, change, or
-// blur — covering mouse and keyboard) fires onRelease and sync resumes.
+// Slider overlay: one labelled range control per slider the program defines,
+// drawn over the visual output. A slider is two-way — while untouched,
+// playback pushes the recorded value at the playhead into showValues() and
+// the thumb follows the loop; grabbing one marks its id dragging (onGrab
+// clears its old take, showValues skips it so the playhead can't fight the
+// drag) and each move records via onInput, until release.
 
 import { createSignal, For, Show, type Accessor } from 'solid-js'
 import { listenGlobal } from './dom.js'
 import type { SliderDef } from '../sliders.js'
 
 export interface SliderPanelCallbacks {
-  // A slider moved — record `value` at the current playhead position.
   onInput(id: string, value: number): void
-  // The user grabbed a slider (first move of a gesture) — drop its recorded
-  // take so the gesture records a fresh one.
   onGrab(id: string): void
-  // The user let go — recorded automation drives the thumb again.
   onRelease(id: string): void
 }
 
@@ -33,14 +22,11 @@ export interface SliderPanelState {
 
 export interface SliderPanelController {
   view: Accessor<SliderPanelState>
-  // Replace the slider definitions (from the program's "sliders" view). New
-  // ids start at their default; values for removed ids are dropped.
+  // New ids start at their default; values for removed ids are dropped.
   setDefs(defs: SliderDef[]): void
-  // Push playback-sampled values (each tick). Ids the user is currently
-  // dragging are skipped so the thumb follows the hand, not the recording.
+  // Ids being dragged are skipped so the thumb follows the hand, not the
+  // recording.
   showValues(values: Record<string, number>): void
-  // Forwarded from the component on each interaction (kept here so `dragging`
-  // and the value signal stay in one place).
   input(id: string, value: number): void
   release(id: string): void
 }
@@ -86,8 +72,8 @@ export function createSliderPanel(cb: SliderPanelCallbacks): SliderPanelControll
 
 export function SliderPanel(props: { ctl: SliderPanelController }) {
   const view = props.ctl.view
-  // A drag can end anywhere on the page (pointer released off the thumb), so the
-  // release listens globally — release() is a no-op for ids that weren't dragging.
+  // A drag can end anywhere on the page, so the release listens globally;
+  // release() is a no-op for ids that weren't dragging.
   listenGlobal(window, 'pointerup', () => { for (const d of view().defs) props.ctl.release(d.id) })
 
   const valueOf = (d: SliderDef): number => {

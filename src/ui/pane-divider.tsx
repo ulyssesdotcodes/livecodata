@@ -1,7 +1,6 @@
-// Draggable divider between the editor pane and table pane. The table's
-// height is kept as a fraction of the shared column so the split stays
-// proportional across window resizes; dragging sets it live in pixels, and
-// the fraction is recomputed and persisted (see settings.ts) on release.
+// Draggable divider between the editor and table panes. The table's height is
+// persisted as a fraction of the shared column so the split stays proportional
+// across resizes; drags set pixels live, and the fraction is saved on release.
 
 import { onCleanup, onMount } from 'solid-js'
 import { getSidePanelSplit, setSidePanelSplit } from '../settings.js'

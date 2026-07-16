@@ -1,13 +1,8 @@
-// Info popover — a self-contained reference the user opens from the editor
-// header (the ℹ button). Two halves: the DSL function reference (reusing the
-// same doc dictionaries that drive editor autocomplete/hover, so the popover
-// never drifts from what completion shows) and a plain-language explanation of
-// the tables the system uses (views, editable tables, the code/midi/slider/tap
-// tables, and the scene-row schema).
-//
-// Humble-object-lite: the component owns its own open/close signal — there's
-// no logic worth hoisting into main.ts — and closes on an outside click or
-// Escape, mirroring the settings popover next to it.
+// Info popover (the ℹ button): the DSL function reference — reusing the doc
+// dictionaries that drive editor autocomplete, so it never drifts from what
+// completion shows — plus a plain-language guide to the system's tables.
+// Unlike other panes it owns its own open/close state; nothing worth hoisting
+// into main.ts.
 
 import { createSignal, For, Show } from 'solid-js'
 import { listenGlobal } from './dom.js'
@@ -16,8 +11,6 @@ import {
   type DocEntry,
 } from '../editor-support.js'
 
-// One block of the function reference: a heading, a short blurb, and the doc
-// dictionary to list (the same DocEntry records completion uses).
 interface FnSection {
   title: string
   blurb: string
@@ -47,8 +40,6 @@ const FN_SECTIONS: FnSection[] = [
   },
 ]
 
-// The tables the system uses. Written for someone reading the code editor for
-// the first time — what each table IS and where it shows up in the table panel.
 interface TableDoc {
   name: string
   detail: string
@@ -104,7 +95,6 @@ export function DocsPopover() {
   let btn: HTMLButtonElement | undefined
   const [pos, setPos] = createSignal<{ top: number; right: number }>({ top: 0, right: 0 })
 
-  // Outside click / Escape closes it, like the settings popover beside it.
   listenGlobal(document, 'click', (e) => {
     if (wrap && !wrap.contains(e.target as Node)) setOpen(false)
   })
