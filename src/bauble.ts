@@ -1,16 +1,18 @@
 // livecodata bauble — table-driven 3D SDF sketches (bauble.studio: Janet code
 // compiled to a GLSL raymarcher). The "bauble" view mirrors the hydra table:
 // events placed by a 1-indexed `beat` column, folded at a frame into a Janet
-// script. setCode replaces the sketch; the meta events rewrite the accumulated
-// code structurally — a bauble sketch is one s-expression to wrap or combine,
-// not a chain to splice like hydra's: transform/duplicate/combine/replace edit
-// it, slice/tile/radial are named wrappers for the classic SDF moves, and
-// transition morphs from the program so far to the program after it over
-// `value` beats, on the t clock (byte-stable — no recompile mid-wipe).
-// Unlike hydra's per-frame props, setVariable values BAKE into the compiled
-// shader (changing one recompiles) — except the reserved camera-x/-y/-zoom
-// trio, which the renderer consumes as plain uniforms. This module is pure;
-// compiling and rendering live in bauble-scene.ts.
+// script. setCode replaces the sketch; the meta events grow it as ONE flat
+// pipe chain using bauble's own `|` composition — (sphere 50 | onion 5 |
+// shade [1 0 0]) — so the accumulated program always reads like a
+// bauble.studio sketch: transform appends its `code` cell as a pipe segment
+// (the arguments, shape omitted), duplicate/combine splice a combiner segment
+// in, slice/tile/radial append the classic SDF moves, and transition morphs
+// from the program so far to the program after it over `value` beats, on the
+// t clock (byte-stable — no recompile mid-wipe). Unlike hydra's per-frame
+// props, setVariable values BAKE into the compiled shader (changing one
+// recompiles) — except the reserved camera-x/-y/-zoom trio, which the
+// renderer consumes as plain uniforms. This module is pure; compiling and
+// rendering live in bauble-scene.ts.
 
 import { beatToFrame, beatsToFrames, FPS } from './constants.js'
 import type { Row } from './lineage.js'
@@ -53,20 +55,29 @@ export function baubleLoops(index: Row[]): number {
   return index.reduce((m, r) => Math.max(m, (r.loop as number | undefined) ?? 0), 0) + 1
 }
 
-// Apply a transform form to a subject shape expression. A standalone `_`
-// (delimited by whitespace/brackets/string bounds — never part of a longer
-// symbol) is the hole: every occurrence becomes the subject, so a form can use
-// the shape twice ("(union _ (mirror _ :x))"). With no hole the subject is
-// inserted as the form's first argument — bauble's own "shape first"
-// convention — and a bare symbol becomes a call: "symmetry" → "(symmetry S)".
-const HOLE = /(^|[\s()[\]{}])_(?=[\s()[\]{}]|$)/g
-export function applyForm(form: string, subject: string): string {
-  const f = form.trim()
-  HOLE.lastIndex = 0
-  if (HOLE.test(f)) return f.replace(HOLE, (_, pre: string) => `${pre}${subject}`)
-  const head = f.match(/^\(\s*[^\s()[\]{}]+/)
-  if (head) return `${f.slice(0, head[0].length)} ${subject}${f.slice(head[0].length)}`
-  return `(${f} ${subject})`
+// Whether code is one balanced (…) form — the shape every fold invariant
+// assumes. Naive paren scan (Janet string literals with parens in a cell would
+// fool it, and then pipeAppend just falls back to wrapping).
+function isSingleForm(code: string): boolean {
+  if (code[0] !== '(') return false
+  let depth = 0
+  for (let i = 0; i < code.length; i++) {
+    if (code[i] === '(') depth++
+    else if (code[i] === ')' && --depth === 0) return i === code.length - 1
+  }
+  return false
+}
+
+// Append one pipe segment to a shape expression, using bauble's own `|`
+// composition: (f a | g b) evaluates as (g (f a) b) — the piped shape becomes
+// the segment's first argument. A single (…) form takes the segment inside its
+// closing paren, so the accumulated program grows as ONE flat chain —
+// "(sphere 50 | onion 5 | shade [1 0 0])" — reading exactly like a
+// bauble.studio sketch; anything else is wrapped first.
+export function pipeAppend(code: string, segment: string): string {
+  const c = code.trim()
+  if (isSingleForm(c)) return `${c.slice(0, -1)} | ${segment})`
+  return `(${c} | ${segment})`
 }
 
 // The combiners a duplicate/combine event picks via `mode`, mapped to how each
@@ -86,10 +97,12 @@ function combineValue(value: unknown): string | null {
   return null
 }
 
-function combineShapes(mode: string, a: string, b: string, value: unknown): string {
+// The pipe segment that combines the current shape (piped in as the first
+// argument) with another whole shape via `mode`.
+function combineSegment(mode: string, other: string, value: unknown): string {
   const v = combineValue(value)
-  if (COMBINE_OPS[mode] === 'amount') return v != null ? `(${mode} ${a} ${b} ${v})` : `(${mode} ${a} ${b})`
-  return v != null ? `(${mode} :r ${v} ${a} ${b})` : `(${mode} ${a} ${b})`
+  if (COMBINE_OPS[mode] === 'amount') return v != null ? `${mode} ${other} ${v}` : `${mode} ${other}`
+  return v != null ? `${mode} :r ${v} ${other}` : `${mode} ${other}`
 }
 
 // The axis a slice/radial row works about — the `axis` cell when it names one,
@@ -135,26 +148,29 @@ export function baubleFrameAt(index: Row[], f: number, loop = 0): BaubleFrame | 
         if (typeof row.name === 'string') vars[row.name] = row.value
         break
       case 'transform':
+        // `code` is a pipe segment — the head and arguments with the shape
+        // itself omitted, e.g. "twist :y 0.02" — appended with bauble's `|`.
         if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
-          code = applyForm(row.code, code)
+          code = pipeAppend(code, row.code.trim())
         }
         break
       case 'duplicate': {
-        // Combine the shape with a copy of itself run through `code` (blank =
-        // a verbatim copy).
+        // Combine the shape with a copy of itself, the copy run through the
+        // `code` segment (blank = a verbatim copy).
         if (code != null) {
           const mode = typeof row.mode === 'string' && row.mode in COMBINE_OPS ? row.mode : 'union'
-          const copyForm = typeof row.code === 'string' ? row.code.trim() : ''
-          const copy = copyForm === '' ? code : applyForm(copyForm, code)
-          code = combineShapes(mode, code, copy, row.value)
+          const seg = typeof row.code === 'string' ? row.code.trim() : ''
+          const copy = seg === '' ? code : pipeAppend(code, seg)
+          code = pipeAppend(code, combineSegment(mode, copy, row.value))
         }
         break
       }
       case 'combine':
-        // Composite another whole shape onto the current one.
+        // Composite another whole shape (`code` is a full sketch, not a
+        // segment) onto the current one.
         if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
           const mode = typeof row.mode === 'string' && row.mode in COMBINE_OPS ? row.mode : 'union'
-          code = combineShapes(mode, code, row.code.trim(), row.value)
+          code = pipeAppend(code, combineSegment(mode, row.code.trim(), row.value))
         }
         break
       case 'replace':
@@ -172,7 +188,7 @@ export function baubleFrameAt(index: Row[], f: number, loop = 0): BaubleFrame | 
           const cutter = typeof row.code === 'string' && row.code.trim() !== ''
             ? row.code.trim()
             : `(half-space :${axisOf(row)})`
-          code = `(subtract (onion ${code} ${thickness}) ${cutter})`
+          code = pipeAppend(pipeAppend(code, `onion ${thickness}`), `subtract ${cutter}`)
         }
         break
       case 'tile':
@@ -184,7 +200,7 @@ export function baubleFrameAt(index: Row[], f: number, loop = 0): BaubleFrame | 
           const spacing = typeof v === 'number' && Number.isFinite(v) && v > 0
             ? `[${v} ${v} ${v}]`
             : typeof v === 'string' && v.trim() !== '' ? v.trim() : null
-          if (spacing != null) code = `(tile ${code} ${spacing})`
+          if (spacing != null) code = pipeAppend(code, `tile ${spacing}`)
         }
         break
       case 'radial':
@@ -194,7 +210,7 @@ export function baubleFrameAt(index: Row[], f: number, loop = 0): BaubleFrame | 
           const count = typeof row.value === 'number' && Number.isFinite(row.value) && row.value >= 1
             ? Math.floor(row.value)
             : 6
-          code = `(radial ${code} :${axisOf(row)} ${count})`
+          code = pipeAppend(code, `radial :${axisOf(row)} ${count}`)
         }
         break
       case 'transition': {
@@ -226,7 +242,7 @@ export function baubleFrameAt(index: Row[], f: number, loop = 0): BaubleFrame | 
     const tr = transitions[i]
     const start = tr.startFrame / FPS
     const end = (tr.startFrame + tr.durFrames) / FPS
-    code = `(morph ${tr.before} ${code} (ss t ${start} ${end}))`
+    code = pipeAppend(tr.before, `morph ${code} (ss t ${start} ${end})`)
   }
   return { code, vars }
 }

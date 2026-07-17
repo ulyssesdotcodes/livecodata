@@ -632,13 +632,16 @@ editable("hydra", schemas.hydra)
 //
 // The bauble table is the same event format as the hydra one — rows placed on
 // the loop by \`beat\` (1-indexed: beat 1 is the top of the loop), two kinds:
-//   - setCode:     \`code\` becomes the sketch — a Janet shape expression like
-//                  "(union (box 60) (sphere 75))". \`t\` is the playback clock
-//                  in seconds, so pausing/scrubbing the timeline freezes/
-//                  scrubs the raymarch too. The dialect is bauble.studio's:
-//                  box/sphere/torus/cone…, union/intersect/subtract (\`:r\` for
-//                  smooth blends), rotate/move/scale, twist/bend/morph,
-//                  shade/color and friends.
+//   - setCode:     \`code\` becomes the sketch — a Janet shape expression,
+//                  best written as a pipe chain the way bauble.studio's own
+//                  examples are: "(box 60 | rotate :y t | shade [1 0 0])"
+//                  ((f a | g b) means (g (f a) b) — each \`|\` feeds the shape
+//                  into the next call as its first argument). \`t\` is the
+//                  playback clock in seconds, so pausing/scrubbing the
+//                  timeline freezes/scrubs the raymarch too. The dialect is
+//                  bauble.studio's: box/sphere/torus/cone…, union/intersect/
+//                  subtract (\`:r\` for smooth blends), rotate/move/scale,
+//                  twist/bend/morph, shade/color and friends.
 //   - setVariable: \`name\`/\`value\` binds a variable the sketch reads — it's
 //                  compiled in as \`(def name value)\` ahead of the code. A
 //                  string value is any Janet expression: value "(sin t)" makes
@@ -676,7 +679,7 @@ editable("bauble", schemas.bauble)
         // Janet, indented the way bauble.studio's own examples are written;
         // click one to open it in the editor.
         { beat: 1, event: "setCode",
-          code: "(shade\n  (union :r 15\n    (rotate (box size) :y t)\n    (sphere 70))\n  [0.29 0.62 1])" },
+          code: "(box size\n  | rotate :y t\n  | union :r 15 (sphere 70)\n  | shade [0.29 0.62 1])" },
         { beat: 1, event: "setVariable", name: "size", value: 55 },
         // beat 5: orbit the camera a third of a turn — a live uniform, no
         // recompile (camera-x tilts, camera-zoom dollies, the same way).
@@ -687,7 +690,7 @@ editable("bauble", schemas.bauble)
         // beat 13: a new sketch for the loop's tail — a golden box twisting
         // back and forth on its y axis until the loop wraps.
         { beat: 13, event: "setCode",
-          code: "(shade\n  (twist (box 70) :y (* 0.03 (sin t)))\n  [1 0.83 0.23])" },
+          code: "(box 70\n  | twist :y (* 0.03 (sin t))\n  | shade [1 0.83 0.23])" },
       ],
     },
   },

@@ -950,19 +950,21 @@ export const SCHEMAS = deepFreeze({
    * value) compiled ahead of the sketch; changing one recompiles the shader,
    * except the reserved camera-x/camera-y/camera-zoom names, which orbit the
    * camera as live uniforms) — plus the meta-programming events that rewrite
-   * the accumulated code in place: "transform" (`code` = a form wrapped
-   * around the shape, a standalone `_` marking the hole or the shape inserted
-   * as first argument), "duplicate" (combine the shape with a copy of itself
-   * run through `code`, via `mode` + smoothing `value`), "combine" (`code` =
-   * another whole shape composited via `mode` — union/intersect/subtract take
-   * `value` as the :r blend radius, morph as its blend amount), "replace"
-   * (swap substring `find` for `value`), "slice" (cut the shape open: an
-   * onion shell `value` thick minus `code` — or a half-space about `axis`),
-   * "tile" (repeat on an infinite lattice — `value` spaces all axes, or a
-   * string vec3 like "[80 120 80]"), "radial" (`value` copies in a circle
-   * about `axis`), and "transition" (morph from the program so far to the
-   * program after it over `value` beats, riding the playback clock — build
-   * the destination with ordinary events at the same beat). The render shows
+   * the accumulated code in place, growing it as one flat chain with
+   * bauble's own `|` pipe composition: "transform" (`code` = a pipe segment,
+   * the head and arguments with the shape itself omitted — "twist :y 0.02"
+   * appends "| twist :y 0.02"), "duplicate" (combine the shape with a copy
+   * of itself run through the `code` segment, via `mode` + smoothing
+   * `value`), "combine" (`code` = another WHOLE shape composited via `mode`
+   * — union/intersect/subtract take `value` as the :r blend radius, morph as
+   * its blend amount), "replace" (swap substring `find` for `value`),
+   * "slice" (cut the shape open: an onion shell `value` thick minus `code` —
+   * or a half-space about `axis`), "tile" (repeat on an infinite lattice —
+   * `value` spaces all axes, or a string vec3 like "[80 120 80]"), "radial"
+   * (`value` copies in a circle about `axis`), and "transition" (morph from
+   * the program so far to the program after it over `value` beats, riding
+   * the playback clock — build the destination with ordinary events at the
+   * same beat). The render shows
    * directly when no hydra sketch is live, and is hydra's s1 source either
    * way — composite it with src(s1). `code` cells open in the editor as
    * Janet (no JS completions); check `disabled` to mute a row without
