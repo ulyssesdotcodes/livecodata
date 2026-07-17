@@ -315,7 +315,7 @@ interface ThreeAnimOpts {
  * The .three accessor on a scene table: animators that read the table's
  * `create` rows and append update keyframes carrying each object's transform.
  * Every method returns a Table (base rows plus keyframes), so they chain —
- * box().three.rotate().three.scale().rasterize(8).
+ * t.box().three.rotate().three.scale().rasterize(8).
  */
 export interface ThreeChain {
   /** Spin each object by `amount` radians about `axis` (default a full turn about y) over `dur` beats — adds to the current rotation. `at` overrides the start beat; `ease` shapes the segment. */
@@ -328,6 +328,17 @@ export interface ThreeChain {
 
 const TAU = Math.PI * 2
 const numOr = (v: unknown, d: number): number => (typeof v === 'number' ? v : d)
+
+// Per-field numeric tweaks for the three.* row modifiers: touch a field on
+// every base (create/untyped) row, and on update keyframes only when they
+// already carry it, so partial animation rows stay intact.
+function modRow(r: Row, specs: [key: string, base: number, f: (v: number) => number][]): Row {
+  const out: Row = { ...r }
+  for (const [key, base, f] of specs) {
+    if (key in r || r.type !== 'update') out[key] = f(numOr(r[key], base))
+  }
+  return out
+}
 
 export interface DSLContext {
   defineLazy(name: string, fn: ViewFn, group?: string): void
@@ -1046,35 +1057,14 @@ function parseCSV(text: string): Row[] {
   })
 }
 
-// The globals a user program sees. JSDoc on these members IS the editor's
-// hover documentation (gen-lang-env.js copies it onto the generated ambient
-// globals), so it is deliberately fuller than the types alone — write it for
-// the livecoder.
-export type DSLSurface = Easings & {
-  define(name: string, fn: ViewFn): void
-  define(name: string, group: string, fn: ViewFn): void
-  table(name: string): Table
-  math(fn: (t: number) => number): MathBuilder
-  rows(arr: Row[] | null | undefined): Table
-  /**
-   * One row per entry in `values`, cycling through `rows` as it goes: output
-   * row i is { ...rows[i % rows.length], ...values[i] } — a short repeating
-   * base pattern with a longer array of overrides merged on top.
-   */
-  rotate(rows: Row[] | null | undefined, values: Row[] | null | undefined): Table
-  csv(text: string): Table
-  data(url: string): Table
-  json(data: Row[] | string | unknown): Table
-  grid(cols: number, rowsN: number, opts?: { spacing?: number; y?: number }): Table
-  /**
-   * Camera moves as beat-timed keyframes: one row per keyframe
-   * { beat?, px, py, pz, tx, ty, tz, fov? }. px/py/pz place the eye, tx/ty/tz
-   * the look-at target (default origin), fov the vertical field of view in
-   * degrees. The first row becomes the camera's create row, the rest updates,
-   * so it rides events → rasterize and interpolates like any object — concat
-   * it into your events stream, then rasterize.
-   */
-  camera(keyframes: Row[] | null | undefined): Table
+/**
+ * The three.js helper namespace, reachable as either `three` or the shorthand
+ * `t`. Scene-primitive builders (box, sphere, …) each return a one-row Table
+ * you concat into a scene and rasterize; the transform modifiers
+ * (translate/scale/rotate) shift a scene table's create rows in place. The
+ * JSDoc on each member IS the editor hover doc — write it for the livecoder.
+ */
+export interface ThreeNamespace {
   /** One "create" row for a box (beat 1, origin, id defaults to the shape name) — set only the fields you care about, then concat into a scene and rasterize. Size: hx/hy/hz half-extents. */
   box(props?: Row): Table
   /** One "create" row for a sphere (beat 1, origin, id defaults to the shape name). Size: r. */
@@ -1099,6 +1089,64 @@ export type DSLSurface = Easings & {
   points(shape: string, props?: Row): Table
   /** A table of points → a BufferGeometry, reading position (and normal, when every row has nx/ny/nz) from px/py/pz (nx/ny/nz). The inverse of points(). */
   geometry(points: Table | Row[]): BufferGeometry
+  /**
+   * Camera moves as beat-timed keyframes: one row per keyframe
+   * { beat?, px, py, pz, tx, ty, tz, fov? }. px/py/pz place the eye, tx/ty/tz
+   * the look-at target (default origin), fov the vertical field of view in
+   * degrees. The first row becomes the camera's create row, the rest updates,
+   * so it rides events → rasterize and interpolates like any object — concat
+   * it into your events stream, then rasterize.
+   */
+  camera(keyframes: Row[] | null | undefined): Table
+  /**
+   * Shift every scene object in `table` by (x, y, z) world units — adds to
+   * px/py/pz on each create row (and any keyframe that already carries a
+   * position). Chain it before .three animators or .rasterize().
+   */
+  translate(table: Table | Row[], x?: number, y?: number, z?: number): Table
+  /**
+   * Scale every scene object in `table` — multiplies its scale (sx/sy/sz,
+   * default 1) by (x, y, z). Pass one number for a uniform scale
+   * (t.scale(box(), 2)); omit y/z to reuse x on those axes.
+   */
+  scale(table: Table | Row[], x?: number, y?: number, z?: number): Table
+  /**
+   * Rotate every scene object in `table` by (x, y, z) radians — adds to
+   * rx/ry/rz on each create row. For a spin over time use .three.rotate.
+   */
+  rotate(table: Table | Row[], x?: number, y?: number, z?: number): Table
+}
+
+// The globals a user program sees. JSDoc on these members IS the editor's
+// hover documentation (gen-lang-env.js copies it onto the generated ambient
+// globals), so it is deliberately fuller than the types alone — write it for
+// the livecoder.
+export type DSLSurface = Easings & {
+  define(name: string, fn: ViewFn): void
+  define(name: string, group: string, fn: ViewFn): void
+  table(name: string): Table
+  math(fn: (t: number) => number): MathBuilder
+  rows(arr: Row[] | null | undefined): Table
+  /**
+   * One row per entry in `values`, cycling through `rows` as it goes: output
+   * row i is { ...rows[i % rows.length], ...values[i] } — a short repeating
+   * base pattern with a longer array of overrides merged on top.
+   */
+  rotate(rows: Row[] | null | undefined, values: Row[] | null | undefined): Table
+  csv(text: string): Table
+  data(url: string): Table
+  json(data: Row[] | string | unknown): Table
+  grid(cols: number, rowsN: number, opts?: { spacing?: number; y?: number }): Table
+  /**
+   * The three.js helpers, grouped: scene-primitive create rows (box, sphere,
+   * cylinder, cone, torus, text, and the generic object), the points ⇄
+   * geometry samplers, the camera keyframer, and the translate/scale/rotate
+   * modifiers that shift a scene table's create rows. Call as three.box(…) —
+   * or via the shorthand `t`: t.box(…).
+   */
+  three: ThreeNamespace
+  /** Shorthand alias for `three`: t.box(…), t.translate(scene, 1, 0, 0), etc. */
+  t: ThreeNamespace
   physics(source: Table | Row[]): PhysicsBuilder
   /**
    * Folding paper: origami() is a bare sheet. Chain .steps(table) to fold it
@@ -1149,6 +1197,51 @@ export type DSLSurface = Easings & {
 }
 
 export function createDSL(ctx: DSLContext | null): DSLSurface {
+  const asTable = (x: Table | Row[] | null | undefined): Table =>
+    x instanceof Table ? x : new Table(x ?? [], ctx)
+
+  const three: ThreeNamespace = {
+    box: (props: Row = {}) => sceneObject('box', props, ctx),
+    sphere: (props: Row = {}) => sceneObject('sphere', props, ctx),
+    cylinder: (props: Row = {}) => sceneObject('cylinder', props, ctx),
+    cone: (props: Row = {}) => sceneObject('cone', props, ctx),
+    torus: (props: Row = {}) => sceneObject('torus', props, ctx),
+    text: (props: Row = {}) => sceneObject('text', props, ctx),
+    object: (shape: string, props: Row = {}) => sceneObject(shape, props, ctx),
+    points: (shape: string, props: Row = {}): Table => {
+      const { segments, ...dims } = props
+      const geo = primitiveGeometry(shape, dims, typeof segments === 'number' ? { segments } : {})
+      const rows = pointsFromGeometry(geo)
+      geo.dispose()
+      return new Table(rows, ctx)
+    },
+    geometry: (points: Table | Row[]): BufferGeometry =>
+      geometryFromPoints(points instanceof Table ? points.rows : points ?? []),
+    // The first keyframe seeds a full default pose so a partial first row is
+    // still well-defined.
+    camera: (keyframes: Row[] | null | undefined): Table => new Table(
+      (keyframes ?? []).map((k, i) => {
+        const beat = typeof k.beat === 'number' ? k.beat : 1
+        return i === 0
+          ? { px: 0, py: 0, pz: 5, tx: 0, ty: 0, tz: 0, ...k, id: 'camera', shape: 'camera', type: 'create', beat }
+          : { ...k, id: 'camera', shape: 'camera', type: 'update', beat }
+      }),
+      ctx,
+    ),
+    translate: (table: Table | Row[], x = 0, y = 0, z = 0): Table =>
+      asTable(table).map((r) => modRow(r, [
+        ['px', 0, (v) => v + x], ['py', 0, (v) => v + y], ['pz', 0, (v) => v + z],
+      ])),
+    scale: (table: Table | Row[], x = 1, y?: number, z?: number): Table =>
+      asTable(table).map((r) => modRow(r, [
+        ['sx', 1, (v) => v * x], ['sy', 1, (v) => v * (y ?? x)], ['sz', 1, (v) => v * (z ?? x)],
+      ])),
+    rotate: (table: Table | Row[], x = 0, y = 0, z = 0): Table =>
+      asTable(table).map((r) => modRow(r, [
+        ['rx', 0, (v) => v + x], ['ry', 0, (v) => v + y], ['rz', 0, (v) => v + z],
+      ])),
+  }
+
   return {
     define: (name: string, group: string | ViewFn, fn?: ViewFn) =>
       fn === undefined
@@ -1184,33 +1277,8 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       return new Table(out, ctx)
     },
     physics: (source: Table | Row[]) => new PhysicsBuilder(source, ctx!),
-    // The first keyframe seeds a full default pose so a partial first row is
-    // still well-defined.
-    camera: (keyframes: Row[] | null | undefined): Table => new Table(
-      (keyframes ?? []).map((k, i) => {
-        const beat = typeof k.beat === 'number' ? k.beat : 1
-        return i === 0
-          ? { px: 0, py: 0, pz: 5, tx: 0, ty: 0, tz: 0, ...k, id: 'camera', shape: 'camera', type: 'create', beat }
-          : { ...k, id: 'camera', shape: 'camera', type: 'update', beat }
-      }),
-      ctx,
-    ),
-    object: (shape: string, props: Row = {}) => sceneObject(shape, props, ctx),
-    points: (shape: string, props: Row = {}): Table => {
-      const { segments, ...dims } = props
-      const geo = primitiveGeometry(shape, dims, typeof segments === 'number' ? { segments } : {})
-      const rows = pointsFromGeometry(geo)
-      geo.dispose()
-      return new Table(rows, ctx)
-    },
-    geometry: (points: Table | Row[]): BufferGeometry =>
-      geometryFromPoints(points instanceof Table ? points.rows : points ?? []),
-    box: (props: Row = {}) => sceneObject('box', props, ctx),
-    sphere: (props: Row = {}) => sceneObject('sphere', props, ctx),
-    cylinder: (props: Row = {}) => sceneObject('cylinder', props, ctx),
-    cone: (props: Row = {}) => sceneObject('cone', props, ctx),
-    torus: (props: Row = {}) => sceneObject('torus', props, ctx),
-    text: (props: Row = {}) => sceneObject('text', props, ctx),
+    three,
+    t: three,
     origami: makeOrigami(ctx),
     editable: (name: string, schema: Schema, seedRows?: Row[]): Table => {
       const rows = (ctx?.editableRows?.(name, schema, seedRows) ?? []).map((r) => ({ ...r }))
