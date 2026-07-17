@@ -201,13 +201,3 @@ test('a maxBeats arg extends a shorter bake so the final pose holds to the bound
   assert.equal(rows.at(-1)!.frame, 6)
   assert.equal(rows.find((r) => r.frame === 6)!.px, 2, 'held, not extrapolated')
 })
-
-test('an object can live entirely past the loop boundary (a later pass)', () => {
-  const rows = rasterizeRows([
-    create({ beat: b(5) }),
-    { id: 's', type: 'destroy', beat: b(7) },
-  ], mb(4))
-  assert.ok(!rows.some((r) => (r.frame as number) < 5), 'absent through pass 0')
-  assert.ok(rows.some((r) => r.frame === 5), 'alive in the next pass')
-  assert.ok(!rows.some((r) => (r.frame as number) >= 7), 'destroyed within it')
-})

@@ -1057,9 +1057,8 @@ async function bootRoom(room: string): Promise<void> {
       else if (e.kind === 'peer-join' || e.kind === 'peer-leave') presenceChanged = true
       else if (e.kind === 'set-loop-beats') loopBeatsChanged = true
     }
-    // A peer resized the loop without applying — fold the merged value in.
-    // (An apply also lands here via applyCooked, which is fine: setLoopBeats
-    // no-ops on an unchanged value.)
+    // A peer resized the loop without applying — fold the merged value in (an
+    // apply's copy via applyCooked is harmless: setLoopBeats no-ops unchanged).
     if (loopBeatsChanged) {
       const n = loopBeatsFromEvents(editableStore.get(ACTIVITY_TABLE)?.events ?? [])
       if (n != null) playback.setLoopBeats(n)

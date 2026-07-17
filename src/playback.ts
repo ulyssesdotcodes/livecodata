@@ -136,8 +136,8 @@ export interface PlaybackAPI {
   currentSourceBeats(): number
   // No-op if already playing.
   play(): void
-  // Set the loop length in beats. On the PlaybackAPI surface (not just the
-  // engine's) because main.ts folds it back from activity events.
+  // On PlaybackAPI (not just the engine) so main.ts can fold the loop length
+  // back out of activity events.
   setLoopBeats(n: number): void
 }
 
@@ -284,7 +284,7 @@ export function createPlaybackEngine(
   }
 
   // Loop length: the timeline's span when one is active, else the loop-length
-  // control — the same span for every visualizer; content never stretches it.
+  // control.
   function recomputeMax(): void {
     if (timeline.active) maxBeats = timeline.beats
     else maxBeats = hasContent() ? loopBeats : 0

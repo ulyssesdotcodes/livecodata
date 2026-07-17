@@ -86,11 +86,9 @@ export function createSceneVisualizer(sceneAPI: SceneAPI): Visualizer {
     },
     hasContent: () => frameIndex.map.size > 0,
     applyFrame({ srcFrameF, loopFrames, ctx, passAt }): Row[] {
-      // The cache is one absolute frame grid; passes are how the loop-length
-      // window chops it up. ceil, so a keyframe at exactly the boundary (beat
-      // loopBeats+1) is the glide endpoint of the pass before it, not a pass
-      // of its own — the idiom for a seamless wrap. Clamping to the extent
-      // holds the final pose when the loop outruns the content.
+      // ceil, so a keyframe at exactly the loop boundary is the previous
+      // pass's glide endpoint (the seamless-wrap idiom), not a pass of its
+      // own; the clamp holds the final pose when the loop outruns the content.
       const loops = loopFrames > 0 ? Math.max(1, Math.ceil(frameIndex.maxFrame / loopFrames)) : 1
       const offset = loops > 1 ? (passAt(epoch) % loops) * loopFrames : 0
       const frameF = Math.min(offset + srcFrameF, frameIndex.maxFrame)
@@ -124,7 +122,6 @@ export function createSceneVisualizer(sceneAPI: SceneAPI): Visualizer {
 // hydra's clock from the source position, so scrubbing scrubs the sketch.
 export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
   let index: Row[] = buildHydraIndex([])
-  // Largest event frame — how far along the absolute grid the content runs.
   let maxIndex = 0
   let epoch = 0
 
@@ -136,10 +133,9 @@ export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
     },
     hasContent: () => index.length > 0,
     applyFrame({ srcFrameF, loopFrames, ctx, passAt }): Row[] {
-      // floor, so an event at exactly beat loopBeats+1 starts a new pass —
-      // that's how a later pass is authored. The absolute frame folds earlier
-      // passes in for free, and drives the sketch clock so transitions keep
-      // animating across passes.
+      // floor (unlike the scene's ceil): an event at exactly beat loopBeats+1
+      // opens a new pass — that's how a later pass is authored. The absolute
+      // frame also drives the clock, so transitions animate across passes.
       const loops = loopFrames > 0 ? Math.floor(maxIndex / loopFrames) + 1 : 1
       const frameF = (loops > 1 ? (passAt(epoch) % loops) * loopFrames : 0) + srcFrameF
       const sketch = hydraFrameAt(index, Math.floor(frameF))
