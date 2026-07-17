@@ -176,3 +176,78 @@ test('Origami Cicada sample: nine simple folds, all exact', () => {
   const xs = done.pos.map((p) => p[0])
   assert.ok(Math.max(...xs) - Math.min(...xs) > 0.8, 'wings splay wide')
 })
+
+test('Run Counter sample: the same code cooks to a different sketch every run', () => {
+  const sample = SAMPLES.find((s) => s.name === 'Run Counter')!
+  const activity: Record<string, unknown>[] = [
+    { seq: 0, t: 0, kind: 'apply', id: 'a1', at: 10_000, edits: [] },
+    { seq: 1, t: 1, kind: 'peer-join', client: 'c1' },
+    { seq: 2, t: 2, kind: 'apply', id: 'a2', at: 13_000, edits: ['e1'] },
+  ]
+  const rt = createRuntime({ logRows: (n) => (n === 'activity' ? activity : null) })
+  const { views } = rt.run(sample.code, { seed: 1 })
+  assert.equal(views.get('runs')!.length, 2, 'peer-join rows are not runs')
+  const hydra = views.get('hydra')!.rows
+  const setCode = hydra.find((r) => r.event === 'setCode')!.code as string
+  assert.ok(setCode.includes('kaleid(5)'), 'two runs -> 3 + 2 kaleid facets')
+  // 3s between the last two applies -> heat 0.7 -> the oscillator runs hot.
+  assert.ok(setCode.includes('osc((props) => props.freq, 0.06, 1.10)'), setCode)
+  assert.equal(hydra.find((r) => r.event === 'setVariable')!.value, 6, 'the variable steps with every run: 4 + runs')
+
+  // Another apply lands: same code, different program.
+  activity.push({ seq: 3, t: 3, kind: 'apply', id: 'a3', at: 999_000, edits: [] })
+  const again = rt.run(sample.code, { seed: 1 }).views.get('hydra')!.rows
+  assert.ok((again.find((r) => r.event === 'setCode')!.code as string).includes('kaleid(6)'))
+  assert.equal(again.find((r) => r.event === 'setVariable')!.value, 7)
+
+  // A fresh session (no applies yet) still cooks: the calm baseline.
+  const fresh = createRuntime({ logRows: (n) => (n === 'activity' ? [] : null) }).run(sample.code, { seed: 1 })
+  assert.ok((fresh.views.get('hydra')!.rows.find((r) => r.event === 'setCode')!.code as string).includes('kaleid(3)'))
+})
+
+test('Session Sculpture sample: one brick per apply, sized by its edit batch, plus the pace graph', () => {
+  const sample = SAMPLES.find((s) => s.name === 'Session Sculpture')!
+  const activity: Record<string, unknown>[] = [
+    { seq: 0, t: 0, kind: 'apply', id: 'a1', at: 50_000, edits: [] },
+    { seq: 1, t: 1, kind: 'apply', id: 'a2', at: 53_000, edits: ['e1', 'e2', 'e3', 'e4'] },
+    { seq: 2, t: 2, kind: 'peer-leave', client: 'c9' },
+  ]
+  const rt = createRuntime({ logRows: (n) => (n === 'activity' ? activity : null) })
+  const { views, graphs } = rt.run(sample.code, { seed: 1 })
+
+  const bricks = views.get('tower')!.rows
+  assert.equal(bricks.filter((r) => r.type === 'create').length, 2, 'one brick per apply')
+  const [b0, b1] = bricks
+  assert.ok((b1.hx as number) > (b0.hx as number), 'a bigger edit batch makes a bigger brick')
+  assert.equal(bricks.filter((r) => r.type === 'update').length, 1, 'the newest brick gets its spin keyframe')
+
+  assert.ok((views.get('label')!.rows[0].text as string).includes('2 runs'))
+  assert.deepEqual(views.get('pace')!.rows.map((r) => r.gap_s), [0, 3], 'seconds between consecutive runs')
+  assert.ok(graphs.some((g) => g.viewName === 'pace'), 'the pace view is charted')
+  assert.ok(views.get('scene')!.length > 0, 'the whole thing rasterizes')
+})
+
+test('Tap Constellation sample: on-grid taps ring at radius 1, sloppy taps leave it', () => {
+  const sample = SAMPLES.find((s) => s.name === 'Tap Constellation')!
+  // Five metronome-perfect taps, 500ms apart…
+  const perfect = Array.from({ length: 5 }, (_, i) => ({ beat: i, time: i * 500 }))
+  const rt = createRuntime({ tapRows: () => perfect })
+  const stars = rt.run(sample.code, { seed: 1 }).views.get('stars')!.rows
+  const creates = stars.filter((r) => r.type === 'create')
+  assert.equal(creates.length, 5, 'one star per tap')
+  for (const s of creates) {
+    const rad = Math.hypot(s.px as number, s.py as number)
+    assert.ok(Math.abs(rad - 1) < 1e-9, `a perfect tap sits on the ring (got ${rad})`)
+  }
+
+  // …then the middle tap lands a quarter-beat late: its star leaves the ring.
+  const sloppy = perfect.map((r, i) => (i === 2 ? { ...r, time: r.time + 125 } : r))
+  const off = createRuntime({ tapRows: () => sloppy }).run(sample.code, { seed: 1 })
+    .views.get('stars')!.rows.filter((r) => r.type === 'create')
+  const rads = off.map((s) => Math.hypot(s.px as number, s.py as number))
+  assert.ok(Math.max(...rads) > 1.5, 'the late tap is pushed well off the ring')
+
+  // Too few taps: the sketch asks for some instead of erroring.
+  const hint = createRuntime({ tapRows: () => [] }).run(sample.code, { seed: 1 }).views.get('stars')!.rows
+  assert.equal(hint[0].shape, 'text')
+})

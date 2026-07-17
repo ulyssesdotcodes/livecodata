@@ -114,3 +114,37 @@ test('the client resolves each cook against its own response id', async () => {
   assert.equal(aOut.cooked.views.get('a')!.length, 1)
   await assert.rejects(b)
 })
+
+test('streaming logs ride the request: table("activity") resolves, and a declared editable always has a (possibly empty) history', () => {
+  const service = createCookService()
+  const program = `
+editable("notes", { x: "number" }, [{ x: 1 }])
+define("edits", (rand, table) => table("notes·events"))
+define("applies", (rand, table) => table("activity"))
+`
+  // First cook of a fresh table: the store has no "notes·events" yet, but
+  // declaring editable("notes") guarantees the history reads as empty rather
+  // than table-not-found.
+  const resp = service.handle(req(program, {
+    logs: [{ name: 'activity', rows: [{ seq: 0, kind: 'apply', id: 'a1' }] }],
+  }))
+  assert.equal(resp.ok, true)
+  if (!resp.ok) return
+  const cooked = unpackCooked(resp.cooked)
+  assert.deepEqual(cooked.views.get('applies')!.rows.map((r) => r.id), ['a1'])
+  assert.equal(cooked.views.get('edits')!.length, 0)
+
+  // Once the store has history, the request carries it and the view sees it.
+  const later = service.handle(req(program, {
+    id: 2,
+    editables: [{ name: 'notes', rows: [{ x: 2 }] }],
+    logs: [
+      { name: 'activity', rows: [] },
+      { name: 'notes·events', rows: [{ seq: 3, kind: 'set-cell', row: 0, col: 'x', value: 2 }] },
+    ],
+  }))
+  assert.equal(later.ok, true)
+  if (later.ok) {
+    assert.deepEqual(unpackCooked(later.cooked).views.get('edits')!.rows.map((r) => r.kind), ['set-cell'])
+  }
+})

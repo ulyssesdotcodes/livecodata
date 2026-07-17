@@ -293,7 +293,15 @@ async function cookInWorker(code: string, seed: number, seeds?: Record<string, R
     // hidden from the program.
     rows: (editableStore.get(name)?.rows ?? []).filter((r) => r[DISABLED_COL] !== true),
   }))
-  const { cooked, declared } = await cookClient.cook({ code, seed, dataCache, tapRows: tapRows(), editables, seeds })
+  // The two streams every session has — guaranteed present even before their
+  // first event lands (a fresh session's first cook runs before its apply is
+  // recorded), so a program can always rely on table("activity") and
+  // table("code·events") resolving.
+  const logs = logTables()
+  for (const name of [ACTIVITY_TABLE, 'code' + EVENTS_SUFFIX]) {
+    if (!logs.some((l) => l.name === name)) logs.push({ name, rows: [] })
+  }
+  const { cooked, declared } = await cookClient.cook({ code, seed, dataCache, tapRows: tapRows(), editables, seeds, logs })
   for (const d of declared) editableStore.ensure(d.name, d.schema, d.seedRows)
   return { cooked, declaredNames: declared.map((d) => d.name) }
 }
@@ -338,33 +346,49 @@ interface CookedData {
   baubleRows: Row[]
 }
 
-// The views shown in the table panel, plus synthetic tables: "taps", the
+// The streaming log tables, under the names their panel tabs wear: the
 // midi/slider folds and event logs, and every editable table's "name·events"
-// history (a log table shows under its bare name instead — see isLog). Each
-// only when the program doesn't define a view of that name itself.
-function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
-  const display = new Map(views)
-  if (!display.has('taps')) display.set('taps', new Table(tapRows()))
+// history (a log table shows under its bare name instead — see isLog). The one
+// list behind both surfaces of a log: the panel tab you watch (tablesForDisplay)
+// and the table() name a program reads (each cook request carries this snapshot
+// — see cookInWorker / CookRequest.logs) — so what you can see is exactly what
+// a sketch can use as data.
+function logTables(): Array<{ name: string; rows: Row[] }> {
+  const logs: Array<{ name: string; rows: Row[] }> = []
   // Folded MIDI take + raw log, once anything has been recorded — locally, by
   // a peer, or in the loaded session.
   if (midiInput.rows().length) {
-    if (!display.has('midi')) display.set('midi', new Table(midiInput.rows()))
-    if (!display.has('midi' + EVENTS_SUFFIX)) display.set('midi' + EVENTS_SUFFIX, new Table(midiInput.eventRows()))
+    logs.push({ name: 'midi', rows: midiInput.rows() })
+    logs.push({ name: 'midi' + EVENTS_SUFFIX, rows: midiInput.eventRows() })
   }
   // Folded slider automation + raw log, only once something is recorded — an
   // empty pair just clutters the panel and can't be deleted, being synthetic.
   // ("sliders" itself is the definitions table, shown like any other view.)
   if (sliderInput && sliderInput.rows().length) {
-    display.set('slider', new Table(sliderInput.rows()))
-    display.set('slider' + EVENTS_SUFFIX, new Table(sliderInput.eventRows()))
+    logs.push({ name: 'slider', rows: sliderInput.rows() })
+    logs.push({ name: 'slider' + EVENTS_SUFFIX, rows: sliderInput.eventRows() })
   }
   for (const name of editableStore.listNames()) {
     // The "slider"/"midi" log tables back recorded automation — surfaced
     // (folded) above, or not at all.
     if (name === 'slider' || name === 'midi') continue
     const key = editableStore.isLog(name) ? name : name + EVENTS_SUFFIX
-    if (display.has(key)) continue
-    display.set(key, new Table((editableStore.get(name)?.events ?? []).map((r) => ({ ...r }))))
+    logs.push({ name: key, rows: (editableStore.get(name)?.events ?? []).map((r) => ({ ...r })) })
+  }
+  return logs
+}
+
+// The views shown in the table panel, plus a live "taps" table of wall-time
+// button presses and every streaming log table (see logTables). A log yields
+// to a program view of the same name — except the recorded slider pair, which
+// comes and goes with the take and always shows the recording.
+function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
+  const display = new Map(views)
+  if (!display.has('taps')) display.set('taps', new Table(tapRows()))
+  for (const { name, rows } of logTables()) {
+    const alwaysShow = name === 'slider' || name === 'slider' + EVENTS_SUFFIX
+    if (!alwaysShow && display.has(name)) continue
+    display.set(name, new Table(rows))
   }
   return display
 }

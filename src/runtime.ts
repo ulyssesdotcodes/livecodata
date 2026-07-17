@@ -41,6 +41,12 @@ export interface RuntimeOptions {
   physics?: () => PhysicsEngine | null
   tapRows?: () => Row[] | null
   editableRows?: (name: string, schema: Record<string, ColumnType>, seedRows?: Row[]) => Row[]
+  // The streaming log tables — the read-only event histories the table panel
+  // shows ("code·events", "activity", "midi·events", …). Consulted only when
+  // table(name) matches no defined view, so a program can read its own session's
+  // logs as ordinary data (null/undefined = no such log, keep the not-found
+  // error). Mirrors the display rule: a program view of the same name wins.
+  logRows?: (name: string) => Row[] | null | undefined
 }
 
 export interface RunOptions {
@@ -48,7 +54,7 @@ export interface RunOptions {
   dataCache?: Map<string, string>
 }
 
-export function createRuntime({ physics, tapRows, editableRows }: RuntimeOptions = {}): { run: (code: string, opts?: RunOptions) => RuntimeResult } {
+export function createRuntime({ physics, tapRows, editableRows, logRows }: RuntimeOptions = {}): { run: (code: string, opts?: RunOptions) => RuntimeResult } {
   let defs: Map<string, DefEntry>
   let cache: Map<string, Table>
   let deps: Map<string, string[]>
@@ -93,6 +99,16 @@ export function createRuntime({ physics, tapRows, editableRows }: RuntimeOptions
     }
     const def = defs.get(name)
     if (!def) {
+      // Not a defined view — maybe a streaming log table (see RuntimeOptions.
+      // logRows): serve a snapshot of its rows as a const table, so the session's
+      // own history ("code·events", "activity", …) reads like any other data.
+      const log = logRows?.(name)
+      if (log) {
+        if (callerView) deps.get(callerView)?.push(name)
+        const stamped = stampNode(name, new Table(log.map((r) => ({ ...r })), ctx))
+        cache.set(name, stamped)
+        return stamped
+      }
       throw new Error(`table("${name}") not found — define("${name}", (rand, table) => ...) it first`)
     }
     if (stack.includes(name)) {

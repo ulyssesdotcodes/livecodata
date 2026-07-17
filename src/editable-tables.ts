@@ -11,6 +11,12 @@ import type { Row } from './lineage.js'
 // The pseudo-table Apply pulses, peer-join/leave and session markers ride.
 export const ACTIVITY_TABLE = 'activity'
 
+// Suffix of a table's read-only edit-history view (`foo·events`) — the name
+// its log wears in the panel and the table() name a program reads it under.
+// Lives here (table-panel.ts re-exports it) so the cook worker can name
+// histories without pulling in panel code.
+export const EVENTS_SUFFIX = '·events'
+
 // 'a' prefix keeps apply ids distinguishable from replica ids in log dumps.
 function mintApplyId(): string {
   return 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
