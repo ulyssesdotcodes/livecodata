@@ -1,32 +1,24 @@
-// livecodata editor completion helpers (pure; no CodeMirror/DOM deps)
-// ----------------------------------------------------------------------------
-// Deciding whether a "." should offer Expr methods or Table methods comes down
-// to the root of the member-access chain to the left of the dot. Every Expr
-// method returns an Expr, so a chain rooted at field()/lit()/idx() stays an Expr;
-// everything else is treated as a Table. This is a small backward scanner over
-// the program text (the editor is untyped JS-in-a-string, so we can't ask a type
-// checker).
-// ----------------------------------------------------------------------------
+// Editor completion helpers (pure; no CodeMirror/DOM deps). Whether a "."
+// offers Expr or Table methods comes down to the root of the member-access
+// chain: every Expr method returns an Expr, so a chain rooted at
+// field()/lit()/idx() stays an Expr. The program is untyped JS-in-a-string, so
+// this is a backward text scan, not a type-checker query.
 
-// Chain heads that produce an Expr.
 export const EXPR_ROOTS: ReadonlySet<string> = new Set(['field', 'lit', 'idx'])
 
 const isIdentChar = (c: string): boolean => /[A-Za-z0-9_$]/.test(c)
 const isWs = (c: string): boolean => c === ' ' || c === '\t' || c === '\n' || c === '\r'
 
-// Given a "." at `dotPos`, walk the member-access chain to its left and return
-// the head identifier (the call/identifier everything hangs off), or null if the
-// receiver isn't a simple chain. Examples:
-//   `field("v").gt(2).`       → "field"
-//   `table("x").map(r=>r).`   → "table"
-//   `r.value.`                → "r"
+// Walk the member-access chain left of the "." at `dotPos` and return its head
+// identifier (`field("v").gt(2).` → "field"), or null if the receiver isn't a
+// simple chain.
 export function chainRoot(text: string, dotPos: number): string | null {
   let i = dotPos - 1
 
   const skipWs = (): void => { while (i >= 0 && isWs(text[i])) i-- }
 
-  // text[i] is ) or ] — walk left past the balanced group (respecting nesting and
-  // string literals) to the character before its opener.
+  // text[i] is ) or ] — walk left past the balanced group (respecting nesting
+  // and string literals) to before its opener.
   const skipBalanced = (): boolean => {
     const close = text[i]
     const open = close === ')' ? '(' : '['
@@ -64,16 +56,14 @@ export function chainRoot(text: string, dotPos: number): string | null {
   return null
 }
 
-// True when a "." at `dotPos` should complete Expr methods rather than Table ones.
 export function isExprDot(text: string, dotPos: number): boolean {
   const root = chainRoot(text, dotPos)
   return root !== null && EXPR_ROOTS.has(root)
 }
 
 // ── Language-service entry mapping ───────────────────────────────────────────
-// Pure translation from TS completion entries to CodeMirror option fields,
-// kept here (not editor-support.ts) so node tests can cover it without
-// CodeMirror imports.
+// TS completion entries → CodeMirror option fields; lives here (not
+// editor-support.ts) so node tests can cover it without CodeMirror imports.
 
 // ts.ScriptElementKind → CodeMirror completion type (drives the option icon).
 export function cmCompletionType(tsKind: string): string {
@@ -104,10 +94,9 @@ export function cmCompletionType(tsKind: string): string {
   }
 }
 
-// Ranking: TS sortText is a two-digit priority band ("11" locals … "15"
-// globals-and-keywords; see ts.Completions.SortText). Locals and location-
-// relevant entries float, keywords sink, and anything with curated DSL docs
-// is surface API — pin it above the standard-library noise.
+// TS sortText is a two-digit priority band ("11" locals … "15" globals and
+// keywords; see ts.Completions.SortText). Locals float, keywords sink, and
+// curated DSL names pin above the standard-library noise.
 export function completionBoost(sortText: string, tsKind: string, hasCuratedDoc: boolean): number {
   const band = parseInt(sortText, 10)
   let boost = Number.isNaN(band) ? -3 : band <= 11 ? 2 : band <= 14 ? 1 : 0
@@ -116,10 +105,9 @@ export function completionBoost(sortText: string, tsKind: string, hasCuratedDoc:
   return boost
 }
 
-// True when a "." at `dotPos` sits right after a table's `.three` accessor
-// (e.g. `box().three.`) — its receiver is the bare member `three` reached by a
-// member access — so the dot should offer the three animators (rotate/scale/
-// move) instead of the ordinary table methods.
+// True when the "." at `dotPos` follows a table's `.three` accessor (e.g.
+// `box().three.`), so the dot offers the three animators instead of the
+// ordinary table methods.
 export function isThreeDot(text: string, dotPos: number): boolean {
   let i = dotPos - 1
   while (i >= 0 && isWs(text[i])) i--

@@ -1,11 +1,8 @@
-// Lang client — the main-thread handle on the language-service worker.
-// ----------------------------------------------------------------------------
-// Promise-per-request over the worker, with a readiness state the editor's
-// completion/hover sources consult: until the worker reports ready (or if it
-// ever fails — worker construction blocked, env fetch failed), sources fall
-// back to the heuristic completions in editor-support.ts, so the editor is
-// never worse than it was without the service. Takes anything Worker-shaped
-// so tests can drive it with a fake message channel (see cook-client.ts).
+// Lang client — the main-thread handle on the language-service worker:
+// promise-per-request plus a readiness state. Until the worker reports ready
+// (or if it ever fails) sources fall back to the heuristic completions in
+// editor-support.ts. Takes anything Worker-shaped so tests can drive it with
+// a fake message channel.
 
 import type { LangRequest, LangResponse, LangReady } from './lang-worker.js'
 import type { LangCompletions, LangSymbolInfo, LangSignatureHelp, EditorLang } from './lang-service.js'
@@ -22,8 +19,6 @@ export type LangStatus = 'loading' | 'ready' | 'failed'
 // variants to their common keys).
 type DistributedOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
-// Every query names the language surface it runs against (default 'dsl');
-// hydra sketch cells pass 'hydra'.
 export interface LangClient {
   status(): LangStatus
   completions(text: string, pos: number, lang?: EditorLang): Promise<LangCompletions | null>
@@ -37,9 +32,8 @@ export function createLangClient(worker: LangWorkerLike): LangClient {
   let status: LangStatus = 'loading'
   const pending = new Map<number, (result: unknown) => void>()
 
-  // The worker script failing outright (404 in a broken deploy, blocked by
-  // CSP) fires 'error' and nothing else — flush everything so callers fall
-  // back instead of hanging.
+  // A worker script that fails outright fires 'error' and nothing else —
+  // flush pending so callers fall back instead of hanging.
   worker.addEventListener('error', () => {
     status = 'failed'
     for (const resolve of pending.values()) resolve(null)
@@ -55,8 +49,8 @@ export function createLangClient(worker: LangWorkerLike): LangClient {
     const resolve = pending.get(msg.id)
     if (!resolve) return
     pending.delete(msg.id)
-    // A per-query error (worker caught an exception) resolves null rather than
-    // rejecting: callers treat null as "no answer" and fall back.
+    // Per-query errors resolve null rather than rejecting: callers treat null
+    // as "no answer" and fall back.
     resolve(msg.ok ? msg.result : null)
   })
 

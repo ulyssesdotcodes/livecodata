@@ -1,10 +1,6 @@
 #!/usr/bin/env node
-// Download climate datasets from Met Office and save them to src/data/.
-// Run once (or whenever you want to refresh): npm run fetch-data
-//
-// Downloads:
-//   HadCRUT5 monthly global temperature anomaly  → src/data/hadcrut5-monthly.csv
-//   HadUK-Grid UK mean temperature monthly       → src/data/haduk-meantemp-monthly.csv
+// Download climate datasets from the Met Office into src/data/.
+// Run once (or to refresh): npm run fetch-data
 
 import { mkdir, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
@@ -17,9 +13,7 @@ async function get(url) {
   return res.text()
 }
 
-// ---------- HadCRUT5 monthly global anomaly ----------
-// Format: Time, Anomaly (deg C), Lower confidence limit (2.5%), Upper confidence limit (97.5%)
-// Time values look like "1850-01" already.
+// Input columns: Time ("1850-01"), Anomaly (deg C), Lower CI (2.5%), Upper CI (97.5%).
 async function fetchHadCRUT5() {
   const url =
     'https://www.metoffice.gov.uk/hadobs/hadcrut5/data/HadCRUT.5.1.0.0/analysis/diagnostics/' +
@@ -27,7 +21,6 @@ async function fetchHadCRUT5() {
   console.log('Fetching HadCRUT5 monthly …')
   const raw = await get(url)
   const lines = raw.trim().split('\n')
-  // Rename headers; keep all four columns.
   const rows = ['year_month,anomaly_c,lower_ci,upper_ci']
   for (const line of lines.slice(1)) {
     const cols = line.split(',').map(s => s.trim())
@@ -37,9 +30,8 @@ async function fetchHadCRUT5() {
   return rows.join('\n') + '\n'
 }
 
-// ---------- HadUK-Grid UK mean temperature monthly ----------
-// Fixed-width text from Met Office: rows = years, cols = months Jan…Dec + annual.
-// We reshape to long-form: year_month,temp_c (skip the annual column).
+// Input is fixed-width text: rows = years, cols = months Jan…Dec + annual.
+// Reshaped to long-form year_month,temp_c (annual column skipped).
 async function fetchHadUKGrid() {
   const url =
     'https://www.metoffice.gov.uk/hadobs/hadukgrid/data/uk/Time_series/meantemp/' +

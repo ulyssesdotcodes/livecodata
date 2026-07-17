@@ -1,12 +1,8 @@
-// The room chip: solo it opens a join popover (room name + username), using
-// the browser's native <div popover> — light-dismiss (outside click, Escape)
-// and top-layer stacking come for free, so there's no click-outside/open-state
-// bookkeeping to write by hand. In a room the chip shows connection status
-// and the live peer count, and leaves on click. Split humble-object style:
-// main.ts owns the multiplayer connection and the peer/presence folds and
-// pushes RoomChipState into the controller (and decides what a join actually
-// does — seed the room, push ?room=&user= into the URL, reload); <RoomChip>
-// only renders it and forwards the submitted room/user pair.
+// Room chip: solo, it opens a join popover using the browser's native
+// <div popover>, so light-dismiss and top-layer stacking come for free; in a
+// room it shows connection status and peer count, and leaves on click.
+// main.ts owns the multiplayer connection and pushes RoomChipState in;
+// <RoomChip> renders it and forwards the submitted room/user pair.
 
 import { createSignal, type Accessor } from 'solid-js'
 import type { MultiplayerStatus } from '../multiplayer.js'
@@ -31,8 +27,7 @@ export function createRoomChip(
   return { state, set: setState, initialUser, onJoin, onLeave }
 }
 
-// Unique per instance so the button's declarative `popovertarget` (below)
-// resolves to *this* chip's popover even if the page ever had more than one.
+// Unique per instance so `popovertarget` resolves to *this* chip's popover.
 let nextPopoverId = 0
 
 export function RoomChip(props: { ctl: RoomChipController }) {
@@ -60,11 +55,8 @@ export function RoomChip(props: { ctl: RoomChipController }) {
     ctl.onJoin(room, nameInput?.value.trim() ?? '')
   }
 
-  // Position under the chip each time the popover opens — measured after
-  // it's shown (the `toggle` event fires post-transition), not guessed, so
-  // it clamps against its real width at the viewport edge instead of
-  // overflowing it. Everything else (light-dismiss, top-layer stacking) is
-  // the browser's native popover behavior; nothing to wire up by hand.
+  // Position under the chip on each open — measured after it's shown so it
+  // clamps against its real width at the viewport edge.
   const onToggle = (e: ToggleEvent): void => {
     if (e.newState !== 'open' || !chipBtn || !popoverEl) return
     const r = chipBtn.getBoundingClientRect()
@@ -84,13 +76,9 @@ export function RoomChip(props: { ctl: RoomChipController }) {
         }}
         title={title()}
         ref={chipBtn}
-        // Declarative invoker (not a scripted showPopover()/togglePopover()
-        // call) so the browser recognizes this button as *this* popover's
-        // own opener — a manual call here would race the native
-        // light-dismiss algorithm, which treats any other click (including
-        // this button, if it weren't the registered invoker) as "outside"
-        // and closes the popover before a click handler even runs. Only
-        // present while solo; in a room the button has no popover to open.
+        // Declarative invoker, not a scripted showPopover(): a manual call
+        // races native light-dismiss, which would treat the click as
+        // "outside" and close the popover first. Only present while solo.
         popoverTarget={ctl.state().kind === 'solo' ? popoverId : undefined}
         aria-label={title()}
         onClick={() => { if (ctl.state().kind === 'room') ctl.onLeave() }}

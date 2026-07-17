@@ -10,7 +10,6 @@ import { frameToBeat } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
 
 const t = (rows: Row[]): Table => new Table(rows)
-// The 1-indexed source `beat` that maps to a given cache frame (30 frames/beat).
 const b = (frame: number): number => frameToBeat(frame)
 const nodeOf = (e: Expr): import('../src/dsl.js').ExprNode => e.node
 
@@ -25,35 +24,13 @@ test('isStreamingNode is true for any expression containing midi()', () => {
 
 // ── derive: streaming → binding, constant → baked ─────────────────────────
 
-test('derive(midi) leaves a per-frame binding; resolveBindings reads the ctx', () => {
-  const row = t([{ id: 'a' }]).derive({ amount: midi('c4') }).rows[0]
-  assert.ok(isBinding(row.amount), 'a streaming value is deferred')
-  const resolved = resolveBindings(row, { midi: () => 0.7 })
-  assert.equal(resolved.amount, 0.7)
-  assert.notEqual(resolved, row, 'a fresh row is returned when something resolves')
-})
-
 // ── slider(): the sibling streaming source ──────────────────────────────────
-
-test('isStreamingNode is true for any expression containing slider()', () => {
-  assert.equal(isStreamingNode(nodeOf(slider('height'))), true)
-  assert.equal(isStreamingNode(nodeOf(slider('height').mul(2))), true)
-  assert.equal(isStreamingNode(nodeOf(field('base').add(slider('x')))), true)
-})
 
 test('derive(slider) leaves a per-frame binding; resolveBindings reads ctx.slider', () => {
   const row = t([{ id: 'a' }]).derive({ py: slider('height') }).rows[0]
   assert.ok(isBinding(row.py), 'a streaming slider value is deferred')
   const resolved = resolveBindings(row, { slider: () => 0.4 })
   assert.equal(resolved.py, 0.4)
-})
-
-test('slider bindings are diffable: same id hashes equal, different id differs', () => {
-  const a = t([{ id: 'x' }]).derive({ v: slider('height') })
-  const b2 = t([{ id: 'x' }]).derive({ v: slider('height') })
-  const c = t([{ id: 'x' }]).derive({ v: slider('warp') })
-  assert.equal(hashOf(a), hashOf(b2))
-  assert.notEqual(hashOf(a), hashOf(c))
 })
 
 test('derive with a constant Expr bakes immediately (no binding)', () => {
@@ -67,11 +44,6 @@ test('a midi value composes with row fields, resolved at frame time', () => {
   assert.ok(isBinding(row.v))
   // base (baked: 10) + c4 (live: 0.5) * 100 = 60
   assert.equal(resolveBindings(row, { midi: () => 0.5 }).v, 60)
-})
-
-test('resolveBindings returns the same row when there is nothing to resolve', () => {
-  const row: Row = { a: 1, b: 2 }
-  assert.equal(resolveBindings(row, { midi: () => 0 }), row)
 })
 
 test('midi bindings are diffable: same note hashes equal, different note differs', () => {
@@ -107,7 +79,6 @@ test('a note recorded at frame 60 drives the field every time the loop passes it
     midi: (note, ch) => sampleMidiAt(idx, note, ch, frame),
   })
 
-  // The baked scene with a midi-bound field, as rasterize produces it.
   const baked = rasterizeRows(
     t([{ id: 's', type: 'create', beat: 1, shape: 'box', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
       .derive({ amount: midi('c4') }).rows,

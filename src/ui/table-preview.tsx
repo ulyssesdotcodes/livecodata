@@ -1,8 +1,6 @@
-// Inline table preview. A compact SolidJS card — a sparkline of every numeric
-// column plus the first few rows/columns — for any Table. Used by the editor's
-// hover tooltip so you can see a view's data without leaving the code
-// (reusing the table panel's cell formatter for consistent display). The
-// sparkline itself is painted by ../preview.ts; this file is only the card.
+// Inline table preview: a compact card — a sparkline of the numeric columns
+// plus the first few rows — used by the editor's hover tooltip. The sparkline
+// itself is painted by ../preview.ts; this file is only the card.
 
 import { For, Show } from 'solid-js'
 import { mountComponent } from './dom.js'
@@ -82,8 +80,8 @@ function TablePreviewCard(props: { table: Table; opts: Required<PreviewOptions> 
   )
 }
 
-// Render the card detached, for hosts (CodeMirror tooltips) that want a
-// plain DOM node. `destroy` disposes the Solid root.
+// Render the card detached, for hosts (CodeMirror tooltips) that want a plain
+// DOM node.
 export function buildTablePreview(
   table: Table,
   { maxRows = 6, maxCols = 6, playIndex = null }: PreviewOptions = {},

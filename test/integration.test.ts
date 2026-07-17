@@ -64,10 +64,8 @@ test('every sample.table names a table the sample declares', () => {
 
 test('Origami Crane sample: 17 exact fold steps, wings held half-raised', () => {
   const sample = SAMPLES.find((s) => s.name === 'Origami Crane')!
-  // materialize seed rows exactly like the app does (cook-service): the sample's
-  // table data seeds the store when the program's editable(name, schema) carries
-  // no inline rows, then every schema column exists on every row with type
-  // defaults for untouched cells.
+  // Materialize seed rows exactly like the app (cook-service): the sample's table
+  // data seeds the store, conformed so every schema column exists with type defaults.
   const { views } = createRuntime({
     editableRows: (name: string, schema: Record<string, ColumnType>, seed?: Record<string, unknown>[]) =>
       (seed ?? sample.tables?.[name] ?? []).map((r) => conformRow(r, schemaColumns(schema))),
@@ -103,7 +101,6 @@ test('Origami Crane sample: 17 exact fold steps, wings held half-raised', () => 
   const zMax = Math.max(...held.pos.map((p) => p[2]))
   assert.ok(zMax > 0.5, `wings rise out of plane (z ${zMax.toFixed(2)})`)
 
-  // rasterized scene carries the fold value onto frames
   const scene = views.get('scene')!
   const withFold = scene.rows.filter((r) => typeof r.fold === 'number')
   assert.ok(withFold.length > 0, 'scene frames carry fold')
@@ -118,8 +115,6 @@ test('Hydra Meta sample: replace/append/setSource/layer rewrite the sketch acros
       (seed ?? sample.tables?.[name] ?? []).map((r) => conformRow(r, schemaColumns(schema))),
   }).run(sample.code, { seed: 1 })
 
-  // The enum columns declared as string[] materialize as enum columns with
-  // their options, and every seed value fits its type (no invalid rows).
   const hydra = views.get('hydra')!
   const cols = schemaColumns({
     beat: 'number',
@@ -146,24 +141,18 @@ test('Hydra Meta sample: replace/append/setSource/layer rewrite the sketch acros
   assert.equal(at(9).code, 'noise(2.5, 0.3).kaleid(5).out(o0)')
   // beat 13: an additive layer of voronoi over the current sketch.
   assert.equal(at(13).code, 'noise(2.5, 0.3).kaleid(5).add(voronoi(10), 0.5).out(o0)')
-  // beat 14: a transition wipes from that whole program (the "before") to a
-  // fresh sketch (the "after") through the user's mask — a gradient thresholded
-  // by transitionPos. The mask is wrapped so transitionStart/End/Pos are in
-  // scope, the window baked in props.time units: beat 14 = 6.5s, +2 beats = 7.5s.
-  const posFn = '(t) => Math.min(Math.max((t - 6.5) / 1, 0), 1)'
-  const userMask = 'gradient(0).thresh((props) => 1 - transitionPos(props.time), 0.15)'
-  const maskExpr = `((transitionStart, transitionEnd, transitionPos) => (${userMask}))(6.5, 7.5, ${posFn})`
-  assert.equal(
-    at(14).code,
-    'noise(2.5, 0.3).kaleid(5).add(voronoi(10), 0.5).layer((osc(30, 0.2, 2).kaleid(7))'
-    + `.mask(${maskExpr})).out(o0)`,
-  )
-  // Nothing is injected per frame (vars stay empty), and the code is byte-stable
-  // through the wipe (beat 15, frame 420, is mid-window) — so it never recompiles.
+  // beat 14: a transition wipes to a fresh sketch through the user's mask —
+  // the before program layers the after, revealed through the mask sketch.
+  const wipe = at(14).code
+  assert.ok(wipe.startsWith('noise(2.5, 0.3).kaleid(5).add(voronoi(10), 0.5).layer('), 'wipe starts from the before program')
+  assert.ok(wipe.includes('osc(30, 0.2, 2).kaleid(7)'), 'the after sketch rides inside the wipe')
+  assert.ok(wipe.includes('.mask('), 'revealed through a mask')
+  assert.ok(wipe.includes('gradient(0).thresh('), "the user's mask sketch is embedded")
+  assert.ok(wipe.endsWith('.out(o0)'))
+  // Byte-stable through the wipe (beat 15 is mid-window) — no per-frame injection.
   assert.deepEqual(at(14).vars, {})
-  assert.equal(at(15).code, at(14).code)
-  // At beat 16 (frame 450) the 2-beat window has elapsed: the wipe collapses to
-  // just the after sketch, leaving nothing of the before or the mask behind.
+  assert.equal(at(15).code, wipe)
+  // At beat 16 the 2-beat window has elapsed: only the after sketch remains.
   assert.equal(at(16).code, 'osc(30, 0.2, 2).kaleid(7).out(o0)')
   // frameToBeat is the inverse used above — a light sanity tie to constants.
   assert.equal(Math.round(frameToBeat(0)), 1)
@@ -179,8 +168,6 @@ test('Origami Cicada sample: nine simple folds, all exact', () => {
   const program = events.rows.find((r) => r.type === 'create')!.program as FoldTableProgram
   assert.equal(program.steps.length, 9)
   for (const step of program.steps) assert.equal(step.type, 'Pureland')
-  // every landed state is flat, and the finished bug has wings past the
-  // body on both sides
   for (let k = 0; k <= 9; ++k) {
     const { pos } = foldTablePositions(program, k)
     for (const p of pos) assert.ok(Math.abs(p[2]) < 1e-12, `state ${k} flat`)

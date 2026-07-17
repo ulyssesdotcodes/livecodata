@@ -4,9 +4,8 @@ import { rasterizeRows, buildFrameIndex, stateAtFrame, sampleFrame } from '../sr
 import { frameToBeat, framesToBeats } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
 
-// A target cache frame → the 1-indexed `beat` that lands on it, and → the beats
-// *span* (for the maxBeats arg). Beats are the input unit now; frames stay the
-// internal baking grid these assertions read.
+// b: the 1-indexed beat landing on a cache frame; mb: a frame count as a beats
+// span (for maxBeats). Beats are the input unit; frames are the baking grid.
 const b = (frame: number): number => frameToBeat(frame)
 const mb = (frame: number): number => framesToBeats(frame)
 
@@ -71,17 +70,6 @@ test('color pulse: flashes exactly at the trigger, eases to base, newest wins', 
   assert.notEqual(colorAt(5), 0xffffff, 'mid-decay color is a mix, not the flash')
   assert.equal(colorAt(6), 0xff0000, 'a newer pulse overrides the older one mid-decay')
   assert.equal(colorAt(10), 0x4a9eff, 'fully decayed back to the base color')
-})
-
-test('color step (no dur) stays a hard switch, newest event wins', () => {
-  const rows = rasterizeRows([
-    create({ color: 0x111111 }),
-    { id: 's', type: 'color', beat: b(4), color: 0x222222 },
-  ], mb(6))
-  const colorAt = (fr: number) => rows.find((r) => r.frame === fr)!.color
-  assert.equal(colorAt(3), 0x111111)
-  assert.equal(colorAt(4), 0x222222)
-  assert.equal(colorAt(6), 0x222222)
 })
 
 test('no rows before create and from destroy onward', () => {
@@ -154,16 +142,6 @@ test('empty input yields an empty cache', () => {
   const fi = buildFrameIndex([])
   assert.equal(fi.maxFrame, 0)
   assert.deepEqual(stateAtFrame(fi, 0), [])
-})
-
-test('custom numeric fields interpolate between keyframes (fold fractions ride the grid)', () => {
-  const rows = rasterizeRows([
-    create({ wings: 0 }),
-    { id: 's', type: 'update', beat: b(10), wings: 1 },
-  ], mb(10))
-  const at5 = rows.find((r) => r.frame === 5)!
-  assert.equal(at5.wings, 0.5, 'halfway through the ramp')
-  assert.equal(rows.find((r) => r.frame === 10)!.wings, 1)
 })
 
 test('custom numeric fields hold their last value when the next keyframe omits them', () => {

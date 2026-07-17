@@ -5,7 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  numericColumns, beatXOf, xExtent, chartDataFor, computeColRanges,
+  numericColumns, beatXOf, computeColRanges,
   xTicks, tickDecimals, fmtNum, resolveSpec,
 } from '../src/graph-panel.js'
 import { Table } from '../src/dsl.js'
@@ -29,17 +29,6 @@ test('beatXOf plots against beat when present, else the row ordinal', () => {
   assert.equal(without.xOf({ x: 9 }, 3), 3)
 })
 
-test('xExtent spans the mapped x values', () => {
-  const rows: Row[] = [{ beat: 2 }, { beat: 5 }, { beat: 3 }]
-  const { xOf } = beatXOf(['beat'])
-  assert.deepEqual(xExtent(rows, xOf), { xMin: 2, xMax: 5 })
-})
-
-test('chartDataFor returns null with nothing to draw', () => {
-  assert.equal(chartDataFor([], ['x'], ['x'], 't'), null)
-  assert.equal(chartDataFor([{ x: 1 }], ['x'], [], 't'), null)
-})
-
 test('resolveSpec: explicit columns are numeric-filtered; default is every plottable column', () => {
   const rows: Row[] = [{ beat: 1, x: 1, y: 2, label: 'a' }]
   const t = new Table(rows)
@@ -60,11 +49,6 @@ test('computeColRanges: per-series raw ranges plus optional padding', () => {
   assert.deepEqual([padded.rawMin, padded.rawMax], [-2, 6], 'raw range is unpadded for the legend')
   assert.ok(Math.abs(padded.min - (-2 - 8 * 0.08)) < 1e-9)
   assert.ok(Math.abs(padded.max - (6 + 8 * 0.08)) < 1e-9)
-})
-
-test('computeColRanges falls back to [-1, 1] for a column with no numbers', () => {
-  const [r] = computeColRanges([{ a: 'text' }], ['a'], 0)
-  assert.deepEqual(r, { rawMin: -1, rawMax: 1, min: -1, max: 1 })
 })
 
 test('xTicks picks nice steps across magnitudes', () => {

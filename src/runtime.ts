@@ -1,15 +1,7 @@
-// livecodata runtime — the cook network
-// ----------------------------------------------------------------------------
-// A reactive dataflow engine over named views (à la Houdini node cooking). A
-// program registers views with define("name", (rand, table) => <Table>); the
-// engine cooks them on demand, in dependency order.
-//
-// Cooking now builds a lazy op-graph (see dsl.ts): running a view's fn assembles
-// Table nodes (and discovers its table() dependencies) but does not compute rows.
-// After cooking, the engine *materializes* each view, reusing a previous run's
-// rows whenever a node's content hash is unchanged (a 2-generation memo). So an
-// edit that leaves the physics subgraph untouched will not re-bake physics.
-// ----------------------------------------------------------------------------
+// The cook network: a reactive dataflow engine over named views (à la Houdini
+// node cooking). Cooking builds a lazy op-graph (see dsl.ts) without computing
+// rows; materialization then reuses a previous run's rows whenever a node's
+// content hash is unchanged, so untouched subgraphs aren't re-baked.
 
 import {
   createDSL, Table, materialize, fnv1a,
@@ -67,9 +59,9 @@ export function createRuntime({ physics, tapRows, editableRows }: RuntimeOptions
   let currentCookingView: string | null = null
   let dataCache = new Map<string, string>()
 
-  // Cross-run row cache keyed by content hash. Two generations: at run start the
-  // current map rolls into `prev`, so a result survives one run of non-use before
-  // being evicted (bounds memory while still catching same-as-last-run subgraphs).
+  // Cross-run row cache keyed by content hash, two generations: a result
+  // survives one run of non-use before eviction — bounds memory while still
+  // catching same-as-last-run subgraphs.
   let curMemo = new Map<number, Row[]>()
   let prevMemo = new Map<number, Row[]>()
   const memo: Memo = {
@@ -82,8 +74,7 @@ export function createRuntime({ physics, tapRows, editableRows }: RuntimeOptions
     return prngs.get(name)!
   }
 
-  // Wrap a Table in a 'stamp' node that appends this view's provenance ref
-  // ({ table: name, index }) to each row's lineage when materialized.
+  // Appends this view's provenance ref to each row's lineage when materialized.
   function stampNode(name: string, input: Table): Table {
     return Table._fromNode(ctx, {
       op: 'stamp',
@@ -189,7 +180,6 @@ export function createRuntime({ physics, tapRows, editableRows }: RuntimeOptions
     ctx.seed = seedVal
     dataCache = dc ?? new Map()
 
-    // Roll the memo forward one generation.
     prevMemo = curMemo
     curMemo = new Map()
 
@@ -200,8 +190,6 @@ export function createRuntime({ physics, tapRows, editableRows }: RuntimeOptions
       defs.set(group, { kind: 'group', members })
     }
 
-    // Cook (build the op-graphs + discover deps) then materialize, reusing
-    // unchanged subgraphs from the memo.
     for (const name of defs.keys()) cook(name, null, [])
     for (const t of cache.values()) materialize(t, matCtx, memo)
 

@@ -8,13 +8,11 @@
     <meta name="theme-color" content="#1a1a2e" />
     <link rel="icon" href="/icons/icon-512.png" type="image/png" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
-    <!-- Feather icon set, loaded globally so src/ui/icon.tsx can pull SVG
-         markup from window.feather.icons synchronously before main.ts runs. -->
+    <!-- Feather icons, loaded globally so src/ui/icon.tsx can read
+         window.feather.icons synchronously before main.ts runs. -->
     <script src="https://cdn.jsdelivr.net/npm/feather-icons@4/dist/feather.min.js"></script>
   </head>
   <body>
-    <!-- The whole layout is rendered by one Solid tree (src/ui/app.tsx);
-         main.ts builds the pure-logic controllers and mounts it here. -->
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

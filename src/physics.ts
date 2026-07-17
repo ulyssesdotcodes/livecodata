@@ -1,8 +1,5 @@
-// livecodata physics
-// ----------------------------------------------------------------------------
 // Bakes a JoltPhysics rigid-body simulation from a base scene table and turns
 // the result back into rows the rest of the DSL already understands.
-// ----------------------------------------------------------------------------
 
 import initJolt from 'jolt-physics'
 import type { Row } from './lineage.js'
@@ -126,9 +123,8 @@ function makeShape(Jolt: JoltModule, row: Row): JoltModule {
       const hx = (row.hx as number | undefined) ?? d.hx
       const hy = (row.hy as number | undefined) ?? d.hy
       const hz = (row.hz as number | undefined) ?? d.hz
-      // Jolt's BoxShape convex radius must be strictly less than every half-extent.
-      // Stay at the proven-stable 0.05 when possible; only shrink it for thin
-      // shapes, keeping it close to the thinnest half-extent for contact stability.
+      // Jolt's BoxShape convex radius must be strictly less than every
+      // half-extent; shrink from the proven-stable 0.05 only for thin shapes
       const convexRadius = Math.min(0.05, 0.9 * Math.min(hx, hy, hz))
       const half = new Jolt.Vec3(hx, hy, hz)
       const s = new Jolt.BoxShape(half, convexRadius, null)
@@ -167,17 +163,10 @@ export function simulateScene(Jolt: JoltModule, baseRows: Row[], opts: SimulateO
 
   const idByBody = new Map<number, unknown>()
   const moving: { id: unknown; bodyId: JoltModule }[] = []
-  // Rows with a `dropAt` (seconds) stay real dynamic bodies throughout (so
-  // their mass properties are the normal dynamic ones, not a static body's)
-  // but start with gravity zeroed out, so they hang motionless until that
-  // many seconds of sim time have passed, then gravity switches back on and
-  // they fall normally. (Flipping motion type static->dynamic mid-sim doesn't
-  // work: a static body's mass properties are never computed, so switching
-  // it to dynamic leaves it with no mass for gravity to act on.) Held bodies
-  // join `moving` immediately — they just report a constant position while
-  // held — so rasterize sees a flat hold followed by a sharp drop instead of
-  // interpolating across the whole hold from the create row to wherever the
-  // body's first real update lands.
+  // `dropAt` rows stay dynamic bodies with gravity zeroed until the drop
+  // frame (flipping static->dynamic mid-sim fails: a static body never gets
+  // mass properties). Held bodies join `moving` immediately so rasterize
+  // sees a flat hold then a sharp drop, not one long interpolation.
   const delayedDrops: { bodyId: JoltModule; dropFrame: number }[] = []
 
   for (const row of creates) {
@@ -248,8 +237,8 @@ export function simulateScene(Jolt: JoltModule, baseRows: Row[], opts: SimulateO
       const d = delayedDrops[i]
       if (frame < d.dropFrame) continue
       bodyInterface.SetGravityFactor(d.bodyId, 1)
-      // A body motionless for a while falls asleep; SetGravityFactor alone
-      // doesn't wake it, so gravity would never actually get a turn to act.
+      // a motionless body falls asleep and SetGravityFactor alone doesn't
+      // wake it, so gravity would never get a turn to act
       bodyInterface.ActivateBody(d.bodyId)
       delayedDrops.splice(i, 1)
     }

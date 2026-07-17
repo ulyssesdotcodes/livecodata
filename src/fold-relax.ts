@@ -1,15 +1,9 @@
-// Soft in-betweens: a small compliant solver in the mould of Origami
-// Simulator (Ghassaei/Demaine/Gershenfeld, 7OSME 2018 — axial springs
-// along every triangulated edge plus angular springs driving each crease's
-// dihedral toward a target, damped explicit integration). The exact
-// flat-folded states from fold-engine stay the ground truth; this solver
-// only fills the motion between two consecutive states: crease targets
-// ramp from the start state's angles to the end state's, and the paper
-// relaxes through the near-isometric path — pockets billow open and press
-// flat the way real paper moves through a reverse fold.
-//
-// Everything here is deterministic and runs at compile time (baking); no
-// physics happens during playback.
+// Soft in-betweens in the mould of Origami Simulator (Ghassaei/Demaine/
+// Gershenfeld, 7OSME 2018): axial springs along triangulated edges plus
+// angular springs driving crease dihedrals toward ramped targets, damped
+// explicit integration. The exact flat states from fold-engine stay the
+// ground truth; this only fills the motion between two consecutive states.
+// Deterministic, compile-time only (baking) — no physics during playback.
 
 export type Vec2 = [number, number]
 
@@ -20,7 +14,7 @@ export interface SoftHinge {
   k: number
   from: number               // dihedral target at t=0
   to: number                 // dihedral target at t=1
-  // 'flank': a pressed crease bordering the action — it transiently opens
+  // 'flank': a pressed crease bordering the action — transiently opens
   // mid-swing (the pocket) and presses shut again
   role: 'normal' | 'flank'
 }
@@ -35,18 +29,16 @@ export interface SoftMesh {
 
 const AXIAL_K = 60           // per unit rest length (stiff paper: strain reads as bend, not stretch)
 const CREASE_K = 3           // base angular stiffness, per unit hinge length
-// paper bends AT creases: a crease whose angle this fold changes is soft
-// (it is being worked); a pressed fold that keeps its angle holds hard;
-// paper that has never been creased resists bending in between
+// paper bends AT creases: a crease being worked is soft, a pressed fold
+// holds hard, never-creased paper resists in between
 const K_CHANGING = 1
 const K_PRESSED = 2
 const K_UNCREASED = 1
 const MIN_L0 = 0.02          // sliver edges get stiffness as if this long
 const MAX_STEP = 0.02        // per-iteration displacement clamp
 
-// Dihedral targets stop just short of ±π: exactly-flat hinges are
-// degenerate (the normal direction flips), and the endpoints are blended
-// into the exact states anyway.
+// Just short of ±π: exactly-flat hinges are degenerate (the normal flips),
+// and the endpoints are blended into the exact states anyway.
 export const FLAT_ANGLE = Math.PI * 0.995
 
 export const buildSoftMesh = (
@@ -72,9 +64,8 @@ export const buildSoftMesh = (
     const L0 = restLen(a, b)
     edges.push({ a, b, L0, k: AXIAL_K / Math.max(L0, MIN_L0) })
   }
-  // triangulate each face as a fan in MATERIAL orientation (counter-
-  // clockwise in sheet space) so every hinge's sign convention is the
-  // paper's own front side, no matter how the face is currently flipped
+  // triangulate each face as a fan in MATERIAL orientation (CCW in sheet
+  // space) so every hinge's sign convention is the paper's own front side
   const fanOf = (F: number[]): number[] => {
     let area = 0
     for (let i = 0, j = F.length - 1; i < F.length; j = i++) {
@@ -82,8 +73,8 @@ export const buildSoftMesh = (
     }
     return area > 0 ? F : [...F].reverse()
   }
-  // the fan triangle within `face` that contains edge a-b, returning its
-  // third (opposite) vertex — used to hang the hinge on real geometry
+  // third vertex of the fan triangle within `face` containing edge a-b —
+  // hangs the hinge on real geometry
   const oppositeIn = (face: number[], a: number, b: number): number => {
     const F = fanOf(face)
     for (let j = 1; j + 1 < F.length; ++j) {
@@ -110,8 +101,8 @@ export const buildSoftMesh = (
   EV.forEach(([a, b], ei) => {
     const faces = EF[ei]
     if (faces.length !== 2) return
-    // material orientation: pick c from the face whose sheet-CCW loop
-    // traverses a->b, d from the other — this fixes the dihedral's sign
+    // pick c from the face whose sheet-CCW loop traverses a->b, d from
+    // the other — this fixes the dihedral's sign
     let f1 = faces[0]
     let f2 = faces[1]
     const traversesAB = (face: number[]): boolean => {
@@ -198,11 +189,10 @@ export const relax = (
       const l2 = len(n2)
       if (l1 < 1e-12 || l2 < 1e-12) continue
       const theta = Math.atan2(dot(cross(n1, n2), eHat), dot(n1, n2))
-      // ∂θ/∂x_c points along −n̂1 (verified numerically: lifting the flap
-      // vertex along its face normal decreases θ in this convention)
+      // ∂θ/∂x_c points along −n̂1 (verified numerically)
       const m = h.k * (theta - target(h))
-      // the torque lever is 1/height — floor it so a transiently
-      // degenerate triangle (height → 0) can't kick the mesh into orbit
+      // torque lever is 1/height — floor it so a transiently degenerate
+      // triangle can't kick the mesh into orbit
       const h1 = Math.max(l1 / eLen, MIN_L0)
       const h2 = Math.max(l2 / eLen, MIN_L0)
       const fc = m / h1
@@ -218,9 +208,9 @@ export const relax = (
         F[h.b * 3 + c] -= t3 * fc * n1c + t4 * fd * n2c
       }
     }
-    // kinetic damping: integrate undamped, but the moment kinetic energy
-    // falls the system passed an energy minimum — stop dead and coast in
-    // from rest again. Robust and fast for form-finding relaxation.
+    // kinetic damping: the moment kinetic energy falls, the system passed
+    // an energy minimum — stop dead and coast in from rest again. Robust
+    // and fast for form-finding relaxation.
     maxMove = 0
     let ke = 0
     for (let i = 0; i < mesh.n; ++i) {
@@ -228,8 +218,7 @@ export const relax = (
       for (let c = 0; c < 3; ++c) {
         const j = i * 3 + c
         vel[j] += F[j] * mesh.dt
-        // hard safety: no vertex moves more than a paper-fraction per
-        // step, whatever transient force spike geometry conjures up
+        // hard safety against transient force spikes
         const move = Math.max(-MAX_STEP, Math.min(MAX_STEP, vel[j] * mesh.dt))
         ke += vel[j] * vel[j]
         pos[j] += move
@@ -248,27 +237,23 @@ export interface BakeOptions {
   time?: number              // simulated relaxation time per keyframe
 }
 
-// Bake the motion from the start state to the end state: crease targets
-// ramp linearly, each keyframe relaxes from the previous one (the seed
-// frame starts from `seedPos`, normally the rigid swing at small t so
-// every flap breaks symmetry toward its correct side).
+// Bake the motion between states: crease targets ramp linearly, each
+// keyframe relaxes from the previous. `seedPos` is normally the rigid
+// swing at small t, so every flap breaks symmetry toward its correct side.
 export const bakeSoftMotion = (
   mesh: SoftMesh, seedPos: Float64Array, opts: BakeOptions = {},
 ): Float64Array[] => {
   const frames = opts.frames ?? 24
-  // a TIME budget, not an iteration count: stiffer meshes get smaller dt,
-  // so fixed iterations would silently under-converge them
+  // a TIME budget: stiffer meshes get smaller dt, so a fixed iteration
+  // count would silently under-converge them
   const iterations = Math.min(6000, Math.ceil((opts.time ?? 10) / mesh.dt))
   const pos = Float64Array.from(seedPos)
   const vel = new Float64Array(mesh.n * 3)
   const out: Float64Array[] = []
-  // the folder's choreography: pocket flanks OPEN over the first third,
-  // the working creases swing through the middle, everything presses
-  // flat at the end — sin(πs) shapes the transient open-and-close
+  // pocket flanks open transiently and press shut — sin(πs) shapes it
   const FLANK_OPEN = Math.PI * 0.45
-  // frame 0 is the seed itself — the barely-swung flat start. Relaxing
-  // toward the from-state first can lurch to a different flat
-  // configuration entirely and snap back a frame later.
+  // frame 0 is the seed itself: relaxing toward the from-state first can
+  // lurch to a different flat configuration and snap back a frame later
   out.push(Float64Array.from(pos))
   for (let f = 1; f <= frames; ++f) {
     const s = f / frames
@@ -284,8 +269,8 @@ export const bakeSoftMotion = (
   return out
 }
 
-// Pin the largest face far from the action: it anchors position and
-// orientation while everything that must flex stays free.
+// Pin the largest static face: it anchors position and orientation while
+// everything that must flex stays free.
 export const pickPinned = (
   FV: number[][], sheet: Vec2[], moving: boolean[],
 ): boolean[] => {

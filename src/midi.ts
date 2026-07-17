@@ -1,35 +1,9 @@
-// livecodata MIDI — an event log folded into a streaming table
-// ----------------------------------------------------------------------------
-// MIDI is a *streaming* source: notes arrive live, while the timeline plays.
-// Like every other live thing here (code runs, table edits, slider moves) what
-// is stored is the append-only log of events. Exactly like sliders, that log
-// is NOT a private one: it rides the shared editable-table store (main.ts
-// hands createMidiInput a thin MidiStore adapter over
-// editableStore.record('midi', …)), so recorded MIDI syncs over multiplayer
-// and persists in the session like any other table. Each event carries three
-// time stamps:
-//   t     — wall-clock ms since the first event (from the event log)
-//   loop  — which loop iteration the playhead was in when it arrived
-//   beat  — the playhead's *content/source* position (a 1-indexed beat — see
-//           Playback.currentSourceBeats), the coordinate the baked scene is
-//           keyed to. Recording this (not wall time) is what makes a recorded
-//           sweep's speed track the timeline mapping: remap the timeline 2x
-//           slower and the sweep takes 2x as long, with everything else.
-//
-// The *current* "midi" table is a pure fold of the log: for each note, the
-// events from the most recent loop in which that note was recorded (so playing
-// a note in a new loop replaces its old take, while untouched notes carry
-// forward), deduped to one row per (channel, frame). The raw log itself is the
-// read-only "midi·events" table — history is never rewritten, only re-derived.
-//
-//   { type:"midi", note:"c4", noteNum:60, channel:1, value:0.8, beat:3.0, loop:2 }
-//
-// At a given frame the *active* value of a note is the most recent row for it
-// at-or-before that frame — exactly how rasterize/effects sample sparse events.
-// The DSL's midi("c4") (an Expr) becomes a per-row binding that playback resolves
-// each frame against the folded table (see resolveBindings in dsl.ts), sampled
-// at the same source frame events are recorded at.
-// ----------------------------------------------------------------------------
+// livecodata MIDI — an append-only event log folded into a streaming table.
+// Like sliders, the log rides the shared editable-table store, so recorded
+// MIDI syncs over multiplayer and persists in the session. Events are stamped
+// with the playhead's content/source position (a 1-indexed beat, not wall
+// time), which is what makes a recorded sweep's speed track the timeline
+// mapping, plus the loop iteration it was recorded in.
 
 import { beatToFrame } from './constants.js'
 import type { StampedEvent } from './event-log.js'
@@ -96,9 +70,8 @@ interface MidiSample {
 
 export type MidiIndex = Map<string, MidiSample[]>
 
-// Group rows by note name, each list sorted ascending by frame, for fast
-// "most recent at-or-before" lookups. Event beats are pre-converted to frames to
-// compare against the playhead's source frame.
+// Group rows by note name, sorted ascending by frame (event beats
+// pre-converted), for fast "most recent at-or-before" lookups.
 export function buildMidiIndex(rows: Row[] | null | undefined): MidiIndex {
   const map: MidiIndex = new Map()
   for (const r of rows ?? []) {
@@ -129,11 +102,10 @@ export function sampleMidiAt(index: MidiIndex, note: string, channel: number | n
 }
 
 // ── The fold: event log → current table ─────────────────────────────────────
-// For each note, keep only the events from the most recent loop in which it was
-// recorded — a new take replaces the old one, untouched notes carry forward —
-// then dedupe to one row per (channel, frame): a burst of messages landing at
-// the same source frame (rapid CC/velocity) collapses to the last value. Pure;
-// the log is never rewritten.
+// Per note: only the events from the most recent loop it was recorded in — a
+// new take replaces the old, untouched notes carry forward — deduped to one
+// row per (channel, frame) so a burst at one source frame collapses to the
+// last value. Pure; the log is never rewritten.
 export function currentMidiRows(events: StampedEvent[]): Row[] {
   const perNote = new Map<string, { loop: number; byKey: Map<string, Row> }>()
   for (const e of events) {
@@ -163,12 +135,9 @@ export function currentMidiRows(events: StampedEvent[]): Row[] {
 // ── Live input ───────────────────────────────────────────────────────────────
 
 // The midi log, abstracted to just what the input needs — the exact twin of
-// sliders' SliderStore. main.ts backs this with the editable-table store:
-// record('midi', kind, payload) appends a store event (auto-creating the
-// "midi" log table on first sight), events() returns that table's events, and
-// onChange fires on every store change (a local message, a peer's merged
-// event, or a session load). Riding the store is what makes recorded MIDI
-// sync over multiplayer and persist in the session.
+// sliders' SliderStore. main.ts backs this with the editable-table store —
+// riding the store is what makes recorded MIDI sync over multiplayer and
+// persist in the session.
 export interface MidiStore {
   record(kind: string, payload?: Record<string, unknown>): void
   events(): StampedEvent[]
@@ -177,37 +146,31 @@ export interface MidiStore {
 
 export interface MidiInputOptions {
   store: MidiStore
-  // The playhead's current content/source position (a 1-indexed beat) — where new
-  // events get stamped (Playback.currentSourceBeats). The same coordinate the
-  // baked scene is keyed to, so a recorded sweep's speed tracks the timeline
-  // mapping rather than staying fixed to wall-clock time.
+  // Where new events get stamped: the playhead's content/source position (a
+  // 1-indexed beat, Playback.currentSourceBeats) — the coordinate the baked
+  // scene is keyed to, so a recorded sweep tracks the timeline mapping.
   getIndex: () => number
-  // The current loop iteration (increments each time playback wraps). Folded
-  // into each event so the current table can be derived per note from the most
-  // recent loop that recorded it.
+  // Current loop iteration, folded into each event so the fold can keep each
+  // note's most recent take.
   getLoop?: () => number
 }
 
 export interface MidiInput {
-  // The folded current table (the "midi" view): per note, the most recent
-  // loop's take, one row per (channel, frame).
+  // The folded current table (the "midi" view).
   rows(): Row[]
-  // The raw append-only log (the "midi·events" view): every event as recorded,
-  // stamped with seq, wall-clock t, loop, and source index.
+  // The raw append-only log (the "midi·events" view).
   eventRows(): Row[]
   clear(): void
-  // A per-frame evaluation context for resolveBindings: midi(note) samples the
-  // folded table at `srcFrame` (the same content/source domain events are
-  // stamped in — see Playback.currentSourceBeats).
+  // Per-frame evaluation context for resolveBindings: midi(note) samples the
+  // folded table at `srcFrame`.
   ctxAt(srcFrame: number): EvalCtx
   // Feed a raw message (exposed for the browser listener and for tests).
   feed(data: ArrayLike<number>): void
 }
 
 export function createMidiInput({ store, getIndex, getLoop }: MidiInputOptions): MidiInput {
-  // Fold caches, invalidated whenever the store changes (a local message, a
-  // merged peer event, or a session load — all reach the same fold via
-  // store.events()).
+  // Fold caches, invalidated on any store change (local, peer merge, or
+  // session load).
   let current: Row[] | null = null
   let index: MidiIndex | null = null
 
@@ -239,13 +202,10 @@ export function createMidiInput({ store, getIndex, getLoop }: MidiInputOptions):
   }
 }
 
-// Best-effort Web MIDI subscription, separate from the input itself: the input
-// (fold + feed over the shared store) exists regardless — so MIDI synced from
-// a peer or loaded from a saved session plays back with no hardware and no
-// permission — while requesting device access pops a browser permission
-// prompt, so main.ts calls this only once the user enables the MIDI toggle.
-// Silently no-ops where unavailable (unsupported browser, denied permission,
-// headless test).
+// Best-effort Web MIDI subscription, separate from the input itself so synced
+// or session-loaded MIDI plays back with no hardware. Requesting device access
+// pops a browser permission prompt, so main.ts calls this only once the user
+// enables the MIDI toggle. No-ops where unavailable.
 export function subscribeWebMidi(input: Pick<MidiInput, 'feed'>): void {
   const access = (navigator as Navigator & {
     requestMIDIAccess?: () => Promise<{ inputs: Map<unknown, { onmidimessage: ((e: { data: Uint8Array }) => void) | null }> }>

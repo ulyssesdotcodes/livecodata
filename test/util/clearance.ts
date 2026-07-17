@@ -1,19 +1,8 @@
 // Paper-clearance metric: does the displayed paper pass through itself?
-//
-// Measures exactly what the renderer draws — foldTablePositions' vertex
-// positions with each face's layer offset applied (zOff along the face's
-// zDir when present, world z otherwise), fan-triangulated as in
-// three-scene.ts fillOrigami. Three offences:
-//
-//  - crossings: two faces properly intersect — paper going THROUGH paper;
-//  - depth: how far the crossing material extends past the other face's
-//    plane — thin grazes hide inside the stack's rendered thickness, deep
-//    plunges read as poking through;
-//  - shears: two near-coplanar faces overlap in-plane while their layer
-//    offsets fail to separate them — z-fighting shimmer.
-//
-// Face pairs that share a sheet vertex are skipped: they are joined at a
-// crease and legitimately touch.
+// Measures what the renderer draws — foldTablePositions' vertices with each
+// face's layer offset applied, fan-triangulated as in three-scene.ts. Offences:
+// crossings (paper through paper), depth (penetration past the other face's
+// plane), shears (near-coplanar overlap the layer offsets fail to separate).
 import { foldTablePositions, type FoldTableProgram } from '../../src/fold-engine.js'
 import { triCrossLength, triCrossDepth, triShearArea, type V3 } from '../../src/tri-clearance.js'
 
@@ -64,7 +53,7 @@ export const clearanceAt = (
   let worstPair: [number, number] | undefined
   for (let a = 0; a < FV.length; ++a) {
     for (let b = a + 1; b < FV.length; ++b) {
-      if (shares(FV[a], FV[b])) continue
+      if (shares(FV[a], FV[b])) continue // joined at a crease — legitimately touch
       const [alo, ahi] = bboxes[a]
       const [blo, bhi] = bboxes[b]
       if (alo[0] > bhi[0] + gapMin || blo[0] > ahi[0] + gapMin ||

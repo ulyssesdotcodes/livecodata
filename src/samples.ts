@@ -1,11 +1,7 @@
-// Sample programs for the livecodata editor. CSV datasets are served from
-// /data/ and loaded at run time via data(url) — no inline embedding needed.
-//
-// An example may also carry `tables`: seed rows for its editable tables, keyed
-// by table name. These populate the table panel when the example is opened, so
-// the program's editable(name, schema) call declares the column *schema* only —
-// the row data lives here (edit it live in the panel), not as an array literal
-// in the code. (Examples with no editable tables just omit `tables`.)
+// Sample programs for the livecodata editor. The // lines inside each `code`
+// string are user-facing tutorial text shown in the editor — keep them
+// verbose. A sample's `tables` seeds its editable tables' rows, so the code
+// declares only the schema.
 import type { Row } from './lineage.js'
 
 export interface Sample {

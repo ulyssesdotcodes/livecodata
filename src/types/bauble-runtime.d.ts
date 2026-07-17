@@ -1,7 +1,7 @@
-// bauble-runtime ships types at its package root (index.d.ts), but its
-// package.json "exports" points straight at build/wasm.js with no "types"
-// condition, so TypeScript can't see them. This mirrors that index.d.ts
-// (an emscripten module factory around bauble.studio's Janet→GLSL compiler).
+// bauble-runtime ships types at its package root, but its package.json
+// "exports" has no "types" condition, so TypeScript can't see them. This
+// mirrors its index.d.ts (an emscripten factory around bauble.studio's
+// Janet→GLSL compiler).
 declare module 'bauble-runtime' {
   export interface EvaluationResult {
     isError: boolean
@@ -14,8 +14,8 @@ declare module 'bauble-runtime' {
     evaluate_script: (script: string) => EvaluationResult
   }
 
-  // The emscripten factory: overrides may replace any Module hook — the two
-  // used here capture the compiler's stdout/stderr chatter.
+  // Overrides may replace any Module hook; these two capture the compiler's
+  // stdout/stderr chatter.
   const baubleFactory: (overrides?: {
     print?: (line: string) => void
     printErr?: (line: string) => void

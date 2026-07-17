@@ -1,82 +1,47 @@
-// livecodata multiplayer room — the transport-agnostic state machine
-// ----------------------------------------------------------------------------
-// A room is nothing but named event logs — the same append-only primitive the
-// client folds everything from. This module owns everything a room *does*,
-// independent of which transport carries it: the Node server (server/server.ts)
-// and the Cloudflare Durable Object (worker/room.ts) are thin adapters that
-// hold sockets and deliver the Outbound messages these handlers return.
-//
-// The room never *interprets* table/apply events (it merges whatever clients
-// bring — dedup by (src, seq), deterministic (seq, src) order via the shared
-// mergeEvents — hands each joiner the union, and relays new events to everyone
-// else), but it does *author* one kind itself: a peer-join/peer-leave event on
-// the "session" log whenever a connection joins or drops, tagged src:"server"
-// and table:"activity" (see editable-tables.ts's record() and main.ts) so peer
-// presence is just more log the client folds, replacing what used to be a
-// dedicated `{type:'peers'}` message.
-//
-// One exception to "merge whatever clients bring": when a connection joins a
-// room that currently has *no other users*, its own session initializes the
-// room rather than unioning onto it. A userless room's logs are stale leftovers
-// from a past jam nobody is in (backends drop a room when its last socket
-// leaves, but durable storage can outlive that), so the first person back in
-// gets a clean room seeded from their local session — not a merge of their work
-// with whatever the room happened to still hold. With peers already present the
-// join unions as usual, folding solo work into the live jam. handleJoin takes
-// `hasPeers` from the adapter (only it knows the live socket count) to tell the
-// two cases apart.
-//
-// Handlers mutate the given logs map in place and report `changed` so durable
-// backends know when to persist. They are otherwise pure: no sockets, no
-// timers, no storage — which is what lets one test suite pin both backends.
-// ----------------------------------------------------------------------------
+// Transport-agnostic multiplayer room: named event logs plus handlers that
+// mutate the logs map in place and report `changed` so durable backends know
+// when to persist. The Node server (server/server.ts) and the Cloudflare
+// Durable Object (worker/room.ts) are thin adapters holding sockets and
+// delivering the Outbound messages; the handlers are otherwise pure (no
+// sockets, timers, or storage), which lets one test suite pin both backends.
+// The room never interprets events, but it does author peer-join/peer-leave
+// events itself, so peer presence is just more log the client folds.
 
 import { compactLatestPerSrcKind, mergeEvents, type StampedEvent } from './event-log.js'
 import { eventsMessage, syncMessage, type EventsMessage, type JoinMessage, type ServerMessage } from './protocol.js'
 
-// The log peer-connection events ride, and the pseudo-table (see
-// editable-tables.ts's record()) they're tagged with within it.
+// The log peer-connection events ride, and the pseudo-table they're tagged with.
 export const SESSION_LOG = 'session'
 export const ACTIVITY_TABLE = 'activity'
 
-// The one log the room compacts rather than keeping whole (the exception to
-// "the room never interprets events"): presence announcements — cursor moves,
-// live-code buffers — fold latest-per-(src, kind) on every client (see
-// presence.ts), so history is dead weight. Without compaction the room's copy
-// grows by one event per throttle tick per typist for the life of the room,
-// and every joiner downloads all of it in the join sync.
+// The one log the room compacts rather than keeping whole: presence folds
+// latest-per-(src, kind) on every client (see presence.ts), so keeping history
+// would grow per keystroke and bloat every join sync.
 export const PRESENCE_LOG = 'presence'
 
 export type RoomLogs = Map<string, StampedEvent[]>
 
-// A message the adapter must deliver, relative to the connection whose
-// message (or disconnect) triggered the handler: 'sender' goes back to that
-// connection, 'others' to every other open connection in the room.
+// A message the adapter must deliver; `to` is relative to the connection
+// whose message (or disconnect) triggered the handler.
 export interface Outbound {
   to: 'sender' | 'others'
   msg: ServerMessage
 }
 
 export interface RoomResult {
-  // The logs map was mutated — durable backends should persist it.
   changed: boolean
   outbound: Outbound[]
 }
 
 export interface JoinResult extends RoomResult {
-  // The id the connection joined with (for its eventual peer-leave event).
+  // The id the connection joined with, for its eventual peer-leave event.
   clientId: string
 }
 
-// Merge incoming events into a room log. Returns the newly-added events so
-// callers can relay exactly what was new.
-//
-// The presence log is compacted on both sides of the merge: incoming first
-// (a rejoiner's upload may still carry superseded announcements), then the
-// stored result. Only events that survive compaction count as new — a stale
-// announcement that a fresher one already supersedes neither persists nor
-// relays. Dedup memory for pruned events is gone with them, which is safe
-// precisely because superseded re-deliveries get compacted away again here.
+// Merge incoming events into a room log, returning the newly-added events so
+// callers relay exactly what was new. The presence log is compacted on both
+// sides of the merge: superseded announcements neither persist nor relay, and
+// losing their dedup memory is safe because re-deliveries compact away again.
 function ingest(logs: RoomLogs, name: string, incoming: StampedEvent[]): StampedEvent[] {
   const compacting = name === PRESENCE_LOG
   const existing = logs.get(name) ?? []
@@ -89,18 +54,15 @@ function ingest(logs: RoomLogs, name: string, incoming: StampedEvent[]): Stamped
   const stored = compactLatestPerSrcKind(events)
   const kept = new Set(stored.map((e) => `${e.src ?? ''}#${e.seq}`))
   const fresh = added.filter((e) => kept.has(`${e.src ?? ''}#${e.seq}`))
-  // Everything new was already superseded: the compacted log is unchanged,
-  // so there is nothing to persist or relay.
+  // Everything new was already superseded — nothing to persist or relay.
   if (fresh.length) logs.set(name, stored)
   return fresh
 }
 
-// This room's own Lamport counter for server-authored events — a separate
-// "replica" (src: "server") in the same (seq, src) order as everyone else.
-// Derived from the logs rather than kept as a counter: rooms are dropped when
-// empty and re-seeded from a rejoiner's history (which contains the *old*
-// server events), so a fresh counter starting at 0 would mint (src, seq) keys
-// that collide with old events and get silently deduped away.
+// The Lamport counter for server-authored (src: "server") events, derived
+// from the logs rather than kept as a counter: a room re-seeded from a
+// rejoiner's history contains the *old* server events, and a fresh counter
+// starting at 0 would mint colliding (src, seq) keys that get silently deduped.
 export function nextServerSeq(logs: RoomLogs): number {
   let max = -1
   for (const events of logs.values()) {
@@ -124,16 +86,13 @@ function recordServerEvent(logs: RoomLogs, kind: string, clientId: string, now: 
 export function handleJoin(logs: RoomLogs, msg: JoinMessage, now: number = Date.now(), hasPeers = true): JoinResult {
   const outbound: Outbound[] = []
   let changed = false
-  // Nobody else is here: this joiner *initializes* the room to its own session.
-  // Any logs still present are stale leftovers (see the module comment), so drop
-  // them before seeding rather than unioning the joiner's work onto them. No
-  // relay needed — there are no peers to relay to.
+  // Nobody else here: the joiner *initializes* the room. Any logs still
+  // present are stale leftovers from a past jam (durable storage can outlive
+  // the last socket), so drop them rather than union the joiner's work onto them.
   if (!hasPeers && logs.size) {
     logs.clear()
     changed = true
   }
-  // Union the joiner's logs, so peers get anything it authored offline, then
-  // hand it the whole room.
   for (const [name, events] of Object.entries(msg.logs ?? {})) {
     if (!Array.isArray(events)) continue
     const added = ingest(logs, name, events)
@@ -143,10 +102,9 @@ export function handleJoin(logs: RoomLogs, msg: JoinMessage, now: number = Date.
     }
   }
   const clientId = typeof msg.client === 'string' && msg.client ? msg.client : 'anon'
-  // Authored *after* merging the joiner's own logs (which — see main.ts —
-  // always include the "activity" table's create event by this point) so this
-  // peer-join always lands on a table that already exists. Not sent to the
-  // joiner itself — the sync below already covers it.
+  // Authored *after* merging the joiner's own logs so the peer-join lands on
+  // an "activity" table that already exists. Not sent to the joiner itself —
+  // the sync below covers it.
   const added = recordServerEvent(logs, 'peer-join', clientId, now)
   if (added.length) {
     changed = true

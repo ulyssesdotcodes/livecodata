@@ -1,25 +1,8 @@
-// livecodata event log — the shared append-only primitive
-// ----------------------------------------------------------------------------
-// Everything authored live in livecodata is an *event*: a code run, an edit to
-// an editable table's cell, a MIDI note. This module is the one primitive under
-// all of them — an append-only list of stamped events. Whatever is currently
-// "visible" (the program in the editor, an editable table's rows, the active
-// MIDI values) is never stored; it is a *fold* of the events up to a point,
-// usually the latest. That's the live-performance-as-event-driven-programming
-// lens: the log is the performance, every view of "now" is derived.
-//
-// Each appended event gets three stamps:
-//   seq — monotonic logical clock (0, 1, 2, …), the replay/scrub coordinate
-//   t   — wall-clock ms since the log's first event
-//   src — which replica authored it (stable per browser)
-// plus whatever payload the caller supplies ({ kind, ... }).
-//
-// The log is also the multiplayer unit: replicas exchange stamped events and
-// merge() them in. seq doubles as a Lamport clock — merging bumps the local
-// counter past every seen seq — and (seq, src) is a deterministic total order,
-// so any two replicas that have seen the same events hold the same log and
-// fold to the same state.
-// ----------------------------------------------------------------------------
+// The shared append-only primitive under everything authored live: state is
+// never stored, only folded from stamped events. Also the multiplayer unit:
+// seq doubles as a Lamport clock and (seq, src) is a deterministic total
+// order, so any two replicas that have seen the same events fold to the same
+// state.
 
 export interface StampedEvent {
   seq: number
@@ -40,33 +23,24 @@ interface SerializedEvents {
   events: StampedEvent[]
 }
 
-// A schema migration: rewrites a whole event list from one serialized version
-// to the next. The on-disk shape of events evolves over time (a payload field
-// changes type, an event kind is split, …); rather than teaching every fold to
-// tolerate every past shape, we upgrade the events once, on load, so the rest
-// of the code only ever sees the current shape.
-//
-// The chain is positional: `migrations[i]` upgrades data written at version
-// `i + 1` into version `i + 2`. So a log with N registered migrations serializes
-// at version N + 1, and loading anything from version 1 forward just runs the
-// tail of the chain. The rule for evolving a schema: append a new migration
-// (never edit or reorder an existing one — old data on disk depends on it) that
-// carries the old shape forward, and old sessions keep working forever.
+/**
+ * Upgrades an event list from one serialized version to the next, on load, so
+ * folds only ever see the current shape. The chain is positional —
+ * migrations[i] upgrades v(i+1) to v(i+2) — so append new migrations, never
+ * edit or reorder existing ones: old data on disk depends on them.
+ */
 export type EventMigration = (events: StampedEvent[]) => StampedEvent[]
 
-// Version 1 is the base: a log with no registered migrations. Each migration
-// adds one to the serialized version (see EventMigration).
+// A log with no migrations serializes at version 1; each migration adds one.
 const BASE_VERSION = 1
 
 // ---------------------------------------------------------------------------
 // Replica identity + merge — the pure pieces multiplayer is built from.
 // ---------------------------------------------------------------------------
 
-// This replica's id, minted once per page load / process. Deliberately NOT
-// persisted: two tabs of one browser must be distinct replicas, or their
-// independently-minted (src, seq) keys would collide and merge() would drop
-// real events as duplicates. Events keep the src they were stamped with, so
-// a reload continuing an old log is still consistent.
+// Replica id, minted once per page load. Deliberately NOT persisted: two tabs
+// of one browser must be distinct replicas, or their (src, seq) keys would
+// collide and merge() would drop real events as duplicates.
 let cachedSource: string | null = null
 
 export function localSource(): string {
@@ -74,9 +48,7 @@ export function localSource(): string {
   return cachedSource
 }
 
-// Deterministic total order over events from any set of replicas: logical time
-// first, authoring replica as the tiebreak. Every replica sorting the same set
-// of events gets the same list — and therefore the same fold.
+/** Deterministic total order (seq, then src) — same sort on every replica, same fold. */
 export function compareEvents(a: StampedEvent, b: StampedEvent): number {
   if (a.seq !== b.seq) return a.seq - b.seq
   const as = a.src ?? '', bs = b.src ?? ''
@@ -85,13 +57,11 @@ export function compareEvents(a: StampedEvent, b: StampedEvent): number {
 
 const eventKey = (e: StampedEvent): string => `${e.src ?? ''}#${e.seq}`
 
-// Keep only the newest event per (src, kind) — the compaction policy for logs
-// whose fold is "latest announcement wins" (presence: cursor moves, live-code
-// buffers — see presence.ts). History carries no information in such logs, so
-// dropping superseded events bounds the log — and therefore the join upload,
-// the room's copy, and every sync — to O(replicas × kinds) instead of growing
-// with session length. Never use this on a log whose fold replays history
-// (the session store, taps): compaction would destroy it.
+/**
+ * Compaction for latest-wins logs (presence — see presence.ts): keeps only the
+ * newest event per (src, kind), bounding the log to O(replicas × kinds). Never
+ * use on a log whose fold replays history — compaction would destroy it.
+ */
 export function compactLatestPerSrcKind(events: StampedEvent[]): StampedEvent[] {
   const latest = new Map<string, StampedEvent>()
   for (const e of events) {
@@ -103,9 +73,10 @@ export function compactLatestPerSrcKind(events: StampedEvent[]): StampedEvent[] 
   return events.filter((e) => latest.get(`${e.src ?? ''}#${e.kind}`) === e)
 }
 
-// Union `incoming` into `existing` (both sorted by compareEvents), deduping by
-// (src, seq). Pure: returns the merged list plus which events were new. Shared
-// by EventLog.merge and the multiplayer server's room state.
+/**
+ * Union `incoming` into `existing`, deduping by (src, seq). Pure — shared by
+ * EventLog.merge and the multiplayer server's room state.
+ */
 export function mergeEvents(
   existing: StampedEvent[],
   incoming: StampedEvent[],
@@ -126,20 +97,17 @@ export function mergeEvents(
 export interface EventLog {
   append(payload: EventPayload): StampedEvent
   all(): StampedEvent[]
-  // Events with seq <= pos — the inputs to "the visible state at that point".
-  upTo(pos: number): StampedEvent[]
+  upTo(pos: number): StampedEvent[] // events with seq <= pos
   last(): StampedEvent | null
   readonly length: number
-  // Fired after every append/load/clear/merge, so folds can invalidate their caches.
   onChange(cb: () => void): void
   // Fired only for locally-authored appends — the multiplayer publish hook.
   onAppend(cb: (e: StampedEvent) => void): void
-  // Integrate events stamped by other replicas: dedup by (src, seq), keep the
-  // deterministic (seq, src) order, and bump the local clock past everything
+  // Integrate other replicas' events, bumping the local clock past everything
   // seen. Returns the events that were actually new.
   merge(incoming: StampedEvent[]): StampedEvent[]
-  // Fired after a merge that added events. Merged events can land *between*
-  // existing ones, so consumers should refold rather than apply incrementally.
+  // Merged events can land *between* existing ones, so consumers should
+  // refold rather than apply incrementally.
   onMerge(cb: (added: StampedEvent[]) => void): void
   serialize(): string
   load(json: string | unknown): boolean
@@ -150,17 +118,13 @@ export function createEventLog(
   { src = localSource(), migrations = [], compact }: {
     src?: string
     migrations?: EventMigration[]
-    // Optional compaction policy (e.g. compactLatestPerSrcKind) applied after
-    // every append/merge/load. The seq counter is independent of the events
-    // list, so pruning never re-mints a (src, seq) key. A pruned event can be
-    // re-merged later (its dedup memory is gone with it) — folds over
-    // compactable logs must already tolerate stale re-deliveries, which
-    // latest-wins folds do by construction.
+    // Compaction applied after every append/merge/load. The seq counter is
+    // independent of the events list, so pruning never re-mints a (src, seq)
+    // key; but a pruned event can be re-merged later, so folds over compactable
+    // logs must tolerate stale re-deliveries (latest-wins folds do).
     compact?: (events: StampedEvent[]) => StampedEvent[]
   } = {},
 ): EventLog {
-  // The version this log writes, and the top of the migration chain load()
-  // upgrades toward (see EventMigration).
   const serialVersion = BASE_VERSION + migrations.length
   let events: StampedEvent[] = []
   let seq = 0
@@ -221,10 +185,8 @@ export function createEventLog(
       try {
         const data = typeof json === 'string' ? JSON.parse(json) as SerializedEvents : json as SerializedEvents
         if (!data || !Array.isArray(data.events)) return false
-        // Upgrade the events from whatever version they were saved at up to the
-        // current one by running the tail of the migration chain. An absent or
-        // out-of-range version is treated as the base (1); data from a newer
-        // version than this build understands is loaded as-is (best effort).
+        // Run the tail of the migration chain. An absent/out-of-range version
+        // reads as base; data from a newer build is loaded as-is (best effort).
         const from = typeof data.version === 'number' && data.version >= BASE_VERSION ? data.version : BASE_VERSION
         let migrated = data.events.map((e) => ({ ...e }))
         for (let v = from; v < serialVersion; v++) migrated = migrations[v - BASE_VERSION](migrated)
@@ -247,17 +209,13 @@ export function createEventLog(
   }
 }
 
-// Fold events into a state — the one way any "current" view is derived from a
-// log. Pure; callers cache and re-fold (or apply the reducer incrementally to
-// new events) as they see fit.
 export function foldEvents<S>(events: StampedEvent[], reducer: (state: S, event: StampedEvent) => S, initial: S): S {
   let state = initial
   for (const e of events) state = reducer(state, e)
   return state
 }
 
-// A run seed: unsigned 32-bit, deterministic once picked (feeds the DSL's
-// per-view PRNGs — see runtime.ts), fresh and unpredictable when generated.
+/** Unsigned 32-bit run seed for the DSL's per-view PRNGs (see runtime.ts). */
 export function randomSeed(): number {
   return (Math.random() * 0x100000000) >>> 0
 }

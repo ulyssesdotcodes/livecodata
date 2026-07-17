@@ -1,7 +1,5 @@
-// Small user-preference store, separate from sessions.ts (which is scoped to
-// session event logs). Every setting is one stringSetting/boolSetting call, so
-// the try/catch-around-storage discipline (private browsing, quota) is written
-// once and a new preference can't hand-roll a divergent copy.
+// User-preference store. Every setting is one stringSetting/boolSetting call,
+// so the try/catch-around-storage discipline is written once.
 
 import { defaultStorage, type MinimalStorage } from './storage.js'
 
@@ -73,28 +71,24 @@ function numberSetting(key: string, def: number): Setting<number> {
   }
 }
 
-// Vim mode was previously always on (hardcoded); default to on so existing
-// users see no change until they explicitly opt out via the settings toggle.
+// Defaults on: vim mode was previously hardcoded on, so existing users see no
+// change until they opt out.
 const vimMode = boolSetting('livecodata.vimMode', true)
 export const getVimMode = vimMode.get
 export const setVimMode = vimMode.set
 
-// The display name announced over multiplayer presence. The URL's ?user= param
-// is the source of truth for a live room (see main.ts); this is just the
-// remembered default that prefills the room-join popover.
+// Remembered default that prefills the room-join popover; the URL's ?user=
+// param is the source of truth for a live room (see main.ts).
 const username = stringSetting('livecodata.username', '')
 export const getUsername = username.get
 export const setUsername = username.set
 
-// MIDI is opt-in: requesting Web MIDI access pops a browser permission prompt,
-// so default to off until the user explicitly enables it via the settings toggle.
+// Opt-in: requesting Web MIDI access pops a browser permission prompt.
 const midiEnabled = boolSetting('livecodata.midiEnabled', false)
 export const getMidiEnabled = midiEnabled.get
 export const setMidiEnabled = midiEnabled.set
 
-// Table pane's share of the editor+table column height, as a fraction of the
-// column's total height. Defaults to 0.5 (table takes up half). Dragging the
-// divider between the panes (see pane-divider.tsx) updates this.
+// Table pane's fraction of the editor+table column height (see pane-divider.tsx).
 const sidePanelSplit = numberSetting('livecodata.sidePanelSplit', 0.5)
 export const getSidePanelSplit = sidePanelSplit.get
 export const setSidePanelSplit = sidePanelSplit.set

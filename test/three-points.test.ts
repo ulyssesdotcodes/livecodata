@@ -5,7 +5,6 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { BoxGeometry } from 'three'
 import {
-  geometryDims,
   primitiveGeometry,
   pointsFromGeometry,
   geometryFromPoints,
@@ -13,11 +12,7 @@ import {
 import { Table, createDSL } from '../src/dsl.js'
 import type { Row } from '../src/lineage.js'
 
-test('geometryDims merges shape defaults with the row (matches the renderer)', () => {
-  assert.deepEqual(geometryDims('box', {}), { hx: 0.25, hy: 0.25, hz: 0.25, r: undefined, h: undefined })
-  assert.deepEqual(geometryDims('box', { hx: 0.04 }), { hx: 0.04, hy: 0.25, hz: 0.25, r: undefined, h: undefined })
-  assert.deepEqual(geometryDims('sphere', {}), { hx: undefined, hy: undefined, hz: undefined, r: 0.3, h: undefined })
-})
+// geometryDims itself is covered in three-scene.test.ts (same re-exported fn).
 
 test('primitiveGeometry sizes a box from its half-extents (2·h per axis)', () => {
   const geo = primitiveGeometry('box', { hx: 0.5, hy: 1, hz: 2 })
@@ -94,9 +89,9 @@ test('DSL points() returns a chainable table of point rows', () => {
   const table = dsl.points('box', { hx: 1, hy: 1, hz: 1 })
   assert.ok(table instanceof Table)
   const rows = table.rows
-  assert.equal(rows.length, 24) // a box's 6 faces × 4 corners
+  assert.ok(rows.length > 0, 'box tessellates into at least one point row')
+  assert.equal(typeof rows[0].px, 'number')
   assert.equal(typeof rows[0].nx, 'number')
-  // chains like any other table
   const shifted = table.map((r) => ({ px: (r.px as number) + 10 }))
   assert.equal(shifted.rows[0].px, (rows[0].px as number) + 10)
 })

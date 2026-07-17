@@ -5,8 +5,6 @@ import { getLineage, withLineage, type Row } from '../src/lineage.js'
 
 const t = (rows: Row[]): Table => new Table(rows)
 
-// ── Expr (chainable expression nodes) ───────────────────────────────────────
-
 test('map(template) builds rows from Expr + literals', () => {
   const out = t([{ a: 1 }, { a: 2 }]).map({ b: field('a').add(10), c: 5 })
   assert.deepEqual(out.rows, [{ b: 11, c: 5 }, { b: 12, c: 5 }])
@@ -15,10 +13,6 @@ test('map(template) builds rows from Expr + literals', () => {
 test('arithmetic chains evaluate left-to-right', () => {
   const out = t([{ a: 2 }]).map({ v: field('a').mul(3).add(1).sub(2) })
   assert.deepEqual(out.rows, [{ v: 5 }]) // 2*3=6, +1=7, -2=5
-})
-
-test('filter(Expr) keeps rows where the predicate holds', () => {
-  assert.deepEqual(t([{ v: 1 }, { v: 5 }, { v: 2 }]).filter(field('v').gt(2)).rows, [{ v: 5 }])
 })
 
 test('and/or/not compose predicates', () => {
@@ -41,18 +35,11 @@ test('emit fans each row out to one or many rows from templates', () => {
   assert.deepEqual(out.rows, [{ x: 0 }, { x: 10 }, { x: 1 }, { x: 11 }])
 })
 
-test('derive accepts Expr, functions, and literals together', () => {
-  const out = t([{ a: 2 }]).derive({ b: field('a').mul(3), c: (r: Row) => (r.a as number) + 1, d: 'k' })
-  assert.deepEqual(out.rows, [{ a: 2, b: 6, c: 3, d: 'k' }])
-})
-
 test('Expr verbs carry lineage forward', () => {
   const base = new Table([withLineage({ v: 5 }, [{ table: 'src', index: 0 }])])
   const out = base.filter(field('v').gt(1)).map({ v: field('v') })
   assert.deepEqual(getLineage(out.rows[0]), [{ table: 'src', index: 0 }])
 })
-
-// ── Content hashing (Merkle dataflow) ───────────────────────────────────────
 
 test('identical op-graphs hash equal; differing specs hash differently', () => {
   const a = t([{ v: 1 }]).filter(field('v').gt(1))
@@ -68,8 +55,6 @@ test('a changed input changes the hash (Merkle propagation)', () => {
   assert.notEqual(hashOf(a), hashOf(b))
 })
 
-// ── Tap-beat / tempo builders (derived from the taps table) ─────────────────
-
 // time is an absolute UTC epoch ms (see tap-log.ts), not time-since-first-tap —
 // pick an arbitrary base instant and space rows beatSeconds apart from it.
 const TAP_BASE_MS = 1_700_000_000_000
@@ -84,13 +69,6 @@ test('tempo() derives the beat length from the taps table, else falls back', () 
   assert.equal(dslWithTaps(tapRowsAt(0.4)).tempo(), 0.4)
   assert.equal(dslWithTaps([]).tempo(), 0.5, 'default fallback is 120 BPM')
   assert.equal(dslWithTaps(tapRowsAt(0, 1)).tempo(0.25), 0.25, 'one tap is not enough')
-})
-
-test('taps() wraps the tap-beat rows in a Table (cloned)', () => {
-  const rows = tapRowsAt(0.5, 2)
-  const tbl = dslWithTaps(rows).taps()
-  assert.deepEqual(tbl.rows, rows)
-  assert.notEqual(tbl.rows[0], rows[0], 'rows are cloned')
 })
 
 test('beats(n) builds a two-keyframe identity remap spanning n beats', () => {

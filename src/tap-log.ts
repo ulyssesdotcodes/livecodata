@@ -1,17 +1,8 @@
-// livecodata tap-beat log — event-sourced, shared like any other table
-// ----------------------------------------------------------------------------
-// Tap-beat used to be a plain in-memory array of press timestamps. It's
-// authored state like any run or table edit, so it belongs on the same
-// append-only event-log primitive: a "tap" event per press, a "clear" event
-// for the reset button. The tap-beat table (and any tempo the DSL's
-// taps()/tempo()/beats() derive from it) is a fold of this log, which makes it
-// syncable over multiplayer exactly like the session log and the editable-
-// table log.
-//
-// Taps are stamped with wall-clock Date.now() (not performance.now(), which is
-// meaningless across processes) so presses from different replicas fold into
-// one chronological sequence once merged.
-// ----------------------------------------------------------------------------
+// livecodata tap-beat log — event-sourced ("tap"/"clear" events) so it syncs
+// over multiplayer like any other table; the tap-beat table and derived tempo
+// are folds of the log. Taps are stamped with wall-clock Date.now() (not
+// performance.now(), which is meaningless across processes) so presses from
+// different replicas fold into one chronological sequence.
 
 import { createEventLog, type EventLog } from './event-log.js'
 import type { Row } from './lineage.js'
@@ -24,24 +15,22 @@ export interface TapLog {
   readonly log: EventLog
   tap(): void
   clear(): void
-  // One row per press still in the current window — { beat, time } (ordinal +
-  // the press's absolute UTC epoch ms, not time-since-first-tap). Absolute so
-  // a client joining a room can derive the same tempo *and* the same wall-clock
-  // reference from the synced table without any extra sync message.
+  // One row per press in the current window — { beat, time }, time as the
+  // press's absolute UTC epoch ms (not time-since-first-tap), so a joining
+  // client derives the same tempo and wall-clock reference with no extra sync.
   rows(): Row[]
-  // The epoch (ms) "beat 0" is anchored to — the *first* tap of the current
-  // sequence (a person tapping a tempo starts on beat 1, so that's the tap
-  // that actually landed on the grid; later taps only refine the interval) —
-  // once at least two taps have established a tempo. Null otherwise.
+  // The epoch (ms) "beat 0" anchors to, once two taps establish a tempo; null
+  // otherwise. It's the *first* tap of the sequence — the one that actually
+  // landed on the grid; later taps only refine the interval.
   anchor(): number | null
 }
 
 export function createTapLog({ src }: { src?: string } = {}): TapLog {
   const log = createEventLog({ src })
 
-  // The current tap window, folded in wall-clock order: merged taps from
-  // another replica can land out of the log's (seq, src) order, but the
-  // reset-gap/window logic below cares about when presses actually happened.
+  // Folded in wall-clock order: merged taps from another replica can land out
+  // of the log's (seq, src) order, but the reset-gap/window logic cares about
+  // when presses actually happened.
   function window(): number[] {
     const events = log.all()
       .filter((e) => e.kind === 'tap' || e.kind === 'clear')
@@ -71,12 +60,9 @@ export function createTapLog({ src }: { src?: string } = {}): TapLog {
   }
 }
 
-// Average seconds between consecutive tap-beat presses (each row's `time` is
-// an absolute UTC epoch ms, not time-since-first-tap), or null with fewer than
-// two taps. The one place the taps table turns into a beat length — the DSL's
-// tempo()/beats() and the playback engine's beat clock/BPM display all derive
-// from this, so tempo semantics (e.g. switching to a median interval) change
-// everywhere at once.
+// Average seconds between consecutive taps (row `time` is absolute epoch ms),
+// or null with fewer than two. The one place the taps table turns into a beat
+// length — DSL tempo()/beats() and the engine's beat clock all derive from it.
 export function beatSecondsFromTaps(rows: Row[] | null | undefined): number | null {
   if (!rows || rows.length < 2) return null
   const first = rows[0].time as number

@@ -1,21 +1,9 @@
-// Visualizer — the one interface between the playback engine and anything
-// that renders content.
-// ----------------------------------------------------------------------------
-// The playback engine (playback.ts) owns time: the beat clock, the loop, the
-// timeline remap, scrubbing. What actually shows up on screen is a list of
-// Visualizers — today the Three.js scene, the hydra post-processing layer and
-// the bauble SDF layer, tomorrow whatever else — each of which knows how to
-// (1) pull its rows out of
-// a cooked program, (2) index them on the shared frame grid, and (3) reconcile
-// its display to a source frame. The engine never learns what a visualizer
-// draws; adding a new one is: add its rows to replay.ts's CookedResult,
-// implement this interface (usually wrapping a pure index module like
-// hydra.ts + a thin GPU/DOM API like hydra-scene.ts — keep that split), and
-// register it in main.ts's visualizer list.
-//
-// Origami note: folding paper renders through the scene visualizer (fold
-// programs are scene objects riding SceneAPI) — it is not a separate
-// Visualizer, so origami work doesn't touch this seam.
+// Visualizer — the one interface between the playback engine (which owns time)
+// and anything that renders content. The engine never learns what a visualizer
+// draws; adding one is: add its rows to replay.ts's CookedResult, implement
+// this interface (usually a pure index module + a thin GPU/DOM API, like
+// hydra.ts + hydra-scene.ts — keep that split), register it in main.ts.
+// Origami renders through the scene visualizer, not a separate one.
 
 import { buildFrameIndex, sampleFrame } from './rasterize.js'
 import { buildHydraIndex, hydraFrameAt, hydraLoops } from './hydra.js'
@@ -27,9 +15,8 @@ import type { SceneAPI } from './three-scene.js'
 import type { HydraAPI } from './hydra-scene.js'
 import type { BaubleAPI } from './bauble-scene.js'
 
-// Absolute wall-clock instants (ms) each content kind's multi-loop sequence
-// counts passes from — per kind, the `at` stamp of the newest apply that
-// changed it (see playback.ts's loopEpochsFromApplies). Shared by every
+// Wall-clock instants (ms) each kind's multi-loop sequence counts passes from
+// — the `at` stamp of the newest apply that changed it. Shared by every
 // replica in a room, which is what puts them all on the same pass.
 export interface LoopEpochs {
   scene?: number
@@ -38,11 +25,9 @@ export interface LoopEpochs {
   bauble?: number
 }
 
-// The row sets a cooked program feeds the visualizers — a subset of replay.ts's
-// CookedResult (which is structurally assignable), so each visualizer picks its
-// own slice and the engine forwards the whole object without knowing the names.
-// `loopEpochs` rides along the same way: each visualizer keeps its own kind's
-// stamp (the engine keeps the timeline's).
+// The row sets a cooked program feeds the visualizers — a structurally
+// assignable subset of replay.ts's CookedResult, so the engine forwards the
+// whole object without knowing the names.
 export interface CookedVisualRows {
   sceneRows: Row[]
   hydraRows: Row[]
@@ -52,17 +37,13 @@ export interface CookedVisualRows {
 }
 
 export interface VisualizerFrame {
-  // Fractional source frame on the shared frame grid (see constants.ts) —
-  // fractional because the playhead sweeps continuously between cache frames.
+  // Fractional source frame — the playhead sweeps continuously between frames.
   srcFrameF: number
-  // Streaming context at the rounded source frame (midi() bindings resolve
-  // against it), or null when no stream is live.
+  // Streaming context midi() bindings resolve against; null when no stream.
   ctx: EvalCtx | null
-  // How many wall-aligned loops have completed since an absolute instant (ms)
-  // — supplied by the engine, which owns time. A visualizer whose rows span
-  // several passes of the loop (a `loop` column next to `beat`) picks the pass
-  // to show as passAt(its loop epoch) modulo its own pass count; the content
-  // half (pass count, per-pass span) stays in the visualizer's index.
+  // Wall-aligned loops completed since an absolute instant (ms) — supplied by
+  // the engine, which owns time. A multi-pass visualizer shows passAt(its loop
+  // epoch) modulo its own pass count.
   passAt: (epochMs: number) => number
 }
 
@@ -70,19 +51,17 @@ export interface Visualizer {
   // Swap in freshly cooked rows. Reconciliation state survives on purpose: a
   // re-cook updates what's on screen in place rather than tearing it down.
   load(cooked: CookedVisualRows): void
-  // Frames of content that should size the loop. 0 when this visualizer has
-  // no say (hydra sketches loop whatever length the user picks).
+  // Frames of content that should size the loop; 0 when this visualizer has
+  // no say.
   contentFrames(): number
   hasContent(): boolean
   // Reconcile the display to this frame. Returns the rows "on screen" there —
   // the engine folds them into the lineage highlight.
   applyFrame(frame: VisualizerFrame): Row[]
-  // Drop reconciliation state so the next applyFrame starts from scratch
-  // (play pressed from idle). Must NOT blank a display that applyFrame is
-  // about to repaint anyway — see blank() for that.
+  // Drop reconciliation state so the next applyFrame starts from scratch.
+  // Must NOT blank a display applyFrame is about to repaint — see blank().
   clear(): void
-  // There is nothing to show at all (program cooked to no content): clear
-  // and blank the display.
+  // Nothing to show at all: clear and blank the display.
   blank(): void
 }
 
@@ -91,9 +70,8 @@ export interface Visualizer {
 export function createSceneVisualizer(sceneAPI: SceneAPI): Visualizer {
   let frameIndex = buildFrameIndex([])
   let alive = new Set<unknown>()
-  // The shared apply stamp scene pass-counting is based on — 0 (the Unix
-  // epoch) until stamped, the same arbitrary-but-shared reference the no-tap
-  // phase anchor uses.
+  // 0 (the Unix epoch) until stamped — the same arbitrary-but-shared reference
+  // the no-tap phase anchor uses.
   let epoch = 0
 
   function clear(): void {
@@ -107,14 +85,12 @@ export function createSceneVisualizer(sceneAPI: SceneAPI): Visualizer {
       if (typeof cooked.loopEpochs?.scene === 'number') epoch = cooked.loopEpochs.scene
     },
     // Per-pass span, not the cache's total extent: a multi-loop cache still
-    // wraps the playhead every loop, with the pass picked by the loop count
-    // (loopFrames == maxFrame when there's no loop column).
+    // wraps the playhead every loop, with the pass picked by the loop count.
     contentFrames: () => frameIndex.loopFrames,
     hasContent: () => frameIndex.map.size > 0,
     applyFrame({ srcFrameF, ctx, passAt }): Row[] {
       // A multi-loop cache is one extended frame grid (loops * loopFrames):
-      // offset into the pass the wall-aligned loop count selects, cycling
-      // through the sequence. Single-loop caches sample exactly as before.
+      // offset into the pass the wall-aligned loop count selects.
       const frameF = frameIndex.loops > 1
         ? (passAt(epoch) % frameIndex.loops) * frameIndex.loopFrames + srcFrameF
         : srcFrameF
@@ -144,9 +120,8 @@ export function createSceneVisualizer(sceneAPI: SceneAPI): Visualizer {
 }
 
 // The hydra layer: the sampled sketch is absolute (setSketch replaces the
-// whole program), so there is no reconciliation state to clear — but blanking
-// resets to the passthrough sketch. tick() drives hydra's clock from the
-// source position, so pausing/scrubbing the timeline pauses/scrubs the sketch.
+// whole program), so there is no reconciliation state to clear. tick() drives
+// hydra's clock from the source position, so scrubbing scrubs the sketch.
 export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
   let index: Row[] = buildHydraIndex([])
   let loops = 1
@@ -163,10 +138,8 @@ export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
     applyFrame({ srcFrameF, ctx, passAt }): Row[] {
       const pass = loops > 1 ? passAt(epoch) % loops : 0
       const sketch = hydraFrameAt(index, Math.floor(srcFrameF), pass)
-      // Resolve any midi/slider bindings in the sketch's variables, then expose
-      // every defined slider's current value as `props.sliders` so a sketch can
-      // read `(props) => props.sliders.brightness` directly (a user variable
-      // named "sliders" still wins — explicit setVariable takes precedence).
+      // Resolve midi/slider bindings, then expose every slider's value as
+      // `props.sliders` (an explicit user variable named "sliders" still wins).
       if (sketch) {
         const vars = ctx ? resolveBindings(sketch.vars, ctx) : sketch.vars
         const sliders = ctx?.sliders?.()
@@ -178,8 +151,8 @@ export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
       return []
     },
     clear(): void {
-      // setSketch is absolute — nothing incremental to drop, and resetting
-      // here would force a visible sketch recompile on every fresh play.
+      // setSketch is absolute — resetting here would force a visible sketch
+      // recompile on every fresh play.
     },
     blank(): void {
       hydraAPI.reset()
@@ -187,11 +160,8 @@ export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
   }
 }
 
-// The bauble layer: like hydra, the sampled sketch is absolute (setSketch
-// replaces the whole program) so there's no reconciliation state — and the
-// same recompile economics apply, so clear() must not reset. tick() drives the
-// raymarcher's clock from the source position, keeping the sketch on the
-// playback timeline.
+// The bauble layer: like hydra, setSketch is absolute and the same recompile
+// economics apply, so clear() must not reset.
 export function createBaubleVisualizer(baubleAPI: BaubleAPI): Visualizer {
   let index: Row[] = buildBaubleIndex([])
   let loops = 1
@@ -208,12 +178,9 @@ export function createBaubleVisualizer(baubleAPI: BaubleAPI): Visualizer {
     applyFrame({ srcFrameF, ctx, passAt }): Row[] {
       const pass = loops > 1 ? passAt(epoch) % loops : 0
       const sketch = baubleFrameAt(index, Math.floor(srcFrameF), pass)
-      // Resolve any midi/slider bindings in the sketch's variables. NB: unlike
-      // hydra there is no props escape hatch — a resolved variable bakes into
-      // the compiled script, so a binding that sweeps every frame recompiles
-      // every frame. The reserved camera-x/-y/-zoom variables are the
-      // exception (renderer uniforms — see bauble-scene.ts), so bind sweeping
-      // inputs to those.
+      // NB: unlike hydra there is no props escape hatch — a resolved variable
+      // bakes into the compiled script, so a binding that sweeps every frame
+      // recompiles every frame; bind sweeping inputs to the camera vars.
       baubleAPI.setSketch(sketch && ctx ? { ...sketch, vars: resolveBindings(sketch.vars, ctx) } : sketch)
       baubleAPI.tick(srcFrameF / FPS)
       return []

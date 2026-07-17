@@ -1,10 +1,6 @@
-// livecodata color — interpolate between two hex colors
-// ----------------------------------------------------------------------------
-// Mix two colors the same way the GPU would: three's Color.lerp is a linear-RGB
-// interpolation (the shader `mix()`), so colors baked into the dense cache match
-// what the renderer produces. This is pure data — no DOM — so it runs under the
-// node test runner alongside the rest of rasterize.
-// ----------------------------------------------------------------------------
+// Mix two hex colors the way the GPU would: three's Color.lerp is linear-RGB
+// (the shader `mix()`), so colors baked into the dense cache match what the
+// renderer produces.
 
 import { Color } from 'three'
 

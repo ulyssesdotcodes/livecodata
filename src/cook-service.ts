@@ -1,21 +1,9 @@
-// Cook service — the worker side of off-main-thread cooking, minus the Worker.
-// ----------------------------------------------------------------------------
-// Everything expensive about running a program — DSL evaluation, materialize,
-// physics baking, origami compilation, rasterize — happens in handle(), which
-// is a pure request → response function so node tests can drive it directly;
-// cook-worker.ts is the humble shell that wires it to postMessage. The one
-// long-lived piece is the runtime itself: keeping it across requests is what
-// preserves the 2-generation materialize memo (an edit that leaves the physics
-// subgraph untouched still skips re-baking it, same as before the worker).
-//
-// The store stays on the main thread (the UI folds and reads it
-// synchronously, and persistence needs localStorage), so a request carries a
-// rows snapshot of every editable table plus the tap rows. editable() calls
-// during the cook behave exactly like ensure()'s read-only replay branch —
-// serve the snapshot, or the conformed seed rows for a table the store hasn't
-// seen — and are reported back as `declared`, which the main thread feeds to
-// the real ensure() (appending create/declare-schema events, which then ride
-// persistence and multiplayer exactly as they always did).
+// Cook service — the worker side of off-main-thread cooking. handle() is a
+// pure request → response function (cook-worker.ts wires it to postMessage) so
+// node tests can drive it directly; the runtime persists across requests to
+// keep the materialize memo warm. The store stays on the main thread, so each
+// request carries editable-table snapshots, and editable() calls during the
+// cook are reported back as `declared` for the main thread's real ensure().
 
 import { createRuntime } from './runtime.js'
 import { cookProgram } from './replay.js'
@@ -30,19 +18,17 @@ export interface CookRequest {
   seed: number
   dataCache: Array<[string, string]>
   tapRows: Row[]
-  // Current rows of every editable table, folded through any active replay
-  // view — i.e. exactly what ensure() would serve on the main thread.
+  // Rows of every editable table, folded through any active replay view —
+  // exactly what ensure() would serve on the main thread.
   editables: Array<{ name: string; rows: Row[] }>
-  // Seed rows to populate an editable table the store hasn't seen yet, keyed
-  // by table name — used when a program's editable(name, schema) call carries
-  // no inline seedRows of its own. Set when opening an example whose table data
-  // lives alongside the sample (see samples.ts / openExample) rather than as an
-  // array literal in the code; ignored once the table exists in the snapshot.
+  // Seed rows for editable tables the store hasn't seen yet, keyed by name —
+  // set when an example's table data lives with the sample rather than inline
+  // in the program; ignored once the table exists in the snapshot.
   seeds?: Record<string, Row[]>
 }
 
-// An editable() the program declared during the cook; the main thread applies
-// these through the store's real ensure().
+// An editable() declared during the cook; the main thread applies these
+// through the store's real ensure().
 export interface DeclaredEditable {
   name: string
   schema: Schema
@@ -67,10 +53,9 @@ export function createCookService({ physics }: { physics?: () => PhysicsEngine |
     physics: physics ?? (() => null),
     tapRows: () => taps,
     editableRows: (name, schema, seedRows) => {
-      // The program's inline seedRows win; otherwise fall back to an
-      // example-provided seed for this table (see CookRequest.seeds). Reporting
-      // the effective seed in `declared` lets the main thread's ensure() create
-      // the table with those rows, exactly as an inline seed would.
+      // Inline seedRows win over an example-provided seed; reporting the
+      // effective seed in `declared` lets the main thread's ensure() create
+      // the table with those rows.
       const seed = seedRows ?? seeds[name]
       declared.push({ name, schema, ...(seed !== undefined ? { seedRows: seed } : {}) })
       const existing = snapshot.get(name)

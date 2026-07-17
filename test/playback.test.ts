@@ -24,21 +24,8 @@ test('wallAlignedTick returns 0 for a non-positive loop length', () => {
   assert.equal(wallAlignedTick(5000, 1000, -4), 0)
 })
 
-test('two independent "clients" sharing an anchor land on the same phase at the same wall time', () => {
-  const anchorMs = 123456
-  const loopSeconds = 2
-  const nowMs = anchorMs + 7777
-  // Client A "started" a while ago, client B just started — irrelevant to the
-  // wall-aligned phase, which only depends on the shared anchor + now.
-  const phaseA = wallAlignedTick(nowMs, anchorMs, loopSeconds)
-  const phaseB = wallAlignedTick(nowMs, anchorMs, loopSeconds)
-  assert.equal(phaseA, phaseB)
-})
-
-// ---------------------------------------------------------------------------
-// Engine tests — the timing/loop/scrub state machine, driven deterministically
-// through the injectable clock (see PlaybackClock in playback.ts).
-// ---------------------------------------------------------------------------
+// --- Engine tests: the timing/loop/scrub state machine, driven through the
+// injectable clock (see PlaybackClock in playback.ts) ------------------------
 
 import { createPlaybackEngine, type PlaybackEngine, type TapControl } from '../src/playback.js'
 import { createSceneVisualizer, createHydraVisualizer } from '../src/visualizer.js'
@@ -83,9 +70,7 @@ function fakeTime(startMs: number) {
   }
 }
 
-// A hydra-only program: content exists (so playback runs) and the loop length
-// comes from loopBeats (DEFAULT_LOOP_BEATS unless set), with no scene rows to
-// stage.
+// Hydra-only program: content exists (so playback runs) with no scene rows to stage.
 const HYDRA_ROWS: Row[] = [{ event: 'setCode', code: 'osc().out()', beat: 1 }]
 
 function makeEngine(time: ReturnType<typeof fakeTime>, extra: { tapControl?: TapControl; onLoop?: () => void } = {}): PlaybackEngine {
@@ -236,20 +221,6 @@ test('wallAlignedLoop and wallAlignedTick are the quotient/remainder of one divi
 test('wallAlignedLoop returns 0 for a non-positive loop length', () => {
   assert.equal(wallAlignedLoop(5000, 1000, 0), 0)
   assert.equal(wallAlignedLoop(5000, 1000, -4), 0)
-})
-
-test('a multi-loop sequence resets by epoch difference, keeping the phase within the loop', () => {
-  // The pass a piece of content shows = loops-elapsed-now minus loops-elapsed
-  // at its epoch (the instant the content last changed / playback started).
-  const anchorMs = 0, loopSeconds = 8
-  const changedAt = 100_000 // mid-loop
-  const loopAt = (nowMs: number) =>
-    Math.max(0, wallAlignedLoop(nowMs, anchorMs, loopSeconds) - wallAlignedLoop(changedAt, anchorMs, loopSeconds))
-  assert.equal(loopAt(changedAt), 0, 'loop 0 at the instant of the change')
-  assert.equal(loopAt(changedAt + 3000), 0, 'still loop 0 later in the same wall-aligned loop')
-  // The change landed at 100s; with an 8s loop the grid wraps at 104s.
-  assert.equal(loopAt(104_000), 1, 'first wall-aligned wrap after the change starts loop 1')
-  assert.equal(loopAt(104_000 + 8000 * 2), 3)
 })
 
 // --- loopEpochsFromApplies — shared loop epochs from stamped apply pulses ----

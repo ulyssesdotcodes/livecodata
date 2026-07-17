@@ -1,7 +1,5 @@
-// Multiplayer: event logs synced over WebSockets. Covers the pure convergence
-// story (two editable-table stores cross-merging their logs) and the real
-// transport (two clients through the room server, using Node's built-in
-// WebSocket client).
+// Multiplayer: event logs synced over WebSockets — pure log convergence plus
+// the real transport through the room server.
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -58,8 +56,8 @@ test('store refolds and notifies when remote events merge in', () => {
   a.log.merge(b.log.all())
   assert.equal(changed, 1)
   assert.deepEqual(a.get('t')!.rows, [{ v: 7 }])
-  // The whole store rides one log: a fresh store loaded from a's serialized
-  // events folds the same state (this is the unit sessions/multiplayer sync).
+  // The whole store rides one log: rehydrating from serialized events folds
+  // the same state.
   const rehydrated = createEditableTableStore()
   assert.ok(rehydrated.load(a.serialize()))
   assert.deepEqual(rehydrated.get('t')!.rows, [{ v: 7 }])
@@ -82,14 +80,12 @@ test('rooms sync history on join and relay live appends both ways', async () => 
     }))
     await until(() => server.roomLog('jam', 'session').some((e) => e.code === 'view("x")'), 'a to seed the room')
 
-    // b joins empty and receives a's history via the sync.
     const logB = createEventLog({ src: 'b' })
     const tablesB = createEventLog({ src: 'b' })
     const tapsB = createTapLog({ src: 'b' })
     conns.push(connectMultiplayer({ url, room: 'jam', logs: { session: logB, tables: tablesB, taps: tapsB.log } }))
     await until(() => logB.all().some((e) => e.code === 'view("x")'), 'b to receive room history')
 
-    // Live appends relay in both directions, across both logs.
     logB.append({ kind: 'run', code: 'view("y")', seed: 2 })
     await until(() => logA.all().some((e) => e.code === 'view("y")'), 'b\'s run to reach a')
     assert.equal(logA.last()!.code, 'view("y")')
@@ -99,15 +95,12 @@ test('rooms sync history on join and relay live appends both ways', async () => 
     await until(() => tablesB.length === 1, 'a\'s table event to reach b')
     assert.equal(tablesB.last()!.kind, 'create')
 
-    // Tap-beat is shared the same way: b's taps reach a and fold identically.
     tapsB.tap()
     tapsB.tap()
     await until(() => tapsA.log.length === 2, 'b\'s taps to reach a')
     assert.deepEqual(tapsA.rows(), tapsB.rows())
     assert.equal(tapsA.rows().length, 2)
 
-    // Replicas and the room hold the same log — including the server's own
-    // peer-join events (see the next test), which ride the same "session" log.
     assert.deepEqual(logA.all(), logB.all())
     assert.deepEqual(server.roomLog('jam', 'session'), logA.all())
   } finally {
@@ -121,11 +114,9 @@ test('the room server authors peer-join/peer-leave on the session log, not a sid
   const url = `ws://127.0.0.1:${server.port}/ws`
   const conns: { close(): void }[] = []
   try {
-    // The "activity" table must exist before a replica connects — see
-    // main.ts's ACTIVITY_TABLE comment — otherwise a peer-join event tagged
-    // table:"activity" has nothing to fold onto in a real EditableTableStore
-    // (this test uses a raw EventLog, which doesn't fold at all, so it'd
-    // still see the event either way; the guarantee matters client-side).
+    // The "activity" table must exist before a replica connects (see main.ts's
+    // ACTIVITY_TABLE comment) so peer-join events have something to fold onto
+    // in a real EditableTableStore.
     const logA = createEventLog({ src: 'a' })
     logA.append({ kind: 'create', table: 'activity', columns: [] })
     conns.push(connectMultiplayer({ url, room: 'peerjam', logs: { session: logA } }))
@@ -148,7 +139,6 @@ test('the room server authors peer-join/peer-leave on the session log, not a sid
       assert.equal(typeof e.client, 'string')
     }
 
-    // b leaves: a sees a peer-leave for b's client id.
     connB.close()
     await until(
       () => logA.all().some((e) => e.kind === 'peer-leave' && e.src === 'server'),
@@ -177,7 +167,6 @@ test('the room log is dropped once the last client disconnects, and a fresh join
     conns.push(connB)
     await until(() => logB.all().some((e) => e.code === 'a0'), 'b to receive history')
 
-    // One of two leaves: the room still has a member, so its log survives.
     connB.close()
     await until(
       () => server.roomLog('evanescent', 'session').some((e) => e.kind === 'peer-leave'),
@@ -185,15 +174,11 @@ test('the room log is dropped once the last client disconnects, and a fresh join
     )
     assert.ok(server.roomLog('evanescent', 'session').some((e) => e.code === 'a0'), 'log survives while a is still connected')
 
-    // The last one leaves: nobody's left to hold the log, so it's dropped —
-    // each client already has its own copy in localStorage (sessionStore),
-    // so nothing is actually lost.
+    // Dropping is safe: each client keeps its own copy in localStorage.
     connA.close()
     await until(() => server.roomLog('evanescent', 'session').length === 0, 'the room log to be dropped')
 
-    // A fresh join with no history re-seeds a brand-new room from scratch —
-    // proof it's truly gone, not just quiesced (an old peer-leave/join or a0
-    // would still be sitting there otherwise).
+    // A fresh join proves the log is truly gone, not just quiesced.
     const logC = createEventLog({ src: 'c' })
     const connC = connectMultiplayer({ url, room: 'evanescent', logs: { session: logC } })
     conns.push(connC)
@@ -218,13 +203,12 @@ test('a client that worked offline heals the room when it (re)joins', async () =
     logB.append({ kind: 'run', code: 'b1', seed: 0 })
 
     conns.push(connectMultiplayer({ url, room: 'r', logs: { session: logA } }))
-    // The room server also authors a peer-join for a's own connection (see
-    // server.ts) — one extra event alongside a0.
+    // 2 = a0 plus the server-authored peer-join for a's own connection.
     await until(() => server.roomLog('r', 'session').length === 2, 'a to seed')
     conns.push(connectMultiplayer({ url, room: 'r', logs: { session: logB } }))
 
-    // Union: everything from both (plus each side's server-authored
-    // peer-join), deterministically interleaved by (seq, src).
+    // 5 = a0 + b0 + b1 + a server-authored peer-join per side, interleaved
+    // deterministically by (seq, src).
     await until(() => logA.length === 5 && logB.length === 5, 'both replicas to hold the union')
     const codes = (log: typeof logA) => log.all().filter((e) => e.code != null).map((e) => e.code)
     assert.deepEqual(codes(logA), ['a0', 'b0', 'b1'])
@@ -246,10 +230,8 @@ test('server ignores garbage frames and events sent before a join', async () => 
     ws.send(JSON.stringify({ type: 'join', room: 'r', client: 'x', logs: {} }))
     const sync = await new Promise<string>((resolve) => { ws.onmessage = (ev) => resolve(String(ev.data)) })
     assert.equal((JSON.parse(sync) as { type: string }).type, 'sync')
-    // Neither the garbage frame nor the events-before-join message landed —
-    // the only thing in the room is the server's own peer-join for this
-    // connection (see server.ts), authored regardless of what the joiner
-    // uploaded.
+    // Only the server's own peer-join landed — neither the garbage frame nor
+    // the pre-join events did.
     const events = server.roomLog('r', 'session')
     assert.equal(events.length, 1)
     assert.equal(events[0].kind, 'peer-join')

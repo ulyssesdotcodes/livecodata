@@ -1,10 +1,7 @@
 // Transport controls — the humble view over the playback engine
-// (../playback.ts). It renders PlaybackViewState verbatim and forwards every
-// interaction straight to an engine method (or the TapControl); no playback
-// logic lives here. createPlaybackController bundles the engine with the
-// view-state signal it emits into; app.tsx renders <PlaybackControls> from
-// that bundle (once main.ts has built it — the engine needs the visualizers,
-// which need the canvases the app render creates first).
+// (../playback.ts): renders PlaybackViewState verbatim and forwards every
+// interaction to an engine method (or the TapControl); no playback logic
+// lives here.
 
 import { createSignal, Show, type Accessor } from 'solid-js'
 import { listenGlobal } from './dom.js'
@@ -60,9 +57,8 @@ export function PlaybackControls(props: {
             onChange={(e) => {
               const el = e.currentTarget
               const n = Math.max(1, Math.round(parseFloat(el.value) || DEFAULT_LOOP_BEATS))
-              // Snap the field to the clamped value: when n equals the current
-              // loopBeats the signal doesn't change, so nothing reactive would
-              // overwrite a rejected entry like "0" or "abc".
+              // Snap the field to the clamped value: when n equals loopBeats
+              // nothing reactive would overwrite a rejected entry like "0".
               el.value = String(n)
               props.engine.setLoopBeats(n)
             }}

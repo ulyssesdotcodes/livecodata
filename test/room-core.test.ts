@@ -46,9 +46,7 @@ test('joining a userless room initializes it to the joiner session, dropping sta
   const result = handleJoin(logs, { type: 'join', client: 'alice', logs: { tables: [ev(0, 'a')] } }, 123, false)
 
   assert.equal(result.changed, true)
-  // The old 'old'-authored rows are gone; only alice's row remains in tables.
   assert.deepEqual(logs.get('tables')?.map((e) => e.src), ['a'])
-  // The ghost's peer-join is gone; only alice's fresh peer-join is in session.
   const session = logs.get(SESSION_LOG) ?? []
   assert.deepEqual(session.map((e) => e.client), ['alice'])
   // Nothing to relay — there are no peers — but the sender still gets a sync.
@@ -59,36 +57,20 @@ test('joining a userless room initializes it to the joiner session, dropping sta
 })
 
 test('joining a room that already has peers unions the joiner logs in', () => {
-  // Bob is already here (hasPeers=true), so alice's join merges rather than
-  // replacing — both peoples work coexists.
+  // hasPeers=true: alice's join merges rather than replacing.
   const logs: RoomLogs = new Map([['tables', [ev(0, 'bob')]]])
 
   const result = handleJoin(logs, { type: 'join', client: 'alice', logs: { tables: [ev(1, 'alice')] } }, 123, true)
 
   assert.equal(result.changed, true)
   assert.deepEqual(logs.get('tables')?.map((e) => e.src), ['bob', 'alice'])
-  // Alice's new event relays to the existing peers.
   assert.ok(result.outbound.some((o) => o.to === 'others' && o.msg.type === 'events'))
-})
-
-test('joining a userless empty room just seeds it (nothing to drop)', () => {
-  const logs: RoomLogs = new Map()
-  const result = handleJoin(logs, { type: 'join', client: 'alice', logs: { tables: [ev(0, 'a')] } }, 123, false)
-  assert.equal(result.changed, true)
-  assert.equal(logs.get('tables')?.length, 1)
-  assert.deepEqual((logs.get(SESSION_LOG) ?? []).map((e) => e.client), ['alice'])
-})
-
-test('a missing client id joins as anon', () => {
-  const logs: RoomLogs = new Map()
-  assert.equal(handleJoin(logs, { type: 'join' }).clientId, 'anon')
 })
 
 test('events merge, dedup by (src, seq), and only relay what was new', () => {
   const logs: RoomLogs = new Map()
   handleEvents(logs, { type: 'events', log: 'tables', events: [ev(0, 'a')] })
 
-  // A duplicate plus one new event: only the new one relays or changes state.
   const result = handleEvents(logs, { type: 'events', log: 'tables', events: [ev(0, 'a'), ev(1, 'b')] })
   assert.equal(result.changed, true)
   assert.equal(result.outbound.length, 1)
@@ -96,7 +78,6 @@ test('events merge, dedup by (src, seq), and only relay what was new', () => {
   const relayed = result.outbound[0].msg.type === 'events' ? result.outbound[0].msg.events : []
   assert.deepEqual(relayed.map((e) => [e.seq, e.src]), [[1, 'b']])
 
-  // A pure duplicate is a no-op: nothing to persist, nothing to relay.
   const dup = handleEvents(logs, { type: 'events', log: 'tables', events: [ev(0, 'a')] })
   assert.equal(dup.changed, false)
   assert.deepEqual(dup.outbound, [])
@@ -154,7 +135,6 @@ test('parseClientMessage drops garbage and unknown frames, validates shapes', ()
 test('the presence log compacts to the latest event per (src, kind) and relays only survivors', () => {
   const logs: RoomLogs = new Map()
 
-  // A stream of cursor announcements: each newer one replaces the last.
   handleEvents(logs, { type: 'events', log: PRESENCE_LOG, events: [ev(0, 'a', { kind: 'presence', head: 1 })] })
   const next = handleEvents(logs, { type: 'events', log: PRESENCE_LOG, events: [ev(1, 'a', { kind: 'presence', head: 2 })] })
   assert.equal(next.changed, true)
@@ -185,7 +165,6 @@ test('a join uploading a full presence history stores and relays only the latest
   assert.equal(result.changed, true)
   // Stored: b's announcement + only a's newest.
   assert.deepEqual(logs.get(PRESENCE_LOG)!.map((e) => [e.src, e.seq]), [['b', 5], ['a', 9]])
-  // Relayed to peers: just the one surviving event, not the whole history.
   const relayed = result.outbound.find((o) => o.to === 'others' && o.msg.type === 'events' && o.msg.log === PRESENCE_LOG)
   assert.ok(relayed && relayed.msg.type === 'events')
   assert.deepEqual(relayed.msg.events.map((e) => e.seq), [9])

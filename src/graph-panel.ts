@@ -1,22 +1,8 @@
-// Chart logic + the shared 2D series renderer.
-// ----------------------------------------------------------------------------
-// Everything chart-shaped goes through this module so the rules can't drift
-// between surfaces: the table panel's big graph and the editor hover preview's
-// sparklines are the *same* renderer (drawSeriesChart) with a different
-// SeriesChartStyle, and "which columns are plottable", "what is the x axis",
-// and "what y range does a series get" are each defined exactly once
-// (numericColumns / beatXOf / computeColRanges — all pure and unit-testable).
-//
-// Range computation is deliberately a pure pre-step (computeColRanges) rather
-// than a by-product of drawing: callers pass the ranges in, so legends can use
-// the same numbers without a second scan and without caring whether the canvas
-// has laid out yet.
-//
-// drawSeriesChart is the single renderer seam: it consumes only (ChartData,
-// ColRange[], style), so a GPU-backed renderer (e.g. ulyssesdotcodes/
-// webgpu-plot-lib, once it grows a gutterless per-series-scale mode and a
-// published build) can replace it behind the same contract without touching
-// any of the pure logic above it.
+// Chart logic + the shared 2D series renderer. The table panel's big graph and
+// the hover preview's sparklines are the *same* renderer (drawSeriesChart) with
+// different styles, so plottability / x-axis / y-range rules can't drift between
+// surfaces. Range computation is deliberately a pure pre-step (computeColRanges)
+// so legends can reuse the numbers without a second scan.
 
 import type { Table } from './dsl.js'
 import type { Row } from './lineage.js'
@@ -65,14 +51,12 @@ function isNumericColumn(rows: Row[], col: string): boolean {
 }
 
 // The one "what counts as plottable" rule: a column charts when it holds a
-// number somewhere and isn't the `beat` x-axis column. The panel's auto-chart,
-// the hover preview, and resolveSpec's default all ask this same question.
+// number somewhere and isn't the `beat` x-axis column.
 export function numericColumns(rows: Row[], cols: string[]): string[] {
   return cols.filter((c) => c !== 'beat' && isNumericColumn(rows, c))
 }
 
-// The shared x mapping: plot against `beat` when the table has one (the beat
-// grid is the x unit everywhere in livecodata), else against row ordinal.
+// Plot against `beat` when the table has one, else against row ordinal.
 export function beatXOf(columns: string[]): { hasIndex: boolean; xOf: (row: Row, i: number) => number } {
   const hasIndex = columns.includes('beat')
   return { hasIndex, xOf: (row, i) => (hasIndex ? (row.beat as number) : i) }
@@ -91,8 +75,8 @@ export function xExtent(rows: Row[], xOf: (row: Row, i: number) => number): { xM
 export function resolveSpec(spec: GraphSpec): ResolvedSpec {
   const rows = spec.table.rows
   const allCols = spec.table.columns
-  // Explicit .graph() columns are honored (minus non-numeric ones, which have
-  // nothing to plot); the default is every plottable column.
+  // Explicit .graph() columns win (minus non-numeric ones); default is every
+  // plottable column.
   const cols = spec.columns.length
     ? spec.columns.filter((c) => isNumericColumn(rows, c))
     : numericColumns(rows, allCols)
@@ -100,8 +84,6 @@ export function resolveSpec(spec: GraphSpec): ResolvedSpec {
   return { rows, cols, xOf, hasIndex }
 }
 
-// Assemble the ChartData a renderer consumes, or null when there is nothing
-// to draw.
 export function chartDataFor(rows: Row[], columns: string[], cols: string[], name: string): ChartData | null {
   if (!rows.length || !cols.length) return null
   const { hasIndex, xOf } = beatXOf(columns)
@@ -135,11 +117,9 @@ export function fmtNum(v: number): string {
   return v.toFixed(abs >= 10 ? 1 : abs >= 1 ? 2 : 3)
 }
 
-// Per-series y ranges: each series is scaled independently (columns with very
-// different magnitudes all show their shape). `yPadFrac` adds breathing room
-// above/below (the big panel chart); sparklines pass 0 and use the raw range.
-// Degenerate ranges (no numbers, or a constant column) widen to something
-// drawable.
+// Each series is scaled independently so columns of very different magnitudes
+// all show their shape. `yPadFrac` adds breathing room (sparklines pass 0);
+// degenerate ranges widen to something drawable.
 export function computeColRanges(rows: Row[], cols: string[], yPadFrac: number): ColRange[] {
   return cols.map((c) => {
     let rawMin = Infinity, rawMax = -Infinity
@@ -165,7 +145,6 @@ export interface SeriesChartStyle {
   yPadFrac: number
 }
 
-// The table panel's big graph.
 export const PANEL_CHART_STYLE: SeriesChartStyle = {
   pad: { l: 6, r: 6, t: 8, b: 18 },
   lineWidth: 1.5,
@@ -174,7 +153,6 @@ export const PANEL_CHART_STYLE: SeriesChartStyle = {
   yPadFrac: 0.08,
 }
 
-// The hover preview's sparklines.
 export const SPARKLINE_STYLE: SeriesChartStyle = {
   pad: { l: 3, r: 3, t: 3, b: 14 },
   lineWidth: 1.25,
@@ -190,16 +168,13 @@ export interface DrawSeriesChartOptions {
   size?: { w: number; h: number }
   // Playhead beat — a vertical line when it falls inside the plot.
   playIndex?: number | null
-  // Storage ordinals of the rows feeding the playhead's active lineage —
-  // marked with a dot per series (the big panel chart).
+  // Storage ordinals of the playhead's active-lineage rows, dotted per series.
   activeRows?: Set<number> | null
 }
 
-// The one multi-series line renderer. Every series gets its own y scale (from
-// the caller-computed `ranges`, which must be per-column parallel to
-// data.cols), a translucent zero line when its range straddles zero, and the
-// x axis gets nice-number tick labels ('… b' when x is the beat grid).
-// Returns false when the canvas has no drawable area yet.
+// The one multi-series line renderer. Every series gets its own y scale from
+// the caller-computed `ranges`, which must be parallel to data.cols. Returns
+// false when the canvas has no drawable area yet.
 export function drawSeriesChart(
   canvas: HTMLCanvasElement,
   data: ChartData,
@@ -291,7 +266,7 @@ export function drawSeriesChart(
 
   const ticks = xTicks(xMin, xMax, tickTarget)
   const dec = tickDecimals(ticks)
-  const suffix = hasIndex ? ' b' : '' // beats (the x-axis unit when a `beat` column is present)
+  const suffix = hasIndex ? ' b' : '' // 'b' = beats
   g.fillStyle = TICK_LABEL_COLOR
   g.font = tickFont
   g.textBaseline = 'top'

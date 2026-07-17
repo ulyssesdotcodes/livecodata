@@ -11,54 +11,39 @@ export interface SceneAPI {
   updateObject(row: Record<string, unknown>): void
   destroyObject(id: unknown): void
   reset(): void
-  // The scene camera. Driven by the DSL when the scene has a `shape: "camera"`
-  // object (see cameraPose); otherwise it holds the default pose. Also exposed
-  // for tooling (screenshot harnesses, debug orbits).
+  // Driven by `shape: "camera"` rows (see cameraPose); also exposed for tooling.
   readonly camera: THREE.PerspectiveCamera
 }
 
-// geometryDims (and the primitive builder) live in three-points.ts, shared with
-// the DSL's points() sampler so a sampled box lands on the drawn box. Re-exported
-// here because that's where geometry decisions have always been imported from.
+// Re-exported from three-points.ts, where the geometry builder is shared with
+// the DSL's points() sampler so sampled and drawn geometry never drift.
 export { geometryDims, type GeometryDims }
 
 function sameDims(a: GeometryDims, b: GeometryDims): boolean {
   return a.hx === b.hx && a.hy === b.hy && a.hz === b.hz && a.r === b.r && a.h === b.h
 }
 
-// Whether an update row's shape/size has drifted from what a mesh was last
-// built with — a re-run that resizes or reshapes an existing object (a
-// house-of-cards card's thickness, a shape swapped sphere<->box) needs its
-// THREE.js geometry disposed and rebuilt, not just repositioned.
+// True when an update row's shape/size means the geometry must be disposed and
+// rebuilt, not just repositioned.
 export function geometryChanged(prevShape: string, prevDims: GeometryDims, row: Record<string, unknown>): boolean {
   const shape = (row.shape as string | undefined) ?? prevShape
   return shape !== prevShape || !sameDims(geometryDims(shape, row), prevDims)
 }
 
-// The renderer's primitive geometry is built by the shared builder in
-// three-points.ts (same one the DSL's points() sampler uses), so the mesh drawn
-// for box() and the vertices returned by points("box") never drift apart.
 const makeGeometry = primitiveGeometry
 
 const PALETTE = [0x4a9eff, 0xff6b6b, 0x51cf66, 0xffd43b, 0xcc5de8, 0xff922b]
 
 // ── Text ────────────────────────────────────────────────────────────────────
-// A `shape: "text"` object is real extruded 3D geometry (three.js TextGeometry),
-// so it catches the scene lights and has depth like every other mesh, and rides
-// the same px/py/pz + rx/ry/rz transform. The font (helvetiker) is bundled and
-// parsed synchronously — no asset fetch — so an object builds the instant its
-// create row is seen, exactly like a box or sphere. `size` is the world-space
-// cap height (per line); newlines split into stacked, centered lines. Only the
-// helvetiker glyph set (Latin + common punctuation) renders; an unknown glyph is
-// skipped. `color` is a plain material color, updated live like any other mesh.
+// `shape: "text"` is real extruded geometry (TextGeometry) so it lights like any
+// other mesh. The font is bundled and parsed synchronously — no asset fetch — so
+// text builds the instant its create row is seen. `size` is the world-space cap
+// height per line; glyphs outside the helvetiker set are skipped.
 
 export interface TextParams { text: string; size: number; color: number }
 
 const TEXT_DEFAULTS = { size: 0.5, color: 0xffffff }
 
-// The subset of a row that determines a text object, merged with defaults. Only
-// `text` and `size` shape the (glyph) GEOMETRY; `color` is carried for the
-// initial material but, like every other mesh, recolors without a rebuild.
 export function textParams(row: Record<string, unknown>): TextParams {
   return {
     text: row.text == null ? '' : String(row.text),
@@ -67,10 +52,8 @@ export function textParams(row: Record<string, unknown>): TextParams {
   }
 }
 
-// Whether an update row's string or size has drifted from what a text object's
-// geometry was last built with — those (and only those) mean the glyph geometry
-// must be regenerated; a color change is a cheap material swap, handled like any
-// other mesh and deliberately excluded here.
+// True when the glyph geometry must be regenerated. Color is deliberately
+// excluded — a color change is a cheap material swap, no rebuild.
 export function textGeometryChanged(prev: TextParams, row: Record<string, unknown>): boolean {
   const p = textParams(row)
   return p.text !== prev.text || p.size !== prev.size
@@ -83,17 +66,16 @@ interface TextObject {
   params: TextParams
 }
 
-// The bundled font is parsed once, lazily, on the first text object — parsing is
-// synchronous (FontLoader.parse), so it stays off the module-load path (and out
-// of tests that only exercise the pure helpers above).
+// Parsed lazily on the first text object so font parsing stays off the
+// module-load path (and out of tests that only use the pure helpers above).
 let _font: Font | null = null
 function getFont(): Font {
   if (!_font) _font = new FontLoader().parse(helvetiker as unknown as Parameters<FontLoader['parse']>[0])
   return _font
 }
 
-// Build (multi-line) extruded text geometry centered on the origin, so the
-// mesh's position/rotation place its CENTER — consistent with the other shapes.
+// Centered on the origin so position/rotation place the CENTER, like the
+// other shapes.
 function makeTextGeometry(params: TextParams): THREE.BufferGeometry {
   const lines = params.text.split('\n')
   const font = getFont()
@@ -105,8 +87,7 @@ function makeTextGeometry(params: TextParams): THREE.BufferGeometry {
       font, size: params.size, depth: params.size * 0.15, curveSegments: 6,
       bevelEnabled: true, bevelThickness: params.size * 0.02, bevelSize: params.size * 0.015, bevelSegments: 2,
     })
-    // A line of only unknown glyphs yields no geometry — skip it rather than
-    // feeding an attribute-less geometry into the merge.
+    // A line of only unknown glyphs yields no geometry — keep it out of the merge.
     if (!g.getAttribute('position')) { g.dispose(); return }
     g.translate(0, -i * lineH, 0)
     parts.push(g)
@@ -118,10 +99,8 @@ function makeTextGeometry(params: TextParams): THREE.BufferGeometry {
   return merged
 }
 
-// Non-uniform object scale from sx/sy/sz (each defaults to 1). This is the
-// three.js Object3D.scale multiplier, applied on top of the geometry's own
-// dimensions — so a `scale` animation grows/shrinks an object over time without
-// rebuilding its geometry every frame.
+// Object3D.scale on top of the geometry's own dimensions, so a scale animation
+// never rebuilds geometry.
 function applyScale(obj: THREE.Object3D, row: Record<string, unknown>): void {
   obj.scale.set((row.sx as number) ?? 1, (row.sy as number) ?? 1, (row.sz as number) ?? 1)
 }
@@ -143,7 +122,6 @@ function makeText(row: Record<string, unknown>): TextObject {
   return { mesh, geometry, material, params }
 }
 
-// Regenerate the glyph geometry — called only when textGeometryChanged().
 function rebuildTextGeometry(obj: TextObject, row: Record<string, unknown>): void {
   const params = textParams(row)
   obj.geometry.dispose()
@@ -158,13 +136,10 @@ function disposeText(obj: TextObject): void {
 }
 
 // ── Camera ──────────────────────────────────────────────────────────────────
-// A `shape: "camera"` object doesn't add a mesh — it drives the scene camera.
-// px/py/pz place the eye and tx/ty/tz the look-at target (default origin);
-// optional `fov` sets the vertical field of view in degrees (a lower fov reads
-// as a longer lens / dolly-zoom). Because it flows through events → rasterize
-// like any object, camera moves are just keyframes on the beat timeline and
-// interpolate for free. Default pose matches the app's initial camera: eye at
-// (0,0,5) looking at the origin, 60° fov.
+// A `shape: "camera"` object adds no mesh — it drives the scene camera: px/py/pz
+// the eye, tx/ty/tz the look-at target, `fov` vertical degrees. It flows through
+// events → rasterize like any object, so camera moves are beat-timeline
+// keyframes and interpolate for free.
 
 export interface CameraPose { px: number; py: number; pz: number; tx: number; ty: number; tz: number; fov: number | null }
 
@@ -172,9 +147,8 @@ export const CAMERA_DEFAULT: CameraPose = { px: 0, py: 0, pz: 5, tx: 0, ty: 0, t
 
 const num = (v: unknown, d: number): number => (typeof v === 'number' ? v : d)
 
-// Resolve a camera row to a concrete pose, falling back to the default eye/
-// target so a partial row (e.g. only pz given) is still well-defined. `fov` is
-// null when the row doesn't set it, so the current fov is left untouched.
+// `fov` is null when the row doesn't set it, so the current fov is left
+// untouched.
 export function cameraPose(row: Record<string, unknown>): CameraPose {
   return {
     px: num(row.px, CAMERA_DEFAULT.px), py: num(row.py, CAMERA_DEFAULT.py), pz: num(row.pz, CAMERA_DEFAULT.pz),
@@ -183,13 +157,9 @@ export function cameraPose(row: Record<string, unknown>): CameraPose {
   }
 }
 
-// A live sheet of folding paper: the compiled fold-table program holds, for
-// every step, the face set, pre-swing coordinates, fold line, moving flags
-// and layer indices. One numeric field drives playback: `fold` = how many
-// folds have landed, fractional = the next flap mid-swing about its fold
-// line (a rigid compound hinge — shared vertices, no tearing). Faces render
-// as a per-face triangle soup so each face can be nudged along z by its
-// layer index; edges render as line segments from the same positions.
+// Folding paper. `fold` drives playback: how many folds have landed, fractional
+// = the next flap mid-swing. Faces render as a per-face triangle soup so each
+// face can be nudged by its layer index; edges are lines from the same positions.
 interface OrigamiObject {
   root: THREE.Group
   program: FoldTableProgram
@@ -209,8 +179,8 @@ const PAPER_BACK = 0xf4efe2
 function fillOrigami(obj: OrigamiObject): void {
   const { program } = obj
   const { FV, pos, zOff, zDir } = foldTablePositions(program, obj.fold)
-  // layer offsets ride the paper: along the face's carried direction when
-  // the motion provides one, else world z (the flat-state stacking axis)
+  // Layer offsets ride the paper: along the face's carried direction when the
+  // motion provides one, else world z (the flat-state stacking axis).
   const offX = (fi: number): number => (zDir ? zDir[fi][0] * zOff[fi] : 0)
   const offY = (fi: number): number => (zDir ? zDir[fi][1] * zOff[fi] : 0)
   const offZ = (fi: number): number => (zDir ? zDir[fi][2] * zOff[fi] : zOff[fi])
@@ -266,11 +236,9 @@ function makeOrigami(row: Record<string, unknown>): OrigamiObject {
 
   const color = row.color != null ? (row.color as number) : 0xd94f2a
   const backColor = row.backColor != null ? (row.backColor as number) : PAPER_BACK
-  // Two single-sided materials so the paper's front and back read differently
-  // (classic origami: colored face, white back — set backColor to fold
-  // colored-side-down, the way a crane is folded so it ends up colored).
-  // flatShading derives face normals in-shader, so no normal attribute
-  // needs recomputing per frame.
+  // Two single-sided materials so front and back read differently (classic
+  // origami: colored face, white back). flatShading derives face normals
+  // in-shader, so no normal attribute needs recomputing per frame.
   const common = {
     metalness: 0.05,
     roughness: 0.85,
@@ -319,9 +287,9 @@ function disposeOrigami(obj: OrigamiObject): void {
   obj.line.dispose()
 }
 
-// The Three.js scene renders to its own canvas, which is *not* shown directly —
-// hydra (see hydra-scene.ts) takes it as a source texture and post-processes it
-// onto the visible canvas. So this module is pure scene + render, no effects.
+// Renders to its own canvas, which is *not* shown directly — hydra (see
+// hydra-scene.ts) takes it as a source texture and post-processes it onto the
+// visible canvas.
 export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): SceneAPI {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true })
   renderer.setPixelRatio(window.devicePixelRatio)

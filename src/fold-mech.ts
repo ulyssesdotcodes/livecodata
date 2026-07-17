@@ -1,22 +1,16 @@
-// Analytic motion for reverse folds through deep layer stacks, where the
-// relaxation solver reads as crumpling: a symmetric reverse fold is a
+// Analytic motion for reverse folds through deep layer stacks (where the
+// relaxation solver reads as crumpling): a symmetric reverse fold is a
 // 1-DOF rigid mechanism. The model is cut into rigid assemblies at the
-// creases that move — the fold's own creases, the pressed "book" creases
-// along the spine, and the creases of earlier reverse folds that would
-// otherwise weld the two book covers together. Assemblies come in mirror
-// pairs: the two flanks open ±β about the spine; every other pair hangs
-// off its parents by a hinge line and closes the loop with one angle φ,
-// solved from "the pair's seam stays in the mirror plane". The active
-// point rides flat while the book opens, crosses the branch point at full
-// opening, and folds home as the book closes — earlier reverse folds
-// un-press just enough to let the covers move, and return. No tuning:
-// the opening angle is the mechanism's own branch point.
+// moving creases; assemblies come in mirror pairs — the flanks open ±β
+// about the spine, every other pair hangs off its parents by a hinge and
+// closes the loop with one angle φ, solved from "the pair's seam stays in
+// the mirror plane". No tuning: the opening angle is the branch point.
 import type { FoldAnim, FoldOutcome, Line, Vec2 } from './fold-engine.js'
 import { X } from './vendor/flatfolder/conversion.js'
 
 // what a finished reverse fold leaves behind: the hinge it swung about,
-// the ridge line its point now sits on (the pre-fold seam reflected across
-// the hinge), and the spine it opened around
+// the seam its point now sits on (pre-fold seam reflected across the
+// hinge), and the spine it opened around
 export interface ReverseRecord { hinge: Line; seam: Line; spine: Line }
 
 type V3 = [number, number, number]
@@ -108,22 +102,18 @@ interface Pair {
 
 export interface MechFrameOpts {
   // fix this cover of the root pair flat for the whole motion (folding on
-  // a table: the bottom sheet never leaves it); default keeps the mirror
-  // plane fixed and both covers swing ±β
+  // a table); default keeps the mirror plane fixed, both covers swing ±β
   anchor?: 'a' | 'b'
-  // cap the book opening below the exact branch point. The rigid theorem
-  // demands opening fully so earlier folds un-press completely; capping
-  // keeps them in place ("the front body opens up a bit") at the cost of
-  // a bounded seam error on the active point, absorbed as gentle bending
-  // by the shared-vertex averaging. Endpoints stay exact.
+  // cap the book opening below the exact branch point: keeps earlier folds
+  // pressed at the cost of a bounded seam error on the active point,
+  // absorbed as bending by the shared-vertex averaging. Endpoints exact.
   betaCap?: number
 }
 
 export interface ReverseMech {
   // per frame: vertex positions (world [x,y,z]*V) and each face's layer-
   // offset direction ([x,y,z]*F) — the world ẑ carried by the face's
-  // rigid assembly, so display stacking rides the paper instead of
-  // shearing through it when the assemblies stand up
+  // assembly, so display stacking rides the paper
   frames: (n: number, opts?: MechFrameOpts) => { pos: number[][]; zdir: number[][] }
   betaStar: number
   // pairs beyond the covers and the active point — earlier reverse folds
@@ -135,12 +125,11 @@ const sameLine = (p: Line, q: Line): boolean =>
   (Math.abs(p[0][0] - q[0][0]) < LINE_TOL && Math.abs(p[0][1] - q[0][1]) < LINE_TOL && Math.abs(p[1] - q[1]) < LINE_TOL) ||
   (Math.abs(p[0][0] + q[0][0]) < LINE_TOL && Math.abs(p[0][1] + q[0][1]) < LINE_TOL && Math.abs(p[1] + q[1]) < LINE_TOL)
 
-// pageLines: fold lines of earlier steps whose pressed creases may be cut
-// to free "pages" — one-sided assemblies (no mirror partner) that would
-// otherwise overhang the opening spine and sweep through the opposite
-// cover. A freed page counter-rotates half the book angle about its own
-// hinge, fanning like the inner pages of an opening book. The caller
-// escalates pageLines until the baked motion passes its clearance gate.
+// pageLines: earlier fold lines whose pressed creases may be cut to free
+// "pages" — one-sided assemblies that would otherwise overhang the opening
+// spine and sweep through the opposite cover. A freed page fans at half
+// the book angle. The caller escalates pageLines until the bake passes
+// its clearance gate.
 export const buildReverseMech = (
   out: FoldOutcome, history: ReverseRecord[], pageLines: Line[] = [],
 ): ReverseMech | undefined => {
@@ -153,10 +142,9 @@ export const buildReverseMech = (
   const changed = EV.map((_, ei) => Math.abs(angleTo[ei] - angleFrom[ei]) > 1e-9)
   const pressed = EV.map((_, ei) => !changed[ei] && Math.abs(angleFrom[ei]) > FLAT)
 
-  // seam-type lines keep mirror pairs apart; hinge-type lines are what the
-  // pairs swing about; page-type lines free one-sided assemblies. Older
-  // reverse folds join the escalation only when the model stays welded
-  // without them.
+  // seam-type lines keep mirror pairs apart; hinge-type lines are swung
+  // about; page-type lines free one-sided assemblies. Older reverse folds
+  // join the escalation only when the model stays welded without them.
   interface CutLine { line: Line; kind: 'seam' | 'hinge' | 'page' }
   const addLine = (list: CutLine[], cand: CutLine): void => {
     if (!list.some((c) => sameLine(c.line, cand.line))) list.push(cand)
@@ -207,7 +195,6 @@ export const buildReverseMech = (
     // creases on one common line cannot move apart — weld them (a point's
     // plies on one side of the paper move as a slab)
     for (let pass = 0; pass < FV.length; ++pass) {
-      // adjacency: comp pair -> lines connecting them
       const links = new Map<string, { a: number; b: number; lines: Line[]; anyPressed: boolean }>()
       EV.forEach((e, ei) => {
         if (!cutEdge[ei]) return
@@ -301,9 +288,7 @@ export const buildReverseMech = (
       seamLine[e.b] = e.line
     }
     // pages: one-sided static assemblies freed by a page-line cut — every
-    // cut connection is a pressed crease on one page line to one parent.
-    // They fan at half the book angle instead of sweeping through the
-    // opposite cover.
+    // cut connection is a pressed crease on one page line to one parent
     interface Page { comp: number; parent: number; line: Line }
     const pages: Page[] = []
     for (let c = 0; c < nComp; ++c) {
@@ -327,8 +312,8 @@ export const buildReverseMech = (
     }
 
     // comps with no seam creases of their own: allowed only as the two
-    // book covers — flanks whose joining stretch of the spine has been
-    // claimed by an earlier fold's point, so they couple through it
+    // book covers, coupling through the spine stretch an earlier fold's
+    // point claimed
     const unpaired = [...Array(nComp).keys()].filter((c) => seamOf[c] === -1 && !isPage[c])
     if (unpaired.length !== 0 && unpaired.length !== 2) {
       dbg?.(`unpaired comps: seamOf=${JSON.stringify(seamOf)} pages=${pages.length} edges=${JSON.stringify(cedges.map((e) => `${e.a}-${e.b}:${e.kind}${e.flip ? '!' : ''}`))}`)
@@ -344,8 +329,7 @@ export const buildReverseMech = (
     }
 
     // one pair per seam link; hinge edges connect pairs (mirror-matched:
-    // the crease and its reflection must join the same two pairs on the
-    // same line)
+    // a crease and its reflection must join the same two pairs on one line)
     const pairId = Array.from({ length: nComp }, () => -1)
     const pairComps: [number, number][] = []
     for (let c = 0; c < nComp; ++c) {
@@ -379,9 +363,9 @@ export const buildReverseMech = (
     }
     const rootLinks = plinks.filter((l) => l.pi === activeId || l.pj === activeId)
     if (rootLinks.length !== 1) { dbg?.(`active pair has ${rootLinks.length} hinge links`); return undefined }
-    // root at the biggest pair: every rooting drives the same 1-DOF shape
-    // curve, but anchoring the bulk keeps the model steady on screen. A
-    // seamless cover pair must root (children need their own seam creases)
+    // root at the biggest pair: every rooting drives the same 1-DOF shape,
+    // but anchoring the bulk keeps the model steady on screen. A seamless
+    // cover pair must root (children need their own seam creases)
     let rootId = -1
     if (seamlessRoot >= 0) {
       rootId = pairId[seamlessRoot]
@@ -494,8 +478,7 @@ export const buildReverseMech = (
           } else if (Math.abs(gp) < 1e-9) {
             // a reversed point: its pre-reverse tip sat on the spine, so
             // φ=π is a root for every β and the moving branch is single-
-            // valued in β — it un-presses on the way open and retraces
-            // home as the book closes, no root picking needed
+            // valued in β — no root picking needed
             phi = 2 * Math.atan2(-g0 / 2, gq - g0 / 2)
             for (const k of [-2 * Math.PI, 2 * Math.PI]) {
               if (Math.abs(phi + k - pair.phi) < Math.abs(phi - pair.phi)) phi += k
@@ -611,10 +594,9 @@ export const buildReverseMech = (
         let beta: number
         let phiA = 0
         if (capped) {
-          // capped runs can't reach the branch crossing, so: open to the
-          // cap on the trivial branch (exact), hold the book there while
-          // the point sweeps between the branches (the folder pushing the
-          // point through — the only torn stretch, bent across the shared
+          // capped runs can't reach the branch crossing: open to the cap
+          // on the trivial branch (exact), hold while the point sweeps
+          // between branches (the only torn stretch, bent across shared
           // vertices), then close riding the fold branch (exact again)
           beta = betaMax * (smooth01(0, 0.35, t) - smooth01(0.65, 1, t))
           if (t <= 0.35) {

@@ -1,32 +1,17 @@
-// livecodata multiplayer wire protocol
-// ----------------------------------------------------------------------------
 // The one definition of the JSON frames exchanged between the client
 // (src/multiplayer.ts) and either server backend (server/server.ts,
-// worker/room.ts). Everything is JSON text frames:
-//
-//   client → server  { type: 'join', room, client, logs: { name: events[] } }
-//   client → server  { type: 'events', log, events }   one local append
-//   server → client  { type: 'sync', logs: { name: events[] } }  room union
-//   server → client  { type: 'events', log, events }   relayed from a peer
-//                                                       (or server-authored,
-//                                                       e.g. a peer-join/leave
-//                                                       — see room-core.ts)
-//
-// parseClientMessage/parseServerMessage own the JSON-parse-and-validate guard
-// that used to be copy-pasted at every endpoint: garbage frames, unknown
-// types, and frames missing required fields all come back as null and are
-// dropped silently.
-// ----------------------------------------------------------------------------
+// worker/room.ts). The parse functions own the validate guard shared by every
+// endpoint: garbage, unknown types, and missing fields come back as null and
+// are dropped silently.
 
 import type { StampedEvent } from './event-log.js'
 
 export interface JoinMessage {
   type: 'join'
-  // The room name. The Node server requires it (it multiplexes rooms on one
-  // socket endpoint); the Durable Object ignores it (the worker already routed
-  // the upgrade by ?room=).
+  // Required by the Node server (it multiplexes rooms on one endpoint);
+  // ignored by the Durable Object (the worker already routed by ?room=).
   room?: string
-  // The joining replica's id; servers fall back to 'anon' when absent.
+  // Servers fall back to 'anon' when absent.
   client?: string
   // The joiner's full logs — seeds an empty room and heals offline gaps.
   logs?: Record<string, StampedEvent[]>

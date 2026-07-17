@@ -1,22 +1,11 @@
-// livecodata lineage — provenance tags on rows
-// ----------------------------------------------------------------------------
-// Every derived row can carry a hidden tag recording which source rows it came
-// from, so at any frame we can trace the on-screen state back to the exact rows
-// of each dataset that produced it ("which parts of each dataset are used now").
-//
-// A lineage ref is { table, index } where `index` is the row's ordinal position
-// within that named view's rows — which is exactly how the table/graph panels
-// address rows, so highlighting is a direct lookup.
-//
-// The tag is stored under a Symbol key. It is enumerable, so it rides along
-// through `{ ...row }` spreads (the DSL's normal way of copying rows), but it
-// never appears in Object.keys — so it stays out of the display columns and out
-// of JSON.stringify (which ignores symbol keys).
-// ----------------------------------------------------------------------------
+// Provenance tags on rows: every derived row can carry a hidden tag recording
+// which source rows it came from. A ref's `index` is the row's ordinal within
+// that named view — exactly how the table/graph panels address rows. The tag
+// lives under a Symbol key: enumerable, so it rides along through `{ ...row }`
+// spreads, but invisible to Object.keys and JSON.stringify.
 
-// Unique-symbol trick: declare a const unique symbol type, then cast the
-// runtime Symbol.for value to it so TypeScript accepts it as a computed property
-// key in interfaces and object types.
+// Unique-symbol trick: cast the runtime Symbol.for value so TypeScript accepts
+// it as a computed property key in interfaces and object types.
 declare const _lineageUnique: unique symbol
 type LineageSymbol = typeof _lineageUnique
 

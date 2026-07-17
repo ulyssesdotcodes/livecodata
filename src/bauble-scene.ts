@@ -1,53 +1,30 @@
-// livecodata bauble-scene — the bauble compiler + WebGL layer
-// ----------------------------------------------------------------------------
-// Wraps bauble-runtime (bauble.studio's Janet-to-GLSL compiler, built to wasm)
-// and a small WebGL2 renderer for the fragment shaders it emits. setSketch()
-// takes a sampled BaubleFrame (see bauble.ts), composes the Janet script
-// ((def …) variable prelude + code), compiles it to a raymarching fragment
-// shader, and draws it as a fullscreen triangle. The shader's uniforms are the
-// bauble.studio contract: camera_origin / camera_matrix (an orbit camera the
-// reserved camera-x/-y/-zoom variables drive — those never touch the compiled
-// script, so a per-frame camera move never recompiles), t (the playback clock,
-// seconds), render_type (0, the shaded render) and viewport.
-//
-// Everything here is defensive about timing: the wasm module loads
-// asynchronously the first time a sketch arrives, and whatever script was most
-// recently requested compiles the moment it's ready. Compilation is gated on
-// the script string's identity — same string, no recompile — because a
-// recompile (Janet eval → GLSL → shader link) is the expensive step, exactly
-// like hydra's sketch recompiles (see hydra-scene.ts). A failed compile keeps
-// the previous program on screen and logs, mirroring hydra's sketch errors.
-//
-// Rendering is not self-driven: tick() advances the clock and redraws, so the
-// playback engine is the only thing animating the sketch — pausing/scrubbing
-// the timeline pauses/scrubs the raymarch right along with everything else.
-// The canvas is also wired into hydra as source s1 (see main.ts), so a hydra
-// sketch can read the bauble render as a texture: src(s1).
-// ----------------------------------------------------------------------------
+// livecodata bauble-scene — the bauble compiler + WebGL layer. Wraps
+// bauble-runtime (bauble.studio's Janet-to-GLSL compiler, wasm) and a small
+// WebGL2 renderer for the fragment shaders it emits, using bauble.studio's
+// uniform contract. Compilation is gated on script-string identity — a
+// recompile is the expensive step — and a failed compile keeps the previous
+// program on screen. tick() is driven only by the playback clock; the canvas
+// is also wired into hydra as source s1 (see main.ts).
 
 import baubleFactory, { type BaubleModule } from 'bauble-runtime'
 import { baubleScript, type BaubleFrame } from './bauble.js'
 
 export interface BaubleAPI {
   setSketch(frame: BaubleFrame | null): void
-  // Advance bauble's clock to the playback timeline's current source position
-  // (seconds) and render one frame there.
   tick(timeSeconds: number): void
   reset(): void
   // Re-run the resize/redraw sequence a real window resize triggers — the
-  // manual escape hatch the visuals reset button offers every canvas layer.
+  // visuals reset button's escape hatch.
   reinit(): void
 }
 
 const TAU = Math.PI * 2
 
-// bauble.studio's default framing: orbit an eighth of a turn up and around,
-// from 512 units out — the view its examples are written against.
+// bauble.studio's default framing — the view its examples are written against.
 const DEFAULT_CAMERA = { x: -0.125, y: 0.125, zoom: 1 }
 const BASE_CAMERA_DISTANCE = 512
 
-// The one vertex shader every bauble fragment shader draws under: a fullscreen
-// triangle from gl_VertexID, no buffers needed.
+// Fullscreen triangle from gl_VertexID — no buffers needed.
 const VERTEX_SRC = `#version 300 es
 void main() {
   vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
@@ -55,9 +32,9 @@ void main() {
 }
 `
 
-// Column-major 3×3 orbit matrix: rotate pitch (x, turns) then yaw (y, turns) —
-// camera space to world space, so origin = matrix · (0, 0, distance) orbits
-// the world origin and the shader's -z forward axis looks back at it.
+// Column-major 3×3 orbit matrix (camera space to world space): pitch (x,
+// turns) then yaw (y, turns), so origin = matrix · (0, 0, distance) orbits the
+// world origin.
 function orbitMatrix(xTurns: number, yTurns: number): Float32Array {
   const ax = xTurns * TAU
   const ay = yTurns * TAU
@@ -76,16 +53,14 @@ function num(value: unknown, fallback: number): number {
 }
 
 export function initBauble(canvas: HTMLCanvasElement): BaubleAPI {
-  // preserveDrawingBuffer: hydra re-samples this canvas as a texture (s1) on
-  // its own schedule, not necessarily in the same frame we drew — without it
-  // the buffer may be cleared after compositing and hydra would read black.
+  // preserveDrawingBuffer: hydra re-samples this canvas as s1 on its own
+  // schedule — without it the buffer may be cleared and hydra reads black.
   const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true })
   if (!gl) console.error('bauble: WebGL2 unavailable — bauble sketches will not render')
 
-  // The wasm compiler, loaded lazily on the first sketch so sessions that
-  // never touch bauble never pay for it. Compiler chatter (timings on stdout,
-  // Janet errors on stderr) is captured: errors surface once per failed
-  // compile below, timings stay out of the console.
+  // The wasm compiler, loaded lazily so sessions that never touch bauble
+  // never pay for it. Its stdout/stderr are captured: Janet errors surface
+  // once per failed compile, timings stay out of the console.
   let module: BaubleModule | null = null
   let moduleLoading = false
   let lastErr = ''
@@ -105,8 +80,8 @@ export function initBauble(canvas: HTMLCanvasElement): BaubleAPI {
   }
 
   // The script most recently asked for (null = blank), the one on screen, and
-  // the compiled program for it. Camera values ride the frame's vars without
-  // touching the script (see bauble.ts's reserved names).
+  // its compiled program. Camera values ride the frame's vars without touching
+  // the script.
   let wantedScript: string | null = null
   let compiledScript: string | null = null
   let program: WebGLProgram | null = null
@@ -128,9 +103,9 @@ export function initBauble(canvas: HTMLCanvasElement): BaubleAPI {
     return shader
   }
 
-  // Compile whatever script is wanted but not yet on screen. Runs when a new
-  // sketch arrives and once when the wasm module finishes loading; a compile
-  // failure (Janet error or GLSL error) keeps the previous program.
+  // Compile whatever script is wanted but not yet on screen — runs on new
+  // sketches and once when the wasm module finishes loading; a compile
+  // failure keeps the previous program.
   function compilePending(): void {
     if (!gl || !module || wantedScript === compiledScript) return
     compiledScript = wantedScript

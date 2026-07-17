@@ -1,30 +1,14 @@
-// livecodata DSL
-// ----------------------------------------------------------------------------
-// A tiny, JavaScript-flavoured DSL for generating tables and using those tables
-// to drive visuals. Tables are arrays of plain row objects. All timing uses
-// **beats** — a row's `beat` column (1-indexed: beat 1 is the first frame) is
-// where it sits on the loop, math().range(beats) samples over `beats` beats,
-// rasterize(maxBeats) sets the animation length in beats, and retime()/shift()
-// move a table along the beat axis. There are no seconds in the data model; the
-// beats() timeline maps the tapped tempo onto this beat grid. Every builder
-// returns a new Table, so everything chains.
+// livecodata DSL — chainable tables of plain row objects that drive visuals.
+// All timing is in beats (1-indexed; no seconds in the data model). A Table is
+// a node in a lazy op-graph, content-hashed (Merkle) so unchanged subgraphs
+// reuse their previous rows; the declarative Expr verbs exist so specs stay
+// data (soundly hashable) — function verbs hash by source text + run seed,
+// best-effort.
 //
-// Deferred / diffable
-// -------------------
-// A Table is no longer an eagerly-computed array of rows: it is a *node* in a
-// lazy op-graph — { op, spec, inputs, compute } — materialized on demand. Each
-// node has a content hash (Merkle: op + spec + input hashes), so the engine can
-// reuse a previously-materialized result when a view's whole subgraph is
-// unchanged. That's what makes "only cook what's needed" possible: editing the
-// effects view doesn't re-bake physics, because the physics node's hash is
-// unchanged.
-//
-// For hashing to be *sound* the inputs must be data, not opaque closures. So the
-// function-valued verbs (map(fn), filter(fn), …) have declarative, chainable
-// Expr variants — field("beat").add(0.5), filter(field("type").eq("collision"))
-// — three.js-node style. Function verbs still work but are hashed by their source
-// text + the run seed (best-effort; a closure could capture changed outer scope).
-// ----------------------------------------------------------------------------
+// JSDoc in this file is deliberately verbose: gen-lang-env.js lifts the JSDoc
+// on DSLSurface members (and the emitted .d.ts of Table & friends) into the
+// editor's CodeMirror hover docs, so the livecoder — not this file's reader —
+// is its audience. Use /** */ for anything the editor should show on hover.
 
 import { rasterizeRows } from './rasterize.js'
 import { withLineage, carry, unionLineage, getLineage, type Row } from './lineage.js'
@@ -35,10 +19,9 @@ import { beatSecondsFromTaps } from './tap-log.js'
 import { primitiveGeometry, pointsFromGeometry, geometryFromPoints } from './three-points.js'
 import type { BufferGeometry } from 'three'
 
-// ── Expr: a small, serializable, chainable expression over a row ─────────────
-// Each Expr wraps a plain-JSON `node` (no functions), so it serializes for
-// hashing and evaluates against a row. Operands accept another Expr or a raw
-// literal. Chain like three.js nodes: field("beat").add(0.5).
+// ── Expr: a serializable, chainable expression over a row ────────────────────
+// Wraps a plain-JSON node (no functions) so it hashes soundly. Operands accept
+// another Expr or a raw literal: field("beat").add(0.5).
 
 type BinOp = 'add' | 'sub' | 'mul' | 'div' | 'mod'
 type CmpOp = 'eq' | 'ne' | 'gt' | 'gte' | 'lt' | 'lte'
@@ -52,15 +35,9 @@ export type ExprNode =
   | { k: 'logic'; op: 'and' | 'or'; a: ExprNode; b: ExprNode }
   | { k: 'not'; a: ExprNode }
   | { k: 'cond'; t: ExprNode; a: ExprNode; b: ExprNode }
-  // A live value pulled from the streaming MIDI table at the *current frame* —
-  // the most recent event for `note` (optionally on `channel`) at-or-before the
-  // playhead's source position. Not resolvable at bake time, so any expression
-  // containing one is deferred into a per-row binding (see bakeExpr).
+  // midi/slider read a streaming source at the current frame, so they can't be
+  // resolved at bake time — bakeExpr defers them into per-row bindings.
   | { k: 'midi'; note: string; channel: number | null }
-  // A live value pulled from the on-screen slider `id` at the *current frame* —
-  // the slider's recorded automation sampled at the playhead's source position
-  // (its live position while the user is dragging it). Streaming exactly like
-  // midi(), so it too defers into a per-frame binding.
   | { k: 'slider'; id: string }
 
 type ExprInput = Expr | number | string | boolean | null
@@ -97,7 +74,7 @@ export class Expr {
   or(o: Expr): Expr { return new Expr({ k: 'logic', op: 'or', a: this.node, b: o.node }) }
   not(): Expr { return new Expr({ k: 'not', a: this.node }) }
 
-  // Ternary: this ? then : otherwise — for picking a value declaratively.
+  /** Ternary: this ? then : otherwise — for picking a value declaratively. */
   cond(then: ExprInput, otherwise: ExprInput): Expr {
     return new Expr({ k: 'cond', t: this.node, a: toNode(then), b: toNode(otherwise) })
   }
@@ -111,28 +88,22 @@ export class Expr {
 export const field = (name: string): Expr => new Expr({ k: 'field', name })
 export const lit = (v: number | string | boolean | null): Expr => new Expr({ k: 'lit', v })
 export const idx = (): Expr => new Expr({ k: 'idx' })
-// A live MIDI value, e.g. midi("c4"). Usable anywhere an Expr is — setField,
-// map(template), derive — and chainable: midi("c4").mul(2).
 export const midi = (note: string, channel: number | null = null): Expr =>
   new Expr({ k: 'midi', note: String(note).toLowerCase(), channel })
 
-// A live slider value, e.g. slider("brightness"). Same shape as midi(): usable
-// anywhere an Expr is and chainable — slider("brightness").mul(2).
 export const slider = (id: string): Expr =>
   new Expr({ k: 'slider', id: String(id) })
 
-// Per-frame evaluation context. `midi` samples the streaming MIDI table and
-// `slider` the streaming slider table, both at the playhead's current source
-// frame (supplied by playback at apply time). `sliders` returns every defined
-// slider's current value keyed by id — handed to hydra sketches as props.sliders.
+// Per-frame evaluation context, supplied by playback at apply time; samplers
+// read the streaming tables at the playhead's current source frame.
 export interface EvalCtx {
   midi?: (note: string, channel: number | null) => number
   slider?: (id: string) => number
   sliders?: () => Record<string, number>
 }
 
-// True if a node reads from a streaming source (MIDI) and so cannot be resolved
-// at bake time — it must be carried as a binding and evaluated per frame.
+// True if the node reads a streaming source and so must be carried as a
+// binding and evaluated per frame rather than at bake time.
 export function isStreamingNode(n: ExprNode): boolean {
   switch (n.k) {
     case 'midi': case 'slider': return true
@@ -185,10 +156,9 @@ export function evalExpr(n: ExprNode, row: Row, i: number, ctx?: EvalCtx): unkno
 }
 
 // ── Streaming bindings ───────────────────────────────────────────────────────
-// A binding is a plain, serializable marker { $expr: node } left in a row in
-// place of a value that can't be computed until a frame is shown (it reads MIDI).
-// rasterize/effects carry bindings through unchanged; playback resolves them per
-// frame against the live MIDI table (resolveBindings, with an EvalCtx).
+// A binding is a serializable { $expr } marker left in a row where the value
+// reads a streaming source; rasterize/effects carry it through unchanged and
+// playback resolves it per frame (resolveBindings).
 
 export interface Binding {
   $expr: ExprNode
@@ -197,15 +167,11 @@ export interface Binding {
 export const isBinding = (v: unknown): v is Binding =>
   v !== null && typeof v === 'object' && '$expr' in (v as Record<string, unknown>)
 
-// Bake-time evaluation of an Expr: streaming expressions defer to a binding
-// (resolved later, per frame); everything else evaluates to a concrete value now.
 function bakeExpr(node: ExprNode, row: Row, i: number): unknown {
   return isStreamingNode(node) ? { $expr: node } : evalExpr(node, row, i)
 }
 
-// Replace any { $expr } bindings in a row with their per-frame values, using the
-// (already-baked) row's own fields plus the streaming ctx. Returns the same row
-// object when there's nothing to resolve.
+// Returns the same row object when there's nothing to resolve.
 export function resolveBindings(row: Row, ctx: EvalCtx): Row {
   let out: Row | null = null
   for (const k in row) {
@@ -218,9 +184,7 @@ export function resolveBindings(row: Row, ctx: EvalCtx): Row {
   return out ?? row
 }
 
-// A row template: a plain object whose values are Expr (evaluated per row),
-// nested templates, arrays, or plain literals (including functions like easings,
-// which pass through untouched).
+/** A row template: values are Expr (evaluated per row), nested templates, arrays, or literals (functions like easings pass through untouched). */
 export type Template = Record<string, unknown>
 
 function buildValue(v: unknown, row: Row, i: number): unknown {
@@ -238,8 +202,8 @@ function buildValue(v: unknown, row: Row, i: number): unknown {
 
 const buildRow = (tmpl: Template, row: Row, i: number): Row => buildValue(tmpl, row, i) as Row
 
-// Does this spec contain any function value? Function-bearing ops are seed-
-// sensitive (a closure might call rand), so their hash includes the run seed.
+// Function-bearing specs are seed-sensitive (a closure might call rand), so
+// their node's hash must include the run seed.
 function hasFn(v: unknown): boolean {
   if (typeof v === 'function') return true
   if (v instanceof Expr) return false
@@ -264,8 +228,7 @@ function stableStringify(v: unknown): string {
   return '{' + keys.map((k) => JSON.stringify(k) + ':' + stableStringify(o[k])).join(',') + '}'
 }
 
-// FNV-1a string hash — also the runtime's per-view PRNG seed hash, so keep it
-// exported rather than re-implemented per module.
+// FNV-1a — exported because it's also the runtime's per-view PRNG seed hash.
 export function fnv1a(s: string): number {
   let h = 2166136261 >>> 0
   for (let i = 0; i < s.length; i++) {
@@ -275,8 +238,8 @@ export function fnv1a(s: string): number {
   return h >>> 0
 }
 
-// Content hash of a Table node: op + canonical spec (+ run seed for seed-
-// sensitive nodes) + the hashes of its inputs. Memoized per instance.
+// Content hash: op + canonical spec (+ run seed when seed-sensitive) + input
+// hashes. Memoized per instance.
 export function hashOf(t: Table): number {
   if (t._hash !== null) return t._hash
   const node = t._node
@@ -297,8 +260,8 @@ export interface Memo {
   set(h: number, rows: Row[]): void
 }
 
-// Compute (and cache) a node's rows. With a `memo`, reuse a previous run's rows
-// when the content hash matches — the heart of incremental cooking.
+// With a `memo`, reuse a previous run's rows when the content hash matches —
+// the heart of incremental cooking.
 export function materialize(t: Table, ctx: MatCtx, memo?: Memo): Row[] {
   if (t._rows) return t._rows
   let h: number | null = null
@@ -338,12 +301,8 @@ export interface SimulateOptions {
   collisions?: boolean
 }
 
-// Options shared by the .three.* scene animators, kept internal so the public
-// ThreeChain methods can inline the shape (visible in hover) — `amount` is how
-// far to go (radians for rotate, world units for move, a multiplier for scale);
-// `dur` how many beats the move takes; `axis` picks x/y/z (rotate/move); `ease`
-// shapes the segment arriving at the target; `at` overrides the start beat
-// (default: each create row's own beat).
+// Kept internal so the public ThreeChain methods can inline the option shape —
+// hover on rotate/scale/move then shows exactly what can be passed.
 interface ThreeAnimOpts {
   amount?: number
   dur?: number
@@ -352,21 +311,18 @@ interface ThreeAnimOpts {
   at?: number
 }
 
-// The .three accessor on a scene table: transform animations that read the
-// table's `create` rows and append the update keyframes carrying each object's
-// transform. Every method returns a Table (the base rows plus the new
-// keyframes), so they chain — box().three.rotate().three.scale().rasterize(8).
-// The option shape is inlined on each method so hovering rotate/scale/move shows
-// exactly what you can pass.
+/**
+ * The .three accessor on a scene table: animators that read the table's
+ * `create` rows and append update keyframes carrying each object's transform.
+ * Every method returns a Table (base rows plus keyframes), so they chain —
+ * box().three.rotate().three.scale().rasterize(8).
+ */
 export interface ThreeChain {
-  // Spin each object by `amount` radians about `axis` (default a full turn about
-  // y) over `dur` beats — adds to the object's current rotation.
+  /** Spin each object by `amount` radians about `axis` (default a full turn about y) over `dur` beats — adds to the current rotation. `at` overrides the start beat; `ease` shapes the segment. */
   rotate(opts?: { amount?: number; dur?: number; axis?: 'x' | 'y' | 'z'; ease?: (t: number) => number; at?: number }): Table
-  // Grow/shrink each object by the `amount` factor (default 2×) over `dur` beats
-  // — multiplies the object's current scale uniformly on all axes (sx/sy/sz).
+  /** Grow/shrink each object by the `amount` factor (default 2×) over `dur` beats — multiplies the current scale uniformly (sx/sy/sz). */
   scale(opts?: { amount?: number; dur?: number; ease?: (t: number) => number; at?: number }): Table
-  // Slide each object by `amount` along `axis` (default 1 unit along x) over
-  // `dur` beats — adds to the object's current position.
+  /** Slide each object by `amount` world units along `axis` (default 1 along x) over `dur` beats — adds to the current position. */
   move(opts?: { amount?: number; dur?: number; axis?: 'x' | 'y' | 'z'; ease?: (t: number) => number; at?: number }): Table
 }
 
@@ -379,16 +335,13 @@ export interface DSLContext {
   addGraph(spec: GraphSpec): void
   resolve(name: string): Table
   physics?: () => PhysicsEngine | null
-  // The tap-beat table rows (wall-time button presses), or null. The tempo source
-  // for tempo()/beats().
+  // The tap-beat rows — the tempo source for tempo()/beats().
   tapRows?: () => Row[] | null
-  // The run seed, set by the runtime; folded into seed-sensitive node hashes.
+  // The run seed; folded into seed-sensitive node hashes.
   seed?: number
   // Synchronous lookup for pre-fetched data() URLs.
   getData?(url: string): string
-  // User-editable table storage: returns the live rows for a table with this
-  // column schema, creating it (seeded with `seedRows`, as create events) or
-  // reconciling its columns on first use.
+  // Live rows for a user-editable table, creating/reconciling it on first use.
   editableRows?(name: string, schema: Schema, seedRows?: Row[]): Row[]
 }
 
@@ -423,8 +376,8 @@ export class Table {
     this.name = null
     this._rows = null
     this._hash = null
-    // A literal-rows leaf: its hash is by value (so e.g. rand-derived math rows
-    // are naturally seed-sensitive without any flag).
+    // A literal-rows leaf hashes by value, so rand-derived rows are naturally
+    // seed-sensitive without any flag.
     this._node = { op: 'rows', spec: rows, inputs: [], seedSensitive: false, compute: () => rows }
   }
 
@@ -474,8 +427,7 @@ export class Table {
     return seen
   }
 
-  // map(fn) transforms each row; map(template) builds each row declaratively from
-  // Expr/literals (diffable). Both carry the source row's lineage.
+  /** map(fn) transforms each row; map(template) builds each row declaratively from Expr/literals (diffable). Both carry the source row's lineage. */
   map(fn: (r: Row, i: number) => Row): Table
   map(template: Record<string, unknown>): Table
   map(arg: ((r: Row, i: number) => Row) | Record<string, unknown>): Table {
@@ -487,11 +439,11 @@ export class Table {
     return this._xf('mapT', { tmpl }, (ins) => ins[0].map((r, i) => tag(buildRow(tmpl, r, i), carry(r))), false)
   }
 
-  // Keep rows that match. Pass a { field: value, … } pattern to keep rows where
-  // every field strictly equals its value (multi-key = AND) — e.g.
-  // filter({ id: "ball", type: "update" }); or an Expr predicate for anything
-  // richer — filter(field("v").gt(3)). Both forms are data (no opaque closure),
-  // so the result is diffable and cheap to re-cook when unchanged.
+  /**
+   * Keep rows that match a { field: value, … } pattern (every field strictly
+   * equal, multi-key = AND) or an Expr predicate — filter(field("v").gt(3)).
+   * Both forms are data, so the result is diffable and cheap to re-cook.
+   */
   filter(pred: Record<string, unknown> | Expr): Table {
     if (pred instanceof Expr) {
       const node = pred.node
@@ -505,16 +457,12 @@ export class Table {
       ins[0].filter((r) => keys.every((k) => r[k] === pred[k])).map(recarry), false)
   }
 
-  // flatMap(fn) — fan out each row into zero, one, or many rows (return null to
-  // drop, a row to keep, an array to expand), like Array.flatMap. The function
-  // form for fan-out; for a diffable version use filter(...).emit(template).
+  /** Fan out each row into zero, one, or many rows, like Array.flatMap. For a diffable version use filter(...).emit(template). */
   flatMap(fn: (r: Row, i: number, rows: Row[]) => Row | Row[] | null | undefined): Table {
     return this._xf('flatMap', { fn }, (ins) => ins[0].flatMap((r, i) => spread(fn(r, i, ins[0]), carry(r))), true)
   }
 
-  // emit(template | template[]) — declarative flatMap: produce one or many rows
-  // per source row from Expr/literal templates. The diffable counterpart of
-  // flatMap (pair with filter() for "when X, emit Y").
+  /** Declarative flatMap: produce one or many rows per source row from Expr/literal templates. Pair with filter() for "when X, emit Y". */
   emit(template: Record<string, unknown> | Record<string, unknown>[]): Table {
     return this._xf('emit', { template }, (ins) =>
       ins[0].flatMap((r, i) => {
@@ -600,12 +548,12 @@ export class Table {
     }, typeof key === 'function')
   }
 
-  // Add or overwrite fields on every row. Each spec value is an Expr (evaluated
-  // against the row), a function (r, i) => val, or a plain literal. Expr/literal-
-  // only specs are diffable; function specs are seed-aware. A live Expr binds per
-  // frame: derive({ amount: midi("c4") }) or derive({ py: slider("height") })
-  // leaves a binding that follows the note/slider as the loop replays; a constant
-  // Expr is baked in immediately.
+  /**
+   * Add or overwrite fields on every row; each spec value is an Expr, a
+   * function (r, i) => val, or a literal. A streaming Expr binds per frame —
+   * derive({ py: slider("height") }) follows the slider as the loop replays —
+   * while a constant Expr is baked in immediately.
+   */
   derive(spec: Record<string, Expr | ((r: Row, i: number) => unknown) | unknown>): Table {
     return this._xf('derive', { spec }, (ins) => ins[0].map((r, i) => {
       const next: Row = { ...r }
@@ -697,12 +645,11 @@ export class Table {
     }, false)
   }
 
-  // Pairs up the rows matching a { field: value, … } pattern (every field
-  // strictly equal), cyclically: match k is "second" paired with match k-1 as
-  // "first" — so match 0 pairs with the LAST match, wrapping the sequence into a
-  // cycle. For each pair, fn(first, second) returns the row(s) that replace
-  // `second` in the output; rows that don't match (and unpaired rows generally)
-  // pass through unchanged. e.g. pairBy({ event: "setCode" }, flicker).
+  /**
+   * Pair up the rows matching a { field: value, … } pattern, cyclically (match
+   * 0 pairs with the LAST match); fn(first, second) returns the row(s) that
+   * replace `second`. Non-matching rows pass through unchanged.
+   */
   pairBy(match: Record<string, unknown>, fn: (first: Row, second: Row) => Row | Row[]): Table {
     const keys = Object.keys(match)
     return this._xf('pairBy', { match, fn }, (ins) => {
@@ -724,12 +671,12 @@ export class Table {
     return this._xf('rasterize', { maxBeats }, (ins) => rasterizeRows(ins[0], maxBeats), false)
   }
 
-  // Move a table along the beat axis. Declarative form retime({ offset, scale })
-  // shifts every row's `beat` by `offset` beats and stretches the spacing about
-  // the loop start (beat 1) by `scale` (durations scale too) — diffable/hashable,
-  // the common case. Function form retime(beat => newBeat) remaps each row's beat
-  // arbitrarily (a closure, so hashed by source text, like map(fn)). Rows without
-  // a `beat` are left untouched. shift(beats) is sugar for retime({ offset }).
+  /**
+   * Move a table along the beat axis: retime({ offset, scale }) shifts every
+   * row's `beat` and stretches spacing about the loop start (durations scale
+   * too); retime(beat => newBeat) remaps arbitrarily. Rows without a `beat`
+   * are untouched. shift(beats) is sugar for retime({ offset }).
+   */
   retime(spec: { offset?: number; scale?: number } | ((beat: number) => number)): Table {
     if (typeof spec === 'function') {
       const fn = spec
@@ -751,18 +698,7 @@ export class Table {
     return this.retime({ offset: beats })
   }
 
-  // ── three: animate scene objects over time ──────────────────────────────────
-  // Read this table's `create` rows and, for every object, append the update
-  // keyframes that carry its transform from its current value to one `amount`
-  // away over `dur` beats. rasterize eases every numeric field between the
-  // keyframes that carry it, so each animator writes a START keyframe (the
-  // object's current value) and an END keyframe `dur` beats later — rotate/move
-  // ADD `amount`, scale MULTIPLIES. The base rows pass through unchanged, so the
-  // result is renderable as-is and the animators chain:
-  //   box({ id: "a" })
-  //     .three.rotate({ amount: Math.PI, dur: 8 })
-  //     .three.scale({ amount: 1.5, dur: 8, ease: easeInOut })
-  //     .rasterize(8)
+  /** Animate this table's scene objects over time — see ThreeChain. */
   get three(): ThreeChain {
     return {
       rotate: (opts: ThreeAnimOpts = {}): Table => {
@@ -791,10 +727,9 @@ export class Table {
     }
   }
 
-  // Shared machinery for the .three.* animators: pass the base rows through, then
-  // per create row append a start + end update keyframe `dur` beats apart, with
-  // fields from `fieldsFor`. `opts` is the (serializable) hash spec; an `ease`
-  // function makes the node seed-sensitive, exactly like map(fn).
+  // Shared .three.* machinery: base rows pass through; per create row, append a
+  // start + end update keyframe `dur` beats apart (rasterize eases between
+  // them). An `ease` function makes the node seed-sensitive, like map(fn).
   private _threeAnim(op: string, opts: ThreeAnimOpts, fieldsFor: (create: Row) => { start: Row; end: Row }): Table {
     const { dur = 4, at, ease } = opts
     return this._xf(op, opts, (ins) => {
@@ -851,18 +786,11 @@ class PhysicsBuilder {
 }
 
 // ── Origami ───────────────────────────────────────────────────────────────────
-// A sheet of paper folded by a TABLE OF FOLD STEPS: every row is one fold.
-// p1/p2 give the fold line as two points drawn on the CURRENT folded model
-// (unit square [0,1]², the sheet before any fold); move gives sheet-space
-// marker point(s) ("x,y", ";"-separated, coordinates on the UNFOLDED sheet)
-// naming the flap(s) that swing; kind/pick choose among the valid layer
-// orders when the fold is ambiguous (e.g. kind: "reverse" for an inside
-// reverse fold); at/dur schedule the swing on the beat timeline. Each row
-// is solved exactly: faces are cut along the line, the flaps reflect, and
-// the layer order is computed — a row that cannot fold flat is an error
-// naming the step, not a silently dead fold. Playback drives one numeric
-// field, `fold`: k means the first k folds have landed, fractional values
-// swing the next flap through 3D about its fold line.
+// A sheet of paper folded by a table of fold steps (row fields: schemas.steps).
+// Each row is solved exactly — a row that cannot fold flat is an error naming
+// the step, not a silently dead fold. Playback drives one numeric field,
+// `fold`: k means the first k folds have landed; fractional values swing the
+// next flap through 3D about its fold line.
 
 export class OrigamiBuilder {
   private _size: number
@@ -876,7 +804,7 @@ export class OrigamiBuilder {
     this._ctx = ctx
   }
 
-  // One table = the whole folding, one row per fold, applied in order.
+  /** Fold the sheet: one row per fold (see schemas.steps for the columns), applied in order. */
   steps(steps: Table | Row[]): OrigamiBuilder {
     const next = new OrigamiBuilder(this._size, this._ctx)
     next._id = this._id
@@ -891,14 +819,12 @@ export class OrigamiBuilder {
     return this._compiled
   }
 
-  // The create row: compiled program + fold at 0 (flat sheet). Extra props
-  // (id, color, px/py/pz, rx/ry/rz, beat, …) merge over defaults.
+  /** The create row: compiled program + fold at 0 (flat sheet). Extra props (id, color, px/py/pz, …) merge over defaults. */
   spawn(props: Row = {}): Table {
     const program = this.program()
     this._id = props.id ?? this._id
-    // turn-overs rotate about the axis the VIEWER sees as vertical: the
-    // scene rotates the whole object by rz, so undo it to find which
-    // paper direction displays upright
+    // Turn-overs rotate about the axis the VIEWER sees as vertical: the scene
+    // rotates the whole object by rz, so undo it here.
     const rz = typeof props.rz === 'number' ? props.rz : 0
     program.flipAxis = [Math.sin(rz), Math.cos(rz)]
     return new Table([{
@@ -908,10 +834,11 @@ export class OrigamiBuilder {
     }], this._ctx)
   }
 
-  // Fold schedule → update keyframes driving `fold`. With no argument, uses
-  // the at/dur timings from the steps() rows (at defaults to the row's
-  // position, dur to 0.75 beats). Override with rows { step?, at, dur? } to
-  // retime, or pass nothing and retime the table instead.
+  /**
+   * Fold schedule → update keyframes driving `fold`. With no argument, uses
+   * the at/dur timings from the steps() rows; override with rows
+   * { step?, at, dur? } to retime.
+   */
   sequence(steps?: Table | Row[] | null, opts: { id?: unknown } = {}): Table {
     const id = opts.id ?? this._id
     const program = this.program()
@@ -939,16 +866,14 @@ export class OrigamiBuilder {
     return new Table(out, this._ctx)
   }
 
-  // The fold value at a beat under the table's own schedule — handy in tests
-  // and expressions.
+  /** The fold value at a beat under the table's own schedule. */
   foldAt(beat: number): number {
     return foldValueAt(this.program(), beat)
   }
 }
 
 export interface OrigamiFactory {
-  // A bare square sheet (unit square, displayed spanning [-size, size]²,
-  // default size 1) — fold it with .steps(table).
+  /** A bare square sheet (displayed spanning [-size, size]², default size 1) — fold it with .steps(table). */
   (opts?: { size?: number }): OrigamiBuilder
 }
 
@@ -966,10 +891,7 @@ class MathBuilder {
     this._ctx = ctx
   }
 
-  // Sample over `beats` beats, one row per frame on the beat grid. `t` (the value
-  // passed to the math fn) is elapsed beats — 0 at the first row. Eager (a
-  // literal-rows leaf): the values — which may come from rand — are baked in, so
-  // the leaf's hash is value-based and naturally seed-sensitive.
+  /** Sample over `beats` beats, one row per frame; `t` passed to the fn is elapsed beats (0 at the first row). Eager, so rand-derived values hash by value. */
   range(beats: number): Table {
     const n = Math.max(1, Math.round(beats * FRAMES_PER_BEAT))
     const rows: Row[] = new Array(n)
@@ -990,13 +912,8 @@ export const EASINGS = {
 
 export type Easings = typeof EASINGS
 
-// ── Canonical table schemas ──────────────────────────────────────────────────
-// The column schemas of the tables the runtime gives meaning to by name, so an
-// editable version comes out with the right columns, enum dropdowns, and code
-// languages without restating them: editable("hydra", schemas.hydra). Keys
-// match the table names the runtime looks for. Frozen — a schema is a shared
-// constant, not per-run state; spread one to extend it:
-// editable("hydra", { ...schemas.hydra, layerName: "string" }).
+// Canonical schemas for the tables the runtime knows by name (surfaced to the
+// editor as `schemas` — its JSDoc there carries the usage docs).
 export const SCHEMAS = deepFreeze({
   /**
    * The hydra view's event stream: one row per event, placed on the loop by
@@ -1086,21 +1003,8 @@ function deepFreeze<T>(value: T): T {
   return value
 }
 
-// ── Scene primitives ───────────────────────────────────────────────────────
-// Sugar for the verbose "create" row you'd otherwise hand-write for a 3D scene
-// object. box()/sphere()/cylinder()/cone()/torus()/text() each return a Table
-// holding one { type: "create", shape } row, defaulted to beat 1 at the origin
-// with no rotation, so only the fields you care about need setting. `id`
-// defaults to the shape name — give distinct ids for multiple objects. Being
-// Tables, they chain and concat like everything else:
-//   box({ id: "a", px: -1, color: 0x4a9eff })
-//     .concat(sphere({ id: "b", px: 1, r: 0.4 }))
-//     .rasterize(8)
-// Size fields follow the row schema shared with the renderer/physics: box uses
-// hx/hy/hz (half-extents), sphere/torus use r, cylinder/cone use r + h (half-
-// height), text uses text + size. Sizes left unset fall back to the shape's
-// defaults in the renderer. Any renderer field (color, rx/ry/rz, …) can be set
-// via props.
+// One default "create" row for a 3D scene object — the shared implementation
+// behind box()/sphere()/… (usage docs live on the DSLSurface members).
 function sceneObject(shape: string, props: Row, ctx: DSLContext | null): Table {
   return new Table([{
     id: shape, type: 'create', beat: 1, shape,
@@ -1125,84 +1029,98 @@ function parseCSV(text: string): Row[] {
   })
 }
 
+// The globals a user program sees. JSDoc on these members IS the editor's
+// hover documentation (gen-lang-env.js copies it onto the generated ambient
+// globals), so it is deliberately fuller than the types alone — write it for
+// the livecoder.
 export type DSLSurface = Easings & {
   define(name: string, fn: ViewFn): void
   define(name: string, group: string, fn: ViewFn): void
   table(name: string): Table
   math(fn: (t: number) => number): MathBuilder
   rows(arr: Row[] | null | undefined): Table
-  // One row per entry in `values` (so the output length matches `values`),
-  // cycling through `rows` as it goes: output row i is { ...rows[i %
-  // rows.length], ...values[i] }. `rows` is the short array rotated through
-  // (a repeating base/pattern); `values` is the longer array of overrides
-  // merged on top.
+  /**
+   * One row per entry in `values`, cycling through `rows` as it goes: output
+   * row i is { ...rows[i % rows.length], ...values[i] } — a short repeating
+   * base pattern with a longer array of overrides merged on top.
+   */
   rotate(rows: Row[] | null | undefined, values: Row[] | null | undefined): Table
   csv(text: string): Table
   data(url: string): Table
   json(data: Row[] | string | unknown): Table
   grid(cols: number, rowsN: number, opts?: { spacing?: number; y?: number }): Table
-  // Camera moves as beat-timed keyframes: one row per keyframe
-  // { beat?, px, py, pz, tx, ty, tz, fov? }. The first becomes the scene's
-  // camera create row, the rest updates — all id "camera", shape "camera" —
-  // so it rides events → rasterize like any object and interpolates between
-  // keyframes for free. px/py/pz place the eye, tx/ty/tz the look-at target
-  // (default origin), fov the vertical field of view in degrees (lower = a
-  // longer lens). Concat it into your events stream, then rasterize.
+  /**
+   * Camera moves as beat-timed keyframes: one row per keyframe
+   * { beat?, px, py, pz, tx, ty, tz, fov? }. px/py/pz place the eye, tx/ty/tz
+   * the look-at target (default origin), fov the vertical field of view in
+   * degrees. The first row becomes the camera's create row, the rest updates,
+   * so it rides events → rasterize and interpolates like any object — concat
+   * it into your events stream, then rasterize.
+   */
   camera(keyframes: Row[] | null | undefined): Table
-  // Scene-primitive builders: each returns a Table with one create row for a
-  // 3D object (beat 1, at the origin, no rotation), so only the fields you set
-  // matter. `id` defaults to the shape name. Concat them into a scene and
-  // rasterize. Sizes: box→hx/hy/hz, sphere/torus→r, cylinder/cone→r+h,
-  // text→text+size; unset sizes use the renderer's shape defaults.
+  /** One "create" row for a box (beat 1, origin, id defaults to the shape name) — set only the fields you care about, then concat into a scene and rasterize. Size: hx/hy/hz half-extents. */
   box(props?: Row): Table
+  /** One "create" row for a sphere (beat 1, origin, id defaults to the shape name). Size: r. */
   sphere(props?: Row): Table
+  /** One "create" row for a cylinder (beat 1, origin, id defaults to the shape name). Size: r + h (half-height). */
   cylinder(props?: Row): Table
+  /** One "create" row for a cone (beat 1, origin, id defaults to the shape name). Size: r + h (half-height). */
   cone(props?: Row): Table
+  /** One "create" row for a torus (beat 1, origin, id defaults to the shape name). Size: r. */
   torus(props?: Row): Table
+  /** One "create" row of extruded 3D text (beat 1, origin, id defaults to "text"). Fields: text + size (cap height per line). */
   text(props?: Row): Table
-  // The generic form behind box()/sphere()/… — build a create row for any
-  // shape string, including future shapes without a named helper.
+  /** The generic form behind box()/sphere()/… — a create row for any shape string, including shapes without a named helper. */
   object(shape: string, props?: Row): Table
-  // A three.js primitive → a table of its points. Tessellates the shape (the
-  // SAME geometry the renderer draws for box()/sphere()/…, sized by the same
-  // hx/hy/hz | r | h fields) and returns one row per vertex: { i, px, py, pz,
-  // nx, ny, nz } — position and surface normal in the shape's local space. Pass
-  // `segments` to raise the tessellation for a denser cloud. The rows are plain
-  // numbers, so they chain and transform like any table:
-  //   points("sphere", { r: 1, segments: 48 }).map({ px: field("nx"), ... })
+  /**
+   * A three.js primitive → a table of its points: one row per vertex
+   * { i, px, py, pz, nx, ny, nz } (position + surface normal in local space),
+   * tessellating the same geometry the renderer draws, sized by the same
+   * hx/hy/hz | r | h fields. Pass `segments` for a denser cloud. Plain
+   * numbers, so the rows chain like any table.
+   */
   points(shape: string, props?: Row): Table
-  // A table of points → a three.js primitive: a BufferGeometry whose position
-  // (and, when every row has nx/ny/nz, normal) attribute is read from the rows'
-  // px/py/pz (nx/ny/nz). The inverse of points(): geometry(points("box")) round-
-  // trips to an equivalent box geometry.
+  /** A table of points → a BufferGeometry, reading position (and normal, when every row has nx/ny/nz) from px/py/pz (nx/ny/nz). The inverse of points(). */
   geometry(points: Table | Row[]): BufferGeometry
   physics(source: Table | Row[]): PhysicsBuilder
-  // Folding paper: origami() is a bare sheet. Chain .steps(table) to fold it
-  // by instructions — each row a fold/reflection along a line through two
-  // points on known edges — then .spawn({ id, color, ... }) for the create
-  // row and .sequence() for beat-timed fold keyframes.
+  /**
+   * Folding paper: origami() is a bare sheet. Chain .steps(table) to fold it
+   * by instructions (one fold per row — see schemas.steps), then
+   * .spawn({ id, color, … }) for the create row and .sequence() for beat-timed
+   * fold keyframes.
+   */
   origami: OrigamiFactory
-  // A user-editable table: rows are entered/edited in the table panel (not
-  // computed), keyed by `name` so edits persist across runs — stored as change
-  // *events*, of which the visible table is the fold. `schema` declares the
-  // column names + types (number → numeric input; code → opens in the main
-  // editor); a column here tracks the schema exactly (added when declared,
-  // gone when it isn't) unless the table panel has genuinely touched it (e.g.
-  // "+ column", or a rename/retype), which claims it and makes it survive
-  // regardless of what's declared on a later Run. `seedRows` populate the
-  // table the first time it's created.
+  /**
+   * A user-editable table: rows are entered/edited in the table panel (not
+   * computed), keyed by `name` so edits persist across runs. `schema` declares
+   * the column names + types (number → numeric input; code → opens in the main
+   * editor); a column tracks the schema exactly unless the table panel has
+   * genuinely touched it, which claims it for the user. `seedRows` populate
+   * the table the first time it's created.
+   */
   editable(name: string, schema: Schema, seedRows?: Row[]): Table
   field(name: string): Expr
   lit(v: number | string | boolean | null): Expr
   idx(): Expr
+  /** A live MIDI value at the playhead, e.g. midi("c4") — usable anywhere an Expr is, and chainable: midi("c4").mul(2). */
   midi(note: string, channel?: number | null): Expr
-  // A live on-screen slider value, e.g. slider("brightness"). Sliders are
-  // declared by defining a view named "sliders" whose rows carry { id, min,
-  // max } (plus an optional `default`); each shows as a labelled control over
-  // the visual and records its automation the way MIDI does.
+  /**
+   * A live on-screen slider value, e.g. slider("brightness"). Sliders are
+   * declared by defining a view named "sliders" (rows { id, min, max,
+   * default? }); each shows as a labelled control over the visual and records
+   * its automation the way MIDI does.
+   */
   slider(id: string): Expr
+  /** The tap-beat table: one row per wall-time button press ({ beat, time }) — the source of truth for tempo. */
   taps(): Table
+  /** Seconds per beat derived from the taps (average interval), or `fallback` (default 0.5s = 120 BPM) until two taps exist. The playhead already runs at this tempo; tempo() is for programs that want the number. */
   tempo(fallback?: number): number
+  /**
+   * A timeline that loops every `count` playback beats. Tempo is automatic, so
+   * this is purely a retime: identity by default (content plays once per
+   * loop); pass { fit } in source-beats to stretch that much content across
+   * the window — beats(16, { fit: 8 }) plays 8 beats of content at half speed.
+   */
   beats(count: number, opts?: { fallback?: number; fit?: number }): Table
   /**
    * Canonical schemas for the tables the runtime knows by name — pass one to
@@ -1249,10 +1167,8 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       return new Table(out, ctx)
     },
     physics: (source: Table | Row[]) => new PhysicsBuilder(source, ctx!),
-    // Camera keyframes → the "camera" scene object's create + update events.
-    // The first keyframe seeds a full default pose (eye at 0,0,5 looking at the
-    // origin) so a partial first row is still well-defined; later keyframes need
-    // only the fields they change.
+    // The first keyframe seeds a full default pose so a partial first row is
+    // still well-defined.
     camera: (keyframes: Row[] | null | undefined): Table => new Table(
       (keyframes ?? []).map((k, i) => {
         const beat = typeof k.beat === 'number' ? k.beat : 1
@@ -1262,14 +1178,7 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       }),
       ctx,
     ),
-    // Scene primitives — one create row apiece, defaulted to beat 1 at the
-    // origin (see sceneObject). object() is the generic; the named helpers are
-    // sugar so autocomplete surfaces the available shapes.
     object: (shape: string, props: Row = {}) => sceneObject(shape, props, ctx),
-    // Primitive ⇄ points bridge (see three-points.ts). points() samples a
-    // shape's vertices+normals into a table; geometry() rebuilds a three.js
-    // primitive from such a table. `segments` (if a number) sets tessellation;
-    // the remaining props size the shape (hx/hy/hz | r | h).
     points: (shape: string, props: Row = {}): Table => {
       const { segments, ...dims } = props
       const geo = primitiveGeometry(shape, dims, typeof segments === 'number' ? { segments } : {})
@@ -1295,20 +1204,8 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     idx,
     midi,
     slider,
-    // The tap-beat table: one row per wall-time button press ({ beat, time } —
-    // ordinal + absolute UTC epoch ms). The source of truth for tempo.
     taps: () => new Table((ctx?.tapRows?.() ?? []).map((r) => ({ ...r })), ctx),
-    // Seconds per beat derived from the tap-beat table (the average interval), or
-    // `fallback` (default 0.5s = 120 BPM) until two taps are recorded. The
-    // playhead already advances at this tempo automatically; tempo() is here for
-    // programs that want the number.
     tempo: (fallback = DEFAULT_BEAT_SECONDS): number => beatSecondsFromTaps(ctx?.tapRows?.()) ?? fallback,
-    // A timeline that loops every `count` playback beats. Tempo is automatic
-    // (the playhead runs at the tapped tempo regardless), so this is purely a
-    // RETIME: two keyframes mapping the count-beat loop onto a span of `source`
-    // beats. Identity by default (content plays once per loop); pass { fit } in
-    // source-beats to stretch a shorter/longer stretch of content across the
-    // window — e.g. beats(16, { fit: 8 }) plays 8 beats of content at half speed.
     beats: (count: number, { fit }: { fit?: number } = {}): Table => {
       const spanBeats = fit != null ? fit : count
       return new Table([

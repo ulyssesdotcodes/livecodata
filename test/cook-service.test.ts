@@ -15,8 +15,6 @@ function structuredCloneLike(v: unknown): unknown {
   return JSON.parse(JSON.stringify(v))
 }
 
-// --- transfer layer -----------------------------------------------------------
-
 test('pack/unpack round-trips functions through a structured clone', () => {
   const rows: Row[] = [{ beat: 1, ease: EASINGS.easeInOut, fn: (t: number) => t * 2 }]
   const out = unpackRows(structuredCloneLike(packRows(rows)) as Row[])
@@ -39,17 +37,6 @@ test('streaming bindings ({ $expr }) pass through untouched', () => {
   const out = unpackRows(structuredCloneLike(packRows(rows)) as Row[])
   assert.deepEqual(out[0].value, binding)
 })
-
-test('nested arrays/objects with functions inside round-trip', () => {
-  const rows: Row[] = [{ steps: [{ ease: EASINGS.easeIn }, { ease: 'linear' }], meta: { deep: { f: (x: number) => x + 1 } } }]
-  const out = unpackRows(structuredCloneLike(packRows(rows)) as Row[])
-  const steps = out[0].steps as Array<Record<string, unknown>>
-  assert.equal((steps[0].ease as (t: number) => number)(0.5), EASINGS.easeIn(0.5))
-  assert.equal(steps[1].ease, 'linear')
-  assert.equal(((out[0].meta as { deep: { f: (x: number) => number } }).deep.f)(2), 3)
-})
-
-// --- cook service ---------------------------------------------------------------
 
 const req = (code: string, extra: Partial<Parameters<ReturnType<typeof createCookService>['handle']>[0]> = {}) => ({
   id: 1,
@@ -84,14 +71,12 @@ test('editable() serves the snapshot when present, else conformed seeds, and rep
 editable("notes", { beat: "number", x: "number" }, [{ beat: 1, x: 5 }])
 define("out", (rand, table) => table("notes"))
 `
-  // No snapshot: the seed rows drive the cook, and the declaration is reported.
   const fresh = service.handle(req(program))
   assert.equal(fresh.ok, true)
   if (!fresh.ok) return
   assert.deepEqual(fresh.declared, [{ name: 'notes', schema: { beat: 'number', x: 'number' }, seedRows: [{ beat: 1, x: 5 }] }])
   assert.deepEqual(unpackCooked(fresh.cooked).views.get('out')!.rows.map((r) => ({ beat: r.beat, x: r.x })), [{ beat: 1, x: 5 }])
 
-  // With a snapshot (the store's current rows): the snapshot wins over seeds.
   const edited = service.handle(req(program, { id: 2, editables: [{ name: 'notes', rows: [{ beat: 2, x: 9 }] }] }))
   assert.equal(edited.ok, true)
   if (!edited.ok) return
@@ -109,8 +94,6 @@ test('tap rows flow into tempo() and a broken program returns an error response'
   assert.equal(broken.ok, false)
   if (!broken.ok) assert.ok(broken.error.length > 0)
 })
-
-// --- client ----------------------------------------------------------------------
 
 test('the client resolves each cook against its own response id', async () => {
   // A fake worker wired straight to a real service, answering out of order.

@@ -1,13 +1,7 @@
-// Default dimensions for the DSL's scene shapes.
-// ----------------------------------------------------------------------------
-// The renderer (three-scene.ts makeGeometry) and the physics engine
-// (physics.ts makeShape) build the *same object* from the same row — rendered
-// geometry and collision shape must agree, or visuals silently desynchronize
-// from the simulation. Both import this one table so an edit can't reach one
-// side only. Conventions shared by both: hx/hy/hz are half-extents (a box
-// renders as 2·h per axis), r is a radius, h is a half-height (cylinders and
-// cones render as 2·h).
-// ----------------------------------------------------------------------------
+// Default dimensions for the DSL's scene shapes. The renderer (three-scene.ts
+// makeGeometry) and the physics engine (physics.ts makeShape) both import this
+// one table so rendered geometry and collision shape can't desynchronize.
+// hx/hy/hz are half-extents, r a radius, h a half-height (rendered as 2·h).
 
 export const SHAPE_DEFAULTS: Record<string, Record<string, number>> = {
   box:      { hx: 0.25, hy: 0.25, hz: 0.25 },

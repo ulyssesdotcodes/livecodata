@@ -1,8 +1,6 @@
-// Cook client — the main-thread handle on the cook worker.
-// ----------------------------------------------------------------------------
-// Wraps the Worker in a promise-per-request API and unpacks the transferred
-// result back into real Tables (see cook-transfer.ts). Takes anything
-// Worker-shaped so tests can drive it with a fake message channel.
+// Cook client — the main-thread handle on the cook worker: promise-per-request,
+// unpacking transferred results back into real Tables (cook-transfer.ts).
+// Takes anything Worker-shaped so tests can drive it with a fake channel.
 
 import { unpackCooked } from './cook-transfer.js'
 import type { CookRequest, CookResponse, DeclaredEditable } from './cook-service.js'
@@ -20,9 +18,7 @@ export interface CookInput {
   dataCache: Map<string, string>
   tapRows: Row[]
   editables: Array<{ name: string; rows: Row[] }>
-  // Seed rows for tables the store hasn't seen yet, keyed by table name — see
-  // CookRequest.seeds. Set when opening an example whose editable table data
-  // lives with the sample rather than inline in the program.
+  // See CookRequest.seeds.
   seeds?: Record<string, Row[]>
 }
 

@@ -1,18 +1,8 @@
-// Combined table + graph panel — the humble SolidJS view over the model in
-// ../table-panel.ts. Each tab shows one view; if the view has numeric columns
-// a chart appears at the top (auto-detected or from .graph()). Editable
-// tables additionally show two sub-tabs below the main tab strip — "Table"
-// (the interactive fold, shown by default) and "Events" (its read-only
-// `name·events` edit history) — so switching between them doesn't require
-// hunting for a separate top-level tab. The table autoscrolls to the active
-// row during playback unless the user has manually scrolled since the last
-// time Play was pressed.
-//
-// All decisions (which tabs exist, which chart to draw, display order, which
-// row is active) come from the model's pure functions; every interaction is
-// forwarded straight to the EditableTableStore. The `tick` signal is bumped
-// after each store write so reads re-fold — the reactive equivalent of the
-// old imperative re-render after every edit.
+// Combined table + graph panel — the humble Solid view over ../table-panel.ts:
+// one tab per view, a chart when numeric columns exist, and "Table"/"Events"
+// sub-tabs for editable tables. All decisions come from the model's pure
+// functions; every interaction forwards to the EditableTableStore, and the
+// `tick` signal is bumped after each store write so reads re-fold.
 
 import {
   createSignal, createMemo, createEffect, on, onCleanup, untrack,
@@ -35,10 +25,8 @@ import { DISABLED_COL, cellValid, invalidColumns, type EditableTableStore, type 
 export { EVENTS_SUFFIX }
 export type { TablePanel, TablePanelOptions, PeerPresence }
 
-// A comma-separated, per-user-colored name list — the visible half of a
-// presence indicator (the tab ring / cell outline is the color-only half).
-// Shared between the tab strip (who has this table open) and a cell's
-// last-editor marker (who last touched it).
+// Per-user-colored name list — the visible half of a presence indicator,
+// shared by the tab strip and a cell's last-editor badge.
 function PresenceNames(nameProps: { peers: PeerPresence[] }) {
   return (
     <For each={nameProps.peers}>
@@ -70,46 +58,32 @@ interface PanelProps extends TablePanelOptions {
 function TablePanelView(props: PanelProps) {
   const { store, views, graphs, current, setCurrent, presence } = props
 
-  // Multiplayer presence: announce every tab switch, including the initial
-  // one (not deferred) — main.ts uses this to publish which table this
-  // replica has open.
+  // Presence: announce every tab switch, including the initial one (not
+  // deferred) — main.ts publishes which table this replica has open.
   createEffect(() => props.onSelectTable?.(current()))
 
-  // Bumped after every store write so memos re-read the (external,
-  // non-reactive) EditableTableStore fold.
+  // Bumped after every store write so memos re-read the non-reactive
+  // EditableTableStore fold.
   const [tick, setTick] = createSignal(0)
   const bump = () => setTick((t) => t + 1)
 
-  // A Run refreshes `views` from outside the panel and can change the store
-  // underneath it — turning an editable table into a computed view of the same
-  // name, or dropping one the program stopped declaring (see retainDeclared).
-  // Only local edits bump `tick`, so pair every external `views` refresh with a
-  // bump, or the tick-gated store reads (isEditableTable, a tab's editable/×)
-  // would keep showing the pre-Run shape.
+  // A Run can change the store underneath the panel (see retainDeclared), but
+  // only local edits bump `tick` — so pair every external `views` refresh
+  // with a bump or tick-gated store reads would show the pre-Run shape.
   createEffect(on(views, () => bump(), { defer: true }))
 
   const [filter, setFilter] = createSignal('')
-  // Only one cell can be in edit mode at a time (key: `${row}:${col}` of the
-  // current table); an outside mousedown cancels it, mirroring the old
-  // closeActiveEdit behavior.
+  // At most one cell in edit mode at a time; an outside mousedown cancels it.
   const [editingCell, setEditingCell] = createSignal<string | null>(null)
-  // A cell whose editor was just opened by Tab navigation and must survive the
-  // asynchronous panel refresh that follows a store write (see advanceEdit /
-  // guardFocus). Null unless a guard is active.
+  // Cell whose editor was just opened by Tab and must survive the async panel
+  // refresh that follows a store write (see advanceEdit / guardFocus).
   let focusGuardKey: string | null = null
-  // Same one-at-a-time pattern for a column header's settings popover.
   const [openColMenu, setOpenColMenu] = createSignal<string | null>(null)
-  // …and for a row's "compiled code at this event" info popover (hydra rows).
   const [openInfoRow, setOpenInfoRow] = createSignal<string | null>(null)
-  // Editable tables show two sub-tabs below the main tab strip: the
-  // interactive fold ("table") and the read-only `name·events` history
-  // ("events"). Resets to "table" whenever the selected tab changes.
   const [subView, setSubView] = createSignal<'table' | 'events'>('table')
   const [graphCollapsed, setGraphCollapsed] = createSignal(window.matchMedia('(max-width: 767px)').matches)
   const [colRanges, setColRanges] = createSignal<ColRange[] | null>(null)
 
-  // Outside mousedowns cancel the open cell editor / column-settings popover /
-  // row-info popover.
   listenGlobal(document, 'mousedown', (e) => {
     const target = e.target as HTMLElement | null
     if (editingCell() != null && !target?.closest?.('.editable-cell.editing')) setEditingCell(null)
@@ -122,12 +96,9 @@ function TablePanelView(props: PanelProps) {
     return allNames(views(), store)
   })
 
-  // Keep the selected tab valid as the tab set changes (same policy the old
-  // rebuildTabs applied): hold the current one, else prefer "events", else last.
-  // A pending restore (desiredTable, set on session/example resume) wins the
-  // moment its table appears among the tabs — it may not exist yet when the
-  // restore is requested, since cooked-view tabs only show up after the cook —
-  // and is cleared once honored so it never fights a later manual tab switch.
+  // A pending restore (desiredTable) wins the moment its table appears among
+  // the tabs — cooked-view tabs only exist after the cook — and is cleared
+  // once honored so it never fights a later manual tab switch.
   createEffect(() => {
     const ns = names()
     const want = props.desiredTable()
@@ -139,9 +110,8 @@ function TablePanelView(props: PanelProps) {
     setCurrent((cur) => fallbackTab(ns, cur))
   })
 
-  // Editing another table resets transient edit state, like the old rebuild did,
-  // and drops back to the "table" sub-tab (never leaves a freshly-selected
-  // table showing its events history by default).
+  // Switching tabs resets transient edit state and drops back to the "table"
+  // sub-tab.
   createEffect(on(current, () => {
     setEditingCell(null)
     setOpenColMenu(null)
@@ -149,8 +119,7 @@ function TablePanelView(props: PanelProps) {
     setSubView('table')
   }, { defer: true }))
 
-  // Whether the current tab is a genuine editable table (has a fold worth
-  // showing) as opposed to a cooked view or a log table.
+  // A genuine editable table, as opposed to a cooked view or a log table.
   const isEditableTable = createMemo(() => {
     tick()
     const name = current()
@@ -165,12 +134,10 @@ function TablePanelView(props: PanelProps) {
     return data ? { name, data } : null
   })
 
-  // Keep a just-opened editor focused across the asynchronous panel refresh
-  // that a store write triggers (editableStore.onChange re-renders these rows on
-  // the next animation frame, which blurs the editor — and its blur handler
-  // would then close it). While the guard is live, a spurious blur is ignored
-  // (see commit's viaBlur guard); here we simply restore focus once the refresh
-  // has settled, then release the guard.
+  // Keep a just-opened editor focused across the async panel refresh a store
+  // write triggers (the refresh blurs the editor, whose blur handler would
+  // close it): commit's viaBlur guard ignores the spurious blur, and this
+  // restores focus once the refresh settles.
   function guardFocus(key: string): void {
     focusGuardKey = key
     const restore = (): void => {
@@ -187,11 +154,9 @@ function TablePanelView(props: PanelProps) {
     })
   }
 
-  // Tab / Shift+Tab out of an open cell editor: the caller commits the current
-  // value first, then this moves the editor to the adjacent column in the same
-  // row, wrapping to the next/previous display row at a row's edge. Code cells
-  // open in the main editor (exactly like a click); every other type opens its
-  // inline editor in place.
+  // Tab/Shift+Tab out of a cell editor (the caller commits first): move to
+  // the adjacent column, wrapping to the next/previous display row. Code
+  // cells open in the main editor; every other type edits inline.
   function advanceEdit(rowIndex: number, colName: string, dir: 1 | -1): void {
     const ed = editableData()
     if (!ed) return
@@ -223,9 +188,8 @@ function TablePanelView(props: PanelProps) {
   const roTable = createMemo(() => {
     const name = current()
     if (!name || editableData()) return null
-    // An editable table's "events" sub-tab reads its history from the
-    // `name·events` view main injects; everything else (cooked views, log
-    // tables) is keyed by its own name.
+    // The "events" sub-tab reads the injected `name·events` view; everything
+    // else is keyed by its own name.
     const key = isEditableTable() ? name + EVENTS_SUFFIX : name
     return views().get(key) ?? null
   })
@@ -354,8 +318,8 @@ function TablePanelView(props: PanelProps) {
       bump()
     }
 
-    // Measured after opening (not guessed) so a menu near the right edge of
-    // the viewport clamps against its real width instead of overflowing it.
+    // Measured after opening so a menu near the viewport's right edge clamps
+    // against its real width instead of overflowing.
     createEffect(() => {
       if (!menuOpen() || !settingsBtn || !menuEl) return
       const r = settingsBtn.getBoundingClientRect()
@@ -414,8 +378,8 @@ function TablePanelView(props: PanelProps) {
                   <For each={COLUMN_TYPES}>
                     {(t) => <option value={t} selected={t === col.type}>{t}</option>}
                   </For>
-                  {/* Enum columns are code-only, not in COLUMN_TYPES — surface
-                      the current type so the menu isn't mislabeled. */}
+                  {/* Enum is code-only, not in COLUMN_TYPES — surface it so
+                      the menu isn't mislabeled. */}
                   <Show when={col.type === 'enum'}>
                     <option value="enum" selected disabled>enum</option>
                   </Show>
@@ -465,15 +429,10 @@ function TablePanelView(props: PanelProps) {
     )
   }
 
-  // A single editable cell: click to open an editor in place (number box for
-  // numbers, checkbox for booleans, text box otherwise); collapses back to a
-  // plain display on commit or on an outside click. Enum cells skip that
-  // dance — they show an always-live dropdown, so a value is one pick away
-  // mid-performance. Committing appends a set-cell event to the store — the
-  // edit *is* the event; the re-fold that follows shows the new state.
-  // Code-typed cells instead hand their text to the main editor (onEditCell).
-  // A value that doesn't fit the column's type (a misspelled enum, a number
-  // typed as text) gets a `cell-invalid` marker (see cellValid).
+  // One editable cell: click opens a typed editor in place; enums instead
+  // show an always-live dropdown so a value is one pick away mid-performance.
+  // Committing appends a set-cell event to the store — the edit *is* the
+  // event. Values that don't fit the column type get a `cell-invalid` marker.
   function EditableCell(cellProps: { table: string; rowIndex: number; col: EditableColumn }) {
     const { table, rowIndex, col } = cellProps
     const key = `${rowIndex}::${col.name}`
@@ -484,9 +443,8 @@ function TablePanelView(props: PanelProps) {
     const commit = (value: unknown, viaBlur = false): void => {
       // Guard the Enter-then-blur double fire: only the open editor commits.
       if (editingCell() !== key) return
-      // A blur on a cell Tab just moved into is spurious — the async panel
-      // refresh (see guardFocus) blurred it, not the user. Leave it open; the
-      // guard restores focus.
+      // A blur while the focus guard is live is the async panel refresh, not
+      // the user — leave the editor open (guardFocus restores focus).
       if (viaBlur && key === focusGuardKey) return
       store.setCell(table, rowIndex, col.name, value)
       setEditingCell(null)
@@ -494,9 +452,8 @@ function TablePanelView(props: PanelProps) {
     }
 
     const keyHandler = (e: KeyboardEvent, commitNow: () => void): void => {
-      // Tab moves to the next column (Shift+Tab the previous), saving the
-      // current edit on the way out. preventDefault so the browser doesn't also
-      // shift focus and fight our editor placement.
+      // preventDefault so the browser doesn't also shift focus and fight our
+      // editor placement.
       if (e.key === 'Tab') {
         e.preventDefault()
         commitNow()
@@ -507,9 +464,7 @@ function TablePanelView(props: PanelProps) {
       if (e.key === 'Enter' && e.ctrlKey && props.onCtrlEnter) props.onCtrlEnter()
     }
 
-    // Collaborators whose last edit landed on this cell: outlined in their
-    // color(s), with their name(s) visible in a corner badge (not just a
-    // hover title) — usually one peer, occasionally two sharing a cell.
+    // Collaborators whose last edit landed on this cell.
     const editors = () => lastEditors(presence(), table, rowIndex, col.name)
 
     return (
@@ -536,8 +491,8 @@ function TablePanelView(props: PanelProps) {
             value={raw() == null ? '' : String(raw())}
             onChange={(e) => { store.setCell(table, rowIndex, col.name, e.currentTarget.value); bump() }}
           >
-            {/* A stray value not in the options still shows (and stays flagged)
-                until the user picks a valid one. */}
+            {/* A stray value not in the options still shows, flagged, until a
+                valid pick. */}
             <Show when={invalid() && raw() != null && raw() !== ''}>
               <option value={String(raw())} selected>{String(raw())}</option>
             </Show>
@@ -564,8 +519,7 @@ function TablePanelView(props: PanelProps) {
               ref={(el) => queueMicrotask(() => el.focus())}
               onChange={(e) => commit(e.currentTarget.checked)}
               onKeyDown={(e) => {
-                // A checkbox commits on toggle, so there's nothing to save here
-                // — Tab just advances to the next/previous column.
+                // A checkbox commits on toggle — Tab just advances.
                 if (e.key !== 'Tab') return
                 e.preventDefault()
                 setEditingCell(null)
@@ -598,10 +552,9 @@ function TablePanelView(props: PanelProps) {
           <Show when={col.type === 'string' || col.type === 'code'}>
             {(() => {
               let txt: HTMLInputElement | undefined
-              // Commit the field's value directly rather than via blur(): Tab
-              // needs to commit and then move the editor in the same handler,
-              // and a synchronous blur() unmounts this input mid-flight, which
-              // strands focus before the next cell can take it.
+              // Commit directly rather than via blur(): a synchronous blur()
+              // unmounts this input mid-flight, stranding focus before the
+              // next cell can take it.
               const commitTxt = (viaBlur = false): void => { if (txt) commit(txt.value, viaBlur) }
               return (
                 <input
@@ -620,12 +573,9 @@ function TablePanelView(props: PanelProps) {
     )
   }
 
-  // A per-row info button (hydra/bauble rows only): opens a popover showing the
-  // sketch compiled up to and including this event — the running program the
-  // fold has built at this point (see hydraCodeUpToRow / baubleCodeUpToRow;
-  // the two tables share event names, so the table's name picks the fold).
-  // Mirrors ColHeader's popover: a fixed-position menu measured from the
-  // button so it doesn't clip.
+  // Per-row info button (hydra/bauble rows only): a popover showing the
+  // sketch compiled up to and including this event — the table's name picks
+  // which fold. Mirrors ColHeader's measured fixed-position popover.
   function RowInfo(rowProps: { table: string; rowIndex: number }) {
     const { table, rowIndex } = rowProps
     const infoKey = `${table}::${rowIndex}`
@@ -634,8 +584,8 @@ function TablePanelView(props: PanelProps) {
     let infoBtn: HTMLButtonElement | undefined
     let popEl: HTMLDivElement | undefined
 
-    // Recompute only while open; re-reads the (tick-gated) store fold so an edit
-    // to any earlier row updates the shown code live.
+    // Recompute only while open; tick-gated so an edit to any earlier row
+    // updates the shown code live.
     const code = createMemo(() => {
       tick(); views()
       if (!open()) return null
@@ -650,8 +600,7 @@ function TablePanelView(props: PanelProps) {
       code()
       const r = infoBtn.getBoundingClientRect()
       const left = Math.max(4, Math.min(r.left, window.innerWidth - popEl.offsetWidth - 4))
-      // Flip above the button when it would overflow the viewport bottom — the
-      // info icon often sits on the last row, near the panel's edge.
+      // Flip above the button when it would overflow the viewport bottom.
       const h = popEl.offsetHeight
       const below = r.bottom + 4
       const top = below + h > window.innerHeight - 4 && r.top - h - 4 >= 4 ? r.top - h - 4 : below
@@ -700,8 +649,6 @@ function TablePanelView(props: PanelProps) {
       setRenaming(false)
       bump()
     }
-    // Multiplayer presence: ring this tab, and name-tag it, for any peer(s)
-    // currently viewing it.
     const viewers = () => viewersOf(presence(), name)
     const ringStyle = () => tabRingStyle(presence(), name)
 
@@ -764,7 +711,7 @@ function TablePanelView(props: PanelProps) {
             <For each={names()}>{(n) => <Tab name={n} />}</For>
           </div>
           {/* Mobile substitute for the tab strip — a native <select> is far
-              easier to use with a thumb than a wrapping row of small buttons. */}
+              easier to use with a thumb. */}
           <select class="table-tab-select" onChange={(e) => setCurrent(e.currentTarget.value)}>
             <For each={names()}>
               {(n) => <option value={n} selected={n === current()}>{n}</option>}
@@ -898,9 +845,8 @@ function TablePanelView(props: PanelProps) {
                           hidden={!edRowVisible(i)}
                           classList={{
                             'row-source': !!lineageSet()?.has(i),
-                            // A boolean column literally named "disabled" is the
-                            // row's own mute switch (see DISABLED_COL) — dim it
-                            // straight from its own data, no separate state.
+                            // A boolean column named "disabled" is the row's
+                            // own mute switch (see DISABLED_COL).
                             'row-disabled': ed().data.rows[i]?.[DISABLED_COL] === true,
                             'row-invalid': invalidColumns(ed().data.rows[i], ed().data.columns).length > 0,
                           }}
@@ -954,9 +900,8 @@ function TablePanelView(props: PanelProps) {
   )
 }
 
-// The pure-logic side handed to app.tsx: the TablePanel API main.ts drives,
-// plus the signal accessors <TablePane> renders from. No DOM here — the view
-// above is the only thing that touches elements.
+// The pure-logic side handed to app.tsx — no DOM here; the view above is the
+// only thing that touches elements.
 export interface TablePanelController extends TablePanel, PanelProps {}
 
 export function createTablePanel(

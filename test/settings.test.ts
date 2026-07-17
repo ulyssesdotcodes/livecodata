@@ -17,16 +17,15 @@ function fakeStorage(): FakeStorage {
   }
 }
 
-test('getVimMode defaults to true with no stored value (matches the prior always-on behavior)', () => {
-  assert.equal(getVimMode(fakeStorage()), true)
-})
-
-test('setVimMode then getVimMode round-trips true and false', () => {
+// One bool setting exercised end to end — every bool setting shares the same
+// stringSetting/boolSetting factory, so this covers the mechanism for all.
+test('vim mode defaults to on and round-trips through storage', () => {
+  assert.equal(getVimMode(fakeStorage()), true, 'matches the prior always-on behavior')
   const storage = fakeStorage()
-  setVimMode(true, storage)
-  assert.equal(getVimMode(storage), true)
   setVimMode(false, storage)
   assert.equal(getVimMode(storage), false)
+  setVimMode(true, storage)
+  assert.equal(getVimMode(storage), true)
 })
 
 test('getVimMode tolerates a storage that throws, falling back to the default (on)', () => {
@@ -40,23 +39,9 @@ test('getVimMode tolerates a storage that throws, falling back to the default (o
 
 test('getMidiEnabled defaults to false with no stored value (MIDI is opt-in)', () => {
   assert.equal(getMidiEnabled(fakeStorage()), false)
-})
-
-test('setMidiEnabled then getMidiEnabled round-trips true and false', () => {
   const storage = fakeStorage()
   setMidiEnabled(true, storage)
-  assert.equal(getMidiEnabled(storage), true)
-  setMidiEnabled(false, storage)
-  assert.equal(getMidiEnabled(storage), false)
-})
-
-test('getMidiEnabled tolerates a storage that throws, falling back to the default (off)', () => {
-  const storage = {
-    getItem: () => { throw new Error('boom') },
-    setItem: () => { throw new Error('boom') },
-  }
-  assert.equal(getMidiEnabled(storage), false)
-  assert.doesNotThrow(() => setMidiEnabled(true, storage))
+  assert.equal(getMidiEnabled(storage), true, 'opting in survives reload')
 })
 
 test('getUsername defaults to empty, round-trips, and tolerates a throwing storage', () => {

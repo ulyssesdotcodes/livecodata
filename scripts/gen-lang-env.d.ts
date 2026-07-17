@@ -1,5 +1,5 @@
-// Hand-written types for gen-lang-env.js (plain node JS so build.js can
-// import it without a TS loader) — lets typechecked tests import the builder.
+// Hand-written types for gen-lang-env.js, which stays plain JS so build.js
+// can import it without a TS loader.
 import type { LangEnv } from '../src/lang-service.js'
 
 export declare const DEFAULT_LIB: string
