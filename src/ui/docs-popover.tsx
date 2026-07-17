@@ -83,6 +83,11 @@ const TABLE_DOCS: TableDoc[] = [
     info: 'taps() is the tap-beat table — one row per Tap button press ({ beat, time }, time an absolute epoch ms). It is the source of tempo: the playhead runs at the tapped rate, and tempo() / beats() read from it.',
   },
   {
+    name: 'Streaming logs',
+    detail: 'the session as data',
+    info: 'The read-only log tabs are readable from code under the names their tabs wear: table("activity") is the session\'s pulse (one { kind: "apply" } row per Run, plus peer-join/leave), table("name·events") any editable table\'s edit history, "code·events" the program\'s. A program view of the same name wins. See the Run Counter / Session Sculpture examples.',
+  },
+  {
     name: 'Scene rows',
     detail: 'what drives the 3D view',
     info: 'Rows rendered as 3D objects share a schema: type ("create" | "update"), id, beat, shape, position px/py/pz, rotation rx/ry/rz, scale sx/sy/sz, color. rasterize(maxBeats) bakes sparse beat-keyed event rows into a dense per-frame world state, easing numeric fields between keyframes.',

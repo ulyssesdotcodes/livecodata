@@ -7,7 +7,7 @@
 
 import { createRuntime } from './runtime.js'
 import { cookProgram } from './replay.js'
-import { conformRow, schemaColumns, type Schema } from './editable-tables.js'
+import { conformRow, schemaColumns, EVENTS_SUFFIX, type Schema } from './editable-tables.js'
 import { packCooked, type PackedCook } from './cook-transfer.js'
 import type { PhysicsEngine } from './dsl.js'
 import type { Row } from './lineage.js'
@@ -25,6 +25,11 @@ export interface CookRequest {
   // set when an example's table data lives with the sample rather than inline
   // in the program; ignored once the table exists in the snapshot.
   seeds?: Record<string, Row[]>
+  // The streaming log tables under their display names ("code·events",
+  // "activity", "midi·events", …) — see main.ts's logTables(). table(name) in
+  // the program falls back to these when no view defines the name, so a sketch
+  // can read the session's own history as data (RuntimeOptions.logRows).
+  logs?: Array<{ name: string; rows: Row[] }>
 }
 
 // An editable() declared during the cook; the main thread applies these
@@ -45,6 +50,7 @@ export interface CookService {
 
 export function createCookService({ physics }: { physics?: () => PhysicsEngine | null } = {}): CookService {
   let snapshot = new Map<string, Row[]>()
+  let logs = new Map<string, Row[]>()
   let taps: Row[] = []
   let seeds: Record<string, Row[]> = {}
   let declared: DeclaredEditable[] = []
@@ -52,12 +58,18 @@ export function createCookService({ physics }: { physics?: () => PhysicsEngine |
   const runtime = createRuntime({
     physics: physics ?? (() => null),
     tapRows: () => taps,
+    logRows: (name) => logs.get(name) ?? null,
     editableRows: (name, schema, seedRows) => {
       // Inline seedRows win over an example-provided seed; reporting the
       // effective seed in `declared` lets the main thread's ensure() create
       // the table with those rows.
       const seed = seedRows ?? seeds[name]
       declared.push({ name, schema, ...(seed !== undefined ? { seedRows: seed } : {}) })
+      // Declaring a table guarantees its history stream: the very first cook of
+      // a fresh editable runs before the store has recorded anything, so its
+      // "name·events" log must read as empty rather than table-not-found.
+      const eventsName = name + EVENTS_SUFFIX
+      if (!logs.has(eventsName)) logs.set(eventsName, [])
       const existing = snapshot.get(name)
       if (existing) return existing
       return (seed ?? []).map((r) => conformRow(r, schemaColumns(schema)))
@@ -67,6 +79,7 @@ export function createCookService({ physics }: { physics?: () => PhysicsEngine |
   return {
     handle(req: CookRequest): CookResponse {
       snapshot = new Map(req.editables.map((e) => [e.name, e.rows]))
+      logs = new Map((req.logs ?? []).map((l) => [l.name, l.rows]))
       taps = req.tapRows
       seeds = req.seeds ?? {}
       declared = []

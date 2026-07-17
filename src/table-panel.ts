@@ -13,8 +13,11 @@ import type { EditableTableStore, ColumnType, EditableColumn } from './editable-
 export const MAX_ROWS = 1000
 export const COLUMN_TYPES: ColumnType[] = ['number', 'string', 'boolean', 'code']
 
-// Suffix of the injected read-only edit-history views (`foo·events`).
-export const EVENTS_SUFFIX = '·events'
+// Suffix of the injected read-only edit-history views (`foo·events`). Defined
+// with the store (the cook worker names histories too); re-exported here for
+// the panel-side consumers that import it from this module.
+import { EVENTS_SUFFIX } from './editable-tables.js'
+export { EVENTS_SUFFIX }
 
 export interface TablePanelOptions {
   // Clicking a code-typed cell routes here (the main editor takes over) instead

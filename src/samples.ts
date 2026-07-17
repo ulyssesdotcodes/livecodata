@@ -692,6 +692,218 @@ editable("bauble", schemas.bauble)
     },
   },
   {
+    name: "Run Counter",
+    table: "runs",
+    code: `// livecodata — a sketch that counts how many times you've run it
+// Everything authored in livecodata lands on an append-only event log, and the
+// logs are TABLES: the streaming tabs you watch fill up in the panel resolve
+// with table(name) like any other data. "activity" is the session's pulse —
+// every Apply (Run / Cmd/Ctrl-Enter) appends one { kind: "apply" } row. This
+// sketch reads that log, so RUNNING it is what plays it: the code below never
+// changes, yet it cooks to a different program every time it runs.
+// Press "Run" (or Cmd/Ctrl-Enter), then Play — then press Run again. And again.
+
+// 1. The run history: one row per Apply so far. \`at\` is the press's wall-clock
+//    epoch ms, \`edits\` the batch of table edits it committed, \`changed\` which
+//    outputs it altered. A cook always sees the session as it was the instant
+//    BEFORE its own Run (the apply is recorded once the cook succeeds), so the
+//    count ticks the moment the next result lands. Watch this view's tab grow.
+define("runs", (rand, table) => table("activity").filter({ kind: "apply" }))
+
+// 2. Fold the log into the knobs of a hydra sketch:
+//    - every Run adds a kaleidoscope facet (wrapping around at nine),
+//    - every Run retunes the oscillator — the setVariable row's value below
+//      is different each time the code runs, with no edit to the code,
+//    - and your PACE plays too: \`heat\` is how hard this Run followed the one
+//      before. Mash Run twice inside ten seconds and the sketch runs hot
+//      (bright, fast spin); let it breathe a minute and it cools back down.
+define("hydra", (rand, table) => {
+  const runs = table("runs").rows
+  const n = runs.length
+  const last = runs[n - 1], prev = runs[n - 2]
+  const gap = prev && typeof last.at === "number" && typeof prev.at === "number"
+    ? (last.at - prev.at) / 1000 : 60            // seconds between the last two Runs
+  const heat = Math.max(0, 1 - gap / 10)         // 1 = frantic, 0 = calm
+  return rows([
+    { beat: 1, event: "setCode",
+      code: "osc((props) => props.freq, 0.06, " + (0.4 + heat).toFixed(2) + ")" +
+            ".kaleid(" + (3 + (n % 7)) + ")" +
+            ".rotate((props) => props.time * " + (0.03 + 0.4 * heat).toFixed(3) + ")" +
+            ".out(o0)" },
+    { beat: 1, event: "setVariable", name: "freq", value: 4 + (n % 24) },
+  ])
+})
+
+// Things to try:
+//   - Scrub the session bar backward: every step re-cooks against the SHORTER
+//     log, so the sketch un-counts itself — the past looks exactly as it did.
+//   - Count a different pulse: filter({ kind: "peer-join" }) reacts to people
+//     joining your room instead of your Runs.
+//   - Every editable table streams too: its full edit history is readable as
+//     table("name·events") — see the Session Sculpture example for that.
+`,
+  },
+  {
+    name: "Session Sculpture",
+    table: "pace",
+    code: `// livecodata — the session as a sculpture
+// table("activity") holds this session's own history — one { kind: "apply" }
+// row per Run — and history makes good building material. This scene lays ONE
+// BRICK PER RUN into a coiling tower: a brick's size is how many table edits
+// that Run committed, its color how hot on the heels of the previous Run it
+// came (red = seconds later, blue = after a long think), and the newest brick
+// slowly turns. The tower only ever grows — keep working and the session
+// piles up. Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
+
+define("applies", (rand, table) => table("activity").filter({ kind: "apply" }))
+
+// 1. One brick per apply, coiling upward a golden angle at a time (so bricks
+//    never stack into a straight seam), sized by the apply's edit batch and
+//    colored by the gap to the Run before it.
+define("tower", (rand, table) => {
+  const applies = table("applies").orderBy("seq").rows
+  const bricks = applies.map((a, i) => {
+    const prev = applies[i - 1]
+    const gap = prev && typeof a.at === "number" && typeof prev.at === "number"
+      ? (a.at - prev.at) / 1000 : 600
+    const hot = Math.max(0, 1 - Math.min(gap, 60) / 60)   // 1 = instant, 0 = a minute+
+    const edits = Array.isArray(a.edits) ? a.edits.length : 0
+    const s = 0.09 + Math.min(edits, 20) * 0.012          // committed more → bigger brick
+    const angle = i * 2.39996                             // the golden angle
+    return {
+      id: "b" + i, type: "create", beat: 1, shape: "box",
+      color: (Math.round(70 + 185 * hot) << 16) | (70 << 8) | Math.round(255 - 185 * hot),
+      hx: s, hy: s, hz: s,
+      px: Math.cos(angle) * 0.9, py: -0.8 + i * 0.17, pz: Math.sin(angle) * 0.9,
+      rx: 0, ry: -angle, rz: 0,
+    }
+  })
+  // The newest brick turns one full revolution per loop (beat 17 = one past
+  // the end, so the spin wraps seamlessly — same trick as Square + Hydra).
+  if (bricks.length) {
+    const top = bricks[bricks.length - 1]
+    bricks.push({ id: top.id, type: "update", beat: 17, ry: top.ry + Math.PI * 2 })
+  }
+  return rows(bricks)
+})
+
+// 2. A caption that keeps count, floating just above the tower's top brick.
+define("label", (rand, table) => {
+  const n = table("applies").length
+  return text({ id: "count", text: n + (n === 1 ? " run" : " runs"),
+    size: 0.22, color: 0xf4efe2, py: -0.8 + n * 0.17 + 0.45 })
+})
+
+// 3. The camera orbits once per 16-beat loop, craning up and backing off as
+//    the tower grows — a sculpture deserves a walk-around.
+define("cam", (rand, table) => {
+  const n = table("applies").length
+  const ty = Math.max(0, (-0.8 + n * 0.17) / 2)
+  const eye = 2.6 + n * 0.05
+  return camera([0, 0.5, 1, 1.5, 2].map((turns, i) => ({
+    beat: 1 + i * 4,
+    px: Math.cos(turns * Math.PI) * eye, py: ty + 1.2, pz: Math.sin(turns * Math.PI) * eye,
+    tx: 0, ty, tz: 0,
+  })))
+})
+
+define("scene", (rand, table) =>
+  table("tower").concat(table("label")).concat(table("cam")).rasterize(16))
+
+// 4. Your working rhythm, graphed: seconds between consecutive Runs. Spikes
+//    are the long thinks; the flats near zero are a jam in full flow.
+define("pace", (rand, table) => {
+  const applies = table("applies").orderBy("seq").rows
+  return rows(applies.map((a, i) => ({
+    run: i + 1,
+    gap_s: i ? Math.round((a.at - applies[i - 1].at) / 100) / 10 : 0,
+  }))).graph("gap_s")
+})
+
+// Things to try:
+//   - Edit any editable table a few times before a Run: that Run's brick
+//     grows with the batch it committed (\`edits\`).
+//   - Read an edit history directly: table("name·events") is the streaming
+//     log behind any editable table — one row per cell you ever touched.
+`,
+  },
+  {
+    name: "Tap Constellation",
+    table: "stars",
+    code: `// livecodata — your sense of time, drawn
+// The Tap button is a streaming log too: taps() is the tap-beat table, one row
+// per press ({ beat, time } — ordinal + wall-clock ms), the same log the tempo
+// folds from. This sketch draws the current tap window as a CONSTELLATION: one
+// star per press, placed around a ring by where that press SHOULD have landed
+// on the grid your own tapping implies — and pushed off the ring by how early
+// (inward) or late (outward) it actually was. A metronome taps a perfect
+// circle; a human taps a constellation.
+// Tap the Tap button under the scene eight or more times, then press "Run"
+// (or Cmd/Ctrl-Enter) to draw it. Tap a new rhythm, Run again, compare.
+// (A tap alone re-tempos playback but doesn't re-cook — the drawing refreshes
+// on Run. The window keeps the last 16 presses; a 2-second pause starts a
+// fresh window — see the "taps" tab for the raw rows.)
+
+define("stars", () => {
+  const t = taps().rows
+  const n = t.length
+  if (n < 3) return text({ text: "tap the Tap button\\na few times, then Run",
+    size: 0.24, color: 0x8899aa })
+  // Fit the straight line time ≈ at0 + i·beatMs through the presses (least
+  // squares) — the grid a perfect metronome WOULD have tapped. (Just joining
+  // the first and last press would pin both of them onto the ring.)
+  const mi = (n - 1) / 2
+  const mt = t.reduce((s, r) => s + r.time, 0) / n
+  let num = 0, den = 0
+  for (let i = 0; i < n; i++) {
+    num += (i - mi) * (t[i].time - mt)
+    den += (i - mi) * (i - mi)
+  }
+  const beatMs = num / den                       // ms per beat of the fitted grid
+  const at0 = mt - beatMs * mi                   // when its beat 0 fell
+  const stars = t.map((r, i) => {
+    const err = (r.time - (at0 + i * beatMs)) / beatMs   // beats early (−) or late (+)
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2
+    const rad = 1 + err * 4
+    const off = Math.min(1, Math.abs(err) * 10)          // 0 on the grid → 1 wild
+    return {
+      id: "t" + i, type: "create", beat: 1, shape: "sphere",
+      r: i === n - 1 ? 0.09 : 0.055,
+      color: (255 << 16) | (Math.round(255 - 130 * off) << 8) | Math.round(255 - 225 * off),
+      px: Math.cos(a) * rad, py: Math.sin(a) * rad, pz: 0, rx: 0, ry: 0, rz: 0,
+    }
+  })
+  // The newest press blinks — a color pulse on the 8-beat loop.
+  const newest = stars[stars.length - 1]
+  stars.push({ id: newest.id, type: "update", beat: 5, color: 0x334455 })
+  stars.push({ id: newest.id, type: "update", beat: 9, color: newest.color })
+  return rows(stars)
+})
+
+// The perfect circle those stars are judged against, plus the tempo the same
+// log folds to (tempo() is seconds per beat), spelled out underneath.
+define("guide", () => {
+  const bpm = Math.round(60 / tempo())
+  return torus({ id: "ring", r: 1, color: 0x2a3646 })
+    .concat(text({ id: "bpm", text: bpm + " bpm", size: 0.2, color: 0x8899aa, py: -1.45 }))
+})
+
+define("scene", (rand, table) => table("stars").concat(table("guide")).rasterize(8))
+
+// A whisper of feedback so the constellation twinkles.
+define("hydra", () => rows([
+  { beat: 1, event: "setCode",
+    code: "src(s0).blend(src(o0).scale(1.004), 0.2).out(o0)" },
+]))
+
+// Things to try:
+//   - Tap deliberately BEHIND the beat (a lazy backbeat): the ring spirals
+//     outward. Rush it and the stars collapse inward instead.
+//   - \`err\` is measured in beats, so the drawing is tempo-independent: sloppy
+//     at 60 bpm looks exactly as sloppy at 180.
+`,
+  },
+  {
     name: "House of Cards",
     table: "ball_height",
     code: `// livecodata — House of Cards

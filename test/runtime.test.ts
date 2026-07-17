@@ -207,3 +207,39 @@ test('editable() re-seeds the code rows the user has not edited when the program
   const out = rt.run(withSeed(11, 22), { seed: 1 })
   assert.deepEqual(out.views.get('k')!.rows.map((r) => r.v), [11, 99])
 })
+
+test('table() falls back to a streaming log for undefined names; program views win; unknowns still error', () => {
+  const activity: Row[] = [
+    { seq: 0, t: 0, kind: 'apply', id: 'a1', at: 1000 },
+    { seq: 1, t: 5, kind: 'peer-join', client: 'c1' },
+  ]
+  const rt = createRuntime({ logRows: (name) => (name === 'activity' ? activity : null) })
+  const { views } = rt.run(
+    'define("applies", (rand, table) => table("activity").filter({ kind: "apply" }))',
+    { seed: 1 },
+  )
+  assert.deepEqual(views.get('applies')!.rows.map((r) => r.id), ['a1'])
+
+  // A program view of the same name shadows the log (mirroring the display
+  // rule: a log tab yields to a cooked view of the same name)…
+  const shadowed = rt.run(`
+    define("activity", () => rows([{ kind: "apply", id: "mine" }]))
+    define("applies", (rand, table) => table("activity"))
+  `, { seed: 1 })
+  assert.deepEqual(shadowed.views.get('applies')!.rows.map((r) => r.id), ['mine'])
+
+  // …and a name the hook doesn't serve keeps the not-found error.
+  assert.throws(
+    () => rt.run('define("x", (rand, table) => table("nope"))', { seed: 1 }),
+    /table\("nope"\) not found/,
+  )
+})
+
+test('a log that grew between runs re-materializes (its rows hash by value, so the memo cannot serve stale history)', () => {
+  const activity: Row[] = [{ seq: 0, kind: 'apply', id: 'a1' }]
+  const rt = createRuntime({ logRows: (name) => (name === 'activity' ? activity : null) })
+  const code = 'define("applies", (rand, table) => table("activity"))'
+  assert.equal(rt.run(code, { seed: 1 }).views.get('applies')!.length, 1)
+  activity.push({ seq: 1, kind: 'apply', id: 'a2' })
+  assert.equal(rt.run(code, { seed: 1 }).views.get('applies')!.length, 2)
+})

@@ -20,6 +20,8 @@ export interface CookInput {
   editables: Array<{ name: string; rows: Row[] }>
   // See CookRequest.seeds.
   seeds?: Record<string, Row[]>
+  // Streaming log tables under their display names — see CookRequest.logs.
+  logs?: Array<{ name: string; rows: Row[] }>
 }
 
 export interface CookOutcome {
@@ -54,6 +56,7 @@ export function createCookClient(worker: WorkerLike): CookClient {
         tapRows: input.tapRows,
         editables: input.editables,
         ...(input.seeds !== undefined ? { seeds: input.seeds } : {}),
+        ...(input.logs !== undefined ? { logs: input.logs } : {}),
       }
       return new Promise((resolve, reject) => {
         pending.set(req.id, { resolve, reject })
