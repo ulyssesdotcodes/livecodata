@@ -175,8 +175,8 @@ test('triggerEach fans out across objects and unions lineage from trigger + obje
 })
 
 test('.three.rotate passes base rows through, appending start + end keyframes', () => {
-  const { box } = createDSL(null)
-  const scene = box({ id: 'a' }).concat(box({ id: 'b', beat: 3 }))
+  const { three } = createDSL(null)
+  const scene = three.box({ id: 'a' }).concat(three.box({ id: 'b', beat: 3 }))
   const out = scene.three.rotate({ amount: Math.PI, dur: 4 })
   assert.deepEqual(out.rows, [
     { id: 'a', type: 'create', beat: 1, shape: 'box', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
@@ -191,8 +191,8 @@ test('.three.rotate passes base rows through, appending start + end keyframes', 
 })
 
 test('.three animators chain, each acting only on the create rows', () => {
-  const { box } = createDSL(null)
-  const out = box({ id: 'a' }).three.rotate({ amount: 1, dur: 2 }).three.scale({ amount: 3, dur: 2 })
+  const { three } = createDSL(null)
+  const out = three.box({ id: 'a' }).three.rotate({ amount: 1, dur: 2 }).three.scale({ amount: 3, dur: 2 })
   assert.deepEqual(out.rows.filter((r) => r.type === 'update'), [
     { id: 'a', type: 'update', beat: 1, ry: 0 },
     { id: 'a', type: 'update', beat: 3, ry: 1 },
@@ -223,8 +223,8 @@ test('grid lays out a centred cols×rows lattice', () => {
 })
 
 test('camera builds a create row (defaulted pose) then update keyframes', () => {
-  const { camera } = createDSL(null)
-  const cam = camera([
+  const { three } = createDSL(null)
+  const cam = three.camera([
     { beat: 1, px: 0, py: 0.5, pz: 5, fov: 60 },
     { beat: 9, px: 4, fov: 45 },
   ])
@@ -238,21 +238,49 @@ test('camera builds a create row (defaulted pose) then update keyframes', () => 
 })
 
 test('box builds a defaulted create row, props overriding defaults', () => {
-  const { box } = createDSL(null)
-  assert.deepEqual(box({ id: 'a', px: -1, color: 0x4a9eff }).rows[0], {
+  const { three } = createDSL(null)
+  assert.deepEqual(three.box({ id: 'a', px: -1, color: 0x4a9eff }).rows[0], {
     id: 'a', type: 'create', beat: 1, shape: 'box',
     px: -1, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, color: 0x4a9eff,
   })
 })
 
 test('every named primitive carries its shape and a "create" type', () => {
-  const dsl = createDSL(null)
+  const { three } = createDSL(null)
   for (const shape of ['box', 'sphere', 'cylinder', 'cone', 'torus', 'text'] as const) {
-    const row = (dsl[shape] as (p?: Row) => Table)().rows[0]
+    const row = three[shape]().rows[0]
     assert.equal(row.shape, shape)
     assert.equal(row.type, 'create')
     assert.equal(row.id, shape)
   }
+})
+
+test('t is a shorthand alias for the three namespace', () => {
+  const { three, t } = createDSL(null)
+  assert.equal(t, three)
+})
+
+test('three.translate/scale/rotate modify a scene table\'s create rows', () => {
+  const { three } = createDSL(null)
+  const base = three.box({ id: 'a', px: 1 })
+  assert.deepEqual(three.translate(base, 2, -1, 0.5).rows[0], {
+    id: 'a', type: 'create', beat: 1, shape: 'box',
+    px: 3, py: -1, pz: 0.5, rx: 0, ry: 0, rz: 0,
+  })
+  // scale multiplies sx/sy/sz (default 1); one arg = uniform on all axes.
+  assert.deepEqual(three.scale(base, 2).rows[0], {
+    id: 'a', type: 'create', beat: 1, shape: 'box',
+    px: 1, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, sx: 2, sy: 2, sz: 2,
+  })
+  assert.deepEqual(three.rotate(base, 0, Math.PI, 0).rows[0].ry, Math.PI)
+})
+
+test('three modifiers leave partial update keyframes that omit the field alone', () => {
+  const { three } = createDSL(null)
+  const scene = three.box({ id: 'a' }).concat([{ id: 'a', type: 'update', beat: 5, ry: 1 }])
+  const rows = three.translate(scene, 2, 0, 0).rows
+  assert.equal(rows[0].px, 2)                       // create row shifted
+  assert.deepEqual(rows[1], { id: 'a', type: 'update', beat: 5, ry: 1 }) // update untouched
 })
 
 test('rotate emits one row per value, cycling through rows and merging', () => {

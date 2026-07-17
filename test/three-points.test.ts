@@ -86,7 +86,7 @@ test('round-trip: primitive → points → geometry reproduces the vertices', ()
 
 test('DSL points() returns a chainable table of point rows', () => {
   const dsl = createDSL(null)
-  const table = dsl.points('box', { hx: 1, hy: 1, hz: 1 })
+  const table = dsl.three.points('box', { hx: 1, hy: 1, hz: 1 })
   assert.ok(table instanceof Table)
   const rows = table.rows
   assert.ok(rows.length > 0, 'box tessellates into at least one point row')
@@ -98,11 +98,11 @@ test('DSL points() returns a chainable table of point rows', () => {
 
 test('DSL geometry() rebuilds a primitive from a points table (inverse of points)', () => {
   const dsl = createDSL(null)
-  const pts = dsl.points('sphere', { r: 1 })
-  const geo = dsl.geometry(pts)
+  const pts = dsl.three.points('sphere', { r: 1 })
+  const geo = dsl.three.geometry(pts)
   assert.equal(geo.getAttribute('position').count, pts.rows.length)
   assert.ok(geo.getAttribute('normal'))
   // also accepts a bare row array
-  const geo2 = dsl.geometry([{ px: 0, py: 0, pz: 0, nx: 0, ny: 1, nz: 0 }])
+  const geo2 = dsl.three.geometry([{ px: 0, py: 0, pz: 0, nx: 0, ny: 1, nz: 0 }])
   assert.equal(geo2.getAttribute('position').count, 1)
 })

@@ -45,24 +45,24 @@ test('Expr chains complete Expr methods, not Table ones', () => {
 test('a chain the old heuristic could not type still completes', () => {
   // The receiver is a local const holding a Table — no field()/table() chain
   // root in sight of the dot, so only the checker can answer this.
-  const names = namesAt('const scene = box().concat(sphere())\nconst out = scene\nout.')
+  const names = namesAt('const scene = t.box().concat(t.sphere())\nconst out = scene\nout.')
   assert.ok(names.includes('rasterize'))
   assert.ok(names.includes('three'))
 })
 
 test('.three completes the scene animators', () => {
-  const res = svc.completionsAt('box().three.', 'box().three.'.length)
+  const res = svc.completionsAt('t.box().three.', 't.box().three.'.length)
   assert.ok(res && res.isMemberCompletion)
   for (const m of ['rotate', 'scale', 'move']) assert.ok(res.entries.some((e) => e.name === m), `expected animator ${m}`)
 })
 
 test('globals include the DSL surface, console, and the ES library', () => {
   const names = namesAt('fie', 3)
-  for (const g of ['field', 'define', 'box', 'console', 'Math']) assert.ok(names.includes(g), `expected global ${g}`)
+  for (const g of ['field', 'define', 'three', 't', 'console', 'Math']) assert.ok(names.includes(g), `expected global ${g}`)
 })
 
 test('quickinfo shows the complete signature', () => {
-  const text = 'box({ id: "a" }).rasterize(8)'
+  const text = 't.box({ id: "a" }).rasterize(8)'
   const qi = svc.quickInfoAt(text, text.indexOf('rasterize') + 1)
   assert.ok(qi)
   assert.match(qi.display, /rasterize\(.*\): Table/)
@@ -189,7 +189,7 @@ test('curatedDocFor picks the doc table from the chain context', () => {
   assert.equal(curatedDocFor(t1, t1.indexOf('map'), 'map'), TABLE_METHOD_DOCS.map)
   const t2 = 'field("v").gt'
   assert.equal(curatedDocFor(t2, t2.indexOf('gt'), 'gt'), EXPR_METHOD_DOCS.gt)
-  const t3 = 'box().three.rotate'
+  const t3 = 't.box().three.rotate'
   assert.equal(curatedDocFor(t3, t3.indexOf('rotate'), 'rotate'), THREE_METHOD_DOCS.rotate)
   assert.equal(curatedDocFor('field', 0, 'field'), DSL_BUILTIN_DOCS.field)
   assert.equal(curatedDocFor('const x = 1', 6, 'x'), null)

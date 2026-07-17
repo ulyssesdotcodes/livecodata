@@ -107,9 +107,10 @@ define("scene", (rand, table) => table("events").rasterize(16))
     name: "Primitives",
     table: "things",
     code: `// livecodata — building 3D objects the easy way
-// box/sphere/cylinder/cone/torus/text each build a ready-made "create" row for
-// a scene object: beat 1, at the origin, no rotation — you set only the fields
-// you care about. They return Tables, so concat them into a scene and
+// The three.js helpers live under the \`three\` namespace, or its shorthand \`t\`.
+// t.box/sphere/cylinder/cone/torus/text each build a ready-made "create" row
+// for a scene object: beat 1, at the origin, no rotation — you set only the
+// fields you care about. They return Tables, so concat them into a scene and
 // rasterize. Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 
 // 1. A few primitives, laid out along x. Each helper's \`id\` defaults to its
@@ -118,17 +119,18 @@ define("scene", (rand, table) => table("events").rasterize(16))
 //    sphere/torus → r, cylinder/cone → r + h (half-height); leave a size out
 //    and the renderer's default for that shape is used.
 define("things", () =>
-  box({ id: "b", px: -2.4, color: 0x4a9eff })
-    .concat(sphere({ id: "s", px: -1.2, r: 0.4, color: 0xff6b6b }))
-    .concat(cylinder({ id: "y", px: 0, r: 0.3, h: 0.5, color: 0x51cf66 }))
-    .concat(cone({ id: "c", px: 1.2, r: 0.35, h: 0.5, color: 0xffd43b }))
-    .concat(torus({ id: "t", px: 2.4, r: 0.35, color: 0xcc5de8 }))
+  t.box({ id: "b", px: -2.4, color: 0x4a9eff })
+    .concat(t.sphere({ id: "s", px: -1.2, r: 0.4, color: 0xff6b6b }))
+    .concat(t.cylinder({ id: "y", px: 0, r: 0.3, h: 0.5, color: 0x51cf66 }))
+    .concat(t.cone({ id: "c", px: 1.2, r: 0.35, h: 0.5, color: 0xffd43b }))
+    .concat(t.torus({ id: "r", px: 2.4, r: 0.35, color: 0xcc5de8 }))
 )
 
-// 2. object(shape, props) is the generic behind the named helpers — handy for a
-//    label. Here a line of 3D text floats above the row of shapes.
+// 2. t.object(shape, props) is the generic behind the named helpers — handy for
+//    a label. Here a line of 3D text floats above the row of shapes. Nudge the
+//    whole scene with t.translate/scale/rotate(table, x, y, z).
 define("label", () =>
-  text({ id: "caption", py: 1.4, size: 0.4, text: "primitives", color: 0xffffff })
+  t.text({ id: "caption", py: 1.4, size: 0.4, text: "primitives", color: 0xffffff })
 )
 
 // 3. Concat everything and bake an 8-beat cache. The scene is static here —
@@ -143,7 +145,7 @@ define("scene", (rand, table) =>
     name: "Camera Move",
     table: "cubes",
     code: `// livecodata — moving the camera from the DSL
-// The camera is just another scene object: \`camera([...])\` emits one keyframe
+// The camera is just another scene object: \`t.camera([...])\` emits one keyframe
 // per row (id "camera", shape "camera") that rides events → rasterize like
 // anything else, so camera moves interpolate on the beat timeline for free.
 // Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
@@ -158,12 +160,12 @@ define("cubes", () =>
   }))
 )
 
-// 2. camera([...]) — one row per keyframe. px/py/pz are the eye, tx/ty/tz the
+// 2. t.camera([...]) — one row per keyframe. px/py/pz are the eye, tx/ty/tz the
 //    look-at target (here always the origin), fov the vertical field of view.
 //    Over the 16-beat loop the eye swings around the lattice and cranes up,
 //    while the fov eases from wide to tight (a subtle dolly-zoom), then returns
 //    to the start pose at beat 17 so the loop repeats seamlessly.
-define("cam", () => camera([
+define("cam", () => t.camera([
   { beat: 1,  px: 0,    py: 0.5, pz: 5, tx: 0, ty: 0, tz: 0, fov: 60 },
   { beat: 5,  px: 4,    py: 1.5, pz: 3, fov: 55 },
   { beat: 9,  px: 0,    py: 3,   pz: -5, fov: 45 },
@@ -790,7 +792,7 @@ define("tower", (rand, table) => {
 // 2. A caption that keeps count, floating just above the tower's top brick.
 define("label", (rand, table) => {
   const n = table("applies").length
-  return text({ id: "count", text: n + (n === 1 ? " run" : " runs"),
+  return t.text({ id: "count", text: n + (n === 1 ? " run" : " runs"),
     size: 0.22, color: 0xf4efe2, py: -0.8 + n * 0.17 + 0.45 })
 })
 
@@ -800,7 +802,7 @@ define("cam", (rand, table) => {
   const n = table("applies").length
   const ty = Math.max(0, (-0.8 + n * 0.17) / 2)
   const eye = 2.6 + n * 0.05
-  return camera([0, 0.5, 1, 1.5, 2].map((turns, i) => ({
+  return t.camera([0, 0.5, 1, 1.5, 2].map((turns, i) => ({
     beat: 1 + i * 4,
     px: Math.cos(turns * Math.PI) * eye, py: ty + 1.2, pz: Math.sin(turns * Math.PI) * eye,
     tx: 0, ty, tz: 0,
@@ -845,23 +847,23 @@ define("pace", (rand, table) => {
 // fresh window — see the "taps" tab for the raw rows.)
 
 define("stars", () => {
-  const t = taps().rows
-  const n = t.length
-  if (n < 3) return text({ text: "tap the Tap button\\na few times, then Run",
+  const tp = taps().rows
+  const n = tp.length
+  if (n < 3) return t.text({ text: "tap the Tap button\\na few times, then Run",
     size: 0.24, color: 0x8899aa })
   // Fit the straight line time ≈ at0 + i·beatMs through the presses (least
   // squares) — the grid a perfect metronome WOULD have tapped. (Just joining
   // the first and last press would pin both of them onto the ring.)
   const mi = (n - 1) / 2
-  const mt = t.reduce((s, r) => s + r.time, 0) / n
+  const mt = tp.reduce((s, r) => s + r.time, 0) / n
   let num = 0, den = 0
   for (let i = 0; i < n; i++) {
-    num += (i - mi) * (t[i].time - mt)
+    num += (i - mi) * (tp[i].time - mt)
     den += (i - mi) * (i - mi)
   }
   const beatMs = num / den                       // ms per beat of the fitted grid
   const at0 = mt - beatMs * mi                   // when its beat 0 fell
-  const stars = t.map((r, i) => {
+  const stars = tp.map((r, i) => {
     const err = (r.time - (at0 + i * beatMs)) / beatMs   // beats early (−) or late (+)
     const a = (i / n) * Math.PI * 2 - Math.PI / 2
     const rad = 1 + err * 4
@@ -884,8 +886,8 @@ define("stars", () => {
 // log folds to (tempo() is seconds per beat), spelled out underneath.
 define("guide", () => {
   const bpm = Math.round(60 / tempo())
-  return torus({ id: "ring", r: 1, color: 0x2a3646 })
-    .concat(text({ id: "bpm", text: bpm + " bpm", size: 0.2, color: 0x8899aa, py: -1.45 }))
+  return t.torus({ id: "ring", r: 1, color: 0x2a3646 })
+    .concat(t.text({ id: "bpm", text: bpm + " bpm", size: 0.2, color: 0x8899aa, py: -1.45 }))
 })
 
 define("scene", (rand, table) => table("stars").concat(table("guide")).rasterize(8))
