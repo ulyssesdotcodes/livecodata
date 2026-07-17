@@ -37,20 +37,16 @@ export function baubleRows(rows: Row[] | null | undefined): Row[] {
 }
 
 // Place each row on the frame grid from its 1-indexed `beat` (frame stored on
-// `index`, the field baubleFrameAt samples against) and sort by (loop, frame);
-// an optional 0-indexed `loop` column places a row in a later pass of the loop.
+// `index`, the field baubleFrameAt samples against) and sort by frame. The beat
+// axis is absolute: a beat past the loop's end lands the row in a later pass
+// (the visualizer wraps the playhead into this grid — see visualizer.ts).
 export function buildBaubleIndex(rows: Row[] | null | undefined): Row[] {
   return baubleRows(rows)
     .map((row) => ({
       ...row,
       index: beatToFrame((row.beat as number | undefined) ?? 1),
-      loop: typeof row.loop === 'number' ? Math.max(0, Math.floor(row.loop)) : 0,
     }))
-    .sort((a, b) => ((a.loop as number) - (b.loop as number)) || ((a.index as number) - (b.index as number)))
-}
-
-export function baubleLoops(index: Row[]): number {
-  return index.reduce((m, r) => Math.max(m, (r.loop as number | undefined) ?? 0), 0) + 1
+    .sort((a, b) => (a.index as number) - (b.index as number))
 }
 
 // Apply a transform form to a subject shape expression. A standalone `_`
@@ -113,20 +109,20 @@ interface Transition {
   durFrames: number
 }
 
-// The active sketch at frame `f` of loop pass `loop`: earlier passes fold in
-// full, then this pass's events at/before f — setCode replaces the code, the
-// meta events evolve it, setVariable folds into the latest value per name.
+// The active sketch at (absolute) frame `f`: every event at/before it folds
+// in — setCode replaces the code, the meta events evolve it, setVariable folds
+// into the latest value per name. Sampling a later pass of the loop is just
+// sampling further along the grid, so earlier passes fold in full for free.
 // Returns null until a setCode is reached — playback then leaves the bauble
 // layer blank.
-export function baubleFrameAt(index: Row[], f: number, loop = 0): BaubleFrame | null {
+export function baubleFrameAt(index: Row[], f: number): BaubleFrame | null {
   const frame = Math.floor(f)
   if (frame < 0) return null
   let code: string | null = null
   const vars: Record<string, unknown> = {}
   const transitions: Transition[] = []
   for (const row of index) {
-    const l = (row.loop as number | undefined) ?? 0
-    if (l > loop || (l === loop && (row.index as number) > frame)) break
+    if ((row.index as number) > frame) break
     switch (row.event) {
       case 'setCode':
         if (typeof row.code === 'string') code = row.code
@@ -274,6 +270,6 @@ export function baubleCodeUpToRow(rows: Row[] | null | undefined, rowIndex: numb
   const pos = index.findIndex((r) => (r as { __row?: number }).__row === rowIndex)
   if (pos < 0) return null
   const at = index[pos]
-  const frame = baubleFrameAt(index.slice(0, pos + 1), at.index as number, at.loop as number)
+  const frame = baubleFrameAt(index.slice(0, pos + 1), at.index as number)
   return frame ? baubleScript(frame) : null
 }

@@ -11,11 +11,11 @@ test('addRow / setCell / removeRow', () => {
   store.createTable('t1')
   store.addRow('t1')
   store.addRow('t1')
-  assert.deepEqual(store.get('t1')!.rows, [{ beat: 0, loop: 0 }, { beat: 0, loop: 0 }])
+  assert.deepEqual(store.get('t1')!.rows, [{ beat: 0 }, { beat: 0 }])
   store.setCell('t1', 0, 'beat', 42)
   assert.equal(store.get('t1')!.rows[0].beat, 42)
   store.removeRow('t1', 0)
-  assert.deepEqual(store.get('t1')!.rows, [{ beat: 0, loop: 0 }])
+  assert.deepEqual(store.get('t1')!.rows, [{ beat: 0 }])
 })
 
 test('duplicateRow inserts a copy of the row right after it, with its own identity going forward', () => {
@@ -27,10 +27,10 @@ test('duplicateRow inserts a copy of the row right after it, with its own identi
   store.setCell('t1', 1, 'beat', 9)
 
   store.duplicateRow('t1', 0)
-  assert.deepEqual(store.get('t1')!.rows, [{ beat: 3, loop: 0 }, { beat: 3, loop: 0 }, { beat: 9, loop: 0 }])
+  assert.deepEqual(store.get('t1')!.rows, [{ beat: 3 }, { beat: 3 }, { beat: 9 }])
 
   store.setCell('t1', 1, 'beat', 5)
-  assert.deepEqual(store.get('t1')!.rows, [{ beat: 3, loop: 0 }, { beat: 5, loop: 0 }, { beat: 9, loop: 0 }])
+  assert.deepEqual(store.get('t1')!.rows, [{ beat: 3 }, { beat: 5 }, { beat: 9 }])
 
   assert.equal(store.get('t1')!.rows.length, 3, 'duplicating an out-of-range row is a no-op')
   store.duplicateRow('t1', 99)
@@ -42,9 +42,9 @@ test('addColumn backfills existing rows with a default; removeColumn drops it', 
   store.createTable('t1')
   store.addRow('t1')
   store.addColumn('t1', 'label', 'string')
-  assert.deepEqual(store.get('t1')!.rows, [{ beat: 0, loop: 0, label: '' }])
+  assert.deepEqual(store.get('t1')!.rows, [{ beat: 0, label: '' }])
   store.removeColumn('t1', 'beat')
-  assert.deepEqual(store.get('t1')!.rows, [{ loop: 0, label: '' }])
+  assert.deepEqual(store.get('t1')!.rows, [{ label: '' }])
 })
 
 test('a boolean column named "disabled" hides a row from ensure() without deleting it', () => {
@@ -72,8 +72,8 @@ test('renameColumn moves the value under the new key', () => {
   store.addRow('t1')
   store.setCell('t1', 0, 'beat', 7)
   assert.ok(store.renameColumn('t1', 'beat', 'score'))
-  assert.deepEqual(store.get('t1')!.rows, [{ score: 7, loop: 0 }])
-  assert.deepEqual(store.get('t1')!.columns, [{ name: 'score', type: 'number' }, { name: 'loop', type: 'number' }])
+  assert.deepEqual(store.get('t1')!.rows, [{ score: 7 }])
+  assert.deepEqual(store.get('t1')!.columns, [{ name: 'score', type: 'number' }])
 })
 
 test('renameTable moves state (and its event history) and rejects collisions', () => {
@@ -141,8 +141,8 @@ test('a table-panel table is never re-seeded by a later editable() seed (the pro
   store.createTable('t')
   store.addRow('t')
   store.setCell('t', 0, 'beat', 5)
-  store.ensure('t', { beat: 'number', loop: 'number' }, [{ beat: 9, loop: 0 }])
-  assert.deepEqual(store.get('t')!.rows, [{ beat: 5, loop: 0 }])
+  store.ensure('t', { beat: 'number' }, [{ beat: 9 }])
+  assert.deepEqual(store.get('t')!.rows, [{ beat: 5 }])
 })
 
 test('re-seeding survives serialize/load — provenance is rebuilt purely from the event log', () => {
@@ -226,7 +226,7 @@ test('serialize/load round-trips the whole store — the unit a session persists
 
   const b = createEditableTableStore()
   assert.ok(b.load(a.serialize()))
-  assert.deepEqual(b.get('t1')!.rows, [{ beat: 9, loop: 0 }])
+  assert.deepEqual(b.get('t1')!.rows, [{ beat: 9 }])
   assert.deepEqual(b.get('t1')!.events.map((e) => e.kind), ['create', 'add-row', 'set-cell'])
   assert.ok(b.has('t2'), 'every table in the store round-trips, not just one')
 })
@@ -380,15 +380,15 @@ test('setReplayView restores every table to its state at a past run', () => {
   store.recordRun()
 
   assert.equal(store.get('code')!.rows[0].code, 'v2')
-  assert.deepEqual(store.get('nums')!.rows, [{ beat: 99, loop: 0 }, { beat: 0, loop: 0 }])
+  assert.deepEqual(store.get('nums')!.rows, [{ beat: 99 }, { beat: 0 }])
 
   store.setReplayView(run1)
   assert.equal(store.get('code')!.rows[0].code, 'v1')
-  assert.deepEqual(store.get('nums')!.rows, [{ beat: 10, loop: 0 }])
+  assert.deepEqual(store.get('nums')!.rows, [{ beat: 10 }])
 
   store.setReplayView(null)
   assert.equal(store.get('code')!.rows[0].code, 'v2')
-  assert.deepEqual(store.get('nums')!.rows, [{ beat: 99, loop: 0 }, { beat: 0, loop: 0 }])
+  assert.deepEqual(store.get('nums')!.rows, [{ beat: 99 }, { beat: 0 }])
 })
 
 test('ensure is read-only while replaying — a scrubbed cook appends nothing', () => {

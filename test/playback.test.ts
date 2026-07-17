@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { wallAlignedTick, wallAlignedLoop, loopEpochsFromApplies } from '../src/playback.js'
+import { wallAlignedTick, wallAlignedLoop, loopEpochsFromApplies, loopBeatsFromEvents } from '../src/playback.js'
 
 test('wallAlignedTick is 0 exactly at the anchor instant', () => {
   assert.equal(wallAlignedTick(1000, 1000, 4), 0)
@@ -29,6 +29,7 @@ test('wallAlignedTick returns 0 for a non-positive loop length', () => {
 
 import { createPlaybackEngine, type PlaybackEngine, type TapControl } from '../src/playback.js'
 import { createSceneVisualizer, createHydraVisualizer } from '../src/visualizer.js'
+import { rasterizeRows } from '../src/rasterize.js'
 import { DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
 
@@ -73,7 +74,12 @@ function fakeTime(startMs: number) {
 // Hydra-only program: content exists (so playback runs) with no scene rows to stage.
 const HYDRA_ROWS: Row[] = [{ event: 'setCode', code: 'osc().out()', beat: 1 }]
 
-function makeEngine(time: ReturnType<typeof fakeTime>, extra: { tapControl?: TapControl; onLoop?: () => void } = {}): PlaybackEngine {
+const sceneCreate = (): Row => ({
+  id: 's', type: 'create', beat: 1, shape: 'sphere',
+  px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0,
+})
+
+function makeEngine(time: ReturnType<typeof fakeTime>, extra: { tapControl?: TapControl; onLoop?: () => void; onLoopBeats?: (n: number) => void } = {}): PlaybackEngine {
   const engine = createPlaybackEngine(
     [createSceneVisualizer(fakeScene()), createHydraVisualizer(fakeHydra())],
     { clock: time.clock, ...extra },
@@ -166,7 +172,7 @@ test('scrubbing while paused commits the playhead for the next resume', () => {
   assert.equal(engine.viewState().pos, 7)
 })
 
-test('setLoopBeats clamps to a whole beat >= 1 and resizes a hydra-only loop', () => {
+test('setLoopBeats clamps to a whole beat >= 1 and resizes the loop', () => {
   const time = fakeTime(0)
   const engine = makeEngine(time)
   engine.setLoopBeats(2.4)
@@ -174,6 +180,27 @@ test('setLoopBeats clamps to a whole beat >= 1 and resizes a hydra-only loop', (
   assert.equal(engine.viewState().maxBeats, 2)
   engine.setLoopBeats(0)
   assert.equal(engine.viewState().loopBeats, DEFAULT_LOOP_BEATS)
+})
+
+test('the loop is the GUI beat count regardless of how much scene content is baked', () => {
+  const time = fakeTime(0)
+  const engine = makeEngine(time)
+  // 4 beats of baked scene content in the default 16-beat loop: content never
+  // stretches (or shrinks) the loop, it just plays inside it.
+  engine.load({ sceneRows: rasterizeRows([sceneCreate()], 4), timelineRows: [], hydraRows: [] })
+  assert.equal(engine.viewState().maxBeats, DEFAULT_LOOP_BEATS)
+  engine.setLoopBeats(3)
+  assert.equal(engine.viewState().maxBeats, 3)
+})
+
+test('setLoopBeats reports a real change through onLoopBeats (clamped no-ops stay silent)', () => {
+  const time = fakeTime(0)
+  const seen: number[] = []
+  const engine = makeEngine(time, { onLoopBeats: (n) => seen.push(n) })
+  engine.setLoopBeats(8)
+  engine.setLoopBeats(8.2) // clamps to 8 — unchanged
+  engine.setLoopBeats(4)
+  assert.deepEqual(seen, [8, 4])
 })
 
 test('retempo re-anchors to the new tapped tempo without moving a paused playhead', () => {
@@ -246,4 +273,58 @@ test('loopEpochsFromApplies ignores non-apply events and unstamped (legacy) puls
 
 test('a stamped apply without a changed list counts for every kind', () => {
   assert.deepEqual(loopEpochsFromApplies([{ kind: 'apply', at: 7 }]), { scene: 7, timeline: 7, hydra: 7, bauble: 7 })
+})
+
+// --- loopBeatsFromEvents — the loop length folded off the activity table -----
+
+test('loopBeatsFromEvents keeps the newest set-loop-beats, ignoring other events and junk values', () => {
+  assert.equal(loopBeatsFromEvents([
+    { kind: 'apply', at: 1 },
+    { kind: 'set-loop-beats', beats: 8, at: 2 },
+    { kind: 'set-loop-beats', beats: 0, at: 3 },   // < 1 — ignored
+    { kind: 'set-loop-beats', beats: 'x', at: 4 }, // not a number — ignored
+    { kind: 'set-loop-beats', beats: 12, at: 5 },
+  ]), 12)
+  assert.equal(loopBeatsFromEvents([{ kind: 'apply', at: 1 }]), null, 'null with none recorded')
+  assert.equal(loopBeatsFromEvents([]), null)
+})
+
+// --- beat-derived passes: content past the loop's end plays in later passes --
+
+test('a hydra event past the loop plays once the wall-aligned pass reaches it', () => {
+  const time = fakeTime(0)
+  const hydra = fakeHydra()
+  const sketches: (string | null)[] = []
+  hydra.setSketch = (s?: { code: string } | null) => { sketches.push(s?.code ?? null) }
+  const engine = createPlaybackEngine([createHydraVisualizer(hydra)], { clock: time.clock })
+  engine.setLoopBeats(2)
+  // Beat 3 is past the 2-beat loop → the second pass's first beat.
+  engine.load({ sceneRows: [], timelineRows: [], hydraRows: [
+    { event: 'setCode', code: 'a', beat: 1 },
+    { event: 'setCode', code: 'b', beat: 3 },
+  ] })
+  engine.toggle() // epoch 0 → phase 0, pass 0
+  assert.equal(sketches.at(-1), 'a.out(o0)')
+  time.advance(2 * DEFAULT_BEAT_SECONDS * 1000) // one full loop → pass 1
+  time.frame()
+  assert.equal(sketches.at(-1), 'b.out(o0)', 'pass 1 reaches the beat-3 event')
+  time.advance(2 * DEFAULT_BEAT_SECONDS * 1000) // pass 2 wraps back to pass 0
+  time.frame()
+  assert.equal(sketches.at(-1), 'a.out(o0)', 'the sequence wraps to pass 0')
+})
+
+test('scene: a keyframe at the loop boundary is a glide endpoint, and short content holds its pose', () => {
+  const viz = createSceneVisualizer(fakeScene())
+  // Content spans beats 1..3 — exactly a 2-beat loop's boundary (frame 60).
+  viz.load({ sceneRows: rasterizeRows([
+    sceneCreate(),
+    { id: 's', type: 'update', beat: 3, px: 4 },
+  ]), hydraRows: [] })
+  const at = (srcFrameF: number, loopFrames: number, pass = 0) =>
+    viz.applyFrame({ srcFrameF, loopFrames, ctx: null, passAt: () => pass })[0]
+  // 2-beat loop (60 frames): the boundary keyframe caps pass 0 rather than
+  // starting a pass of its own, so the glide covers the whole loop seamlessly.
+  assert.equal(at(30, 60, 5).px, 2, 'mid-glide, whatever the wall-aligned pass count')
+  // 4-beat loop (120 frames): the loop outruns the content — the final pose holds.
+  assert.equal(at(90, 120).px, 4)
 })

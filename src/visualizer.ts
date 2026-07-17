@@ -6,8 +6,8 @@
 // Origami renders through the scene visualizer, not a separate one.
 
 import { buildFrameIndex, sampleFrame } from './rasterize.js'
-import { buildHydraIndex, hydraFrameAt, hydraLoops } from './hydra.js'
-import { buildBaubleIndex, baubleFrameAt, baubleLoops } from './bauble.js'
+import { buildHydraIndex, hydraFrameAt } from './hydra.js'
+import { buildBaubleIndex, baubleFrameAt } from './bauble.js'
 import { resolveBindings, type EvalCtx } from './dsl.js'
 import { FPS } from './constants.js'
 import type { Row } from './lineage.js'
@@ -39,6 +39,9 @@ export interface CookedVisualRows {
 export interface VisualizerFrame {
   // Fractional source frame — the playhead sweeps continuously between frames.
   srcFrameF: number
+  // The loop length in frames — the GUI beat count, supplied by the engine.
+  // Content whose beat runs past this span forms later passes of the loop.
+  loopFrames: number
   // Streaming context midi() bindings resolve against; null when no stream.
   ctx: EvalCtx | null
   // Wall-aligned loops completed since an absolute instant (ms) — supplied by
@@ -51,9 +54,6 @@ export interface Visualizer {
   // Swap in freshly cooked rows. Reconciliation state survives on purpose: a
   // re-cook updates what's on screen in place rather than tearing it down.
   load(cooked: CookedVisualRows): void
-  // Frames of content that should size the loop; 0 when this visualizer has
-  // no say.
-  contentFrames(): number
   hasContent(): boolean
   // Reconcile the display to this frame. Returns the rows "on screen" there —
   // the engine folds them into the lineage highlight.
@@ -84,16 +84,16 @@ export function createSceneVisualizer(sceneAPI: SceneAPI): Visualizer {
       frameIndex = buildFrameIndex(cooked.sceneRows ?? [])
       if (typeof cooked.loopEpochs?.scene === 'number') epoch = cooked.loopEpochs.scene
     },
-    // Per-pass span, not the cache's total extent: a multi-loop cache still
-    // wraps the playhead every loop, with the pass picked by the loop count.
-    contentFrames: () => frameIndex.loopFrames,
     hasContent: () => frameIndex.map.size > 0,
-    applyFrame({ srcFrameF, ctx, passAt }): Row[] {
-      // A multi-loop cache is one extended frame grid (loops * loopFrames):
-      // offset into the pass the wall-aligned loop count selects.
-      const frameF = frameIndex.loops > 1
-        ? (passAt(epoch) % frameIndex.loops) * frameIndex.loopFrames + srcFrameF
-        : srcFrameF
+    applyFrame({ srcFrameF, loopFrames, ctx, passAt }): Row[] {
+      // The cache is one absolute frame grid; passes are how the loop-length
+      // window chops it up. ceil, so a keyframe at exactly the boundary (beat
+      // loopBeats+1) is the glide endpoint of the pass before it, not a pass
+      // of its own — the idiom for a seamless wrap. Clamping to the extent
+      // holds the final pose when the loop outruns the content.
+      const loops = loopFrames > 0 ? Math.max(1, Math.ceil(frameIndex.maxFrame / loopFrames)) : 1
+      const offset = loops > 1 ? (passAt(epoch) % loops) * loopFrames : 0
+      const frameF = Math.min(offset + srcFrameF, frameIndex.maxFrame)
       const baked = sampleFrame(frameIndex, frameF)
       const states = ctx ? baked.map((s) => resolveBindings(s, ctx)) : baked
       const present = new Set<unknown>()
@@ -124,20 +124,25 @@ export function createSceneVisualizer(sceneAPI: SceneAPI): Visualizer {
 // hydra's clock from the source position, so scrubbing scrubs the sketch.
 export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
   let index: Row[] = buildHydraIndex([])
-  let loops = 1
+  // Largest event frame — how far along the absolute grid the content runs.
+  let maxIndex = 0
   let epoch = 0
 
   return {
     load(cooked): void {
       index = buildHydraIndex(cooked.hydraRows ?? [])
-      loops = hydraLoops(index)
+      maxIndex = index.reduce((m, r) => Math.max(m, r.index as number), 0)
       if (typeof cooked.loopEpochs?.hydra === 'number') epoch = cooked.loopEpochs.hydra
     },
-    contentFrames: () => 0,
     hasContent: () => index.length > 0,
-    applyFrame({ srcFrameF, ctx, passAt }): Row[] {
-      const pass = loops > 1 ? passAt(epoch) % loops : 0
-      const sketch = hydraFrameAt(index, Math.floor(srcFrameF), pass)
+    applyFrame({ srcFrameF, loopFrames, ctx, passAt }): Row[] {
+      // floor, so an event at exactly beat loopBeats+1 starts a new pass —
+      // that's how a later pass is authored. The absolute frame folds earlier
+      // passes in for free, and drives the sketch clock so transitions keep
+      // animating across passes.
+      const loops = loopFrames > 0 ? Math.floor(maxIndex / loopFrames) + 1 : 1
+      const frameF = (loops > 1 ? (passAt(epoch) % loops) * loopFrames : 0) + srcFrameF
+      const sketch = hydraFrameAt(index, Math.floor(frameF))
       // Resolve midi/slider bindings, then expose every slider's value as
       // `props.sliders` (an explicit user variable named "sliders" still wins).
       if (sketch) {
@@ -147,7 +152,7 @@ export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
       } else {
         hydraAPI.setSketch(sketch)
       }
-      hydraAPI.tick(srcFrameF / FPS)
+      hydraAPI.tick(frameF / FPS)
       return []
     },
     clear(): void {
@@ -164,25 +169,27 @@ export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
 // economics apply, so clear() must not reset.
 export function createBaubleVisualizer(baubleAPI: BaubleAPI): Visualizer {
   let index: Row[] = buildBaubleIndex([])
-  let loops = 1
+  let maxIndex = 0
   let epoch = 0
 
   return {
     load(cooked): void {
       index = buildBaubleIndex(cooked.baubleRows ?? [])
-      loops = baubleLoops(index)
+      maxIndex = index.reduce((m, r) => Math.max(m, r.index as number), 0)
       if (typeof cooked.loopEpochs?.bauble === 'number') epoch = cooked.loopEpochs.bauble
     },
-    contentFrames: () => 0,
     hasContent: () => index.length > 0,
-    applyFrame({ srcFrameF, ctx, passAt }): Row[] {
-      const pass = loops > 1 ? passAt(epoch) % loops : 0
-      const sketch = baubleFrameAt(index, Math.floor(srcFrameF), pass)
+    applyFrame({ srcFrameF, loopFrames, ctx, passAt }): Row[] {
+      // Pass derivation mirrors the hydra visualizer's; the absolute frame
+      // also drives `t`, keeping (ss t …) transition windows on one clock.
+      const loops = loopFrames > 0 ? Math.floor(maxIndex / loopFrames) + 1 : 1
+      const frameF = (loops > 1 ? (passAt(epoch) % loops) * loopFrames : 0) + srcFrameF
+      const sketch = baubleFrameAt(index, Math.floor(frameF))
       // NB: unlike hydra there is no props escape hatch — a resolved variable
       // bakes into the compiled script, so a binding that sweeps every frame
       // recompiles every frame; bind sweeping inputs to the camera vars.
       baubleAPI.setSketch(sketch && ctx ? { ...sketch, vars: resolveBindings(sketch.vars, ctx) } : sketch)
-      baubleAPI.tick(srcFrameF / FPS)
+      baubleAPI.tick(frameF / FPS)
       return []
     },
     clear(): void {

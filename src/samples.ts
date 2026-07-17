@@ -60,7 +60,8 @@ define("events", (rand, table) =>
 )
 
 // 3. Bake the sparse keyframes into a dense per-frame cache for playback —
-//    8 beats long, so the sphere holds its last pose before the loop wraps.
+//    at least 8 beats of it. The loop itself is the "beats" control under the
+//    scene (16 by default), so the sphere holds its last pose until it wraps.
 define("scene", (rand, table) => table("events").rasterize(8))
 `,
     tables: {
@@ -238,7 +239,8 @@ define("events", (rand, table) => {
     .concat(paper.sequence())
 })
 
-// Bake to a 21-beat loop cache — hold the finished crane a moment, then
+// Bake a 21-beat cache — with the 16-beat "beats" control the folding runs
+// past the loop into a second pass, holds the finished crane a moment, then
 // the paper opens flat and folds itself all over again.
 define("scene", (rand, table) => table("events").rasterize(21))
 
@@ -313,7 +315,7 @@ define("events", (rand, table) => {
     .concat(paper.sequence())
 })
 
-// Bake to a 12-beat loop — fold, rest a beat, open flat, fold again.
+// Bake a 12-beat cache — fold, rest, hold until the loop wraps, fold again.
 define("scene", (rand, table) => table("events").rasterize(12))
 
 // Things to try, live in the "steps" tab:
@@ -875,7 +877,7 @@ define("stars", () => {
       px: Math.cos(a) * rad, py: Math.sin(a) * rad, pz: 0, rx: 0, ry: 0, rz: 0,
     }
   })
-  // The newest press blinks — a color pulse on the 8-beat loop.
+  // The newest press blinks — a color pulse early in the loop.
   const newest = stars[stars.length - 1]
   stars.push({ id: newest.id, type: "update", beat: 5, color: 0x334455 })
   stars.push({ id: newest.id, type: "update", beat: 9, color: newest.color })
@@ -1000,7 +1002,8 @@ define("sim", "events", (rand, table) =>
 )
 
 // 3. Bake the sparse "events" stream into a dense per-frame cache for playback
-//    (12 beats — the full simulation).
+//    (12 beats of cache — the full simulation; the loop length itself is the
+//    "beats" control under the scene).
 define("scene", (rand, table) => table("events").rasterize(12))
 
 // 4. Collisions are just rows — pull them into their own view to inspect, and

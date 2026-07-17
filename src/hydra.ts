@@ -23,20 +23,16 @@ export function hydraRows(rows: Row[] | null | undefined): Row[] {
 }
 
 // Place each row on the frame grid from its 1-indexed `beat` (frame stored on
-// `index`, the field hydraFrameAt samples against) and sort by (loop, frame);
-// an optional 0-indexed `loop` column places a row in a later pass of the loop.
+// `index`, the field hydraFrameAt samples against) and sort by frame. The beat
+// axis is absolute: a beat past the loop's end lands the row in a later pass
+// (the visualizer wraps the playhead into this grid — see visualizer.ts).
 export function buildHydraIndex(rows: Row[] | null | undefined): Row[] {
   return hydraRows(rows)
     .map((row) => ({
       ...row,
       index: beatToFrame((row.beat as number | undefined) ?? 1),
-      loop: typeof row.loop === 'number' ? Math.max(0, Math.floor(row.loop)) : 0,
     }))
-    .sort((a, b) => ((a.loop as number) - (b.loop as number)) || ((a.index as number) - (b.index as number)))
-}
-
-export function hydraLoops(index: Row[]): number {
-  return index.reduce((m, r) => Math.max(m, (r.loop as number | undefined) ?? 0), 0) + 1
+    .sort((a, b) => (a.index as number) - (b.index as number))
 }
 
 // Strip a trailing `.out(...)` off a sketch, leaving the bare chain the
@@ -119,14 +115,13 @@ function transitionWindow(t: Transition): { start: number; end: number; posFn: s
 // running code string; setVariable folds into the shared `vars`. Returns null
 // until a setCode establishes some code.
 function foldOutput(
-  rows: Row[], frame: number, loop: number, output: string,
+  rows: Row[], frame: number, output: string,
   vars: Record<string, unknown>,
 ): string | null {
   let code: string | null = null
   const transitions: Transition[] = []
   for (const row of rows) {
-    const l = (row.loop as number | undefined) ?? 0
-    if (l > loop || (l === loop && (row.index as number) > frame)) break
+    if ((row.index as number) > frame) break
     switch (row.event) {
       case 'setCode':
         if (typeof row.code === 'string') code = row.code
@@ -203,11 +198,12 @@ function foldOutput(
   return `${result}.out(${output})`
 }
 
-// The active sketch at frame `f` of loop pass `loop`: earlier passes fold in
-// full, then this pass's events at/before f, one running code string per
-// output, concatenated. Returns null until some output reaches a setCode —
-// playback then falls back to showing the raw scene.
-export function hydraFrameAt(index: Row[], f: number, loop = 0): HydraFrame | null {
+// The active sketch at (absolute) frame `f`: every event at/before it folds
+// in, one running code string per output, concatenated. Sampling a frame in a
+// later pass of the loop is just sampling further along the grid, so earlier
+// passes fold in full for free. Returns null until some output reaches a
+// setCode — playback then falls back to showing the raw scene.
+export function hydraFrameAt(index: Row[], f: number): HydraFrame | null {
   const frame = Math.floor(f)
   if (frame < 0) return null
   // Fold each output's stream independently; concatenate in output-name order
@@ -222,7 +218,7 @@ export function hydraFrameAt(index: Row[], f: number, loop = 0): HydraFrame | nu
   const vars: Record<string, unknown> = {}
   const codes: string[] = []
   for (const out of [...groups.keys()].sort()) {
-    const code = foldOutput(groups.get(out)!, frame, loop, out, vars)
+    const code = foldOutput(groups.get(out)!, frame, out, vars)
     if (code != null) codes.push(code)
   }
   return codes.length === 0 ? null : { code: codes.join('\n'), vars }
@@ -236,10 +232,10 @@ export function hydraCodeUpToRow(rows: Row[] | null | undefined, rowIndex: numbe
   const all = rows ?? []
   if (!isHydraRow(all[rowIndex])) return null
   // Tag rows with their original position so the target is findable after the
-  // (loop, frame) sort.
+  // frame sort.
   const index = buildHydraIndex(all.map((row, i) => ({ ...row, __row: i })))
   const pos = index.findIndex((r) => (r as { __row?: number }).__row === rowIndex)
   if (pos < 0) return null
   const at = index[pos]
-  return hydraFrameAt(index.slice(0, pos + 1), at.index as number, at.loop as number)?.code ?? null
+  return hydraFrameAt(index.slice(0, pos + 1), at.index as number)?.code ?? null
 }

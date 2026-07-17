@@ -2,8 +2,9 @@
 // (create/update/color/destroy, keyed by `id`) into a dense frame-indexed
 // cache, one row per alive object per frame, on the FRAMES_PER_BEAT grid.
 // Timing fields (`beat`, `dur`) are in beats, 1-indexed (beat 1 = frame 0).
-// An optional 0-indexed `loop` column places events in later passes of the
-// loop; playback picks the pass (see playback.ts's wallAlignedLoop).
+// The beat axis is absolute: events past the loop's end just bake further
+// along the grid, and playback wraps the playhead into it in loop-length
+// passes (see the scene visualizer in visualizer.ts).
 
 import { withLineage, unionLineage, type Row } from './lineage.js'
 import { mixColor } from './color.js'
@@ -16,7 +17,8 @@ interface SampledState {
 
 // Fields rasterize interprets itself. Anything else — a custom field, or a
 // { $expr } streaming binding — is "extra": carried through to each baked row
-// untouched, to be read (and bindings resolved) at playback.
+// untouched, to be read (and bindings resolved) at playback. `loop` is the
+// retired pass column: still reserved so old tables carrying one stay inert.
 const RESERVED = new Set([
   'id', 'type', 'beat', 'loop', 'dur', 'ease', 'to', 'shape', 'color',
   'px', 'py', 'pz', 'rx', 'ry', 'rz', 'sx', 'sy', 'sz', 'frame',
@@ -39,11 +41,10 @@ function lerp(a: number, b: number, t: number): number {
 }
 
 // Resolve event timing to the frame grid: `beat` (1-indexed) → cache frame,
-// `dur` (beats) → frames, `loop` normalized (rows without one sit in pass 0).
+// `dur` (beats) → frames.
 function toFrameEvent(e: Row): Row {
   const ev = { ...e }
   ev.frame = beatToFrame((e.beat as number | undefined) ?? 1)
-  ev.loop = typeof e.loop === 'number' ? Math.max(0, Math.floor(e.loop)) : 0
   if (ev.dur != null) ev.dur = beatsToFrames(ev.dur as number)
   return ev
 }
@@ -138,33 +139,24 @@ function sampleObject(events: Row[], i: number): SampledState | null {
 
 export function rasterizeRows(eventRows: Row[] | null | undefined, maxBeats?: number): Row[] {
   const events = (eventRows ?? []).map(toFrameEvent)
-  // One pass spans `span` frames (given maxBeats, else the largest event frame
-  // in ANY pass, so every pass is the same length). Pass-L events sit at
-  // L * span + frame, so the ordinary keyframe machinery interpolates across
-  // loop boundaries for free.
-  const loops = events.reduce((m, e) => Math.max(m, e.loop as number), 0) + 1
-  const span = maxBeats != null
-    ? Math.max(0, beatsToFrames(maxBeats))
-    : events.reduce((m, e) => Math.max(m, (e.frame as number) ?? 0), 0)
-  for (const e of events) e.frame = (e.frame as number) + (e.loop as number) * span
+  // Bake out to the largest event frame, or at least `maxBeats` when given —
+  // the extra frames hold the final pose so a glide target can sit exactly on
+  // a loop boundary. How that extent chops into passes is playback's concern.
+  const max = Math.max(
+    maxBeats != null ? Math.max(0, beatsToFrames(maxBeats)) : 0,
+    events.reduce((m, e) => Math.max(m, (e.frame as number) ?? 0), 0),
+  )
   const timelines = buildTimelines(events)
-  // A multi-loop cache bakes every pass to its full span (so the last pass
-  // holds to the loop boundary); a single loop keeps its natural extent.
-  const max = loops > 1 ? loops * span : span
 
   const out: Row[] = []
   for (let frame = 0; frame <= max; frame++) {
-    // Pass this baked frame falls in — carried on rows only when multi-loop,
-    // so buildFrameIndex can recover the per-loop span.
-    const loop = loops > 1 && span > 0 ? Math.min(loops - 1, Math.floor(frame / span)) : null
     for (const evs of timelines.values()) {
       const s = sampleObject(evs, frame)
       if (!s) continue
-      // Drop the sparse `beat`/`loop` keyframe fields; the dense cache is
-      // keyed by `frame` (plus `loop` when multi-loop).
+      // Drop the sparse `beat` keyframe field (and any legacy `loop`); the
+      // dense cache is keyed by `frame`.
       const { beat: _beat, loop: _loop, ...fields } = s.fields
-      const baked = loop != null ? { ...fields, frame, loop, id: evs[0].id } : { ...fields, frame, id: evs[0].id }
-      out.push(withLineage(baked, unionLineage(s.sources)))
+      out.push(withLineage({ ...fields, frame, id: evs[0].id }, unionLineage(s.sources)))
     }
   }
   return out
@@ -172,31 +164,20 @@ export function rasterizeRows(eventRows: Row[] | null | undefined, maxBeats?: nu
 
 export interface FrameIndex {
   map: Map<number, Row[]>
-  // Total extent of the baked cache in frames, across every pass of the loop.
+  // Total extent of the baked cache in frames.
   maxFrame: number
-  // How many passes the cache spans, and the per-pass frame span. No `loop`
-  // column means one pass: loops = 1 and loopFrames = maxFrame.
-  loops: number
-  loopFrames: number
 }
 
 export function buildFrameIndex(sceneRows: Row[]): FrameIndex {
   const map = new Map<number, Row[]>()
   let maxFrame = 0
-  let maxLoop = 0
   for (const r of sceneRows ?? []) {
     const f = (r.frame as number | undefined) ?? 0
     if (!map.has(f)) map.set(f, [])
     map.get(f)!.push(r)
     if (f > maxFrame) maxFrame = f
-    const l = r.loop as number | undefined
-    if (typeof l === 'number' && l > maxLoop) maxLoop = l
   }
-  const loops = maxLoop + 1
-  // rasterizeRows bakes multi-loop to exactly loops * span frames, so the
-  // per-pass span is recoverable from the total extent.
-  const loopFrames = loops > 1 ? Math.round(maxFrame / loops) : maxFrame
-  return { map, maxFrame, loops, loopFrames }
+  return { map, maxFrame }
 }
 
 export function stateAtFrame(frameIndex: FrameIndex, i: number): Row[] {
