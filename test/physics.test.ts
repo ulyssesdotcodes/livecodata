@@ -119,6 +119,23 @@ test('initial velocity is applied to dynamic bodies', () => {
   assert.ok((updates[updates.length - 1].px as number) > 1, 'travelled along +x from its initial velocity')
 })
 
+test('a create row with beat > 1 is held until that beat, then fired with its velocity', () => {
+  // fps 30, steps 60: beat 3 = 1s on the fixed grid -> released at frame 30.
+  const out = simulateScene(Jolt, [
+    { id: 'shot', type: 'create', beat: 3, shape: 'sphere', motion: 'dynamic', px: 0, py: 0, pz: 0, vx: 5 },
+  ], { steps: 60, gravity: 0, fps: 30 })
+
+  const updates = rowsById(out, 'shot').filter((r) => r.type === 'update')
+  for (const r of updates.filter((r) => (r.beat as number) <= 3)) {
+    assert.equal(r.px, 0, `held until its beat: px ${r.px} at beat ${r.beat}`)
+  }
+  const last = updates[updates.length - 1]
+  assert.ok((last.px as number) > 1, `flew after release: px ${(last.px as number).toFixed(2)}`)
+
+  const create = rowsById(out, 'shot').find((r) => r.type === 'create')!
+  assert.equal(create.beat, 3, 'the create row keeps its beat, so rasterize shows it only from there')
+})
+
 function fakeEngine(rows: Row[]): { simulate: () => Row[] } {
   return { simulate: () => rows }
 }

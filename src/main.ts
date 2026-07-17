@@ -24,6 +24,7 @@ import { Table } from './dsl.js'
 import { createEditableTableStore, DISABLED_COL, CLEAR_RUNS_KIND, ACTIVITY_TABLE, type ColumnType, type SessionRun } from './editable-tables.js'
 import type { ApplyNode } from './branches.js'
 import { createMidiInput, subscribeWebMidi, type MidiInput, type MidiStore } from './midi.js'
+import { createMouseInput, type MouseInput, type MouseStore } from './mouse.js'
 import { createSliderInput, sliderDefs, type SliderInput, type SliderStore } from './sliders.js'
 import { createSliderPanel } from './ui/slider-panel.js'
 import { beatToFrame } from './constants.js'
@@ -196,6 +197,22 @@ const midiInput: MidiInput = createMidiInput({
   getLoop: () => loopCount,
 })
 
+// Canvas clicks, event-logged like MIDI, but as bake-time data rather than a
+// per-frame stream: a program reads them as table("mouse"), so each click
+// re-cooks the live program (see the canvas listener + requestLiveRecook) —
+// which is what lets a click re-bake a physics simulation on the fly.
+const mouseStore: MouseStore = {
+  record: (kind, payload) => editableStore.record('mouse', kind, payload),
+  events: () => editableStore.log.all().filter((e) => e.table === 'mouse'),
+  onChange: (cb) => editableStore.onChange(cb),
+}
+
+const mouseInput: MouseInput = createMouseInput({
+  store: mouseStore,
+  getIndex: () => playback.currentSourceBeats(),
+  getLoop: () => loopCount,
+})
+
 let midiSubscribed = false
 function ensureMidiSubscription(): void {
   if (midiSubscribed) return
@@ -293,12 +310,13 @@ async function cookInWorker(code: string, seed: number, seeds?: Record<string, R
     // hidden from the program.
     rows: (editableStore.get(name)?.rows ?? []).filter((r) => r[DISABLED_COL] !== true),
   }))
-  // The two streams every session has — guaranteed present even before their
+  // The streams every session has — guaranteed present even before their
   // first event lands (a fresh session's first cook runs before its apply is
-  // recorded), so a program can always rely on table("activity") and
-  // table("code·events") resolving.
+  // recorded, and a mouse-driven sketch cooks before its first click), so a
+  // program can always rely on table("activity"), table("code·events") and
+  // table("mouse") resolving.
   const logs = logTables()
-  for (const name of [ACTIVITY_TABLE, 'code' + EVENTS_SUFFIX]) {
+  for (const name of [ACTIVITY_TABLE, 'code' + EVENTS_SUFFIX, 'mouse']) {
     if (!logs.some((l) => l.name === name)) logs.push({ name, rows: [] })
   }
   const { cooked, declared } = await cookClient.cook({ code, seed, dataCache, tapRows: tapRows(), editables, seeds, logs })
@@ -368,10 +386,15 @@ function logTables(): Array<{ name: string; rows: Row[] }> {
     logs.push({ name: 'slider', rows: sliderInput.rows() })
     logs.push({ name: 'slider' + EVENTS_SUFFIX, rows: sliderInput.eventRows() })
   }
+  // Folded clicks + raw log, once anything has been recorded.
+  if (mouseInput.rows().length) {
+    logs.push({ name: 'mouse', rows: mouseInput.rows() })
+    logs.push({ name: 'mouse' + EVENTS_SUFFIX, rows: mouseInput.eventRows() })
+  }
   for (const name of editableStore.listNames()) {
-    // The "slider"/"midi" log tables back recorded automation — surfaced
-    // (folded) above, or not at all.
-    if (name === 'slider' || name === 'midi') continue
+    // The "slider"/"midi"/"mouse" log tables back recorded automation —
+    // surfaced (folded) above, or not at all.
+    if (name === 'slider' || name === 'midi' || name === 'mouse') continue
     const key = editableStore.isLog(name) ? name : name + EVENTS_SUFFIX
     logs.push({ name: key, rows: (editableStore.get(name)?.events ?? []).map((r) => ({ ...r })) })
   }
@@ -561,6 +584,39 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
   } finally {
     cooking--
   }
+}
+
+// True when the on-screen program bakes from the mouse table — the same
+// source-sniffing trick extractDataUrls uses. Gates click recording, so a
+// program that never reads clicks doesn't collect them (or re-cook) at all.
+const READS_MOUSE = /\btable\(\s*["'`]mouse["'`]\s*\)/
+function programReadsMouse(): boolean {
+  return liveCode != null && READS_MOUSE.test(liveCode)
+}
+
+// A live input changed data the current program bakes from (a canvas click
+// landing in table("mouse")): re-cook the SAME program in place. broadcast/
+// persist are off — like a reactive peer evaluate, this is no new run, so the
+// physics re-bakes and playback.load swaps the cache without touching the
+// session history or the playhead. Coalesced: clicks can outrun the worker,
+// so at most one extra cook queues behind the one in flight.
+let liveRecookRunning = false
+let liveRecookQueued = false
+function requestLiveRecook(): void {
+  if (liveCode == null) return
+  if (liveRecookRunning) {
+    liveRecookQueued = true
+    return
+  }
+  liveRecookRunning = true
+  void evaluate(liveCode, { setError: editor.setError, seed: liveSeed, broadcast: false, persist: false })
+    .finally(() => {
+      liveRecookRunning = false
+      if (liveRecookQueued) {
+        liveRecookQueued = false
+        requestLiveRecook()
+      }
+    })
 }
 
 // The code cell this editor is a window onto ("code[0].code" is the main
@@ -978,6 +1034,21 @@ const mounts = mountApp(document.getElementById('app') as HTMLElement, {
   onClearRuns: clearRuns,
 })
 const sceneAPI = initThree(mounts.threeCanvas, mounts.canvasPane)
+
+// Record canvas clicks into the mouse log — stamped with the playhead's
+// source beat plus the camera ray at click time — then re-bake the program
+// on the fly. Listening on the pane but acting only on canvas targets keeps
+// the sliders and transport riding on top click-transparent to this.
+mounts.canvasPane.addEventListener('pointerdown', (e) => {
+  if (!programReadsMouse()) return
+  if (!(e.target instanceof HTMLCanvasElement)) return
+  const rect = mounts.canvasPane.getBoundingClientRect()
+  if (!rect.width || !rect.height) return
+  const x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+  const y = 1 - ((e.clientY - rect.top) / rect.height) * 2
+  mouseInput.click({ x, y, ...sceneAPI.pickRay(x, y) })
+  requestLiveRecook()
+})
 const baubleAPI = initBauble(mounts.baubleCanvas)
 // The bauble canvas rides along as hydra source s1, so a sketch can composite
 // the SDF render.
@@ -1037,7 +1108,9 @@ async function bootRoom(room: string): Promise<void> {
     // tables need nothing here — the generic onChange reaction covers them.
     let applied = false
     let presenceChanged = false
+    let clicked = false
     for (const e of added) {
+      if (e.table === 'mouse') clicked = true
       if (e.table !== ACTIVITY_TABLE) continue
       if (e.kind === 'apply') applied = true
       else if (e.kind === 'peer-join' || e.kind === 'peer-leave') presenceChanged = true
@@ -1050,6 +1123,10 @@ async function bootRoom(room: string): Promise<void> {
         if (latest.code !== liveCode) editor.setCode(latest.code)
         void evaluate(latest.code, { setError: editor.setError, seed: latest.seed, broadcast: false })
       }
+    } else if (clicked && programReadsMouse()) {
+      // A peer's click is bake-time data for the program on screen — mirror
+      // their on-the-fly re-bake (an apply above already re-cooks).
+      requestLiveRecook()
     }
     if (presenceChanged) {
       chipStatus(multiplayer?.status ?? 'connecting')

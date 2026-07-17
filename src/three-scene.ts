@@ -13,6 +13,9 @@ export interface SceneAPI {
   reset(): void
   // Driven by `shape: "camera"` rows (see cameraPose); also exposed for tooling.
   readonly camera: THREE.PerspectiveCamera
+  // The world-space camera ray through a normalized device point (-1..1, y
+  // up) — what a recorded canvas click carries into the mouse table.
+  pickRay(ndcX: number, ndcY: number): { px: number; py: number; pz: number; dx: number; dy: number; dz: number }
 }
 
 // Re-exported from three-points.ts, where the geometry builder is shared with
@@ -353,8 +356,15 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
   }
   requestAnimationFrame(animate)
 
+  const raycaster = new THREE.Raycaster()
+
   return {
     camera,
+    pickRay(ndcX: number, ndcY: number) {
+      raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera)
+      const { origin: o, direction: d } = raycaster.ray
+      return { px: o.x, py: o.y, pz: o.z, dx: d.x, dy: d.y, dz: d.z }
+    },
     createObject(row: Record<string, unknown>): void {
       const { id, shape, px, py, pz, rx, ry, rz, color } = row
       if (objects.has(id) || origamis.has(id) || texts.has(id) || cameras.has(id)) return

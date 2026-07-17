@@ -767,6 +767,15 @@ class PhysicsBuilder {
     this._ctx = ctx
   }
 
+  /**
+   * Bake the rigid-body simulation: steps the world `steps` frames at `fps`
+   * and ADDS to the source table — per-frame "update" rows for each moving
+   * body plus "collision" rows on first contact, all placed on the beat grid.
+   * A dynamic create row with `beat` > 1 (or a `dropAt` in seconds) is held
+   * motionless until that moment, then released with its vx/vy/vz applied —
+   * so a mid-loop row (say, a click-fired projectile from table("mouse"))
+   * enters the simulation at its beat.
+   */
   simulate(opts: { steps?: number; gravity?: number; fps?: number; sampleEvery?: number; collisions?: boolean } = {}): Table {
     const src = this._source instanceof Table ? this._source : new Table(this._source ?? [], this._ctx)
     return Table._fromNode(this._ctx, {
@@ -1099,6 +1108,14 @@ export type DSLSurface = Easings & {
   points(shape: string, props?: Row): Table
   /** A table of points → a BufferGeometry, reading position (and normal, when every row has nx/ny/nz) from px/py/pz (nx/ny/nz). The inverse of points(). */
   geometry(points: Table | Row[]): BufferGeometry
+  /**
+   * A JoltPhysics bake over a scene table's create rows (motion:
+   * "dynamic"/"static"/"kinematic", plus restitution/friction/vx/vy/vz) —
+   * chain .simulate({ steps, gravity }) for the baked event stream. Re-cooks
+   * incrementally: only when the source rows change does the sim re-bake,
+   * which is what lets live inputs (e.g. table("mouse") clicks) re-bake it
+   * on the fly.
+   */
   physics(source: Table | Row[]): PhysicsBuilder
   /**
    * Folding paper: origami() is a bare sheet. Chain .steps(table) to fold it

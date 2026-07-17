@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createRuntime } from '../src/runtime.js'
+import { initPhysics } from '../src/physics.js'
 import { getLineage } from '../src/lineage.js'
 import { foldTablePositions, type FoldTableProgram } from '../src/fold-engine.js'
 import { conformRow, schemaColumns, invalidColumns, type ColumnType } from '../src/editable-tables.js'
@@ -54,10 +55,12 @@ test('every sample.table names a table the sample declares', () => {
   // The example's default tab (see main's openExample) must be a real view or
   // editable table the code produces — a typo would silently fall back to the
   // default tab. Guard it statically: the name has to be a define()/editable()
-  // target in that sample's own code.
+  // target — or a streaming log the code reads via table() (Block Shooter's
+  // "mouse" tab appears once clicks land) — in that sample's own code.
   for (const s of SAMPLES) {
     if (s.table == null) continue
-    const decl = new RegExp(`(define|editable)\\(\\s*"${s.table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`)
+    const name = s.table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const decl = new RegExp(`(define|editable|table)\\(\\s*"${name}"`)
     assert.ok(decl.test(s.code), `sample "${s.name}" declares its table "${s.table}"`)
   }
 })
@@ -106,6 +109,34 @@ test('Origami Crane sample: 17 exact fold steps, wings held half-raised', () => 
   assert.ok(withFold.length > 0, 'scene frames carry fold')
   const last = withFold[withFold.length - 1]
   assert.equal(last.fold, 16.5)
+})
+
+test('Block Shooter sample: a recorded click bakes a ball fired at its beat', async () => {
+  const sample = SAMPLES.find((s) => s.name === 'Block Shooter')!
+  const engine = await initPhysics()
+  // One click straight down the default camera axis, recorded at beat 5 —
+  // served the way main.ts serves the mouse log to the cook worker.
+  const click = { type: 'click', beat: 5, loop: 0, x: 0, y: 0, px: 0, py: 0, pz: 5, dx: 0, dy: 0, dz: -1 }
+  const { views } = createRuntime({
+    physics: () => engine,
+    logRows: (name) => (name === 'mouse' ? [click] : null),
+  }).run(sample.code, { seed: 1 })
+
+  const sim = views.get('sim')!.rows
+  const create = sim.find((r) => r.id === 'ball0' && r.type === 'create')!
+  assert.equal(create.beat, 5, 'the ball appears at the beat the click landed on')
+
+  const flight = sim.filter((r) => r.id === 'ball0' && r.type === 'update')
+  for (const r of flight.filter((r) => (r.beat as number) <= 5)) {
+    assert.ok(Math.abs((r.pz as number) - 4) < 1e-6, 'held one unit down the ray until its beat')
+  }
+  assert.ok(flight.some((r) => (r.pz as number) < 1), 'then flew down the ray to the blocks')
+
+  assert.ok(sim.some((r) => r.type === 'collision' && r.other === 'ball0'),
+    'the shot lands — something records being hit by the ball')
+
+  const scene = views.get('scene')!
+  assert.ok(scene.rows.some((r) => r.id === 'ball0'), 'the baked loop cache carries the shot')
 })
 
 test('Hydra Meta sample: replace/append/setSource/layer rewrite the sketch across the loop', () => {

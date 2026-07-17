@@ -29,8 +29,12 @@ export function framesToBeats(nFrames: number): number {
   return nFrames / FRAMES_PER_BEAT
 }
 
-// The one legitimate seconds→beat conversion: physics integrates in SI seconds
-// and its output is placed on the beat grid (see physics.ts).
+// The one legitimate seconds↔beat conversion pair: physics integrates in SI
+// seconds; its inputs enter and its output lands on the beat grid (physics.ts).
 export function secondsToBeat(seconds: number): number {
   return seconds / DEFAULT_BEAT_SECONDS + 1
+}
+
+export function beatToSeconds(beat: number): number {
+  return (beat - 1) * DEFAULT_BEAT_SECONDS
 }

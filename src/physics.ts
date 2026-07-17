@@ -4,7 +4,7 @@
 import initJolt from 'jolt-physics'
 import type { Row } from './lineage.js'
 import type { SimulateOptions } from './dsl.js'
-import { FPS, secondsToBeat } from './constants.js'
+import { FPS, secondsToBeat, beatToSeconds } from './constants.js'
 import { SHAPE_DEFAULTS } from './shapes.js'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -163,18 +163,21 @@ export function simulateScene(Jolt: JoltModule, baseRows: Row[], opts: SimulateO
 
   const idByBody = new Map<number, unknown>()
   const moving: { id: unknown; bodyId: JoltModule }[] = []
-  // `dropAt` rows stay dynamic bodies with gravity zeroed until the drop
+  // Held rows stay dynamic bodies with gravity zeroed until their release
   // frame (flipping static->dynamic mid-sim fails: a static body never gets
   // mass properties). Held bodies join `moving` immediately so rasterize
-  // sees a flat hold then a sharp drop, not one long interpolation.
-  const delayedDrops: { bodyId: JoltModule; dropFrame: number }[] = []
+  // sees a flat hold then a sharp release, not one long interpolation.
+  const delayedDrops: { bodyId: JoltModule; dropFrame: number; vx: number; vy: number; vz: number }[] = []
 
   for (const row of creates) {
     const motion = row.motion as string | undefined
     const layer = motion === 'static' ? LAYER_NON_MOVING : LAYER_MOVING
     const shape = makeShape(Jolt, row)
-    const dropAt = row.dropAt as number | undefined
-    const held = motion !== 'static' && dropAt != null && dropAt > 0
+    // A row is held until the later of its `dropAt` (SI seconds) and its
+    // `beat` — so a create row placed mid-loop (a click-fired ball) enters
+    // the simulation at that beat, with its vx/vy/vz applied at release.
+    const releaseSec = Math.max((row.dropAt as number | undefined) ?? 0, beatToSeconds((row.beat as number | undefined) ?? 1))
+    const held = motion !== 'static' && releaseSec > 0
 
     const pos = new Jolt.RVec3((row.px as number | undefined) ?? 0, (row.py as number | undefined) ?? 0, (row.pz as number | undefined) ?? 0)
     const q = eulerToQuat((row.rx as number | undefined) ?? 0, (row.ry as number | undefined) ?? 0, (row.rz as number | undefined) ?? 0)
@@ -195,7 +198,12 @@ export function simulateScene(Jolt: JoltModule, baseRows: Row[], opts: SimulateO
 
     const bodyKey = body.GetID().GetIndexAndSequenceNumber() as number
     idByBody.set(bodyKey, row.id)
-    if (held) delayedDrops.push({ bodyId: body.GetID(), dropFrame: Math.round((dropAt as number) * fps) })
+    if (held) {
+      delayedDrops.push({
+        bodyId: body.GetID(), dropFrame: Math.round(releaseSec * fps),
+        vx: (row.vx as number | undefined) ?? 0, vy: (row.vy as number | undefined) ?? 0, vz: (row.vz as number | undefined) ?? 0,
+      })
+    }
     if (motion !== 'static') moving.push({ id: row.id, bodyId: body.GetID() })
 
     Jolt.destroy(settings)
@@ -237,6 +245,11 @@ export function simulateScene(Jolt: JoltModule, baseRows: Row[], opts: SimulateO
       const d = delayedDrops[i]
       if (frame < d.dropFrame) continue
       bodyInterface.SetGravityFactor(d.bodyId, 1)
+      if (d.vx !== 0 || d.vy !== 0 || d.vz !== 0) {
+        const v = new Jolt.Vec3(d.vx, d.vy, d.vz)
+        bodyInterface.SetLinearVelocity(d.bodyId, v)
+        Jolt.destroy(v)
+      }
       // a motionless body falls asleep and SetGravityFactor alone doesn't
       // wake it, so gravity would never get a turn to act
       bodyInterface.ActivateBody(d.bodyId)

@@ -1024,6 +1024,96 @@ define("ball_height", (rand, table) =>
 `,
   },
   {
+    name: "Block Shooter",
+    table: "mouse",
+    code: `// livecodata — Block Shooter: click the scene to knock down the pyramid
+// A pyramid of blocks stands on a floor. CLICK THE SCENE to fire a ball along
+// your aim — no Run needed: each click lands in the mouse table and re-bakes
+// the physics simulation on the fly. A shot is recorded against the BEAT it
+// was fired on, so the whole volley replays, identically, every pass of the
+// loop. Press "Run" (or Cmd/Ctrl-Enter), hit Play, then click the blocks.
+
+// 1. The standing scene: a static floor and a 4-story pyramid of dynamic
+//    blocks, stacked analytically so it starts at rest.
+define("blocks", () => {
+  const H = 0.2, GAP = 0.42
+  const out = []
+  for (let k = 0; k < 4; k++) {
+    const count = 4 - k
+    for (let i = 0; i < count; i++) {
+      out.push({
+        id: "blk" + k + "_" + i, type: "create", shape: "box", color: 0x4a9eff,
+        motion: "dynamic", friction: 0.4, restitution: 0,
+        hx: H, hy: H, hz: H,
+        px: -(count - 1) * GAP / 2 + i * GAP, py: -0.8 + k * 0.401, pz: 0,
+        rx: 0, ry: 0, rz: 0,
+      })
+    }
+  }
+  out.push({ id: "floor", type: "create", shape: "box", color: 0x1a2e1a,
+    motion: "static", px: 0, py: -1.2, pz: 0, hx: 4, hy: 0.2, hz: 4 })
+  return out
+})
+
+// 2. The mouse table: one row per canvas click, recorded live while you play.
+//    \`beat\` is the playhead position the click landed on (1-indexed — the
+//    same coordinate every other table uses, so the shot re-fires at that spot
+//    each loop); x/y are where on screen (-1..1); px/py/pz + dx/dy/dz the
+//    camera ray you aimed along. Each click becomes a ball: spawned one unit
+//    down the ray and released INTO the simulation at its beat — a dynamic
+//    create row with beat > 1 is held until that moment, then fired with its
+//    vx/vy/vz. Clicks accumulate for the whole session; cap the volley with
+//    .slice(-8) if it gets crowded.
+define("balls", (rand, table) =>
+  table("mouse").map((c, i) => ({
+    id: "ball" + i, type: "create", beat: c.beat, shape: "sphere",
+    color: 0xf39c12, motion: "dynamic", restitution: 0.3, r: 0.28,
+    px: c.px + c.dx, py: c.py + c.dy, pz: c.pz + c.dz,
+    rx: 0, ry: 0, rz: 0,
+    vx: c.dx * 18, vy: c.dy * 18, vz: c.dz * 18,
+  }))
+)
+
+// 3. Bake the JoltPhysics simulation over blocks + every recorded shot: 480
+//    frames = 16 beats on the fixed grid. The cook is content-hashed, so the
+//    sim re-bakes exactly once per new click — that's the whole "on the fly"
+//    mechanism, the same incremental cook a Run uses. (The 3rd arg groups
+//    this view into "events", concat'd with "flash" below, beat-sorted.)
+define("sim", "events", (rand, table) =>
+  physics(table("blocks").concat(table("balls"))).simulate({ steps: 480, gravity: -9.81 })
+)
+
+// 4. Impacts flash the struck block white for a beat and a half — collision
+//    rows are just data, so it's a filter and a color pulse.
+define("flash", "events", (rand, table) =>
+  table("sim")
+    .filter({ type: "collision" })
+    .flatMap((c) => String(c.id).startsWith("blk") && String(c.other).startsWith("ball")
+      ? { id: c.id, type: "color", beat: c.beat, color: 0xffffff, dur: 1.5 }
+      : null)
+)
+
+// 5. Bake the sparse "events" stream into the dense 16-beat playback cache.
+//    When the loop wraps, the pyramid stands back up and the volley fires
+//    again — scrub the timeline to rewatch a shot in slow motion.
+define("scene", (rand, table) => table("events").rasterize(16))
+
+// 6. The crown block's height, graphed — the exact beat a shot topples it.
+define("crown", (rand, table) =>
+  table("events").filter({ id: "blk3_0", type: "update" })
+    .map(r => ({ beat: r.beat, height: r.py }))
+    .graph("height")
+)
+
+// Things to try:
+//   - Fire two shots on the same beat of different loops: both replay
+//     together — beats, not wall time, are the shared axis.
+//   - Watch the "mouse" tab fill as you click (raw log: "mouse·events").
+//   - Raise the ball speed (the vx/vy/vz factor) or its r — heavier shot,
+//     bigger wreckage. Then Run to re-bake the same recorded volley.
+`,
+  },
+  {
     name: "CO2 (Mauna Loa)",
     table: "co2_monthly",
     code: `// Mauna Loa CO2 — monthly atmospheric measurements by NOAA/Scripps, 1958–2026.

@@ -34,8 +34,10 @@ import type { Row } from '../src/lineage.js'
 
 function fakeScene() {
   return {
-    // SceneAPI's camera is for screenshot tooling; nothing here reads it.
+    // SceneAPI's camera/pickRay are for tooling and click capture; nothing
+    // here reads them.
     camera: null as never,
+    pickRay: () => ({ px: 0, py: 0, pz: 0, dx: 0, dy: 0, dz: 0 }),
     calls: [] as string[],
     createObject(): void { this.calls.push('create') },
     updateObject(): void { this.calls.push('update') },
