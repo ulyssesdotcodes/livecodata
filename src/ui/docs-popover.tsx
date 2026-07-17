@@ -85,7 +85,7 @@ const TABLE_DOCS: TableDoc[] = [
   {
     name: 'Streaming logs',
     detail: 'the session as data',
-    info: 'The read-only log tabs are readable from code under the names their tabs wear: table("activity") is the session\'s pulse (one { kind: "apply" } row per Run, plus peer-join/leave), table("name·events") any editable table\'s edit history, "code·events" the program\'s. A program view of the same name wins. See the Run Counter / Session Sculpture examples.',
+    info: 'The read-only log tabs are readable from code under the names their tabs wear: table("activity") is the session\'s pulse (one { kind: "apply" } row per Run, plus peer-join/leave and set-loop-beats markers), table("name·events") any editable table\'s edit history, "code·events" the program\'s. A program view of the same name wins. See the Run Counter / Session Sculpture examples.',
   },
   {
     name: 'Scene rows',

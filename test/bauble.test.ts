@@ -7,7 +7,6 @@ import {
   baubleFrameAt,
   baubleScript,
   baubleCodeUpToRow,
-  baubleLoops,
   isBaubleCameraVar,
   applyForm,
   type BaubleFrame,
@@ -75,28 +74,27 @@ test('variables take their latest value while the sketch stays put', () => {
   assert.equal(frameAt(rows, 6)!.code, '(sphere size)')
 })
 
-test('baubleFrameAt samples the pass named by `loop`, folding earlier passes in full', () => {
+test('the beat axis is absolute: a beat past the loop folds once the extended frame reaches it', () => {
+  // Playback samples a later pass at pass * loopFrames + frame — an event
+  // beyond the loop's span (here frame 100) is simply further along the grid.
   const index = buildBaubleIndex([
-    { beat: 1, loop: 0, event: 'setCode', code: 'a' },
-    { beat: 1, loop: 0, event: 'setVariable', name: 'amount', value: 1 },
-    { beat: b(10), loop: 1, event: 'setCode', code: 'b' },
+    { beat: 1, event: 'setCode', code: 'a' },
+    { beat: 1, event: 'setVariable', name: 'amount', value: 1 },
+    { beat: b(110), event: 'setCode', code: 'b' },
   ])
-  assert.equal(baubleFrameAt(index, 0, 0)!.code, 'a', 'pass 0')
-  assert.equal(baubleFrameAt(index, 0, 1)!.code, 'a', 'early in pass 1 the change has not hit yet')
-  assert.equal(baubleFrameAt(index, 10, 1)!.code, 'b', 'pass 1 reaches its setCode')
-  assert.equal(baubleFrameAt(index, 0, 2)!.code, 'b', 'a later pass folds pass 1 in full')
-  assert.deepEqual(baubleFrameAt(index, 0, 2)!.vars, { amount: 1 }, 'variables persist across passes')
+  assert.equal(baubleFrameAt(index, 0)!.code, 'a', 'pass 0')
+  assert.equal(baubleFrameAt(index, 100)!.code, 'a', 'early in pass 1 the change has not hit yet')
+  assert.equal(baubleFrameAt(index, 110)!.code, 'b', 'pass 1 reaches its setCode')
+  assert.equal(baubleFrameAt(index, 200)!.code, 'b', 'a later pass folds pass 1 in full')
+  assert.deepEqual(baubleFrameAt(index, 200)!.vars, { amount: 1 }, 'variables persist across passes')
 })
 
-test('buildBaubleIndex orders rows by (loop, frame); baubleLoops counts the passes', () => {
+test('buildBaubleIndex orders rows by frame', () => {
   const index = buildBaubleIndex([
-    { beat: 1, loop: 1, event: 'setCode', code: 'later' },
-    { beat: b(5), event: 'setCode', code: 'first' }, // no loop → pass 0
+    { beat: b(20), event: 'setCode', code: 'later' },
+    { beat: b(5), event: 'setCode', code: 'first' },
   ])
   assert.deepEqual(index.map((r) => r.code), ['first', 'later'])
-  assert.equal(baubleLoops(index), 2)
-  assert.equal(baubleLoops(buildBaubleIndex([{ beat: 1, event: 'setCode', code: 'x' }])), 1)
-  assert.equal(baubleFrameAt(index, 99)!.code, 'first', 'no loop argument behaves as pass 0')
 })
 
 test('baubleScript compiles variables as (def …) forms ahead of the code, in fold order', () => {
@@ -317,12 +315,12 @@ test('meta events before any setCode are no-ops', () => {
 
 test('meta events compose in beat order and fold across loop passes', () => {
   const idx = buildBaubleIndex([
-    { beat: 1, loop: 0, event: 'setCode', code: '(box 50)' },
-    { beat: b(4), loop: 0, event: 'duplicate', code: '(move _ [120 0 0])' },
-    { beat: b(2), loop: 1, event: 'replace', find: '50', value: '70' },
+    { beat: 1, event: 'setCode', code: '(box 50)' },
+    { beat: b(4), event: 'duplicate', code: '(move _ [120 0 0])' },
+    { beat: b(102), event: 'replace', find: '50', value: '70' }, // beyond a 100-frame loop → a later pass
   ])
-  assert.equal(baubleFrameAt(idx, 0, 1)!.code, '(union (box 50) (move (box 50) [120 0 0]))')
-  assert.equal(baubleFrameAt(idx, 2, 1)!.code, '(union (box 70) (move (box 70) [120 0 0]))')
+  assert.equal(baubleFrameAt(idx, 100)!.code, '(union (box 50) (move (box 50) [120 0 0]))')
+  assert.equal(baubleFrameAt(idx, 102)!.code, '(union (box 70) (move (box 70) [120 0 0]))')
 })
 
 test('baubleCodeUpToRow folds up to and including the given row (in raw table order)', () => {

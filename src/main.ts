@@ -31,7 +31,7 @@ import { createTapLog } from './tap-log.js'
 import { connectMultiplayer } from './multiplayer.js'
 import type { MultiplayerConnection, MultiplayerStatus } from './multiplayer.js'
 import { PRESENCE_LOG } from './room-core.js'
-import { loopEpochsFromApplies } from './playback.js'
+import { loopEpochsFromApplies, loopBeatsFromEvents } from './playback.js'
 import type { PlaybackAPI, PlaybackOptions } from './playback.js'
 import type { Row } from './lineage.js'
 import type { PeerPresence } from './ui/table-panel.js'
@@ -278,6 +278,15 @@ const playbackOptions: PlaybackOptions = {
   // a saved session's.
   midiCtxAt: (srcFrame) => (midiInput.rows().length ? midiInput.ctxAt(srcFrame) : null),
   sliderCtxAt: (srcFrame) => (sliderInput && sliderInput.defs().length ? sliderInput.ctxAt(srcFrame) : null),
+  onLoopBeats: (n) => recordLoopBeats(n),
+}
+
+// The loop length rides the activity table so it syncs, persists, and replays
+// like any other session state. The guard stops a value we just folded back
+// out of the table (a session load, a peer's change) from echoing a duplicate.
+function recordLoopBeats(n: number): void {
+  if (loopBeatsFromEvents(editableStore.get(ACTIVITY_TABLE)?.events ?? []) === n) return
+  editableStore.record(ACTIVITY_TABLE, 'set-loop-beats', { beats: n, at: Date.now() })
 }
 
 // The cook runs in a Web Worker (cook-worker.ts) so a heavy Apply never blocks
@@ -417,7 +426,8 @@ function diffCooked({ sceneRows, timelineRows, hydraRows, baubleRows }: CookedDa
 
 // Render a cooked program and hand its rows to playback. Loop epochs come from
 // the activity table's apply stamps — the author's clock, NOT this replica's —
-// so late joiners land on the same pass of a multi-loop sequence.
+// so late joiners land on the same pass of a multi-loop sequence. The loop
+// length folds from the same stream, so a session load or scrub restores it.
 function applyCooked(cooked: CookedData): void {
   lastViews = cooked.views
   // Before load(): load() fires onTick, which reads the slider input.
@@ -427,7 +437,10 @@ function applyCooked(cooked: CookedData): void {
   // With hydra rows present, hydra's output is the display and it reads the
   // bauble render as s1 — only a bauble-only sketch shows this canvas directly.
   mounts.baubleCanvas.classList.toggle('visible', cooked.baubleRows.length > 0 && cooked.hydraRows.length === 0)
-  playback.load({ ...cooked, loopEpochs: loopEpochsFromApplies(editableStore.get(ACTIVITY_TABLE)?.events ?? []) })
+  const activityEvents = editableStore.get(ACTIVITY_TABLE)?.events ?? []
+  const loopBeats = loopBeatsFromEvents(activityEvents)
+  if (loopBeats != null) playback.setLoopBeats(loopBeats)
+  playback.load({ ...cooked, loopEpochs: loopEpochsFromApplies(activityEvents) })
 }
 
 // A tap changed the tempo. Nothing re-cooks — content sits on a fixed beat
@@ -1037,10 +1050,18 @@ async function bootRoom(room: string): Promise<void> {
     // tables need nothing here — the generic onChange reaction covers them.
     let applied = false
     let presenceChanged = false
+    let loopBeatsChanged = false
     for (const e of added) {
       if (e.table !== ACTIVITY_TABLE) continue
       if (e.kind === 'apply') applied = true
       else if (e.kind === 'peer-join' || e.kind === 'peer-leave') presenceChanged = true
+      else if (e.kind === 'set-loop-beats') loopBeatsChanged = true
+    }
+    // A peer resized the loop without applying — fold the merged value in (an
+    // apply's copy via applyCooked is harmless: setLoopBeats no-ops unchanged).
+    if (loopBeatsChanged) {
+      const n = loopBeatsFromEvents(editableStore.get(ACTIVITY_TABLE)?.events ?? [])
+      if (n != null) playback.setLoopBeats(n)
     }
     if (applied) {
       const latest = editableStore.get('code')?.rows[0] as { code: string; seed: number } | undefined

@@ -60,7 +60,8 @@ define("events", (rand, table) =>
 )
 
 // 3. Bake the sparse keyframes into a dense per-frame cache for playback —
-//    8 beats long, so the sphere holds its last pose before the loop wraps.
+//    at least 8 beats of it. The loop itself is the "beats" control under the
+//    scene (16 by default), so the sphere holds its last pose until it wraps.
 define("scene", (rand, table) => table("events").rasterize(8))
 `,
     tables: {
@@ -95,11 +96,11 @@ define("events", () => rows([
   { id: "sub", type: "create", beat: 1, shape: "text", text: "tables to visuals",
     color: 0xffd43b, size: 0.32, px: 0, py: -0.5, pz: 0, rx: 0, ry: -0.6, rz: 0 },
   { id: "sub", type: "update", beat: 9, ry: 0.6 },
-  { id: "sub", type: "update", beat: 17, ry: -0.6 },
+  { id: "sub", type: "update", beat: 16, ry: -0.6 },
 ]))
 
-// Bake to a 16-beat loop; the subtitle's ry keyframes ease back and forth as
-// the loop repeats.
+// The subtitle's ry keyframes ease back and forth, landing back on the start
+// pose just before the loop wraps so it repeats without a jump.
 define("scene", (rand, table) => table("events").rasterize(16))
 `,
   },
@@ -163,14 +164,14 @@ define("cubes", () =>
 // 2. t.camera([...]) — one row per keyframe. px/py/pz are the eye, tx/ty/tz the
 //    look-at target (here always the origin), fov the vertical field of view.
 //    Over the 16-beat loop the eye swings around the lattice and cranes up,
-//    while the fov eases from wide to tight (a subtle dolly-zoom), then returns
-//    to the start pose at beat 17 so the loop repeats seamlessly.
+//    while the fov eases from wide to tight (a subtle dolly-zoom), then lands
+//    back on the start pose at beat 16 so the loop repeats without a jump.
 define("cam", () => t.camera([
   { beat: 1,  px: 0,    py: 0.5, pz: 5, tx: 0, ty: 0, tz: 0, fov: 60 },
   { beat: 5,  px: 4,    py: 1.5, pz: 3, fov: 55 },
   { beat: 9,  px: 0,    py: 3,   pz: -5, fov: 45 },
   { beat: 13, px: -4,   py: 1.5, pz: 3, fov: 55 },
-  { beat: 17, px: 0,    py: 0.5, pz: 5, fov: 60 },
+  { beat: 16, px: 0,    py: 0.5, pz: 5, fov: 60 },
 ]))
 
 // 3. Merge the camera keyframes with the cubes and bake the 16-beat cache.
@@ -238,9 +239,10 @@ define("events", (rand, table) => {
     .concat(paper.sequence())
 })
 
-// Bake to a 21-beat loop cache — hold the finished crane a moment, then
-// the paper opens flat and folds itself all over again.
-define("scene", (rand, table) => table("events").rasterize(21))
+// Bake a 64-beat cache — four passes of the 16-beat loop: the paper folds
+// itself across the first three and a bit, holds the finished crane, then
+// opens flat and folds itself all over again.
+define("scene", (rand, table) => table("events").rasterize(64))
 
 // A whisper of video feedback (the rendered scene is hydra's s0) so the
 // paper leaves faint trails as it moves. Delete this view for a clean look.
@@ -259,35 +261,35 @@ define("hydra", () => rows([
 //   - Nudge a p1/p2 a little: small nudges re-solve fine; ask something
 //     impossible and the error names the offending step instead of
 //     folding wrong.
-//   - Slow a step down: give "neck" dur: 3 and watch the reverse fold
+//   - Slow a step down: give "neck" dur: 6 and watch the reverse fold
 //     swing through.
 `,
     tables: {
       steps: [
         // in half along the diagonal
-        { step: "diag", p1: "0,0", p2: "1,1", move: "0.667,0.333", at: 1 },
+        { step: "diag", p1: "0,0", p2: "1,1", move: "0.667,0.333", at: 1, dur: 2 },
         // collapse into the square base: four inside reverse folds
-        { step: "collapse1", p1: "0,0.5", p2: "1,0.5", move: "0.333,0.167", kind: "reverse", at: 2 },
-        { step: "collapse2", p1: "0.5,0", p2: "0.5,1", move: "0.833,0.667", kind: "reverse", at: 3 },
-        { step: "collapse3", p1: "0,1", p2: "0.4142135624,0", move: "0.667,0.069036", kind: "reverse", at: 4 },
-        { step: "collapse4", p1: "0,1", p2: "1,0.5857864376", move: "0.930964,0.667", kind: "reverse", at: 5 },
+        { step: "collapse1", p1: "0,0.5", p2: "1,0.5", move: "0.333,0.167", kind: "reverse", at: 4, dur: 2 },
+        { step: "collapse2", p1: "0.5,0", p2: "0.5,1", move: "0.833,0.667", kind: "reverse", at: 7, dur: 2 },
+        { step: "collapse3", p1: "0,1", p2: "0.4142135624,0", move: "0.667,0.069036", kind: "reverse", at: 10, dur: 2 },
+        { step: "collapse4", p1: "0,1", p2: "1,0.5857864376", move: "0.930964,0.667", kind: "reverse", at: 13, dur: 2 },
         // flatten the stray flap, then tuck the side corners in
-        { step: "flatten", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.930964,0.333", at: 6 },
-        { step: "tuck1", p1: "0,1", p2: "0.4142135624,0", move: "0.069036,0.667", kind: "reverse", at: 7 },
-        { step: "tuck2", p1: "0,1", p2: "1,0.5857864376", move: "0.667,0.930964", kind: "reverse", at: 8 },
+        { step: "flatten", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.930964,0.333", at: 16, dur: 2 },
+        { step: "tuck1", p1: "0,1", p2: "0.4142135624,0", move: "0.069036,0.667", kind: "reverse", at: 19, dur: 2 },
+        { step: "tuck2", p1: "0,1", p2: "1,0.5857864376", move: "0.667,0.930964", kind: "reverse", at: 22, dur: 2 },
         // kite folds onto the centre line, front then (after turning a flap
         // like a page) back — this thins the points into neck and tail
-        { step: "kite1", p1: "0,1", p2: "0.6681786379,0", move: "0.525373,0.274808", pick: 1, at: 9 },
-        { step: "kite2", p1: "0,1", p2: "1,0.3318213621", move: "0.897812,0.667", at: 10 },
-        { step: "turn", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.333,0.930964", at: 11 },
-        { step: "kite3", p1: "0,1", p2: "1,0.3318213621", move: "0.667,0.897812", pick: 1, at: 12 },
-        { step: "kite4", p1: "0,1", p2: "0.6681786379,0", move: "0.208238,0.583899", pick: 1, at: 13 },
+        { step: "kite1", p1: "0,1", p2: "0.6681786379,0", move: "0.525373,0.274808", pick: 1, at: 25, dur: 2 },
+        { step: "kite2", p1: "0,1", p2: "1,0.3318213621", move: "0.897812,0.667", at: 28, dur: 2 },
+        { step: "turn", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.333,0.930964", at: 31, dur: 2 },
+        { step: "kite3", p1: "0,1", p2: "1,0.3318213621", move: "0.667,0.897812", pick: 1, at: 34, dur: 2 },
+        { step: "kite4", p1: "0,1", p2: "0.6681786379,0", move: "0.208238,0.583899", pick: 1, at: 37, dur: 2 },
         // swing the points up: neck, tail, then the head, all reverse folds
-        { step: "neck", p1: "0.1345593806,0", p2: "0.4733251916,1", move: "0.906033,0.694263", kind: "reverse", at: 14 },
-        { step: "tail", p1: "0,0.5266748083", p2: "1,0.8654406193", move: "0.246505,0.203815", kind: "reverse", at: 15 },
-        { step: "head", p1: "0,0.1274716613", p2: "1,0.8431274379", move: "0.096435,0.080352", kind: "reverse", at: 16 },
+        { step: "neck", p1: "0.1345593806,0", p2: "0.4733251916,1", move: "0.906033,0.694263", kind: "reverse", at: 40, dur: 2 },
+        { step: "tail", p1: "0,0.5266748083", p2: "1,0.8654406193", move: "0.246505,0.203815", kind: "reverse", at: 43, dur: 2 },
+        { step: "head", p1: "0,0.1274716613", p2: "1,0.8431274379", move: "0.096435,0.080352", kind: "reverse", at: 46, dur: 2 },
         // both wings at once — front sheet and back sheet — held half-raised
-        { step: "wings", p1: "0,0.1414213562", p2: "0.8585786438,1", move: "0.858,0.377;0.377,0.858", at: 17, dur: 1.5, to: 0.5 },
+        { step: "wings", p1: "0,0.1414213562", p2: "0.8585786438,1", move: "0.858,0.377;0.377,0.858", at: 49, dur: 4, to: 0.5 },
       ],
     },
   },
@@ -313,8 +315,9 @@ define("events", (rand, table) => {
     .concat(paper.sequence())
 })
 
-// Bake to a 12-beat loop — fold, rest a beat, open flat, fold again.
-define("scene", (rand, table) => table("events").rasterize(12))
+// Bake a 32-beat cache — two passes of the 16-beat loop: fold across the
+// first and a half, hold the finished bug, then open flat and fold again.
+define("scene", (rand, table) => table("events").rasterize(32))
 
 // Things to try, live in the "steps" tab:
 //   - Nudge wingL/wingR's p1/p2: the wings splay wider or tighter.
@@ -325,21 +328,21 @@ define("scene", (rand, table) => table("events").rasterize(12))
     tables: {
       steps: [
         // in half along the diagonal: the triangle, point down
-        { step: "half", p1: "0,0", p2: "1,1", move: "0.667,0.333", at: 1 },
+        { step: "half", p1: "0,0", p2: "1,1", move: "0.667,0.333", at: 1, dur: 2 },
         // both corners up to the top point
-        { step: "cornerL", p1: "0,0.5", p2: "1,0.5", move: "0.1,0.3;0.3,0.1", at: 2 },
-        { step: "cornerR", p1: "0.5,0", p2: "0.5,1", move: "0.6,0.8;0.8,0.6", at: 3 },
+        { step: "cornerL", p1: "0,0.5", p2: "1,0.5", move: "0.1,0.3;0.3,0.1", at: 4, dur: 2 },
+        { step: "cornerR", p1: "0.5,0", p2: "0.5,1", move: "0.6,0.8;0.8,0.6", at: 7, dur: 2 },
         // wings: sweep each tip back down so they point away from each
         // other and stick out past the triangle's edges
-        { step: "wingL", p1: "0.19885,0.598479", p2: "1.001892,0.99618", move: "0.03,0.12;0.12,0.03", at: 4 },
-        { step: "wingR", p1: "0.401521,0.80115", p2: "0.00382,-0.001892", move: "0.88,0.97;0.97,0.88", at: 5 },
+        { step: "wingL", p1: "0.19885,0.598479", p2: "1.001892,0.99618", move: "0.03,0.12;0.12,0.03", at: 10, dur: 2 },
+        { step: "wingR", p1: "0.401521,0.80115", p2: "0.00382,-0.001892", move: "0.88,0.97;0.97,0.88", at: 13, dur: 2 },
         // the head: one layer down over the wings, the second stops short —
         // that little gap is the cicada's stripe
-        { step: "head1", p1: "-0.19,0.59", p2: "0.41,1.19", move: "0.97,0.03", at: 6 },
-        { step: "head2", p1: "-0.24,0.64", p2: "0.36,1.24", move: "0.03,0.97", at: 7 },
+        { step: "head1", p1: "-0.19,0.59", p2: "0.41,1.19", move: "0.97,0.03", at: 16, dur: 2 },
+        { step: "head2", p1: "-0.24,0.64", p2: "0.36,1.24", move: "0.03,0.97", at: 19, dur: 2 },
         // narrow the body: fold the side corners behind
-        { step: "tuckL", p1: "0.09,0.59", p2: "0.39,0.29", move: "0.05,0.55", at: 8 },
-        { step: "tuckR", p1: "0.41,0.91", p2: "0.71,0.61", move: "0.45,0.95", at: 9 },
+        { step: "tuckL", p1: "0.09,0.59", p2: "0.39,0.29", move: "0.05,0.55", at: 22, dur: 2 },
+        { step: "tuckR", p1: "0.41,0.91", p2: "0.71,0.61", move: "0.45,0.95", at: 25, dur: 2 },
       ],
     },
   },
@@ -410,15 +413,17 @@ editable("hydra", schemas.hydra)
 // itself partway through the loop, not just a variable (see "Hydra Sketch" for
 // that simpler, single-part case). Press "Run" (or Cmd/Ctrl-Enter), then Play.
 
-// 1. One square, spinning a full turn over the 16-beat loop. Two keyframes are
-//    enough: ry: 0 at beat 1, ry: 2π at beat 17 (one past the loop's end) — since
-//    2π and 0 are the same angle, the spin wraps with no jump when it repeats.
-//    A small fixed tilt (rx) keeps the face in view as it turns edge-on to the
-//    camera, rather than vanishing to a line.
+// 1. One square, spinning a full turn each loop. Two keyframes are enough:
+//    ry: 0 at beat 1, ry: 2π at beat 16 — since 2π and 0 are the same angle,
+//    the square rests on its start pose for the loop's last beat and the wrap
+//    lands with no jump. (Push a keyframe past the loop's end instead — say
+//    beat 17 — and those beats land on a SECOND pass: the scene only resets
+//    once every two loops.) A small fixed tilt (rx) keeps the face in view as
+//    it turns edge-on to the camera, rather than vanishing to a line.
 define("events", () => rows([
   { id: "square", type: "create", beat: 1, shape: "box", color: 0x4a9eff,
     px: 0, py: 0, pz: 0, hx: 0.6, hy: 0.6, hz: 0.05, rx: 0.3, ry: 0, rz: 0 },
-  { id: "square", type: "update", beat: 17, ry: Math.PI * 2 },
+  { id: "square", type: "update", beat: 16, ry: Math.PI * 2 },
 ]))
 
 define("scene", (rand, table) => table("events").rasterize(16))
@@ -780,11 +785,12 @@ define("tower", (rand, table) => {
       rx: 0, ry: -angle, rz: 0,
     }
   })
-  // The newest brick turns one full revolution per loop (beat 17 = one past
-  // the end, so the spin wraps seamlessly — same trick as Square + Hydra).
+  // The newest brick turns one full revolution per loop (2π lands it back on
+  // its start angle at beat 16, so the wrap is seamless — same trick as
+  // Square + Hydra).
   if (bricks.length) {
     const top = bricks[bricks.length - 1]
-    bricks.push({ id: top.id, type: "update", beat: 17, ry: top.ry + Math.PI * 2 })
+    bricks.push({ id: top.id, type: "update", beat: 16, ry: top.ry + Math.PI * 2 })
   }
   return rows(bricks)
 })
@@ -803,7 +809,7 @@ define("cam", (rand, table) => {
   const ty = Math.max(0, (-0.8 + n * 0.17) / 2)
   const eye = 2.6 + n * 0.05
   return t.camera([0, 0.5, 1, 1.5, 2].map((turns, i) => ({
-    beat: 1 + i * 4,
+    beat: Math.min(1 + i * 4, 16), // the return leg lands inside the loop
     px: Math.cos(turns * Math.PI) * eye, py: ty + 1.2, pz: Math.sin(turns * Math.PI) * eye,
     tx: 0, ty, tz: 0,
   })))
@@ -875,7 +881,7 @@ define("stars", () => {
       px: Math.cos(a) * rad, py: Math.sin(a) * rad, pz: 0, rx: 0, ry: 0, rz: 0,
     }
   })
-  // The newest press blinks — a color pulse on the 8-beat loop.
+  // The newest press blinks — a color pulse early in the loop.
   const newest = stars[stars.length - 1]
   stars.push({ id: newest.id, type: "update", beat: 5, color: 0x334455 })
   stars.push({ id: newest.id, type: "update", beat: 9, color: newest.color })
@@ -1000,7 +1006,8 @@ define("sim", "events", (rand, table) =>
 )
 
 // 3. Bake the sparse "events" stream into a dense per-frame cache for playback
-//    (12 beats — the full simulation).
+//    (12 beats of cache — the full simulation; the loop length itself is the
+//    "beats" control under the scene).
 define("scene", (rand, table) => table("events").rasterize(12))
 
 // 4. Collisions are just rows — pull them into their own view to inspect, and

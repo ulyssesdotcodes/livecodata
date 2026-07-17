@@ -928,7 +928,9 @@ export type Easings = typeof EASINGS
 export const SCHEMAS = deepFreeze({
   /**
    * The hydra view's event stream: one row per event, placed on the loop by
-   * `beat` (1-indexed). `event` picks what it does — "setCode" (`code` = the
+   * `beat` (1-indexed; a beat past the loop's end — the "beats" control under
+   * the scene — lands the event in a later pass of the loop, so beat 17 of a
+   * 16-beat loop opens the second pass). `event` picks what it does — "setCode" (`code` = the
    * whole sketch), "setVariable" (`name`/`value` = a live input the sketch
    * reads as a props function), "setSource"/"append" (`code` = a new chain
    * head / a ".effect(…)" fragment), "replace" (swap substring `find` for
@@ -954,8 +956,9 @@ export const SCHEMAS = deepFreeze({
   },
   /**
    * The bauble view's event stream: one row per event, placed on the loop by
-   * `beat` (1-indexed) — the same table-of-events format as hydra, for 3D SDF
-   * sketches instead of 2D post-processing. `event` picks what it does —
+   * `beat` (1-indexed; like hydra, a beat past the loop's end lands the event
+   * in a later pass of the loop) — the same table-of-events format as hydra,
+   * for 3D SDF sketches instead of 2D post-processing. `event` picks what it does —
    * "setCode" (`code` = the whole sketch, a Janet shape expression like
    * "(rotate (box 50) :y t)"), "setVariable" (`name`/`value` = a (def name
    * value) compiled ahead of the sketch; changing one recompiles the shader,

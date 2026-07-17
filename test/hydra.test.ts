@@ -6,7 +6,6 @@ import {
   buildHydraIndex,
   hydraFrameAt,
   hydraCodeUpToRow,
-  hydraLoops,
   type HydraFrame,
 } from '../src/hydra.js'
 import { frameToBeat } from '../src/constants.js'
@@ -78,27 +77,27 @@ test('a `beat` column places rows on the loop 1-indexed (30 frames/beat)', () =>
   assert.deepEqual(hydraFrameAt(idx, 240)!.vars, { freq: 12 })
 })
 
-test('hydraFrameAt samples the pass named by `loop`, folding earlier passes in full', () => {
+test('the beat axis is absolute: a beat past the loop folds once the extended frame reaches it', () => {
+  // Playback samples a later pass at pass * loopFrames + frame — an event
+  // beyond the loop's span (here frame 100) is simply further along the grid.
   const index = buildHydraIndex([
-    { beat: 1, loop: 0, event: 'setCode', code: 'a' },
-    { beat: 1, loop: 0, event: 'setVariable', name: 'amount', value: 1 },
-    { beat: b(10), loop: 1, event: 'setCode', code: 'b' },
+    { beat: 1, event: 'setCode', code: 'a' },
+    { beat: 1, event: 'setVariable', name: 'amount', value: 1 },
+    { beat: b(110), event: 'setCode', code: 'b' },
   ])
-  assert.equal(hydraFrameAt(index, 0, 0)!.code, 'a.out(o0)', 'pass 0')
-  assert.equal(hydraFrameAt(index, 0, 1)!.code, 'a.out(o0)', 'early in pass 1 the change has not hit yet')
-  assert.equal(hydraFrameAt(index, 10, 1)!.code, 'b.out(o0)', 'pass 1 reaches its setCode')
-  assert.equal(hydraFrameAt(index, 0, 2)!.code, 'b.out(o0)', 'a later pass folds pass 1 in full')
-  assert.deepEqual(hydraFrameAt(index, 0, 2)!.vars, { amount: 1 }, 'variables persist across passes')
+  assert.equal(hydraFrameAt(index, 0)!.code, 'a.out(o0)', 'pass 0')
+  assert.equal(hydraFrameAt(index, 100)!.code, 'a.out(o0)', 'early in pass 1 the change has not hit yet')
+  assert.equal(hydraFrameAt(index, 110)!.code, 'b.out(o0)', 'pass 1 reaches its setCode')
+  assert.equal(hydraFrameAt(index, 200)!.code, 'b.out(o0)', 'a later pass folds pass 1 in full')
+  assert.deepEqual(hydraFrameAt(index, 200)!.vars, { amount: 1 }, 'variables persist across passes')
 })
 
-test('buildHydraIndex orders rows by (loop, frame); hydraLoops counts the passes', () => {
+test('buildHydraIndex orders rows by frame', () => {
   const index = buildHydraIndex([
-    { beat: 1, loop: 1, event: 'setCode', code: 'later' },
-    { beat: b(5), event: 'setCode', code: 'first' }, // no loop → pass 0
+    { beat: b(20), event: 'setCode', code: 'later' },
+    { beat: b(5), event: 'setCode', code: 'first' },
   ])
   assert.deepEqual(index.map((r) => r.code), ['first', 'later'])
-  assert.equal(hydraLoops(index), 2)
-  assert.equal(hydraLoops(buildHydraIndex([{ beat: 1, event: 'setCode', code: 'x' }])), 1)
 })
 
 test('isHydraRow / hydraRows recognise the meta-programming events', () => {
@@ -221,13 +220,13 @@ test('layer amount can be a live expression evaluated with props each frame', ()
 
 test('meta events compose in beat order and fold across loop passes', () => {
   const idx = buildHydraIndex([
-    { beat: 1, loop: 0, event: 'setCode', code: 'osc(10).out(o0)' },
-    { beat: b(4), loop: 0, event: 'append', code: '.rotate(0.1)' },
-    { beat: b(2), loop: 1, event: 'replace', find: '10', value: '20' },
+    { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
+    { beat: b(4), event: 'append', code: '.rotate(0.1)' },
+    { beat: b(102), event: 'replace', find: '10', value: '20' }, // beyond a 100-frame loop → a later pass
   ])
-  // Pass 1 folds pass 0 in full (append included), then applies its own replace.
-  assert.equal(hydraFrameAt(idx, 0, 1)!.code, 'osc(10).rotate(0.1).out(o0)')
-  assert.equal(hydraFrameAt(idx, 2, 1)!.code, 'osc(20).rotate(0.1).out(o0)')
+  // Sampling into the next pass folds the earlier one in full (append included).
+  assert.equal(hydraFrameAt(idx, 100)!.code, 'osc(10).rotate(0.1).out(o0)')
+  assert.equal(hydraFrameAt(idx, 102)!.code, 'osc(20).rotate(0.1).out(o0)')
 })
 
 test('events fold per output; the sketch concatenates every output in name order', () => {

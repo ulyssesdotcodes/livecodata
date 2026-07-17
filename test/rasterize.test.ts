@@ -14,11 +14,11 @@ const create = (over: Row = {}): Row => ({
   px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, ...over,
 })
 
-test('emits frames 0..maxFrame inclusive for an object alive throughout', () => {
+test('bakes every frame a maxBeats loop samples (span exclusive) for an object alive throughout', () => {
   const rows = rasterizeRows([create()], mb(10))
-  assert.equal(rows.length, 11)
+  assert.equal(rows.length, 10)
   assert.equal(rows[0].frame, 0)
-  assert.equal(rows[10].frame, 10)
+  assert.equal(rows[9].frame, 9, 'frame 10 belongs to the next pass, so the pad stops at 9')
   assert.ok(rows.every((r) => r.id === 's' && r.shape === 'sphere'))
 })
 
@@ -55,7 +55,7 @@ test('color is a step function: latest color-bearing event <= frame', () => {
   assert.equal(colorAt(3), 0x222222)
   assert.equal(colorAt(5), 0x222222)
   assert.equal(colorAt(6), 0x333333)
-  assert.equal(colorAt(8), 0x333333)
+  assert.equal(colorAt(7), 0x333333)
 })
 
 test('color pulse: flashes exactly at the trigger, eases to base, newest wins', () => {
@@ -95,7 +95,7 @@ test('multiple objects each get a row per frame they are alive', () => {
 })
 
 test('buildFrameIndex + stateAtFrame give O(1) lookups', () => {
-  const rows = rasterizeRows([create({ id: 'a' }), create({ id: 'b' })], mb(4))
+  const rows = rasterizeRows([create({ id: 'a' }), create({ id: 'b' })], mb(5))
   const fi = buildFrameIndex(rows)
   assert.equal(fi.maxFrame, 4)
   assert.deepEqual(stateAtFrame(fi, 2).map((r) => r.id).sort(), ['a', 'b'])
@@ -177,75 +177,27 @@ test('numeric tracks glide across keyframes that omit them', () => {
   assert.equal(at2.wings, 0.5, 'wings ramp unaffected by the later ry keyframe')
 })
 
-// --- multi-loop sequences: the `loop` column next to `beat` ------------------
+// --- the absolute beat axis: events past maxBeats form later passes ----------
 
-test('a loop column extends the bake across passes: loop L beat b lands at L * span + frame', () => {
+test('events past the maxBeats span keep baking — passes are playback\'s concern', () => {
   const rows = rasterizeRows([
     create({ px: 0 }),
-    { id: 's', type: 'update', beat: b(4), loop: 0, px: 4 },
-    { id: 's', type: 'update', beat: b(4), loop: 1, px: 8 },
+    { id: 's', type: 'update', beat: b(8), px: 8 },
   ], mb(4))
-  // Two passes of a 4-frame loop → baked out to 8 frames.
+  // The cache is one absolute grid; the beat-8 keyframe (frame 8) extends it
+  // past the 4-frame loop span, and the glide crosses the boundary like any
+  // other segment. Playback wraps the playhead into it in loop-length passes.
   assert.equal(rows.at(-1)!.frame, 8)
-  assert.equal(rows.find((r) => r.frame === 4)!.px, 4, 'end of pass 0')
-  assert.equal(rows.find((r) => r.frame === 8)!.px, 8, 'end of pass 1')
+  assert.equal(rows.find((r) => r.frame === 4)!.px, 4, 'halfway through the cross-boundary glide')
+  assert.equal(rows.find((r) => r.frame === 8)!.px, 8)
+  assert.ok(rows.every((r) => !('loop' in r)), 'baked rows carry no pass column')
 })
 
-test('interpolation crosses the loop boundary like any other keyframe segment', () => {
+test('a maxBeats arg extends a shorter bake so the final pose holds to the loop\'s last frame', () => {
   const rows = rasterizeRows([
     create({ px: 0 }),
-    { id: 's', type: 'update', beat: b(2), loop: 0, px: 2 },
-    { id: 's', type: 'update', beat: b(2), loop: 1, px: 6 },
-  ], mb(4))
-  // Pass 0 frame 2 (px 2) → pass 1 frame 2 (extended frame 6, px 6): the
-  // segment spans the wrap at frame 4.
-  assert.equal(rows.find((r) => r.frame === 4)!.px, 4, 'halfway through the cross-boundary glide')
-})
-
-test('without a maxBeats arg the per-pass span is the largest event beat in any pass', () => {
-  const rows = rasterizeRows([
-    create(),
-    { id: 's', type: 'update', beat: b(6), loop: 0, px: 1 },
-    { id: 's', type: 'update', beat: b(2), loop: 1, px: 2 },
-  ])
-  // Span = 6 frames (pass 0's extent); pass 1 bakes out to its full span too.
-  assert.equal(rows.at(-1)!.frame, 12)
-})
-
-test('dense multi-loop rows carry which pass they fall in; single-loop rows do not', () => {
-  const multi = rasterizeRows([
-    create(),
-    { id: 's', type: 'update', beat: b(2), loop: 1, px: 1 },
-  ], mb(2))
-  assert.equal(multi.find((r) => r.frame === 1)!.loop, 0)
-  assert.equal(multi.find((r) => r.frame === 3)!.loop, 1)
-  assert.equal(multi.find((r) => r.frame === 4)!.loop, 1, 'the last baked frame belongs to the final pass')
-
-  const single = rasterizeRows([create()], mb(2))
-  assert.ok(single.every((r) => !('loop' in r)), 'no loop column → the baked rows are unchanged')
-})
-
-test('buildFrameIndex recovers loops and the per-pass span from a multi-loop cache', () => {
-  const rows = rasterizeRows([
-    create(),
-    { id: 's', type: 'update', beat: b(3), loop: 2, px: 1 },
-  ], mb(3))
-  const idx = buildFrameIndex(rows)
-  assert.equal(idx.loops, 3)
-  assert.equal(idx.loopFrames, 3, 'per-pass span')
-  assert.equal(idx.maxFrame, 9, 'total extent = loops * span')
-
-  const singleIdx = buildFrameIndex(rasterizeRows([create()], mb(3)))
-  assert.equal(singleIdx.loops, 1)
-  assert.equal(singleIdx.loopFrames, singleIdx.maxFrame, 'single-loop: span is the whole cache')
-})
-
-test('an object can exist in only one pass (create/destroy carry loop too)', () => {
-  const rows = rasterizeRows([
-    create({ loop: 1 }),
-    { id: 's', type: 'destroy', beat: b(2), loop: 1 },
-  ], mb(3))
-  assert.ok(!rows.some((r) => (r.frame as number) < 3), 'absent through pass 0')
-  assert.ok(rows.some((r) => r.frame === 3), 'alive at the top of pass 1')
-  assert.ok(!rows.some((r) => (r.frame as number) > 4), 'destroyed within pass 1')
+    { id: 's', type: 'update', beat: b(2), px: 2 },
+  ], mb(6))
+  assert.equal(rows.at(-1)!.frame, 5)
+  assert.equal(rows.find((r) => r.frame === 5)!.px, 2, 'held, not extrapolated')
 })

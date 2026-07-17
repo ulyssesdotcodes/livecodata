@@ -5,7 +5,7 @@
 import { buildTimeline, type Timeline } from './timeline.js'
 import { activeLineage } from './lineage.js'
 import type { EvalCtx } from './dsl.js'
-import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS, framesToBeats } from './constants.js'
+import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS, beatsToFrames } from './constants.js'
 import type { Row } from './lineage.js'
 import type { CookedVisualRows, LoopEpochs, Visualizer } from './visualizer.js'
 import { beatSecondsFromTaps } from './tap-log.js'
@@ -73,6 +73,9 @@ export interface PlaybackOptions {
   // Same for slider() bindings; its ctx also carries sliders(), which each
   // hydra sketch reads as `props.sliders`.
   sliderCtxAt?: (srcFrame: number) => EvalCtx | null
+  // Fired when setLoopBeats actually changes the loop length — main.ts records
+  // it on the activity table so the count syncs and replays with the session.
+  onLoopBeats?: (n: number) => void
 }
 
 // Injectable clocks/scheduler so tests can drive timing deterministically.
@@ -88,6 +91,17 @@ export interface PlaybackClock {
 export interface PlaybackEngineOptions extends PlaybackOptions {
   onViewChange?: (vs: PlaybackViewState) => void
   clock?: PlaybackClock
+}
+
+// Fold the activity event stream into the loop length: the newest
+// 'set-loop-beats' event wins, null with none recorded. Riding the activity
+// table gives the count sync, persistence, and scrub-replay for free.
+export function loopBeatsFromEvents(events: Row[]): number | null {
+  let out: number | null = null
+  for (const e of events ?? []) {
+    if (e.kind === 'set-loop-beats' && typeof e.beats === 'number' && e.beats >= 1) out = Math.round(e.beats)
+  }
+  return out
 }
 
 // Fold the activity event stream into per-kind loop epochs: the newest
@@ -122,12 +136,14 @@ export interface PlaybackAPI {
   currentSourceBeats(): number
   // No-op if already playing.
   play(): void
+  // On PlaybackAPI (not just the engine) so main.ts can fold the loop length
+  // back out of activity events.
+  setLoopBeats(n: number): void
 }
 
 export interface PlaybackEngine extends PlaybackAPI {
   toggle(): void
   setLoop(on: boolean): void
-  setLoopBeats(n: number): void
   // Preview a drag position without committing the playhead; endScrub commits.
   scrub(pos: number): void
   endScrub(): void
@@ -136,7 +152,7 @@ export interface PlaybackEngine extends PlaybackAPI {
 
 export function createPlaybackEngine(
   visualizers: Visualizer[],
-  { onTick, onPlay, onLoop, tapControl, midiCtxAt, sliderCtxAt, onViewChange, clock }: PlaybackEngineOptions = {},
+  { onTick, onPlay, onLoop, tapControl, midiCtxAt, sliderCtxAt, onLoopBeats, onViewChange, clock }: PlaybackEngineOptions = {},
 ): PlaybackEngine {
   const now = clock?.now ?? ((): number => performance.now())
   const epochNow = clock?.epochNow ?? ((): number => Date.now())
@@ -158,9 +174,9 @@ export function createPlaybackEngine(
   let isScrubbing = false
   let scrubPos = 0
   let loop = true
-  // Loop length when nothing else sizes it (a pure hydra sketch). User-settable
-  // so the last sketch keyframe no longer has to sit exactly at the loop
-  // boundary (where it was invisible).
+  // The loop length for every visualizer — the GUI "beats" control. Content
+  // whose beat runs past it forms later passes rather than stretching the
+  // loop; only an active timeline overrides it.
   let loopBeats = DEFAULT_LOOP_BEATS
   // The position most recently shown to the view.
   let shownPos = 0
@@ -216,7 +232,8 @@ export function createPlaybackEngine(
     const sliderCtx = sliderCtxAt ? sliderCtxAt(srcFrame) : null
     const ctx: EvalCtx | null = midiCtx || sliderCtx ? { ...midiCtx, ...sliderCtx } : null
     const states: Row[] = []
-    for (const v of visualizers) states.push(...v.applyFrame({ srcFrameF, ctx, passAt: passesSince }))
+    const loopFrames = beatsToFrames(loopBeats)
+    for (const v of visualizers) states.push(...v.applyFrame({ srcFrameF, loopFrames, ctx, passAt: passesSince }))
     // Graphed/table views key their rows by `beat`, so report the source beat.
     onTick?.(pos, activeLineage(states), srcBeat)
   }
@@ -266,18 +283,11 @@ export function createPlaybackEngine(
     return sourceBeatAt(pos)
   }
 
-  // Loop length: the timeline's span, else the longest visualizer content,
-  // else the loop-length control — which keeps a hydra-only sketch's last
-  // keyframe visible instead of landing exactly on the loop boundary.
+  // Loop length: the timeline's span when one is active, else the loop-length
+  // control.
   function recomputeMax(): void {
-    if (timeline.active) {
-      maxBeats = timeline.beats
-      return
-    }
-    const frames = visualizers.reduce((m, v) => Math.max(m, v.contentFrames()), 0)
-    if (frames > 0) maxBeats = framesToBeats(frames)
-    else if (hasContent()) maxBeats = loopBeats
-    else maxBeats = 0
+    if (timeline.active) maxBeats = timeline.beats
+    else maxBeats = hasContent() ? loopBeats : 0
   }
 
   // Anchor the beat clock so the live position reads `pos` beats right now —
@@ -351,6 +361,7 @@ export function createPlaybackEngine(
       return
     }
     loopBeats = n
+    onLoopBeats?.(n)
     recomputeMax()
     retimeTo(currentTime())
   }
