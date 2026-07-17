@@ -86,10 +86,11 @@ export function createSceneVisualizer(sceneAPI: SceneAPI): Visualizer {
     },
     hasContent: () => frameIndex.map.size > 0,
     applyFrame({ srcFrameF, loopFrames, ctx, passAt }): Row[] {
-      // ceil, so a keyframe at exactly the loop boundary is the previous
-      // pass's glide endpoint (the seamless-wrap idiom), not a pass of its
-      // own; the clamp holds the final pose when the loop outruns the content.
-      const loops = loopFrames > 0 ? Math.max(1, Math.ceil(frameIndex.maxFrame / loopFrames)) : 1
+      // Same pass rule as hydra/bauble: frames land on the loop, so a last
+      // event on beat 21 of a 16-beat loop makes a 32-beat sequence (beat 13,
+      // a plain 16-beat one). The clamp holds the final pose through the last
+      // pass's tail rather than blanking mid-pass.
+      const loops = loopFrames > 0 ? Math.floor(frameIndex.maxFrame / loopFrames) + 1 : 1
       const offset = loops > 1 ? (passAt(epoch) % loops) * loopFrames : 0
       const frameF = Math.min(offset + srcFrameF, frameIndex.maxFrame)
       const baked = sampleFrame(frameIndex, frameF)
@@ -133,9 +134,9 @@ export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
     },
     hasContent: () => index.length > 0,
     applyFrame({ srcFrameF, loopFrames, ctx, passAt }): Row[] {
-      // floor (unlike the scene's ceil): an event at exactly beat loopBeats+1
-      // opens a new pass — that's how a later pass is authored. The absolute
-      // frame also drives the clock, so transitions animate across passes.
+      // floor: an event at exactly beat loopBeats+1 opens a new pass — that's
+      // how a later pass is authored. The absolute frame also drives the
+      // clock, so transitions animate across passes.
       const loops = loopFrames > 0 ? Math.floor(maxIndex / loopFrames) + 1 : 1
       const frameF = (loops > 1 ? (passAt(epoch) % loops) * loopFrames : 0) + srcFrameF
       const sketch = hydraFrameAt(index, Math.floor(frameF))

@@ -313,18 +313,27 @@ test('a hydra event past the loop plays once the wall-aligned pass reaches it', 
   assert.equal(sketches.at(-1), 'a.out(o0)', 'the sequence wraps to pass 0')
 })
 
-test('scene: a keyframe at the loop boundary is a glide endpoint, and short content holds its pose', () => {
+test('scene: content past the loop plays in later passes; short content resets every loop', () => {
   const viz = createSceneVisualizer(fakeScene())
-  // Content spans beats 1..3 — exactly a 2-beat loop's boundary (frame 60).
-  viz.load({ sceneRows: rasterizeRows([
-    sceneCreate(),
-    { id: 's', type: 'update', beat: 3, px: 4 },
-  ]), hydraRows: [] })
   const at = (srcFrameF: number, loopFrames: number, pass = 0) =>
     viz.applyFrame({ srcFrameF, loopFrames, ctx: null, passAt: () => pass })[0]
-  // 2-beat loop (60 frames): the boundary keyframe caps pass 0 rather than
-  // starting a pass of its own, so the glide covers the whole loop seamlessly.
-  assert.equal(at(30, 60, 5).px, 2, 'mid-glide, whatever the wall-aligned pass count')
-  // 4-beat loop (120 frames): the loop outruns the content — the final pose holds.
-  assert.equal(at(90, 120).px, 4)
+
+  // px glides 0 → 20 across beats 1..21 (600 frames): a 16-beat loop
+  // (480 frames) makes a two-loop, 32-beat sequence.
+  viz.load({ sceneRows: rasterizeRows([
+    sceneCreate(),
+    { id: 's', type: 'update', beat: 21, px: 20 },
+  ], 16), hydraRows: [] })
+  assert.equal(at(240, 480, 0).px, 8, 'pass 0, beat 9')
+  assert.equal(at(60, 480, 1).px, 18, 'pass 1 continues the glide (beat 19)')
+  assert.equal(at(300, 480, 1).px, 20, 'past the last event the pose holds to the sequence end')
+  assert.equal(at(240, 480, 2).px, 8, 'pass 2 wraps back to the beginning')
+
+  // A last event on beat 13 fits the loop — it resets every 16 beats,
+  // whatever the wall-aligned pass count says.
+  viz.load({ sceneRows: rasterizeRows([
+    sceneCreate(),
+    { id: 's', type: 'update', beat: 13, px: 12 },
+  ], 16), hydraRows: [] })
+  assert.equal(at(300, 480, 7).px, 10, 'beat 11 of any loop')
 })

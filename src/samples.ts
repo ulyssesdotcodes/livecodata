@@ -96,11 +96,11 @@ define("events", () => rows([
   { id: "sub", type: "create", beat: 1, shape: "text", text: "tables to visuals",
     color: 0xffd43b, size: 0.32, px: 0, py: -0.5, pz: 0, rx: 0, ry: -0.6, rz: 0 },
   { id: "sub", type: "update", beat: 9, ry: 0.6 },
-  { id: "sub", type: "update", beat: 17, ry: -0.6 },
+  { id: "sub", type: "update", beat: 16, ry: -0.6 },
 ]))
 
-// Bake to a 16-beat loop; the subtitle's ry keyframes ease back and forth as
-// the loop repeats.
+// The subtitle's ry keyframes ease back and forth, landing back on the start
+// pose just before the loop wraps so it repeats without a jump.
 define("scene", (rand, table) => table("events").rasterize(16))
 `,
   },
@@ -164,14 +164,14 @@ define("cubes", () =>
 // 2. t.camera([...]) — one row per keyframe. px/py/pz are the eye, tx/ty/tz the
 //    look-at target (here always the origin), fov the vertical field of view.
 //    Over the 16-beat loop the eye swings around the lattice and cranes up,
-//    while the fov eases from wide to tight (a subtle dolly-zoom), then returns
-//    to the start pose at beat 17 so the loop repeats seamlessly.
+//    while the fov eases from wide to tight (a subtle dolly-zoom), then lands
+//    back on the start pose at beat 16 so the loop repeats without a jump.
 define("cam", () => t.camera([
   { beat: 1,  px: 0,    py: 0.5, pz: 5, tx: 0, ty: 0, tz: 0, fov: 60 },
   { beat: 5,  px: 4,    py: 1.5, pz: 3, fov: 55 },
   { beat: 9,  px: 0,    py: 3,   pz: -5, fov: 45 },
   { beat: 13, px: -4,   py: 1.5, pz: 3, fov: 55 },
-  { beat: 17, px: 0,    py: 0.5, pz: 5, fov: 60 },
+  { beat: 16, px: 0,    py: 0.5, pz: 5, fov: 60 },
 ]))
 
 // 3. Merge the camera keyframes with the cubes and bake the 16-beat cache.
@@ -412,15 +412,17 @@ editable("hydra", schemas.hydra)
 // itself partway through the loop, not just a variable (see "Hydra Sketch" for
 // that simpler, single-part case). Press "Run" (or Cmd/Ctrl-Enter), then Play.
 
-// 1. One square, spinning a full turn over the 16-beat loop. Two keyframes are
-//    enough: ry: 0 at beat 1, ry: 2π at beat 17 (one past the loop's end) — since
-//    2π and 0 are the same angle, the spin wraps with no jump when it repeats.
-//    A small fixed tilt (rx) keeps the face in view as it turns edge-on to the
-//    camera, rather than vanishing to a line.
+// 1. One square, spinning a full turn each loop. Two keyframes are enough:
+//    ry: 0 at beat 1, ry: 2π at beat 16 — since 2π and 0 are the same angle,
+//    the square rests on its start pose for the loop's last beat and the wrap
+//    lands with no jump. (Push a keyframe past the loop's end instead — say
+//    beat 17 — and those beats land on a SECOND pass: the scene only resets
+//    once every two loops.) A small fixed tilt (rx) keeps the face in view as
+//    it turns edge-on to the camera, rather than vanishing to a line.
 define("events", () => rows([
   { id: "square", type: "create", beat: 1, shape: "box", color: 0x4a9eff,
     px: 0, py: 0, pz: 0, hx: 0.6, hy: 0.6, hz: 0.05, rx: 0.3, ry: 0, rz: 0 },
-  { id: "square", type: "update", beat: 17, ry: Math.PI * 2 },
+  { id: "square", type: "update", beat: 16, ry: Math.PI * 2 },
 ]))
 
 define("scene", (rand, table) => table("events").rasterize(16))
@@ -782,11 +784,12 @@ define("tower", (rand, table) => {
       rx: 0, ry: -angle, rz: 0,
     }
   })
-  // The newest brick turns one full revolution per loop (beat 17 = one past
-  // the end, so the spin wraps seamlessly — same trick as Square + Hydra).
+  // The newest brick turns one full revolution per loop (2π lands it back on
+  // its start angle at beat 16, so the wrap is seamless — same trick as
+  // Square + Hydra).
   if (bricks.length) {
     const top = bricks[bricks.length - 1]
-    bricks.push({ id: top.id, type: "update", beat: 17, ry: top.ry + Math.PI * 2 })
+    bricks.push({ id: top.id, type: "update", beat: 16, ry: top.ry + Math.PI * 2 })
   }
   return rows(bricks)
 })
@@ -805,7 +808,7 @@ define("cam", (rand, table) => {
   const ty = Math.max(0, (-0.8 + n * 0.17) / 2)
   const eye = 2.6 + n * 0.05
   return t.camera([0, 0.5, 1, 1.5, 2].map((turns, i) => ({
-    beat: 1 + i * 4,
+    beat: Math.min(1 + i * 4, 16), // the return leg lands inside the loop
     px: Math.cos(turns * Math.PI) * eye, py: ty + 1.2, pz: Math.sin(turns * Math.PI) * eye,
     tx: 0, ty, tz: 0,
   })))

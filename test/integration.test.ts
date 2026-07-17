@@ -42,7 +42,7 @@ define("joined", () => table("cities").join(rows([{ id: "a", note: "hit" }]), "i
     [{ id: 'a', pop: 8, note: 'hit' }])
 
   const scene = views.get('scene')!
-  assert.equal(scene.length, 4 * 25)
+  assert.equal(scene.length, 4 * 24)
   const lit = scene.rows.find((r) => r.color !== 0x4444ff)
   assert.ok(lit, 'expected at least one flashed frame')
   const tables = new Set(getLineage(lit!).map((l) => l.table))

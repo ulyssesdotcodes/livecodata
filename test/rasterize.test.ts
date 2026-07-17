@@ -14,11 +14,11 @@ const create = (over: Row = {}): Row => ({
   px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, ...over,
 })
 
-test('emits frames 0..maxFrame inclusive for an object alive throughout', () => {
+test('bakes every frame a maxBeats loop samples (span exclusive) for an object alive throughout', () => {
   const rows = rasterizeRows([create()], mb(10))
-  assert.equal(rows.length, 11)
+  assert.equal(rows.length, 10)
   assert.equal(rows[0].frame, 0)
-  assert.equal(rows[10].frame, 10)
+  assert.equal(rows[9].frame, 9, 'frame 10 belongs to the next pass, so the pad stops at 9')
   assert.ok(rows.every((r) => r.id === 's' && r.shape === 'sphere'))
 })
 
@@ -55,7 +55,7 @@ test('color is a step function: latest color-bearing event <= frame', () => {
   assert.equal(colorAt(3), 0x222222)
   assert.equal(colorAt(5), 0x222222)
   assert.equal(colorAt(6), 0x333333)
-  assert.equal(colorAt(8), 0x333333)
+  assert.equal(colorAt(7), 0x333333)
 })
 
 test('color pulse: flashes exactly at the trigger, eases to base, newest wins', () => {
@@ -95,7 +95,7 @@ test('multiple objects each get a row per frame they are alive', () => {
 })
 
 test('buildFrameIndex + stateAtFrame give O(1) lookups', () => {
-  const rows = rasterizeRows([create({ id: 'a' }), create({ id: 'b' })], mb(4))
+  const rows = rasterizeRows([create({ id: 'a' }), create({ id: 'b' })], mb(5))
   const fi = buildFrameIndex(rows)
   assert.equal(fi.maxFrame, 4)
   assert.deepEqual(stateAtFrame(fi, 2).map((r) => r.id).sort(), ['a', 'b'])
@@ -193,11 +193,11 @@ test('events past the maxBeats span keep baking — passes are playback\'s conce
   assert.ok(rows.every((r) => !('loop' in r)), 'baked rows carry no pass column')
 })
 
-test('a maxBeats arg extends a shorter bake so the final pose holds to the boundary', () => {
+test('a maxBeats arg extends a shorter bake so the final pose holds to the loop\'s last frame', () => {
   const rows = rasterizeRows([
     create({ px: 0 }),
     { id: 's', type: 'update', beat: b(2), px: 2 },
   ], mb(6))
-  assert.equal(rows.at(-1)!.frame, 6)
-  assert.equal(rows.find((r) => r.frame === 6)!.px, 2, 'held, not extrapolated')
+  assert.equal(rows.at(-1)!.frame, 5)
+  assert.equal(rows.find((r) => r.frame === 5)!.px, 2, 'held, not extrapolated')
 })

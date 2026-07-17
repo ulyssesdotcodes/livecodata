@@ -139,11 +139,12 @@ function sampleObject(events: Row[], i: number): SampledState | null {
 
 export function rasterizeRows(eventRows: Row[] | null | undefined, maxBeats?: number): Row[] {
   const events = (eventRows ?? []).map(toFrameEvent)
-  // Bake out to the largest event frame, or at least `maxBeats` when given —
-  // the extra frames hold the final pose so a glide target can sit exactly on
-  // a loop boundary. How that extent chops into passes is playback's concern.
+  // Bake out to the largest event frame, or at least the last frame a
+  // `maxBeats` loop samples (its span EXCLUSIVE — frame span belongs to the
+  // next pass, and pad frames reaching it would spuriously add one). How the
+  // extent chops into passes is playback's concern.
   const max = Math.max(
-    maxBeats != null ? Math.max(0, beatsToFrames(maxBeats)) : 0,
+    maxBeats != null ? Math.max(0, beatsToFrames(maxBeats) - 1) : 0,
     events.reduce((m, e) => Math.max(m, (e.frame as number) ?? 0), 0),
   )
   const timelines = buildTimelines(events)
