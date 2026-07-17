@@ -671,10 +671,12 @@ editable("bauble", schemas.bauble)
     tables: {
       bauble: [
         // A box spinning inside a sphere, smoothly blended (:r 15) and shaded
-        // blue. \`size\` and \`t\` are free in the code — size comes from the
-        // setVariable rows, t is the playback clock.
+        // blue. `size` and `t` are free in the code — size comes from the
+        // setVariable rows, t is the playback clock. Cells hold multi-line
+        // Janet, indented the way bauble.studio's own examples are written;
+        // click one to open it in the editor.
         { beat: 1, event: "setCode",
-          code: "(shade (union :r 15 (rotate (box size) :y t) (sphere 70)) [0.29 0.62 1])" },
+          code: "(shade\n  (union :r 15\n    (rotate (box size) :y t)\n    (sphere 70))\n  [0.29 0.62 1])" },
         { beat: 1, event: "setVariable", name: "size", value: 55 },
         // beat 5: orbit the camera a third of a turn — a live uniform, no
         // recompile (camera-x tilts, camera-zoom dollies, the same way).
@@ -685,7 +687,7 @@ editable("bauble", schemas.bauble)
         // beat 13: a new sketch for the loop's tail — a golden box twisting
         // back and forth on its y axis until the loop wraps.
         { beat: 13, event: "setCode",
-          code: "(shade (twist (box 70) :y (* 0.03 (sin t))) [1 0.83 0.23])" },
+          code: "(shade\n  (twist (box 70) :y (* 0.03 (sin t)))\n  [1 0.83 0.23])" },
       ],
     },
   },

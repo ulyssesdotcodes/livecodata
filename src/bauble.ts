@@ -1,15 +1,18 @@
 // livecodata bauble — table-driven 3D SDF sketches (bauble.studio: Janet code
 // compiled to a GLSL raymarcher). The "bauble" view mirrors the hydra table:
 // events placed by a 1-indexed `beat` column, folded at a frame into a Janet
-// script. setCode replaces the sketch; the meta events (transform/duplicate/
-// combine/replace) rewrite the accumulated code structurally — a bauble sketch
-// is one s-expression to wrap or combine, not a chain to splice like hydra's.
+// script. setCode replaces the sketch; the meta events rewrite the accumulated
+// code structurally — a bauble sketch is one s-expression to wrap or combine,
+// not a chain to splice like hydra's: transform/duplicate/combine/replace edit
+// it, slice/tile/radial are named wrappers for the classic SDF moves, and
+// transition morphs from the program so far to the program after it over
+// `value` beats, on the t clock (byte-stable — no recompile mid-wipe).
 // Unlike hydra's per-frame props, setVariable values BAKE into the compiled
 // shader (changing one recompiles) — except the reserved camera-x/-y/-zoom
 // trio, which the renderer consumes as plain uniforms. This module is pure;
 // compiling and rendering live in bauble-scene.ts.
 
-import { beatToFrame } from './constants.js'
+import { beatToFrame, beatsToFrames, FPS } from './constants.js'
 import type { Row } from './lineage.js'
 
 export interface BaubleFrame {
@@ -19,7 +22,11 @@ export interface BaubleFrame {
 
 // The two data events plus the meta-programming transforms that rewrite the
 // accumulated code (each a no-op until a setCode establishes some).
-const BAUBLE_EVENTS = new Set(['setCode', 'setVariable', 'transform', 'duplicate', 'combine', 'replace'])
+const BAUBLE_EVENTS = new Set([
+  'setCode', 'setVariable',
+  'transform', 'duplicate', 'combine', 'replace',
+  'transition', 'slice', 'tile', 'radial',
+])
 
 export function isBaubleRow(row: Row | null | undefined): boolean {
   return row != null && typeof row.event === 'string' && BAUBLE_EVENTS.has(row.event)
@@ -85,6 +92,27 @@ function combineShapes(mode: string, a: string, b: string, value: unknown): stri
   return v != null ? `(${mode} :r ${v} ${a} ${b})` : `(${mode} ${a} ${b})`
 }
 
+// The axis a slice/radial row works about — the `axis` cell when it names one,
+// y otherwise (a blank or malformed cell behaves like the default).
+function axisOf(row: Row): string {
+  const a = typeof row.axis === 'string' ? row.axis.trim() : ''
+  return a === 'x' || a === 'y' || a === 'z' ? a : 'y'
+}
+
+// A `transition` snapshotted mid-fold: the `before` program (frozen at the
+// transition's beat) and the grid-frame window the wipe morphs across. The
+// window bakes into the emitted code in `t` units (seconds — bauble-scene.ts
+// drives t as srcFrameF / FPS) as (ss t start end), so the wipe animates on
+// the playback clock without the string changing per frame — no recompile
+// mid-wipe, and it pauses/scrubs with the timeline. Once the window elapses
+// the fold drops the transition (see baubleFrameAt) and the code collapses to
+// the bare after program, exactly like hydra's transitions.
+interface Transition {
+  before: string
+  startFrame: number
+  durFrames: number
+}
+
 // The active sketch at frame `f` of loop pass `loop`: earlier passes fold in
 // full, then this pass's events at/before f — setCode replaces the code, the
 // meta events evolve it, setVariable folds into the latest value per name.
@@ -95,6 +123,7 @@ export function baubleFrameAt(index: Row[], f: number, loop = 0): BaubleFrame | 
   if (frame < 0) return null
   let code: string | null = null
   const vars: Record<string, unknown> = {}
+  const transitions: Transition[] = []
   for (const row of index) {
     const l = (row.loop as number | undefined) ?? 0
     if (l > loop || (l === loop && (row.index as number) > frame)) break
@@ -134,9 +163,72 @@ export function baubleFrameAt(index: Row[], f: number, loop = 0): BaubleFrame | 
           code = code.split(row.find).join(row.value == null ? '' : String(row.value))
         }
         break
+      case 'slice':
+        // Cut the shape open as a shell: onion at `value` thickness (3 when
+        // unset), the cutter subtracted being `code` (any shape) or a
+        // half-space about the `axis` cell.
+        if (code != null) {
+          const thickness = combineValue(row.value) ?? '3'
+          const cutter = typeof row.code === 'string' && row.code.trim() !== ''
+            ? row.code.trim()
+            : `(half-space :${axisOf(row)})`
+          code = `(subtract (onion ${code} ${thickness}) ${cutter})`
+        }
+        break
+      case 'tile':
+        // Repeat the shape on an infinite lattice: a number `value` spaces all
+        // three axes evenly, a string is a vec3 (or any Janet expression)
+        // verbatim. No spacing → no-op (a zero-spaced lattice is degenerate).
+        if (code != null) {
+          const v = row.value
+          const spacing = typeof v === 'number' && Number.isFinite(v) && v > 0
+            ? `[${v} ${v} ${v}]`
+            : typeof v === 'string' && v.trim() !== '' ? v.trim() : null
+          if (spacing != null) code = `(tile ${code} ${spacing})`
+        }
+        break
+      case 'radial':
+        // Repeat the shape in a circular array of `value` copies (6 when
+        // unset) about the `axis` cell.
+        if (code != null) {
+          const count = typeof row.value === 'number' && Number.isFinite(row.value) && row.value >= 1
+            ? Math.floor(row.value)
+            : 6
+          code = `(radial ${code} :${axisOf(row)} ${count})`
+        }
+        break
+      case 'transition': {
+        // Snapshot the program so far as the "before" and remember the wipe;
+        // it morphs to the final "after" (the code that keeps folding after
+        // it) once the fold completes — but only while its window is live:
+        // once elapsed the wipe is done and the after stands alone, so
+        // finished wipes never pile up.
+        if (code != null) {
+          const durBeats = typeof row.value === 'number' && row.value > 0 ? row.value : 1
+          const durFrames = Math.max(1, beatsToFrames(durBeats))
+          const startFrame = row.index as number
+          if (frame < startFrame + durFrames) {
+            transitions.push({ before: code, startFrame, durFrames })
+          }
+        }
+        break
+      }
     }
   }
-  return code == null ? null : { code, vars }
+  if (code == null) return null
+
+  // Apply the wipes from the innermost (latest) out: the final program is the
+  // last transition's "after", and each earlier transition morphs its own
+  // frozen "before" toward the wipe that follows it — nested transitions
+  // compose in beat order, the earliest wrapping all the later ones. (ss t
+  // start end) ramps 0 → 1 across the window on the playback clock.
+  for (let i = transitions.length - 1; i >= 0; i--) {
+    const tr = transitions[i]
+    const start = tr.startFrame / FPS
+    const end = (tr.startFrame + tr.durFrames) / FPS
+    code = `(morph ${tr.before} ${code} (ss t ${start} ${end}))`
+  }
+  return { code, vars }
 }
 
 // Reserved names the renderer consumes directly as camera uniforms — never

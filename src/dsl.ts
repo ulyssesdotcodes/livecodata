@@ -955,20 +955,28 @@ export const SCHEMAS = deepFreeze({
    * as first argument), "duplicate" (combine the shape with a copy of itself
    * run through `code`, via `mode` + smoothing `value`), "combine" (`code` =
    * another whole shape composited via `mode` — union/intersect/subtract take
-   * `value` as the :r blend radius, morph as its blend amount), and "replace"
-   * (swap substring `find` for `value`). The render shows directly when no
-   * hydra sketch is live, and is hydra's s1 source either way — composite it
-   * with src(s1). `code` cells open in the editor as Janet (no JS
-   * completions); check `disabled` to mute a row without deleting it.
+   * `value` as the :r blend radius, morph as its blend amount), "replace"
+   * (swap substring `find` for `value`), "slice" (cut the shape open: an
+   * onion shell `value` thick minus `code` — or a half-space about `axis`),
+   * "tile" (repeat on an infinite lattice — `value` spaces all axes, or a
+   * string vec3 like "[80 120 80]"), "radial" (`value` copies in a circle
+   * about `axis`), and "transition" (morph from the program so far to the
+   * program after it over `value` beats, riding the playback clock — build
+   * the destination with ordinary events at the same beat). The render shows
+   * directly when no hydra sketch is live, and is hydra's s1 source either
+   * way — composite it with src(s1). `code` cells open in the editor as
+   * Janet (no JS completions); check `disabled` to mute a row without
+   * deleting it.
    */
   bauble: {
     beat: 'number',
-    event: ['setCode', 'transform', 'duplicate', 'combine', 'replace', 'setVariable'],
+    event: ['setCode', 'transform', 'duplicate', 'combine', 'replace', 'slice', 'tile', 'radial', 'transition', 'setVariable'],
     code: { type: 'code', language: 'bauble' },
     find: 'string',
     name: 'string',
     value: 'number',
     mode: ['union', 'intersect', 'subtract', 'morph'],
+    axis: ['x', 'y', 'z'],
     disabled: 'boolean',
   },
   /**

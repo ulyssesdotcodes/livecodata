@@ -217,12 +217,98 @@ test('replace swaps every occurrence of the literal string in the current code',
   assert.equal(baubleFrameAt(idx, 5)!.code, '(union (box 40) (move (box 40) [90 0 0]))', 'empty find changes nothing')
 })
 
+test('slice cuts the shape open: an onion shell minus a half-space (or a custom cutter)', () => {
+  const idx = buildBaubleIndex([
+    { beat: 1, event: 'setCode', code: '(sphere 70)' },
+    { beat: b(2), event: 'slice', value: 5, axis: 'x' },
+  ])
+  assert.equal(baubleFrameAt(idx, 2)!.code, '(subtract (onion (sphere 70) 5) (half-space :x))')
+  // Defaults: thickness 3, axis y; a `code` cell supplies a custom cutter.
+  const defaults = buildBaubleIndex([
+    { beat: 1, event: 'setCode', code: 'S' },
+    { beat: b(2), event: 'slice' },
+    { beat: b(3), event: 'slice', code: '(half-space :y 20)' },
+  ])
+  assert.equal(baubleFrameAt(defaults, 2)!.code, '(subtract (onion S 3) (half-space :y))')
+  assert.equal(
+    baubleFrameAt(defaults, 3)!.code,
+    '(subtract (onion (subtract (onion S 3) (half-space :y)) 3) (half-space :y 20))',
+  )
+})
+
+test('tile repeats on a lattice: a number spaces all axes, a string vec3 is verbatim, none is a no-op', () => {
+  const at = (value?: unknown) => {
+    const row: Row = { beat: b(2), event: 'tile' }
+    if (value !== undefined) row.value = value
+    return baubleFrameAt(buildBaubleIndex([{ beat: 1, event: 'setCode', code: 'S' }, row]), 2)!.code
+  }
+  assert.equal(at(90), '(tile S [90 90 90])')
+  assert.equal(at('[80 120 80]'), '(tile S [80 120 80])')
+  assert.equal(at(), 'S')
+  assert.equal(at(0), 'S', 'zero spacing is degenerate — skipped')
+})
+
+test('radial repeats in a circle about `axis`, defaulting to 6 copies about y', () => {
+  const idx = buildBaubleIndex([
+    { beat: 1, event: 'setCode', code: '(move (box 15) [70 0 0])' },
+    { beat: b(2), event: 'radial', value: 8, axis: 'z' },
+    { beat: b(3), event: 'radial' },
+  ])
+  assert.equal(baubleFrameAt(idx, 2)!.code, '(radial (move (box 15) [70 0 0]) :z 8)')
+  assert.equal(baubleFrameAt(idx, 3)!.code, '(radial (radial (move (box 15) [70 0 0]) :z 8) :y 6)')
+})
+
+test('transition morphs from the before program to the after, on the t clock', () => {
+  const idx = buildBaubleIndex([
+    { beat: 1, event: 'setCode', code: '(box 60)' },
+    // At the same beat: the transition (snapshots the box as "before"), then
+    // the destination program that folds on as the live "after".
+    { beat: 5, event: 'transition', value: 4 }, // frames 120–240 → t 2s–4s
+    { beat: 5, event: 'setCode', code: '(sphere 70)' },
+  ])
+  // Before the transition beat, just the before program.
+  assert.equal(baubleFrameAt(idx, 0)!.code, '(box 60)')
+  // Inside the window: a morph whose amount rides the playback clock. The
+  // string is byte-stable across the whole window — no recompile mid-wipe.
+  const at = baubleFrameAt(idx, 120)!
+  assert.equal(at.code, '(morph (box 60) (sphere 70) (ss t 2 4))')
+  assert.equal(baubleFrameAt(idx, 180)!.code, at.code)
+  assert.equal(baubleFrameAt(idx, 239)!.code, at.code)
+  // Once the window elapses the wipe is done and collapses to the after.
+  assert.equal(baubleFrameAt(idx, 240)!.code, '(sphere 70)')
+})
+
+test('transition composes with meta events as the after program; nested wipes wrap in beat order', () => {
+  const idx = buildBaubleIndex([
+    { beat: 1, event: 'setCode', code: '(box 60)' },
+    { beat: 5, event: 'transition', value: 8 }, // frames 120–360 → t 2s–6s
+    { beat: 5, event: 'setCode', code: '(sphere 70)' },
+    { beat: 9, event: 'transition', value: 2 }, // frames 240–300 → t 4s–5s
+    { beat: 9, event: 'transform', code: '(twist _ :y 0.02)' },
+  ])
+  // At beat 9 both windows are live: the inner wipe goes sphere → twisted
+  // sphere, the outer wraps it from the box.
+  assert.equal(
+    baubleFrameAt(idx, 240)!.code,
+    '(morph (box 60) (morph (sphere 70) (twist (sphere 70) :y 0.02) (ss t 4 5)) (ss t 2 6))',
+  )
+  // The inner wipe finishes at frame 300; only the outer remains.
+  assert.equal(
+    baubleFrameAt(idx, 300)!.code,
+    '(morph (box 60) (twist (sphere 70) :y 0.02) (ss t 2 6))',
+  )
+})
+
 test('meta events before any setCode are no-ops', () => {
   const idx = buildBaubleIndex([
     { beat: 1, event: 'transform', code: '(twist _ :y 0.02)' },
     { beat: 1, event: 'duplicate', code: '(move _ [40 0 0])' },
     { beat: 1, event: 'combine', code: '(sphere 40)' },
     { beat: 1, event: 'replace', find: 'a', value: 'b' },
+    { beat: 1, event: 'slice' },
+    { beat: 1, event: 'tile', value: 90 },
+    { beat: 1, event: 'radial' },
+    { beat: 1, event: 'transition', value: 2 },
     { beat: b(2), event: 'setCode', code: '(box 50)' },
   ])
   assert.equal(baubleFrameAt(idx, 0), null)
