@@ -1080,6 +1080,19 @@ export interface ThreeNamespace {
   torus(props?: Row): Table
   /** One "create" row of extruded 3D text (beat 1, origin, id defaults to "text"). Fields: text + size (cap height per line). */
   text(props?: Row): Table
+  /**
+   * One "create" row for a light (shape "light", beat 1, id defaults to
+   * "light") — no mesh, it adds a three.js light. `kind` picks the type:
+   * "ambient" (flat fill), "hemisphere" (sky/ground fill, `groundColor` the
+   * lower tint), "directional" (the default — a sun; px/py/pz the direction it
+   * comes from, tx/ty/tz the target), "point" (an omni bulb at px/py/pz,
+   * `distance`/`decay` falloff), or "spot" (a cone px/py/pz → tx/ty/tz,
+   * `angle`/`penumbra` shape). `color` and `intensity` apply to all. Adding any
+   * light switches the scene's default lights off. Concat into a scene and
+   * rasterize — intensity/position/color are numeric keyframe tracks, so they
+   * animate on the beat timeline like any other field.
+   */
+  light(props?: Row): Table
   /** The generic form behind box()/sphere()/… — a create row for any shape string, including shapes without a named helper. */
   object(shape: string, props?: Row): Table
   /**
@@ -1142,7 +1155,7 @@ export type DSLSurface = Easings & {
   grid(cols: number, rowsN: number, opts?: { spacing?: number; y?: number }): Table
   /**
    * The three.js helpers, grouped: scene-primitive create rows (box, sphere,
-   * cylinder, cone, torus, text, and the generic object), the points ⇄
+   * cylinder, cone, torus, text, light, and the generic object), the points ⇄
    * geometry samplers, the camera keyframer, and the translate/scale/rotate
    * modifiers that shift a scene table's create rows. Call as three.box(…) —
    * or via the shorthand `t`: t.box(…).
@@ -1210,6 +1223,11 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     cone: (props: Row = {}) => sceneObject('cone', props, ctx),
     torus: (props: Row = {}) => sceneObject('torus', props, ctx),
     text: (props: Row = {}) => sceneObject('text', props, ctx),
+    // A light isn't a mesh, so it skips sceneObject's px/py/pz:0 defaults —
+    // leaving position unset lets the renderer apply the kind's own default.
+    light: (props: Row = {}) => new Table([{
+      id: 'light', type: 'create', beat: 1, shape: 'light', kind: 'directional', ...props,
+    }], ctx),
     object: (shape: string, props: Row = {}) => sceneObject(shape, props, ctx),
     points: (shape: string, props: Row = {}): Table => {
       const { segments, ...dims } = props

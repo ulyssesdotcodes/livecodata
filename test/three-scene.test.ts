@@ -5,7 +5,7 @@
 // on is computed here.)
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { geometryDims, geometryChanged, textParams, textGeometryChanged, cameraPose } from '../src/three-scene.js'
+import { geometryDims, geometryChanged, textParams, textGeometryChanged, cameraPose, lightParams, lightKindChanged, LIGHT_DEFAULT } from '../src/three-scene.js'
 
 test('geometryDims merges shape defaults with the row\'s own fields', () => {
   assert.deepEqual(geometryDims('box', {}), { hx: 0.25, hy: 0.25, hz: 0.25, r: undefined, h: undefined })
@@ -59,4 +59,28 @@ test('cameraPose fills eye/target defaults and leaves fov null when unset', () =
     { px: 1, py: 2, pz: 3, tx: -1, ty: -2, tz: -3, fov: 45 })
   // The empty-row default matches the app's initial camera.
   assert.deepEqual(cameraPose({}), { px: 0, py: 0, pz: 5, tx: 0, ty: 0, tz: 0, fov: null })
+})
+
+test('lightParams resolves a partial row with defaults and guards the kind', () => {
+  // An empty row is well-defined (the default directional key), so a bare
+  // create/keyframe still builds a light.
+  assert.deepEqual(lightParams({}), LIGHT_DEFAULT)
+  // A partial row keeps what it sets and defaults the rest.
+  const p = lightParams({ kind: 'point', intensity: 4, px: 1 })
+  assert.equal(p.kind, 'point')
+  assert.equal(p.intensity, 4)
+  assert.equal(p.px, 1)
+  assert.equal(p.py, LIGHT_DEFAULT.py)
+  // An unknown kind falls back to the default rather than reaching THREE.
+  assert.equal(lightParams({ kind: 'laser' }).kind, 'directional')
+})
+
+test('lightKindChanged flags a rebuild only when a row names a different kind', () => {
+  // A plain update (no kind) or the same kind is a live mutation, not a rebuild.
+  assert.equal(lightKindChanged('point', { intensity: 5, px: 2 }), false)
+  assert.equal(lightKindChanged('point', { kind: 'point', intensity: 5 }), false)
+  // A genuinely different kind needs the THREE.Light rebuilt.
+  assert.equal(lightKindChanged('point', { kind: 'spot' }), true)
+  // An unknown kind is ignored — keep the current one.
+  assert.equal(lightKindChanged('point', { kind: 'nope' }), false)
 })
