@@ -1,5 +1,6 @@
 import * as esbuild from 'esbuild'
 import { solidPlugin } from 'esbuild-plugin-solid'
+import { createHash } from 'node:crypto'
 import { rmSync, mkdirSync, cpSync, readFileSync, writeFileSync } from 'fs'
 import { writeLangEnv } from './scripts/gen-lang-env.js'
 
@@ -7,6 +8,9 @@ rmSync('public', { recursive: true, force: true })
 mkdirSync('public/assets', { recursive: true })
 cpSync('src/data', 'public/data', { recursive: true })
 cpSync('static', 'public', { recursive: true })
+// Self-hosted feather-icons (see index.html) — bundled so the app has no
+// third-party runtime dependency and works offline.
+cpSync('node_modules/feather-icons/dist/feather.min.js', 'public/assets/feather.min.js')
 
 // The language-service environment the lang worker fetches at startup — see
 // scripts/gen-lang-env.js.
@@ -48,3 +52,13 @@ const html = readFileSync('index.html', 'utf8')
   .replace('</head>', '    <link rel="stylesheet" href="./assets/index.css">\n  </head>')
   .replace('src="/src/main.ts"', 'src="./assets/index.js"')
 writeFileSync('public/index.html', html)
+
+// Stamp the service worker with a content hash of the built bundle so each
+// deploy activates a fresh cache and evicts the previous one (see static/sw.js).
+const version = createHash('sha256')
+  .update(readFileSync('public/assets/index.js'))
+  .update(readFileSync('public/assets/cook-worker.js'))
+  .update(readFileSync('public/assets/index.css'))
+  .digest('hex')
+  .slice(0, 12)
+writeFileSync('public/sw.js', readFileSync('static/sw.js', 'utf8').replaceAll('__BUILD_VERSION__', version))

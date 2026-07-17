@@ -8,6 +8,8 @@ mkdirSync('public/assets', { recursive: true })
 mkdirSync('public/data', { recursive: true })
 cpSync('src/data', 'public/data', { recursive: true })
 cpSync('static', 'public', { recursive: true })
+// Self-hosted feather-icons (see index.html / build.js).
+cpSync('node_modules/feather-icons/dist/feather.min.js', 'public/assets/feather.min.js')
 
 // Regenerated on watch start only — a dsl.ts type change needs a restart.
 writeLangEnv('public/assets/lang-env.json')
@@ -16,6 +18,10 @@ const html = readFileSync('index.html', 'utf8')
   .replace('</head>', '    <link rel="stylesheet" href="./assets/index.css">\n  </head>')
   .replace('src="/src/main.ts"', 'src="./assets/index.js"')
 writeFileSync('public/index.html', html)
+
+// A stable version in dev — the network-first worker serves fresh from the dev
+// server while it's up and falls back to cache only when it's offline.
+writeFileSync('public/sw.js', readFileSync('static/sw.js', 'utf8').replaceAll('__BUILD_VERSION__', 'dev'))
 
 const ctx = await esbuild.context({
   entryPoints: ['src/main.ts'],

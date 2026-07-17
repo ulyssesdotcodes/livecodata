@@ -1111,4 +1111,10 @@ async function boot(): Promise<void> {
   }
 }
 
+// Register the offline service worker (static/sw.js). Best-effort: an
+// unsupported browser or a failed registration just means no offline caching.
+if ('serviceWorker' in navigator) {
+  addEventListener('load', () => { void navigator.serviceWorker.register('/sw.js').catch(() => {}) })
+}
+
 void boot()
