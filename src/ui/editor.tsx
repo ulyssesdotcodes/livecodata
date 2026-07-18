@@ -3,7 +3,7 @@
 // cell-target bookkeeping, and chrome state; <EditorPane> renders it. Editor
 // logic (completion/hover sources, docs) lives in ../editor-support.ts.
 
-import { createSignal, Show, type Accessor, type JSX } from 'solid-js'
+import { createSignal, createEffect, on, Show, type Accessor, type JSX } from 'solid-js'
 import { listenGlobal, mountComponent } from './dom.js'
 import { EditorView, basicSetup } from 'codemirror'
 import { javascriptLanguage } from '@codemirror/lang-javascript'
@@ -128,11 +128,16 @@ export interface EditorAPI {
   // cell's text loads, and Run/Ctrl-Enter calls onCommit instead of running
   // the program. `lang` picks which surface completions/hover run against.
   editCell(label: string, code: string, onCommit: (text: string) => void, opts?: { lang?: CodeLanguage }): void
+  // Ask the pane to uncollapse (e.g. a code cell was clicked on mobile, where
+  // the editor starts collapsed).
+  expand(): void
   // Draw collaborators' carets (the caller filters to the cell open here).
   setRemoteCursors(cursors: RemoteCursor[]): void
 }
 
 export interface EditorController extends EditorAPI {
+  // Bumped by expand(); <EditorPane> watches it to uncollapse.
+  expandTick: Accessor<number>
   title: Accessor<string>
   runLabel: Accessor<string>
   backVisible: Accessor<boolean>
@@ -154,6 +159,7 @@ export function createEditor(
   const [runLabel, setRunLabel] = createSignal('Run')
   const [backVisible, setBackVisible] = createSignal(false)
   const [error, setErrorSig] = createSignal<string | null>(null)
+  const [expandTick, setExpandTick] = createSignal(0)
 
   const setError = (msg: string | null): void => { setErrorSig(msg) }
 
@@ -274,6 +280,8 @@ export function createEditor(
     setCode,
     setError,
     editCell,
+    expand: () => setExpandTick((n) => n + 1),
+    expandTick,
     title,
     runLabel,
     backVisible,
@@ -303,6 +311,8 @@ export function createEditor(
 export function EditorPane(props: { ctl: EditorController; children?: JSX.Element }) {
   const { ctl } = props
   const [collapsed, setCollapsed] = createSignal(window.matchMedia('(max-width: 767px)').matches)
+  // A code cell click (ctl.expand()) opens the panel if collapsed.
+  createEffect(on(ctl.expandTick, () => setCollapsed(false), { defer: true }))
   // The settings menu is positioned fixed (not absolute) so it isn't clipped
   // by #editor-pane's overflow:hidden when the panel is collapsed.
   const [settingsOpen, setSettingsOpen] = createSignal(false)
