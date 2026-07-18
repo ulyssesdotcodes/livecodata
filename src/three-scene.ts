@@ -22,6 +22,11 @@ export interface SceneAPI {
   // Install (or clear) the post-processing stage. When active, its render()
   // replaces the plain renderer.render in the animate loop.
   setPost(api: PostAPI | null): void
+  // Opt the GPU particle system in or out. Particles are OFF by default: the
+  // system is built lazily the first time a program enables it (main.ts
+  // enables it exactly while a "particles" slider is defined), and only on the
+  // WebGPU backend — the WebGL2 fallback has no compute shaders.
+  setParticlesEnabled(on: boolean): void
   // Drive a live curl-noise particle parameter (GPU particle slice). A no-op
   // when the particle system isn't running — i.e. under the WebGL2 fallback,
   // which has no compute shaders. See src/compute/particles.ts.
@@ -535,9 +540,31 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
     }
   }
 
-  // The GPU particle system (curl-noise compute). Only built on the WebGPU
-  // backend — null under the WebGL2 fallback, which has no compute shaders.
+  // The GPU particle system (curl-noise compute). Opt-in: built lazily the
+  // first time setParticlesEnabled(true) arrives — never as scene furniture —
+  // and only on the WebGPU backend (the WebGL2 fallback has no compute
+  // shaders). Disabling hides the sprite and freezes the sim; re-enabling
+  // reuses the built system.
   let particles: ParticleSystem | null = null
+  let particlesWanted = false
+  let particlesBuilding = false
+  let webgpu = false
+
+  function syncParticles(): void {
+    if (particles) {
+      particles.sprite.visible = particlesWanted
+      return
+    }
+    if (!particlesWanted || !webgpu || particlesBuilding) return
+    particlesBuilding = true
+    createParticleSystem(renderer).then((p) => {
+      particles = p
+      scene.add(p.sprite)
+      p.sprite.visible = particlesWanted
+    }).catch((e) => {
+      console.error('three-scene: particle system init failed', e)
+    })
+  }
   // Latest playback position (beats), pushed in by the engine via
   // setParticleTime; the sim steps only when this moves (see particles.tick).
   let particleTime = 0
@@ -552,26 +579,17 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
     for (const o of origamis.values()) {
       if (o.shown !== o.fold) fillOrigami(o)
     }
-    particles?.tick(particleTime)
+    if (particles?.sprite.visible) particles.tick(particleTime)
     if (!post?.render()) renderer.render(scene, camera)
     requestAnimationFrame(animate)
   }
   // WebGPURenderer must finish backend init before the first render() (it
   // picks WebGPU, or falls back to a WebGL2 backend, during init). Gate the
   // loop on that; a rejected init would leave the scene un-drawn, so surface it.
-  renderer.init().then(async () => {
-    // Compute shaders need the real WebGPU backend; skip particles entirely on
-    // the WebGL2 fallback so the rest of the scene still renders there.
+  renderer.init().then(() => {
     const backend = renderer.backend as { isWebGPUBackend?: boolean } | undefined
-    if (backend?.isWebGPUBackend) {
-      try {
-        particles = await createParticleSystem(renderer)
-        scene.add(particles.sprite)
-      } catch (e) {
-        console.error('three-scene: particle system init failed', e)
-        particles = null
-      }
-    }
+    webgpu = backend?.isWebGPUBackend === true
+    syncParticles() // in case a program enabled particles before init resolved
     requestAnimationFrame(animate)
   }).catch((e) => {
     console.error('three-scene: renderer init failed', e)
@@ -583,6 +601,11 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
     scene,
     setPost(api: PostAPI | null): void {
       post = api
+    },
+    setParticlesEnabled(on: boolean): void {
+      if (on === particlesWanted) return
+      particlesWanted = on
+      syncParticles()
     },
     setParticleParam(name: 'timeMultiplier' | 'elscale' | 'speed', value: number): void {
       if (particles) particles.params[name] = value

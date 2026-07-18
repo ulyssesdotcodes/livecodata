@@ -63,12 +63,24 @@ define("events", (rand, table) =>
 //    at least 8 beats of it. The loop itself is the "beats" control under the
 //    scene (16 by default), so the sphere holds its last pose until it wraps.
 define("scene", (rand, table) => table("events").rasterize(8))
+
+// 4. Post-processing is an editable table too (the "post" tab): beat-placed
+//    events build a shader chain run over the rendered scene. Seeded here: a
+//    soft bloom whose \`glow\` is a live variable, pulsed brighter at beat 9 —
+//    edit the chain cell or the values on the right and Run to restyle the
+//    whole scene. See the "Post" example for the full tour.
+editable("post", schemas.post)
 `,
     tables: {
       path: [
         { beat: 1, px: -1, py: 0,   pz: 0 },
         { beat: 3, px: 1,  py: 1,   pz: 0 },
         { beat: 5, px: 0,  py: 0.3, pz: -1 },
+      ],
+      post: [
+        { beat: 1, event: "chain", code: "bloom((p) => p.glow, 0.4, 0.6)" },
+        { beat: 1, event: "set", name: "glow", value: 0.35 },
+        { beat: 9, event: "pulse", name: "glow", value: 0.8, dur: 2, ease: "easeOut" },
       ],
     },
   },
@@ -547,7 +559,7 @@ editable("post", schemas.post)
 `,
     tables: {
       post: [
-        { beat: 1, event: "chain", code: "edges((p) => p.th, 1).bloom((p) => p.glow)" },
+        { beat: 1, event: "chain", code: "edges((p) => p.th, 1)\n  .bloom((p) => p.glow)" },
         { beat: 1, event: "set", name: "th", value: 0.15 },
         { beat: 1, event: "set", name: "glow", value: 0.2 },
         { beat: 5, event: "set", name: "th", value: 0.4, dur: 2, ease: "easeInOut" },

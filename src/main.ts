@@ -5,6 +5,7 @@ import { initHydra } from './hydra-scene.js'
 import { isHydraRow } from './hydra.js'
 import { isBaubleRow } from './bauble.js'
 import { isPostRow } from './post.js'
+import { particleRows, hasSpawner, particleParamsAt, type ParticleParamName } from './particles.js'
 import { initBauble } from './bauble-scene.js'
 import { initPost } from './post-scene.js'
 import { createSceneVisualizer, createHydraVisualizer, createBaubleVisualizer, createPostVisualizer } from './visualizer.js'
@@ -264,12 +265,17 @@ const playbackOptions: PlaybackOptions = {
     sceneAPI.setParticleTime(srcBeats)
     // Show recorded automation on the slider thumbs (skipping any being
     // dragged — see SliderPanel).
-    if (sliderInput && sliderInput.defs().length) {
-      const vals = sliderInput.valuesAt(beatToFrame(srcBeats))
-      sliderPanel.showValues(vals)
-      // GPU particle slice: a slider named "particles" drives the curl speed
-      // uniform live (WebGPU only; a no-op under the WebGL2 fallback).
-      if ('particles' in vals) sceneAPI.setParticleParam('speed', vals.particles)
+    const sliderVals = sliderInput && sliderInput.defs().length
+      ? sliderInput.valuesAt(beatToFrame(srcBeats)) : null
+    if (sliderVals) sliderPanel.showValues(sliderVals)
+    // Particle params: the particles table's `set` rows fold at the playhead;
+    // a slider named "particles" (if defined) rides on top as a live speed
+    // override. (Enabling/disabling the sim happens at apply — applyCooked.)
+    for (const [name, value] of Object.entries(particleParamsAt(particleTableRows, beatToFrame(srcBeats)))) {
+      sceneAPI.setParticleParam(name as ParticleParamName, value)
+    }
+    if (sliderVals && 'particles' in sliderVals) {
+      sceneAPI.setParticleParam('speed', sliderVals.particles)
     }
     lastTick = tick
     if (rewinding) {
@@ -352,6 +358,9 @@ if (roomName) currentSessionId = roomSessionId(roomName)
 import type { GraphSpec } from './graph-panel.js'
 
 let lastViews = new Map<string, Table>()
+// The current program's particle-control rows (see src/particles.ts), folded
+// per tick; refreshed on every applyCooked.
+let particleTableRows: Row[] = []
 // The program + seed on screen — possibly a scrubbed historical run, not
 // "code"'s latest row — so a tap can re-cook in place.
 let liveCode: string | null = null
@@ -445,6 +454,10 @@ function applyCooked(cooked: CookedData): void {
   lastViews = cooked.views
   // Before load(): load() fires onTick, which reads the slider input.
   updateSliderDefs(cooked.views)
+  // GPU particles are opt-in per program: a "particles" view with a `spawn`
+  // row turns the sim on; its `set` rows are folded from onTick.
+  particleTableRows = particleRows(cooked.views.get('particles')?.rows)
+  sceneAPI.setParticlesEnabled(hasSpawner(particleTableRows))
   tablePanel.setTables(tablesForDisplay(cooked.views))
   tablePanel.setGraphs(cooked.graphs)
   // With hydra rows present, hydra's output is the display and it reads the

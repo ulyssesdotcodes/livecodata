@@ -1019,6 +1019,26 @@ export const SCHEMAS = deepFreeze({
     disabled: 'boolean',
   },
   /**
+   * The GPU particle view: a table that opts the curl-noise particle sim in
+   * and drives its parameters. A "spawn" row turns the sim on — without one
+   * it never runs (WebGPU browsers only; the WebGL2 fallback has no compute
+   * shaders, so the rest of the scene renders without particles). "set" rows
+   * drive the sim's parameters, folded at-or-before the playhead like every
+   * event table: `name` is one of "timeMultiplier" (how fast the noise field
+   * evolves), "elscale" (spatial scale of the swirls), or "speed"
+   * (per-particle speed along the field); `value` the number. A slider named
+   * "particles" (if defined) rides on top as a live speed override. The sim
+   * itself is stateful GPU compute — it can't be baked or scrubbed exactly;
+   * only these controls replay. Check `disabled` to mute a row.
+   */
+  particles: {
+    beat: 'number',
+    event: ['spawn', 'set'],
+    name: 'string',
+    value: 'number',
+    disabled: 'boolean',
+  },
+  /**
    * The bauble view's event stream: one row per event, placed on the loop by
    * `beat` (1-indexed; like hydra, a beat past the loop's end lands the event
    * in a later pass of the loop) — the same table-of-events format as hydra,

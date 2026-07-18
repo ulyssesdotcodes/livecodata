@@ -42,6 +42,7 @@ function fakeScene() {
     scene: null as never,
     setPost(): void {},
     calls: [] as string[],
+    setParticlesEnabled(): void {},
     setParticleParam(): void {},
     setParticleTime(): void {},
     createObject(): void { this.calls.push('create') },
