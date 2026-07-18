@@ -637,9 +637,8 @@ const editor = createEditor({
   onEdit: (cell, code) => presence?.setLiveCode(cell, code),
   // Escaping a code cell hands keyboard focus back to the table it came from.
   onExitCell: () => tablePanel.focusGrid(),
-  // Run has something to commit when the buffer diverges from the applied
-  // program or the store holds un-applied table edits.
   programDirty: (buffer) => (liveCode == null || buffer !== liveCode) || editableStore.hasPendingEdits(),
+  hasPendingEdits: () => editableStore.hasPendingEdits(),
 })
 
 // --- presence indicators -----------------------------------------------------
@@ -714,14 +713,14 @@ presence?.onChange(schedulePresenceRefresh)
 // animation frame and ignored while a cook is in flight.
 let storeRefreshScheduled = false
 editableStore.onChange(() => {
+  // An edit just became pending — flip the Run button synchronously, not on the
+  // coalesced frame below, so it's enabled the instant a grid Enter commits.
+  if (!cooking) editor.refreshCanRun()
   if (cooking || storeRefreshScheduled) return
   storeRefreshScheduled = true
   requestAnimationFrame(() => {
     storeRefreshScheduled = false
     tablePanel.setTables(tablesForDisplay(lastViews))
-    // An inline grid edit just became pending (or a peer's apply claimed ours),
-    // so the Run button's enabled state may have flipped.
-    editor.refreshCanRun()
     // A store event may be a peer's set-cell — their "last edited" marker.
     schedulePresenceRefresh()
   })
