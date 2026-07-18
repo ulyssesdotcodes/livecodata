@@ -443,6 +443,11 @@ export interface EditableTableStore {
   // branch tip, unless forked (edit while scrubbed): then `parent` is the
   // scrubbed node and `seen` the abandoned tip, so it reads as a fork.
   recordApply(payload?: Record<string, unknown>): ApplyNode | null
+  // True when un-applied edits to real data tables are waiting — the signal the
+  // Run/Apply button gates on. Markers that ride log tables (peer join/leave,
+  // MIDI/slider recordings, loop resizes) don't count: they'd otherwise keep
+  // the button lit through any performance.
+  hasPendingEdits(): boolean
   // Folded from the log's apply events (cached; invalidated by any change).
   branchTree(): BranchTree
   // The apply id the live fold shows; null for a fresh/legacy log.
@@ -801,6 +806,19 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       invalidateTree()
       notify()
       return branchTree().nodes.get(id) ?? null
+    },
+
+    hasPendingEdits(): boolean {
+      if (!pending.length) return false
+      const want = new Set(pending)
+      for (const e of log.all()) {
+        if (!want.has(eventKey(e))) continue
+        // Skip markers on log tables; only a mutation to an editable data table
+        // counts as a pending edit.
+        if (tables.get(e.table as string)?.log) continue
+        return true
+      }
+      return false
     },
 
     branchTree,

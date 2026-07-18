@@ -117,6 +117,11 @@ export interface EditorOptions {
   // Left a cell-target editor back to the program (Back button or Escape) —
   // the table panel uses it to restore keyboard focus to the grid.
   onExitCell?: () => void
+  // Whether Running the program `buffer` would commit anything: true when it
+  // differs from the applied code or the store holds pending table edits. Gates
+  // the Run button; absent means always enabled. (Cell mode gates on the cell
+  // buffer differing from its committed value, handled internally.)
+  programDirty?: (buffer: string) => boolean
 }
 
 export interface EditorAPI {
@@ -135,6 +140,11 @@ export interface EditorAPI {
 export interface EditorController extends EditorAPI {
   title: Accessor<string>
   runLabel: Accessor<string>
+  // Whether Run/Apply would commit anything — the button's enabled state.
+  canRun: Accessor<boolean>
+  // Recompute canRun; call when pending store edits change out-of-band (a grid
+  // edit) or after an apply re-baselines the applied code.
+  refreshCanRun(): void
   backVisible: Accessor<boolean>
   error: Accessor<string | null>
   initialVimMode: boolean
@@ -148,27 +158,45 @@ export interface EditorController extends EditorAPI {
 }
 
 export function createEditor(
-  { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange, onResetHydra, onCursor, onEdit, onExitCell }: EditorOptions = {},
+  { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange, onResetHydra, onCursor, onEdit, onExitCell, programDirty }: EditorOptions = {},
 ): EditorController {
   const [title, setTitle] = createSignal('DSL')
   const [runLabel, setRunLabel] = createSignal('Run')
+  const [canRun, setCanRun] = createSignal(true)
   const [backVisible, setBackVisible] = createSignal(false)
   const [error, setErrorSig] = createSignal<string | null>(null)
 
   const setError = (msg: string | null): void => { setErrorSig(msg) }
 
   // When set, the editor is a window onto one table cell rather than the
-  // program: Run commits the text back to the cell.
+  // program: Run commits the text back to the cell. `cellBaseline` is the
+  // committed cell text, so an unchanged cell has nothing to apply.
   let cellTarget: { label: string; lang: CodeLanguage; onCommit: (text: string) => void } | null = null
   let stashedProgram = ''
+  let cellBaseline = ''
 
   const cellLabel = (): string => cellTarget ? cellTarget.label : PROGRAM_CELL
   const cellLang = (): CodeLanguage => cellTarget ? cellTarget.lang : 'dsl'
 
-  function run(): void {
+  // Nothing to commit ⇒ the button is disabled. Cell mode compares against the
+  // committed value; program mode delegates to programDirty (applied-code diff
+  // plus pending store edits), defaulting to always-enabled without it.
+  function refreshCanRun(): void {
     const text = view.state.doc.toString()
-    if (cellTarget) cellTarget.onCommit(text)
-    else onRun?.(text, { setError })
+    setCanRun(cellTarget ? text !== cellBaseline : (programDirty ? programDirty(text) : true))
+  }
+
+  function run(): void {
+    if (!canRun()) return
+    const text = view.state.doc.toString()
+    if (cellTarget) {
+      cellTarget.onCommit(text)
+      // The committed text is now the cell's value — nothing left to apply.
+      cellBaseline = text
+      refreshCanRun()
+    } else {
+      onRun?.(text, { setError })
+    }
   }
 
   // Programmatic doc replacements must not read as the user typing — mutes
@@ -193,6 +221,7 @@ export function createEditor(
       setDoc(stashedProgram)
       onExitCell?.()
     }
+    refreshCanRun()
   }
 
   // Vim owns Escape (leave insert mode); only treat it as "back to the table"
@@ -205,10 +234,12 @@ export function createEditor(
   function editCell(label: string, code: string, onCommit: (text: string) => void, { lang = 'dsl' }: { lang?: CodeLanguage } = {}): void {
     if (!cellTarget) stashedProgram = view.state.doc.toString()
     cellTarget = { label, lang, onCommit }
+    cellBaseline = code
     setTitle(label)
     setRunLabel('Apply')
     setBackVisible(true)
     setDoc(code)
+    refreshCanRun()
     view.focus()
   }
 
@@ -232,6 +263,7 @@ export function createEditor(
       ...(langService ? [typeHover(langService, makeSymbolCard, cellLang), signatureHelp(langService, makeSigCard, cellLang)] : []),
       EditorView.updateListener.of((u) => {
         if (!(u.selectionSet || u.docChanged)) return
+        if (u.docChanged) refreshCanRun()
         onCursor?.(cellLabel(), u.state.selection.main.head)
         if (u.docChanged && !programmaticDoc && onEdit) onEdit(cellLabel(), u.state.doc.toString())
         if (!onCaretView) return
@@ -276,6 +308,8 @@ export function createEditor(
     editCell,
     title,
     runLabel,
+    canRun,
+    refreshCanRun,
     backVisible,
     error,
     initialVimMode: vimMode,
@@ -333,7 +367,7 @@ export function EditorPane(props: { ctl: EditorController; children?: JSX.Elemen
         >
           Back
         </button>
-        <button class="run-btn" onClick={() => ctl.run()}>{ctl.runLabel()}</button>
+        <button class="run-btn" disabled={!ctl.canRun()} onClick={() => ctl.run()}>{ctl.runLabel()}</button>
         <DocsPopover />
         <div class="settings-wrap" ref={settingsWrap}>
           <button

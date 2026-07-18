@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   createEditableTableStore, schemaColumns, cellValid,
-  CLEAR_RUNS_KIND,
+  CLEAR_RUNS_KIND, ACTIVITY_TABLE,
   type EditableColumn,
 } from '../src/editable-tables.js'
 
@@ -515,6 +515,26 @@ test('recordApply commits the pending edits as an apply node and grows the branc
   assert.equal(a2.seen, a1.id)
   assert.equal(a2.fork, false)
   assert.deepEqual(store.branchPath().map((n) => n.id), [a1.id, a2.id])
+})
+
+test('hasPendingEdits gates on real table edits, not log-table markers', () => {
+  const store = createEditableTableStore()
+  assert.equal(store.hasPendingEdits(), false, 'nothing edited yet')
+
+  store.createTable('t')
+  store.addRow('t')
+  store.setCell('t', 0, 'beat', 1)
+  assert.equal(store.hasPendingEdits(), true, 'un-applied data edits are pending')
+
+  store.recordApply()
+  assert.equal(store.hasPendingEdits(), false, 'apply clears the pending edits')
+
+  // A marker riding a log table (peer join, MIDI, loop resize) is not an edit.
+  store.record(ACTIVITY_TABLE, 'set-loop-beats', { beats: 8 })
+  assert.equal(store.hasPendingEdits(), false, 'log-table markers do not count')
+
+  store.setCell('t', 0, 'beat', 2)
+  assert.equal(store.hasPendingEdits(), true, 'a fresh data edit is pending again')
 })
 
 test('editing while scrubbed to an apply forks a new branch, leaving the old one intact', () => {
