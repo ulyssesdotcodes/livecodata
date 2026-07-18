@@ -626,6 +626,51 @@ define("hydra", () => rows([
     },
   },
   {
+    name: "Particles",
+    table: "particles",
+    code: `// livecodata — GPU curl-noise particles, driven by a table
+// A live particle system that runs entirely on the GPU (ported from threely):
+// a huge cloud of points swept along a curl-noise flow field and coloured by
+// their velocity. WebGPU browsers only (desktop Chrome/Edge) — under the WebGL2
+// fallback the particles are skipped and only the scene below shows.
+// Press "Run", then Play: the flow advances with the timeline and freezes when
+// you pause, because the sim rides the beat clock like every other visual.
+
+// 1. The "particles" view opts the sim in and steers it — an event table folded
+//    at the playhead, like "post" and "hydra". A \`spawn\` row turns the sim ON
+//    (without one it never runs). \`set\` rows drive the field: \`name\` is "speed"
+//    (how fast points ride the flow), "elscale" (size of the swirls), or
+//    "timeMultiplier" (how fast the flow itself churns); \`value\` is the number.
+//    Here it starts slow and broad, then quickens and tightens halfway through.
+//    It's editable — open the "particles" tab to tweak a value or "+ row" an
+//    event; \`schemas.particles\` is the canonical schema (hover for columns), and
+//    a row's \`disabled\` box mutes it.
+editable("particles", schemas.particles)
+
+// 2. A dark core for the particles to swirl around — and content for playback to
+//    run, since the particle clock only advances while the timeline plays. A
+//    sphere at the origin turning once across the 16-beat loop; the additive
+//    particles read brightest against it.
+define("scene", () =>
+  t.sphere({ id: "core", r: 0.6, color: 0x140f28, px: 0, py: 0, pz: 0 })
+    .three.rotate({ axis: "y", amount: 6.283, dur: 16 })
+    .rasterize(16))
+
+// Tip: define a slider named "particles" (see the Sliders example) and it rides
+// on top as a live speed override — play the flow by hand over the table's base.
+`,
+    tables: {
+      particles: [
+        { beat: 1, event: "spawn" },
+        { beat: 1, event: "set", name: "speed",          value: 0.002 },
+        { beat: 1, event: "set", name: "elscale",        value: 16 },
+        { beat: 1, event: "set", name: "timeMultiplier", value: 0.06 },
+        { beat: 9, event: "set", name: "speed",          value: 0.009 },
+        { beat: 9, event: "set", name: "elscale",        value: 8 },
+      ],
+    },
+  },
+  {
     name: "Hydra Sketch Swap",
     table: "hydra sketch",
     code: `// livecodata — swapping between two hydra sketches, with a flicker
