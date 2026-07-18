@@ -980,6 +980,45 @@ export const SCHEMAS = deepFreeze({
     disabled: 'boolean',
   },
   /**
+   * The post view's event stream: TSL post-processing built like a hydra table,
+   * one row per event placed on the loop by `beat` (1-indexed; a beat past the
+   * loop's end lands the event in a later pass). The chain runs on the rendered
+   * Three.js scene BEFORE hydra samples it as s0, so it composes with (rather
+   * than replaces) the hydra view. `code` cells are chains starting from a head
+   * — `scene()` (the rendered scene) — with fluent ops: `edges(threshold,
+   * colorMode)`, `blur(radius)`, `bloom(strength, radius, threshold)`,
+   * `pixelate(size)`. There is no `.out()` in a cell — the `out` column names
+   * the target (main is the display) and terminates the chain. Every op
+   * argument is either LIVE (the default: a number, or a function of the props
+   * object like `(p) => p.glow`, bound to a live uniform rebound each frame with
+   * no recompile) or STRUCTURAL (e.g. edges' colorMode, which selects a shader
+   * path). `event` picks what a row does — "setCode" (`code` = the whole chain),
+   * "setVariable" (`name`/`value` = a live input the chain reads through a props
+   * function; add `dur`/`ease` to TWEEN it from its current value), "impulse"
+   * (add `value·env` over `dur` beats, `ease` shaping the envelope; impulses
+   * stack), "replace" (swap substring `find` for `value` — rebinds live
+   * literals on the same graph), plus the meta-programming events "setSource"
+   * (swap the head, keep the effect tail), "append" (splice a `.fx(…)`
+   * fragment), "layer" (composite another chain via `mode`, amount `value`), and
+   * "transition" (wipe to the program after it over `dur` beats; `code` = an
+   * optional black-and-white mask chain, blank = crossfade). `event`, `out`,
+   * `ease`, and `mode` are enums (dropdowns); `code` cells open in the editor;
+   * check `disabled` to mute a row without deleting it.
+   */
+  post: {
+    beat: 'number',
+    event: ['setCode', 'setSource', 'append', 'replace', 'layer', 'transition', 'setVariable', 'impulse'],
+    out: ['main', 'b1', 'b2', 'b3'],
+    code: { type: 'code', language: 'post' },
+    find: 'string',
+    name: 'string',
+    value: 'number',
+    dur: 'number',
+    ease: ['linear', 'easeIn', 'easeOut', 'easeInOut'],
+    mode: ['blend', 'add', 'mult', 'diff', 'mask'],
+    disabled: 'boolean',
+  },
+  /**
    * The bauble view's event stream: one row per event, placed on the loop by
    * `beat` (1-indexed; like hydra, a beat past the loop's end lands the event
    * in a later pass of the loop) — the same table-of-events format as hydra,

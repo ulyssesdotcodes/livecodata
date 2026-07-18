@@ -224,7 +224,7 @@ export function codeCompletions(
     const node = syntaxTree(context.state).resolveInner(context.pos, -1)
     if (/String|Comment/.test(node.name)) return null
     const lang = getLang()
-    if (lang === 'bauble') return null // Janet — no JS surface applies
+    if (lang !== 'dsl' && lang !== 'hydra') return null // bauble (Janet) / post: no JS surface yet
 
     if (client && client.status() === 'ready') {
       const word = context.matchBefore(/[\w$]+/)
@@ -269,7 +269,7 @@ export function typeHover(client: LangClient, makeSymbolCard: SymbolCardFactory,
   return hoverTooltip(async (view, pos) => {
     if (client.status() !== 'ready') return null
     const lang = getLang()
-    if (lang === 'bauble') return null // Janet — no JS surface applies
+    if (lang !== 'dsl' && lang !== 'hydra') return null // bauble (Janet) / post: no JS surface yet
     const text = view.state.doc.toString()
     const info = await client.quickInfo(text, pos, lang)
     if (!info || !info.display) return null
@@ -327,7 +327,7 @@ export function signatureHelp(client: LangClient, makeSigCard: SigCardFactory, g
     }
     if (client.status() !== 'ready') return
     const lang = getLang()
-    if (lang === 'bauble') return // Janet — no JS surface applies
+    if (lang !== 'dsl' && lang !== 'hydra') return // bauble (Janet) / post: no JS surface yet
     const id = ++epoch
     const { view } = update
     const text = update.state.doc.toString()

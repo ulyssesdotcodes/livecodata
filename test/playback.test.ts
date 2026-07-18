@@ -35,8 +35,12 @@ import type { Row } from '../src/lineage.js'
 
 function fakeScene() {
   return {
-    // SceneAPI's camera is for screenshot tooling; nothing here reads it.
+    // SceneAPI's camera/renderer/scene are for screenshot tooling and the post
+    // stage; nothing here reads them.
     camera: null as never,
+    renderer: null as never,
+    scene: null as never,
+    setPost(): void {},
     calls: [] as string[],
     setParticleParam(): void {},
     setParticleTime(): void {},
@@ -274,7 +278,7 @@ test('loopEpochsFromApplies ignores non-apply events and unstamped (legacy) puls
 })
 
 test('a stamped apply without a changed list counts for every kind', () => {
-  assert.deepEqual(loopEpochsFromApplies([{ kind: 'apply', at: 7 }]), { scene: 7, timeline: 7, hydra: 7, bauble: 7 })
+  assert.deepEqual(loopEpochsFromApplies([{ kind: 'apply', at: 7 }]), { scene: 7, timeline: 7, hydra: 7, bauble: 7, post: 7 })
 })
 
 // --- loopBeatsFromEvents — the loop length folded off the activity table -----

@@ -113,9 +113,9 @@ export function loopEpochsFromApplies(events: Row[]): LoopEpochs {
   const out: LoopEpochs = {}
   for (const e of events ?? []) {
     if (e.kind !== 'apply' || typeof e.at !== 'number') continue
-    const kinds: unknown[] = Array.isArray(e.changed) ? e.changed : ['scene', 'timeline', 'hydra', 'bauble']
+    const kinds: unknown[] = Array.isArray(e.changed) ? e.changed : ['scene', 'timeline', 'hydra', 'bauble', 'post']
     for (const k of kinds) {
-      if (k === 'scene' || k === 'timeline' || k === 'hydra' || k === 'bauble') out[k] = e.at
+      if (k === 'scene' || k === 'timeline' || k === 'hydra' || k === 'bauble' || k === 'post') out[k] = e.at
     }
   }
   return out

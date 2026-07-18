@@ -36,16 +36,17 @@ export function buildHydraIndex(rows: Row[] | null | undefined): Row[] {
 }
 
 // Strip a trailing `.out(...)` off a sketch, leaving the bare chain the
-// meta-programming events extend or compose.
+// meta-programming events extend or compose. Exported for the sibling `post`
+// fold (src/post.ts), which reuses the same chain surgery.
 const OUT_TAIL = /\.out\s*\([^)]*\)\s*;?\s*$/
-function chainOf(code: string): string {
+export function chainOf(code: string): string {
   return code.replace(OUT_TAIL, '')
 }
 
 // Split a sketch into its head generator call (balanced parens) and the rest
 // of the chain. Best-effort: a head with no call, or unbalanced parens, yields
-// the whole string as the head.
-function splitHead(code: string): [string, string] {
+// the whole string as the head. Exported for reuse by src/post.ts's setSource.
+export function splitHead(code: string): [string, string] {
   const s = code.trimStart()
   let i = 0
   while (i < s.length && /[\w$]/.test(s[i])) i++
@@ -92,7 +93,7 @@ function outputOf(row: Row): string {
 // exposed to the mask in `props.time` (seconds) units and bakes as constants,
 // so the mask animates on hydra's own clock without the sketch string changing
 // per frame.
-interface Transition {
+export interface Transition {
   before: string
   mask: string
   startFrame: number
@@ -100,8 +101,9 @@ interface Transition {
 }
 
 // The window bounds a transition exposes to its mask sketch, in `props.time`
-// (seconds) units, plus the clamped 0 → 1 `transitionPos(t)` helper.
-function transitionWindow(t: Transition): { start: number; end: number; posFn: string } {
+// (seconds) units, plus the clamped 0 → 1 `transitionPos(t)` helper. Exported
+// for src/post.ts, which mirrors hydra's transition windowing.
+export function transitionWindow(t: Transition): { start: number; end: number; posFn: string } {
   const start = t.startFrame / FPS
   const dur = t.durFrames / FPS
   return {
