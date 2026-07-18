@@ -255,6 +255,10 @@ const playbackOptions: PlaybackOptions = {
     currentPlayIndex = srcBeats
     tablePanel.highlightIndex(srcBeats)
     tablePanel.highlightLineage(active)
+    // Drive the GPU particle clock off the playhead so the sim steps with
+    // play/pause/scrub (onTick fires on play frames and scrubs, not while
+    // paused — so a held playhead freezes it). No-op off the WebGPU backend.
+    sceneAPI.setParticleTime(srcBeats)
     // Show recorded automation on the slider thumbs (skipping any being
     // dragged — see SliderPanel).
     if (sliderInput && sliderInput.defs().length) {

@@ -28,8 +28,13 @@ export interface ParticleParams {
 
 export interface ParticleSystem {
   readonly sprite: THREE.Sprite
-  // Advance the simulation one frame (runs the compute kernel on the GPU).
-  tick(): void
+  // Advance the simulation to playback position `time` (in beats — the value
+  // the playback engine reports, so the sim tracks play/pause/scrub/loop like
+  // every other visualizer). The GPU step runs only when `time` has moved since
+  // the last tick, so a paused (or idle) playhead freezes the sim; a stateful
+  // GPU sim can't rewind, so scrubbing backward jumps the field but not the
+  // particle positions.
+  tick(time: number): void
   // Live-editable curl parameters; a TSL reference() reads these every frame,
   // so mutating a field takes effect on the next tick with no rebuild.
   readonly params: ParticleParams
@@ -58,6 +63,13 @@ export async function createParticleSystem(
   const t: any = THREE.TSL
   const params: ParticleParams = { ...DEFAULT_PARAMS }
 
+  // The simulation clock. Instead of three's wall-clock TSL.time (which runs
+  // free of playback), this uniform is fed the playback position each tick, so
+  // curl-field evolution and particle aging track the beat clock — pausing
+  // freezes them, scrubbing/looping moves them, exactly like the scene and
+  // hydra visualizers. Units are beats (whatever the playback engine reports).
+  const clock = t.uniform(0)
+
   // ── Storage buffers (GPU-resident particle state) ──────────────────────────
   const makeBuffer = (itemSize: number): THREE.StorageInstancedBufferAttribute =>
     new THREE.StorageInstancedBufferAttribute(count, itemSize)
@@ -80,7 +92,7 @@ export async function createParticleSystem(
 
   // ── Init kernel: scatter particles into a random cloud ─────────────────────
   const initKernel = t.Fn(() => {
-    const { float, instanceIndex, rand, vec3, time } = t
+    const { float, instanceIndex, rand, vec3 } = t
     const i = float(instanceIndex)
 
     const px = rand(i.mul(0.1547)).sub(0.5).mul(8)
@@ -93,8 +105,8 @@ export async function createParticleSystem(
     const spd = rand(i.mul(0.2341)).mul(velMul)
     velocity.assign(vec3(ang.sin().mul(spd), ang.cos().mul(spd), 0))
 
-    birthTime.assign(time)
-    lifespan.assign(rand(i).mul(10).add(5)) // 5–15s
+    birthTime.assign(clock)
+    lifespan.assign(rand(i).mul(10).add(5)) // 5–15 beats of life
   })().compute(count)
 
   await renderer.computeAsync(initKernel)
@@ -108,20 +120,20 @@ export async function createParticleSystem(
     index: t.float(t.instanceIndex),
     posa: position,
     elscale: elscaleRef,
-    time: t.time.mul(timeMultiplierRef),
+    time: clock.mul(timeMultiplierRef),
     speed: speedRef,
     force: t.vec3(0),
   })
 
   // ── Update kernel: curl + damp + integrate + age/respawn ───────────────────
   const updateKernel = t.Fn(() => {
-    const { float, instanceIndex, rand, vec3, time } = t
+    const { float, instanceIndex, rand, vec3 } = t
     const i = float(instanceIndex)
 
     const vel = velocity.add(curlForce).mul(0.995).toVar()
     const pos = position.add(vel).toVar()
 
-    const age = time.sub(birthTime)
+    const age = clock.sub(birthTime)
     const dead = age.greaterThanEqual(lifespan)
 
     // Respawn dead particles near the origin with a fresh outward kick.
@@ -138,7 +150,7 @@ export async function createParticleSystem(
     // new state straight back to the GPU storage buffer for the next frame.
     position.assign(dead.select(reseedPos, pos))
     velocity.assign(dead.select(reseedVel, vel))
-    birthTime.assign(dead.select(time, birthTime))
+    birthTime.assign(dead.select(clock, birthTime))
   })().compute(count)
 
   // ── Render material: draw straight from the position buffer ────────────────
@@ -156,7 +168,15 @@ export async function createParticleSystem(
   ;(sprite as unknown as { count: number }).count = count
   sprite.frustumCulled = false
 
-  const tick = (): void => {
+  // The render loop calls this every animation frame, but the sim should only
+  // step in lockstep with playback — so we run the GPU kernel only when the
+  // playback clock has moved since last time. A held (paused/idle) playhead
+  // reports the same value each frame and the sim stays frozen.
+  let lastTime = 0
+  const tick = (time: number): void => {
+    clock.value = time
+    if (time === lastTime) return
+    lastTime = time
     renderer.compute(updateKernel)
   }
 

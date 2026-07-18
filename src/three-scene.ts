@@ -18,6 +18,10 @@ export interface SceneAPI {
   // when the particle system isn't running — i.e. under the WebGL2 fallback,
   // which has no compute shaders. See src/compute/particles.ts.
   setParticleParam(name: 'timeMultiplier' | 'elscale' | 'speed', value: number): void
+  // The playback position (in beats) that drives the particle sim's clock, so
+  // it steps with play/pause/scrub like the other visualizers. Fed each tick
+  // from the playback engine; a no-op when no particle system is running.
+  setParticleTime(time: number): void
 }
 
 // Re-exported from three-points.ts, where the geometry builder is shared with
@@ -526,12 +530,15 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
   // The GPU particle system (curl-noise compute). Only built on the WebGPU
   // backend — null under the WebGL2 fallback, which has no compute shaders.
   let particles: ParticleSystem | null = null
+  // Latest playback position (beats), pushed in by the engine via
+  // setParticleTime; the sim steps only when this moves (see particles.tick).
+  let particleTime = 0
 
   function animate(): void {
     for (const o of origamis.values()) {
       if (o.shown !== o.fold) fillOrigami(o)
     }
-    particles?.tick()
+    particles?.tick(particleTime)
     renderer.render(scene, camera)
     requestAnimationFrame(animate)
   }
@@ -560,6 +567,9 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
     camera,
     setParticleParam(name: 'timeMultiplier' | 'elscale' | 'speed', value: number): void {
       if (particles) particles.params[name] = value
+    },
+    setParticleTime(time: number): void {
+      particleTime = time
     },
     createObject(row: Record<string, unknown>): void {
       const { id, shape, px, py, pz, rx, ry, rz, color } = row

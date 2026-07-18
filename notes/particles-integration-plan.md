@@ -82,10 +82,24 @@ table, no DSL yet.
   coloured by velocity direction, additive blending. Returns `{ sprite, tick,
   params, dispose }`. `params` is read live via TSL `reference()`.
 - `src/three-scene.ts` — after `renderer.init()`, if the backend is WebGPU,
-  build the system, add its sprite to the scene, and `tick()` it each frame.
-  Exposes `SceneAPI.setParticleParam(name, value)` (a no-op off WebGPU).
+  build the system, add its sprite to the scene, and `tick(time)` it each frame.
+  Exposes `SceneAPI.setParticleParam(name, value)` and `setParticleTime(beats)`
+  (both no-ops off WebGPU).
 - `src/main.ts` — a slider named `particles` drives the curl `speed` uniform
-  live, through the existing slider automation (`onTick`).
+  live, and the playhead drives the sim clock, both through the existing
+  playback `onTick`.
+
+### Clock: the sim honours playback time
+
+The sim does **not** use three's wall-clock `TSL.time`. Instead a `uniform`
+clock is fed the playback position (beats) each `onTick`, and the GPU update
+kernel runs only when that value moves. So the sim steps in lockstep with the
+beat clock — playing advances it, pausing freezes it, scrubbing/looping moves
+it — exactly like the scene and hydra visualizers. Curl-field evolution and
+particle aging (lifespan is in beats) ride this same clock. Caveat inherent to
+a stateful GPU sim: scrubbing *backward* jumps the field but can't rewind
+particle positions, and a loop wrap resets the clock sawtooth-style rather than
+looping the particle state seamlessly.
 
 ### Verifying the slice
 
@@ -104,7 +118,9 @@ table, no DSL yet.
    `main.ts` registration) rather than a hardcoded sprite in `three-scene.ts`.
 2. Design the DSL control surface: a `particles` table / builder whose rows set
    uniforms (spawn position, force, curl params, palette, count).
-3. Wire `beat`/`tempo`/`midi`/`taps` into uniforms (replacing threely's bespoke
-   tap-beat + audio signals with livecodata's first-class ones).
+3. Wire more of `beat`/`tempo`/`midi`/`taps` into uniforms (replacing threely's
+   bespoke tap-beat + audio signals with livecodata's first-class ones). The
+   sim clock already tracks the playhead; `beatramp`/loudness-style feeds are
+   the remaining ones.
 4. Decide the degradation story for WebGL2-only browsers (hide vs. static
    fallback).

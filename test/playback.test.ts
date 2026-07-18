@@ -39,6 +39,7 @@ function fakeScene() {
     camera: null as never,
     calls: [] as string[],
     setParticleParam(): void {},
+    setParticleTime(): void {},
     createObject(): void { this.calls.push('create') },
     updateObject(): void { this.calls.push('update') },
     destroyObject(): void { this.calls.push('destroy') },
