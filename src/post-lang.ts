@@ -36,6 +36,14 @@ export interface OpSpec {
 // this module keeps it (and its tests) free of the `three` import graph.
 export const POST_OPS: Record<string, OpSpec> = {
   scene: { kind: 'head', args: [], doc: 'The rendered Three.js scene as the chain head — the color plane every effect starts from.' },
+  src: { kind: 'head', args: [{ name: 'bus', arg: 'structural', default: 1 }], doc: 'A feedback bus (src(b1)..src(b3)) as the chain head — samples that bus\'s previous frame for one-frame-behind feedback.' },
+  blend: { kind: 'combine', args: [{ name: 'amount', arg: 'live', default: 0.5 }], doc: 'Cross-fade another chain over this one by `amount` (0–1, live).' },
+  add: { kind: 'combine', args: [], doc: 'Add another chain to this one.' },
+  mult: { kind: 'combine', args: [], doc: 'Multiply this chain by another.' },
+  diff: { kind: 'combine', args: [], doc: 'Absolute difference between this chain and another.' },
+  mask: { kind: 'combine', args: [], doc: 'Multiply this chain by another chain\'s luminance.' },
+  layer: { kind: 'combine', args: [], doc: 'Composite another chain over this one using the layer\'s alpha.' },
+  transition: { kind: 'head', args: [{ name: 'mix', arg: 'live', default: 0 }, { name: 'threshold', arg: 'structural', default: 0.1 }, { name: 'useTexture', arg: 'structural', default: 0 }], doc: 'Wipe from one chain to another; the fold builds it from a transition event (crossfade, or a mask chain).' },
   edges: {
     kind: 'fx',
     args: [
@@ -79,8 +87,9 @@ export interface OpCall {
   op: string
   kind: OpKind
   args: OpArgVal[]
-  // combine ops (blend/layer/mask/…) carry another chain as their first arg.
-  chainArg?: OpChain
+  // Chain arguments: a combine (blend/layer/mask/…) carries one; a transition
+  // carries the before/after (and optional mask) chains it wipes between.
+  chainArgs?: OpChain[]
 }
 export type OpChain = OpCall[]
 
@@ -88,7 +97,7 @@ export type OpChain = OpCall[]
 // structural slot bakes to a number (its default when not a number); a live
 // slot keeps a number or a function verbatim, coercing a numeric string and
 // falling back to the default for anything unusable.
-function makeCall(op: string, kind: OpKind, spec: ArgSpec[], raw: unknown[], chainArg?: OpChain): OpCall {
+function makeCall(op: string, kind: OpKind, spec: ArgSpec[], raw: unknown[], chainArgs?: OpChain[]): OpCall {
   const args = spec.map((s, i): OpArgVal => {
     const r = raw[i]
     if (s.arg === 'structural') {
@@ -102,7 +111,7 @@ function makeCall(op: string, kind: OpKind, spec: ArgSpec[], raw: unknown[], cha
     }
     return { cls: 'live', value: s.default }
   })
-  return { op, kind, args, chainArg }
+  return { op, kind, args, chainArgs }
 }
 
 // The fluent chain builder a head factory returns. Every fx/combine op in the
@@ -120,7 +129,7 @@ function installOps(): void {
     if (spec.kind === 'head') continue
     if (spec.kind === 'combine') {
       ;(ChainBuilder.prototype as unknown as Record<string, unknown>)[name] = function (this: ChainBuilder, chain: unknown, ...rest: unknown[]): ChainBuilder {
-        this.ops.push(makeCall(name, spec.kind, spec.args, rest, chainOps(chain)))
+        this.ops.push(makeCall(name, spec.kind, spec.args, rest, [chainOps(chain)]))
         return this
       }
     } else {
@@ -138,13 +147,26 @@ function chainOps(value: unknown): OpChain {
   throw new Error('post: combine op expected a chain argument')
 }
 
-// The eval scope: one factory per head. Each returns a fresh ChainBuilder so
-// the fluent ops accumulate a private op list.
+// The eval scope: head factories plus the bus tokens (b1..b3) and the
+// transition builder. `scene`/`src` return a fresh ChainBuilder; `transition`
+// wraps the fold's before/after (and optional mask) chains.
 function headScope(): Record<string, unknown> {
   const scope: Record<string, unknown> = {}
-  for (const name of POST_HEADS) {
-    scope[name] = (...raw: unknown[]): ChainBuilder =>
-      new ChainBuilder(makeCall(name, 'head', POST_OPS[name].args, raw))
+  scope.scene = (): ChainBuilder => new ChainBuilder(makeCall('scene', 'head', POST_OPS.scene.args, []))
+  scope.src = (bus: unknown): ChainBuilder => new ChainBuilder(makeCall('src', 'head', POST_OPS.src.args, [bus]))
+  scope.b1 = 1
+  scope.b2 = 2
+  scope.b3 = 3
+  // A transition is the head of the output chain the fold produces: it wipes
+  // `before` → `after` by `pos` (0→1), optionally through a black-and-white
+  // `mask` chain (null = crossfade). The pos function reads the playback clock.
+  scope.transition = (before: unknown, after: unknown, mask: unknown, pos: unknown, threshold?: unknown): ChainBuilder => {
+    const useTexture = mask instanceof ChainBuilder ? 1 : 0
+    const call = makeCall('transition', 'head', POST_OPS.transition.args, [pos, threshold, useTexture])
+    call.chainArgs = useTexture
+      ? [chainOps(before), chainOps(after), chainOps(mask)]
+      : [chainOps(before), chainOps(after)]
+    return new ChainBuilder(call)
   }
   return scope
 }
@@ -169,7 +191,7 @@ export function chainSignature(chain: OpChain): string {
   return chain
     .map((op) => {
       const args = op.args.map((a) => (a.cls === 'structural' ? String(a.value) : '#')).join(',')
-      const sub = op.chainArg ? `{${chainSignature(op.chainArg)}}` : ''
+      const sub = op.chainArgs ? `{${op.chainArgs.map(chainSignature).join('|')}}` : ''
       return `${op.op}(${args})${sub}`
     })
     .join('.')
@@ -182,7 +204,7 @@ export function chainSignature(chain: OpChain): string {
 export function forEachLiveArg(chain: OpChain, cb: (value: LiveValue) => void): void {
   for (const op of chain) {
     for (const a of op.args) if (a.cls === 'live') cb(a.value)
-    if (op.chainArg) forEachLiveArg(op.chainArg, cb)
+    if (op.chainArgs) for (const sub of op.chainArgs) forEachLiveArg(sub, cb)
   }
 }
 

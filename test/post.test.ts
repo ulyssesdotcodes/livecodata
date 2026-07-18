@@ -6,6 +6,7 @@ import {
   buildPostIndex,
   postFrameAt,
   postCodeUpToRow,
+  postStateFrames,
   foldVars,
   type PostFrame,
 } from '../src/post.js'
@@ -170,4 +171,80 @@ test('impulses stack additively and default to an easeOut envelope', () => {
   // No ease → easeOut decay: env = 1 - (1-(1-u)^2); at u=0.5 that is 0.25.
   const decay: Row[] = [{ beat: 1, event: 'impulse', name: 'g', value: 1, dur: 1 }] // frame 0..30
   close(vars(decay, 15).g, 0.25, 'default easeOut envelope at the midpoint')
+})
+
+// ── meta-events, transitions, and state enumeration ─────────────────────────
+
+const ops = (frame: PostFrame | null, out = 'main'): string[] =>
+  (frame?.chains.find((c) => c.out === out)?.chain ?? []).map((o) => o.op)
+
+test('setSource swaps the head and keeps the effect tail', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'setCode', out: 'main', code: 'scene().blur(4)' },
+    { beat: b(4), event: 'setSource', out: 'main', code: 'src(b1)' },
+  ]
+  assert.deepEqual(ops(frameAt(rows, 4)), ['src', 'blur'])
+})
+
+test('append splices an effect fragment onto the chain', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'setCode', out: 'main', code: 'scene().blur(4)' },
+    { beat: b(4), event: 'append', out: 'main', code: '.pixelate(6)' },
+  ]
+  assert.deepEqual(ops(frameAt(rows, 4)), ['scene', 'blur', 'pixelate'])
+})
+
+test('layer composites another chain via the chosen mode', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'setCode', out: 'main', code: 'scene()' },
+    { beat: b(4), event: 'layer', out: 'main', mode: 'blend', value: 0.5, code: 'scene().edges(0.2, 0)' },
+  ]
+  const chain = frameAt(rows, 4)!.chains[0].chain
+  assert.deepEqual(chain.map((o) => o.op), ['scene', 'blend'])
+  assert.deepEqual(chain[1].chainArgs![0].map((o) => o.op), ['scene', 'edges'])
+})
+
+test('a transition wraps before→after during its window, then expires to the after program', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'setCode', out: 'main', code: 'scene().blur(4)' },
+    { beat: 5, event: 'transition', out: 'main', dur: 2 }, // frame 120, window [120,180)
+    { beat: 5, event: 'setCode', out: 'main', code: 'scene().edges(0.2, 0)' },
+  ]
+  const idx = buildPostIndex(rows)
+  assert.deepEqual(ops(postFrameAt(idx, 120)), ['transition'], 'inside the window: the wipe')
+  assert.deepEqual(ops(postFrameAt(idx, 180)), ['scene', 'edges'], 'at the end: the after program stands alone')
+  assert.ok(postStateFrames(idx).includes(180), 'the window END is an enumerated state frame')
+})
+
+test('a bus out folds independently and the main chain can sample it via src(bN)', () => {
+  const frame = frameAt([
+    { beat: 1, event: 'setCode', out: 'b1', code: 'src(b1).blend(scene(), 0.3)' },
+    { beat: 1, event: 'setCode', out: 'main', code: 'scene().layer(src(b1))' },
+  ], 0)!
+  assert.deepEqual(frame.chains.map((c) => c.out), ['b1', 'main'])
+  // src(b1) carries a structural bus index — different buses are different states.
+  assert.equal(frame.chains[0].chain[0].op, 'src')
+  assert.equal(frame.chains[0].chain[0].args[0].value, 1)
+})
+
+test('warm-compile audit: no frame of a loop introduces a state setProgram did not enumerate', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'setCode', out: 'b1', code: 'src(b1).blend(scene(), 0.3)' },
+    { beat: 1, event: 'setCode', out: 'main', code: 'scene().edges((p) => p.th, 1)' },
+    { beat: 1, event: 'setVariable', name: 'th', value: 0.2 },
+    { beat: 9, event: 'append', out: 'main', code: '.bloom((p) => p.glow)' },
+    { beat: 13, event: 'transition', out: 'main', dur: 2 },
+    { beat: 13, event: 'setCode', out: 'main', code: 'scene().pixelate(8)' },
+  ]
+  const idx = buildPostIndex(rows)
+  const enumerated = new Set<string>()
+  for (const f of postStateFrames(idx)) {
+    const fr = postFrameAt(idx, f)
+    if (fr) enumerated.add(fr.stateId)
+  }
+  const maxF = Math.max(...postStateFrames(idx)) + 120
+  for (let f = 0; f <= maxF; f++) {
+    const fr = postFrameAt(idx, f)
+    if (fr) assert.ok(enumerated.has(fr.stateId), `frame ${f} state "${fr.stateId}" was not precompiled`)
+  }
 })

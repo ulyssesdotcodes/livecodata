@@ -16,7 +16,7 @@ import { gaussianBlur } from 'three/addons/tsl/display/GaussianBlurNode.js'
 import { bloom } from 'three/addons/tsl/display/BloomNode.js'
 import { sobel } from 'three/addons/tsl/display/SobelOperatorNode.js'
 import { POST_OPS, forEachLiveArg, collectLiveValues, type OpChain, type OpCall } from './post-lang.js'
-import { postFrameAt, type PostFrame } from './post.js'
+import { postFrameAt, postStateFrames, type PostFrame } from './post.js'
 import type { Row } from './lineage.js'
 
 // TSL's node-builder types are far stricter than the runtime (every op is
@@ -29,25 +29,14 @@ type Node = any
 const t: any = TSL
 
 export interface PostAPI {
-  // Enumerate + compile + warm-render every folded state of `index`.
   setProgram(index: Row[]): void
-  // Select the precompiled state for this frame and write its live uniforms.
   setFrame(frame: PostFrame | null, props: Record<string, unknown>): void
-  // Render the active state through its pipeline; returns false when inactive so
-  // three-scene falls back to the plain renderer path.
   render(): boolean
   resize(): void
   reset(): void
 }
 
 const BLUR_SIGMA = 4
-
-// One live-uniform accumulator for buildGraph — factories push their uniforms
-// in live-arg order so setFrame can rebind them positionally.
-interface Reg {
-  live(init: number): Node
-  add(u: Node): void
-}
 
 // The initial value for op arg `i`: its constant when the arg is a plain number,
 // else the registry default (a function-valued arg is overwritten every frame).
@@ -56,108 +45,173 @@ function liveInit(op: OpCall, i: number): number {
   return typeof v === 'number' ? v : (POST_OPS[op.op]?.args[i]?.default ?? 0)
 }
 
-// The TSL factory per op. Each returns the output node given its input; live
-// args are registered via `reg` in arg order (matching forEachLiveArg).
-type Factory = (input: Node, op: OpCall, reg: Reg, scenePassColor: Node) => Node
-
-const FACTORIES: Record<string, Factory> = {
-  scene: (_input, _op, _reg, scenePassColor) => scenePassColor,
-
-  edges: (input, op, reg) => {
-    const th = reg.live(liveInit(op, 0))
-    const colorMode = op.args[1]?.value as number
-    const G: Node = (sobel(input) as Node).r
-    const mask = t.step(th, G)
-    if (colorMode === 1) return t.vec4(t.vec3(input.rgb).add(t.vec3(mask)), 1) // edges over source
-    if (colorMode === 2) return t.vec4(t.vec3(G, G.mul(0.5), t.oneMinus(G)).mul(mask), 1) // hue by magnitude
-    return t.vec4(t.vec3(mask), 1) // white edges on black
-  },
-
-  blur: (input, op, reg) => gaussianBlur(input, reg.live(liveInit(op, 0)), BLUR_SIGMA),
-
-  bloom: (input, op, reg) => {
-    const b = bloom(input, liveInit(op, 0), liveInit(op, 1), liveInit(op, 2))
-    reg.add(b.strength)
-    reg.add(b.radius)
-    reg.add(b.threshold)
-    return t.vec4(input).add(b)
-  },
-
-  pixelate: (input, op, reg) => {
-    const size = reg.live(liveInit(op, 0))
-    const tex = t.convertToTexture(input)
-    const cells = t.screenSize.div(size)
-    const q = t.uv().mul(cells).floor().add(0.5).div(cells)
-    return tex.sample(q)
-  },
-}
+// A src(bN) sampling node paired with the bus it reads — the engine repoints its
+// `.value` at that bus's previous-frame target each render.
+interface SrcRef { bus: number; node: Node }
 
 interface Graph {
   node: Node
   uniforms: Node[]
-}
-
-// Build the node graph for one out's chain, collecting live uniforms in the
-// deterministic forEachLiveArg order so setFrame binds them positionally.
-function buildGraph(chain: OpChain, scenePassColor: Node): Graph {
-  const uniforms: Node[] = []
-  const reg: Reg = {
-    live: (init) => { const u = t.uniform(init); uniforms.push(u); return u },
-    add: (u) => { uniforms.push(u) },
-  }
-  let node: Node | null = null
-  for (const op of chain) {
-    const factory = FACTORIES[op.op]
-    if (!factory) throw new Error(`post: no TSL factory for op "${op.op}"`)
-    node = factory(node, op, reg, scenePassColor)
-  }
-  // Guard the invariant buildGraph and setFrame rely on: uniform count equals
-  // the chain's live-arg count, so positional rebinding stays aligned.
-  let liveCount = 0
-  forEachLiveArg(chain, () => liveCount++)
-  if (liveCount !== uniforms.length) {
-    throw new Error(`post: op factory bound ${uniforms.length} uniforms for ${liveCount} live args`)
-  }
-  return { node: node!, uniforms }
-}
-
-interface State {
-  pipeline: Node // THREE.RenderPipeline
-  uniforms: Node[]
-  warmed: boolean
+  srcRefs: SrcRef[]
+  chain: OpChain
 }
 
 export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.Scene; camera: THREE.Camera }): PostAPI {
   const { renderer, scene, camera } = three
 
-  // One scene pass shared by every state graph (Phase 1: plain color; MRT demand
-  // scanning arrives with the aux planes). Its color texture is the `scene()`
-  // head every chain starts from.
   const scenePass = t.pass(scene, camera)
   const scenePassColor = scenePass.getTextureNode('output')
 
+  // Feedback buses: a ping-pong RenderTarget pair per used index, shared across
+  // states so feedback survives a state switch (it drops on resize, like hydra).
+  interface Bus { index: number; targets: [THREE.RenderTarget, THREE.RenderTarget]; cur: number }
+  const buses = new Map<number, Bus>()
+  function ensureBus(index: number): Bus {
+    let bus = buses.get(index)
+    if (!bus) {
+      const size = renderer.getDrawingBufferSize(new THREE.Vector2())
+      const mk = (): THREE.RenderTarget => new THREE.RenderTarget(Math.max(1, size.x), Math.max(1, size.y), { depthBuffer: false })
+      bus = { index, targets: [mk(), mk()], cur: 0 }
+      buses.set(index, bus)
+    }
+    return bus
+  }
+
+  // Build a chain's node graph, collecting live uniforms and src refs in the
+  // deterministic forEachLiveArg order (own live args of each op, then its chain
+  // args) so setFrame binds uniforms positionally.
+  function buildGraph(chain: OpChain): Graph {
+    const uniforms: Node[] = []
+    const srcRefs: SrcRef[] = []
+    const live = (init: number): Node => { const u = t.uniform(init); uniforms.push(u); return u }
+
+    function build(c: OpChain): Node {
+      let node: Node | null = null
+      for (const op of c) node = buildOp(op, node)
+      return node
+    }
+
+    function buildOp(op: OpCall, input: Node): Node {
+      switch (op.op) {
+        case 'scene':
+          return scenePassColor
+        case 'src': {
+          const busIndex = op.args[0].value as number
+          const texNode = t.texture(ensureBus(busIndex).targets[0].texture)
+          srcRefs.push({ bus: busIndex, node: texNode })
+          return texNode
+        }
+        case 'edges': {
+          const th = live(liveInit(op, 0))
+          const colorMode = op.args[1]?.value as number
+          const G: Node = (sobel(input) as Node).r
+          const m = t.step(th, G)
+          if (colorMode === 1) return t.vec4(t.vec3(input.rgb).add(t.vec3(m)), 1)
+          if (colorMode === 2) return t.vec4(t.vec3(G, G.mul(0.5), t.oneMinus(G)).mul(m), 1)
+          return t.vec4(t.vec3(m), 1)
+        }
+        case 'blur':
+          return gaussianBlur(input, live(liveInit(op, 0)), BLUR_SIGMA)
+        case 'bloom': {
+          // BloomNode wraps its own uniforms — push those (in arg order) instead
+          // of creating ours, keeping the forEachLiveArg alignment.
+          const b = bloom(input, liveInit(op, 0), liveInit(op, 1), liveInit(op, 2))
+          uniforms.push(b.strength, b.radius, b.threshold)
+          return t.vec4(input).add(b)
+        }
+        case 'pixelate': {
+          const size = live(liveInit(op, 0))
+          const tex = t.convertToTexture(input)
+          const cells = t.screenSize.div(size)
+          const q = t.uv().mul(cells).floor().add(0.5).div(cells)
+          return tex.sample(q)
+        }
+        case 'transition': {
+          const pos = live(liveInit(op, 0))
+          const threshold = op.args[1].value as number
+          const useTexture = op.args[2].value as number
+          const before = t.convertToTexture(build(op.chainArgs![0]))
+          const after = t.convertToTexture(build(op.chainArgs![1]))
+          if (useTexture) {
+            const mask = t.convertToTexture(build(op.chainArgs![2]))
+            const f = t.smoothstep(pos.sub(threshold), pos.add(threshold), t.luminance(t.vec3(mask)))
+            return t.mix(after, before, f)
+          }
+          return t.mix(before, after, pos)
+        }
+        // Combines (blend has a live amount; the rest composite raw).
+        case 'blend':
+          return t.mix(t.vec4(input), t.vec4(build(op.chainArgs![0])), live(liveInit(op, 0)))
+        case 'add':
+          return t.vec4(input).add(t.vec4(build(op.chainArgs![0])))
+        case 'mult':
+          return t.vec4(input).mul(t.vec4(build(op.chainArgs![0])))
+        case 'diff':
+          return t.abs(t.vec4(input).sub(t.vec4(build(op.chainArgs![0]))))
+        case 'mask':
+          return t.vec4(input).mul(t.luminance(t.vec3(build(op.chainArgs![0]))))
+        case 'layer': {
+          const b = t.vec4(build(op.chainArgs![0]))
+          return t.mix(t.vec4(input), b, b.a)
+        }
+        default:
+          throw new Error(`post: no TSL factory for op "${op.op}"`)
+      }
+    }
+
+    const node = build(chain)
+    let liveCount = 0
+    forEachLiveArg(chain, () => liveCount++)
+    if (liveCount !== uniforms.length) {
+      throw new Error(`post: bound ${uniforms.length} uniforms for ${liveCount} live args`)
+    }
+    return { node, uniforms, srcRefs, chain }
+  }
+
+  interface BusGraph extends Graph { index: number; quad: Node }
+  interface State {
+    main: { pipeline: Node; graph: Graph } | null
+    buses: BusGraph[]
+    warmed: boolean
+  }
   const states = new Map<string, State>()
   let active: State | null = null
 
-  function buildState(stateId: string, frame: PostFrame): State {
-    // Phase 1: only `main` is rendered; buses (b1..b3) arrive with feedback.
-    const main = frame.chains.find((c) => c.out === 'main') ?? frame.chains[0]
-    const graph = buildGraph(main.chain, scenePassColor)
-    const pipeline = new THREE.RenderPipeline(renderer, graph.node)
-    const state: State = { pipeline, uniforms: graph.uniforms, warmed: false }
-    states.set(stateId, state)
+  function buildState(frame: PostFrame): State {
+    const byOut = new Map(frame.chains.map((c) => [c.out, c.chain]))
+    let main: State['main'] = null
+    const mainChain = byOut.get('main')
+    if (mainChain) {
+      const graph = buildGraph(mainChain)
+      main = { pipeline: new THREE.RenderPipeline(renderer, graph.node), graph }
+    }
+    const busGraphs: BusGraph[] = []
+    for (const idx of [1, 2, 3]) {
+      const bc = byOut.get('b' + idx)
+      if (!bc) continue
+      ensureBus(idx)
+      const graph = buildGraph(bc)
+      const mat = new THREE.NodeMaterial()
+      mat.fragmentNode = graph.node
+      const quad = new THREE.QuadMesh(mat)
+      busGraphs.push({ ...graph, index: idx, quad })
+    }
+    const state: State = { main, buses: busGraphs, warmed: false }
+    states.set(frame.stateId, state)
     return state
   }
 
-  // Warm-render every state once so backend pipeline creation happens now (the
-  // cook pause), not on a beat. Gated on renderer.init() — the first load can
-  // arrive before the backend is chosen.
   function warmAll(): void {
     void renderer.init().then(() => {
       for (const state of states.values()) {
         if (state.warmed) continue
         try {
-          state.pipeline.render()
+          for (const bg of state.buses) {
+            renderer.setRenderTarget(buses.get(bg.index)!.targets[0])
+            bg.quad.render(renderer)
+          }
+          renderer.setRenderTarget(null)
+          state.main?.pipeline.render()
           state.warmed = true
         } catch (e) {
           console.error('post: warm render failed', e)
@@ -166,21 +220,24 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
     })
   }
 
+  function writeUniforms(graph: Graph, props: Record<string, unknown>): void {
+    const values = collectLiveValues(graph.chain, props)
+    const n = Math.min(values.length, graph.uniforms.length)
+    for (let i = 0; i < n; i++) graph.uniforms[i].value = values[i]
+  }
+
   return {
     setProgram(index): void {
       states.clear()
       active = null
       if (index.length === 0) return
-      // Enumerate every distinct folded state — one per event frame. (Transition
-      // window ends join this set with the transition phase.)
-      const frames = [...new Set(index.map((r) => r.index as number))].sort((a, b) => a - b)
       const seen = new Set<string>()
-      for (const f of frames) {
+      for (const f of postStateFrames(index)) {
         const frame = postFrameAt(index, f)
         if (!frame || seen.has(frame.stateId)) continue
         seen.add(frame.stateId)
         try {
-          buildState(frame.stateId, frame)
+          buildState(frame)
         } catch (e) {
           console.error('post: state build failed', e)
         }
@@ -193,10 +250,8 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
       if (!frame) { active = null; return }
       let state = states.get(frame.stateId)
       if (!state) {
-        // A frame outside the enumerated set (should not happen once transition
-        // ends are enumerated) — build it lazily so playback never crashes.
         try {
-          state = buildState(frame.stateId, frame)
+          state = buildState(frame)
           warmAll()
         } catch (e) {
           console.error('post: lazy state build failed', e)
@@ -204,21 +259,39 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
         }
       }
       active = state
-      const main = frame.chains.find((c) => c.out === 'main') ?? frame.chains[0]
-      const values = collectLiveValues(main.chain, props)
-      const n = Math.min(values.length, state.uniforms.length)
-      for (let i = 0; i < n; i++) state.uniforms[i].value = values[i]
+      if (state.main) writeUniforms(state.main.graph, props)
+      for (const bg of state.buses) writeUniforms(bg, props)
     },
 
     render(): boolean {
       if (!active) return false
-      active.pipeline.render()
+      // Buses in index order to their write targets, sampling the previous frame
+      // (targets[cur]); then flip so main reads this frame's output.
+      for (const bg of active.buses) {
+        const bus = buses.get(bg.index)!
+        for (const ref of bg.srcRefs) {
+          const rb = buses.get(ref.bus)
+          if (rb) ref.node.value = rb.targets[rb.cur].texture
+        }
+        renderer.setRenderTarget(bus.targets[1 - bus.cur])
+        bg.quad.render(renderer)
+      }
+      renderer.setRenderTarget(null)
+      for (const bg of active.buses) { const bus = buses.get(bg.index)!; bus.cur = 1 - bus.cur }
+      if (!active.main) return false
+      for (const ref of active.main.graph.srcRefs) {
+        const rb = buses.get(ref.bus)
+        if (rb) ref.node.value = rb.targets[rb.cur].texture
+      }
+      active.main.pipeline.render()
       return true
     },
 
     resize(): void {
-      // RenderPipeline and its effect RTs track the renderer's drawing-buffer
-      // size themselves; nothing to do here yet.
+      const size = renderer.getDrawingBufferSize(new THREE.Vector2())
+      for (const bus of buses.values()) {
+        for (const rt of bus.targets) rt.setSize(Math.max(1, size.x), Math.max(1, size.y))
+      }
     },
 
     reset(): void {

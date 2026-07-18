@@ -6,8 +6,8 @@
 // hydra.ts's chain surgery (chainOf/splitHead/transitionWindow) so the two
 // folds stay byte-compatible.
 
-import { beatToFrame, beatsToFrames } from './constants.js'
-import { chainOf } from './hydra.js'
+import { beatToFrame, beatsToFrames, FPS } from './constants.js'
+import { chainOf, splitHead } from './hydra.js'
 import { EASINGS, type Easings } from './dsl.js'
 import { evalPostCode, chainSignature, type OpChain } from './post-lang.js'
 import type { Row } from './lineage.js'
@@ -47,11 +47,53 @@ export function buildPostIndex(rows: Row[] | null | undefined): Row[] {
     .sort((a, b) => (a.index as number) - (b.index as number))
 }
 
+// The frames whose folded state must be precompiled: every event frame, plus
+// each transition's END frame (the fold changes when a wipe window expires with
+// no row there — the verified fused-fx failure mode). setProgram enumerates
+// these; a warm-compile audit checks no other frame introduces a new state.
+export function postStateFrames(index: Row[]): number[] {
+  const frames = new Set<number>()
+  for (const row of index) {
+    const f = row.index as number
+    frames.add(f)
+    if (row.event === 'transition') {
+      const durBeats = typeof row.dur === 'number' && row.dur > 0 ? row.dur : 1
+      frames.add(f + Math.max(1, beatsToFrames(durBeats)))
+    }
+  }
+  return [...frames].sort((a, b) => a - b)
+}
+
 // The output a row drives: one of main/b1/b2/b3, defaulting to main.
 const OUTPUTS = new Set(['main', 'b1', 'b2', 'b3'])
 function outputOf(row: Row): string {
   const o = typeof row.out === 'string' ? row.out.trim() : ''
   return OUTPUTS.has(o) ? o : 'main'
+}
+
+// Blend modes the `layer` event can pick, and whether each takes an amount.
+// Only `blend` carries an amount in the op registry; the rest composite raw.
+const LAYER_AMOUNT = new Set(['blend'])
+const LAYER_MODES = new Set(['blend', 'add', 'mult', 'diff', 'mask'])
+
+// A layer amount as a code fragment: a number is a literal; any other non-empty
+// string is a per-frame props expression (hydra-identical).
+function amountExpr(value: unknown): string {
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  const s = typeof value === 'string' ? value.trim() : ''
+  if (s === '') return '0.5'
+  const n = Number(s)
+  if (!Number.isNaN(n)) return String(n)
+  return s.includes('=>') ? `(${s})` : `(p) => (${s})`
+}
+
+// A transition snapshotted mid-fold: the frozen "before" chain, its mask chain
+// ('' = plain crossfade), and the grid-frame wipe window.
+interface Transition {
+  before: string
+  mask: string
+  startFrame: number
+  durFrames: number
 }
 
 // Fold one output's events (sorted, filtered to this output) into its running
@@ -61,20 +103,69 @@ function outputOf(row: Row): string {
 // (foldVars), since variables are global to the program, not per-output.
 function foldOutput(rows: Row[], frame: number): string | null {
   let code: string | null = null
+  const transitions: Transition[] = []
   for (const row of rows) {
     if ((row.index as number) > frame) break
     switch (row.event) {
       case 'setCode':
         if (typeof row.code === 'string' && row.code.trim() !== '') code = chainOf(row.code.trim())
         break
+      case 'setSource':
+        // Swap the head, keep the effect tail (splitHead), like hydra.
+        if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
+          code = `${chainOf(row.code.trim())}${splitHead(code)[1]}`
+        }
+        break
+      case 'append':
+        if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
+          code = `${chainOf(code)}${row.code.trim()}`
+        }
+        break
       case 'replace':
         if (code != null && typeof row.find === 'string' && row.find !== '') {
           code = code.split(row.find).join(row.value == null ? '' : String(row.value))
         }
         break
+      case 'layer':
+        if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
+          const mode = typeof row.mode === 'string' && LAYER_MODES.has(row.mode) ? row.mode : 'blend'
+          const amt = LAYER_AMOUNT.has(mode) ? `, ${amountExpr(row.value)}` : ''
+          code = `${chainOf(code)}.${mode}(${chainOf(row.code.trim())}${amt})`
+        }
+        break
+      case 'transition': {
+        // Snapshot the current chain as "before"; the wipe applies to the final
+        // "after" once folded. Elapsed windows are dropped (see postStateFrames
+        // for why the window END is its own enumerated state).
+        if (code != null) {
+          const durBeats = typeof row.dur === 'number' && row.dur > 0 ? row.dur : 1
+          const durFrames = Math.max(1, beatsToFrames(durBeats))
+          const startFrame = row.index as number
+          if (frame < startFrame + durFrames) {
+            transitions.push({
+              before: chainOf(code),
+              mask: typeof row.code === 'string' ? row.code.trim() : '',
+              startFrame,
+              durFrames,
+            })
+          }
+        }
+        break
+      }
     }
   }
-  return code
+  if (code == null) return null
+  // Apply wipes innermost-first so nested transitions compose in beat order.
+  let result = chainOf(code)
+  for (let i = transitions.length - 1; i >= 0; i--) {
+    const tr = transitions[i]
+    const start = tr.startFrame / FPS
+    const dur = tr.durFrames / FPS
+    const posFn = `(p) => Math.min(Math.max((p.time - ${start}) / ${dur}, 0), 1)`
+    const mask = tr.mask !== '' ? `(${chainOf(tr.mask)})` : 'null'
+    result = `transition((${tr.before}), (${result}), ${mask}, ${posFn})`
+  }
+  return result
 }
 
 const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x)
