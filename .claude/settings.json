@@ -2,11 +2,25 @@
   "hooks": {
     "PreToolUse": [
       {
+        "matcher": "mcp__github__create_pull_request",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"Before opening this PR, check for and remove any temporary planning or scratch files you created for this task (e.g. plan drafts, working notes) that should not be committed.\"}}'"
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
             "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/commit-nudge.mjs\""
+          },
+          {
+            "type": "command",
+            "if": "Bash(gh pr create*)",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"Before opening this PR, check for and remove any temporary planning or scratch files you created for this task (e.g. plan drafts, working notes) that should not be committed.\"}}'"
           }
         ]
       }
