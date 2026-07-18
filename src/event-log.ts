@@ -138,7 +138,13 @@ export function createEventLog(
   return {
     append(payload: EventPayload): StampedEvent {
       if (start == null) start = Date.now()
-      const event: StampedEvent = { ...payload, seq: seq++, t: Date.now() - start, src }
+      // A payload src overrides the replica id — content-derived identity
+      // (e.g. 'slider:<name>'), so the same declaration re-generated on
+      // another replica or a later run reads as the same author.
+      const event: StampedEvent = {
+        ...payload, seq: seq++, t: Date.now() - start,
+        src: typeof payload.src === 'string' && payload.src !== '' ? payload.src : src,
+      }
       events.push(event)
       if (compact) events = compact(events)
       appendListeners.forEach((cb) => cb(event))

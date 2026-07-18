@@ -662,3 +662,57 @@ test('concurrent applies at the same tip linearize onto one branch across replic
   assert.deepEqual(a.branchTree().heads, b.branchTree().heads)
   assert.equal(a.branchTree().heads.length, 1, 'the race resolves to one branch')
 })
+
+// ── defineSlider: code-declared slider rows ──────────────────────────────────
+
+test('defineSlider creates the "sliders" table with one row per name, idempotently', () => {
+  const store = createEditableTableStore()
+  store.defineSlider('height', 0, 2)
+  assert.deepEqual(
+    store.get('sliders')!.rows.map((r) => ({ id: r.id, min: r.min, max: r.max, default: r.default })),
+    [{ id: 'height', min: 0, max: 2, default: 0 }],
+  )
+  const len = store.log.length
+  store.defineSlider('height', 0, 2) // rerun of the same code
+  store.defineSlider('height') // another code site referencing the same slider
+  assert.equal(store.log.length, len, 'reruns and re-references append nothing')
+  assert.equal(store.get('sliders')!.rows.length, 1)
+  store.defineSlider('warp') // min/max default 0–1
+  const warp = store.get('sliders')!.rows.find((r) => r.id === 'warp')!
+  assert.deepEqual({ min: warp.min, max: warp.max }, { min: 0, max: 1 })
+})
+
+test('a rerun after reload re-generates the same declaration: the event src derives from the name', () => {
+  const a = createEditableTableStore({ src: 'A' })
+  a.defineSlider('warp', 0, 1)
+  const declared = a.log.all().find((e) => e.kind === 'define-slider')!
+  assert.equal(declared.src, 'slider:warp')
+
+  const b = createEditableTableStore({ src: 'B' })
+  assert.ok(b.load(a.serialize()))
+  b.defineSlider('warp', 0, 1) // the program runs again in a new session
+  assert.equal(b.get('sliders')!.rows.length, 1)
+  assert.equal(b.log.all().filter((e) => e.kind === 'define-slider').length, 1, 'no second declaration')
+})
+
+test('racing declarations from two replicas fold to one slider row after merge', () => {
+  const a = createEditableTableStore({ src: 'A' })
+  const b = createEditableTableStore({ src: 'B' })
+  b.createTable('other') // offsets b's clock so the two declarations get distinct (src, seq) keys
+  a.defineSlider('x', 0, 1)
+  b.defineSlider('x', 0, 1)
+  a.log.merge(b.log.all())
+  b.log.merge(a.log.all())
+  assert.equal(a.get('sliders')!.rows.length, 1)
+  assert.equal(b.get('sliders')!.rows.length, 1)
+})
+
+test('a user-deleted slider row is not resurrected by a later run', () => {
+  const a = createEditableTableStore()
+  a.defineSlider('gone', 0, 1)
+  a.removeRow('sliders', 0)
+  const b = createEditableTableStore()
+  assert.ok(b.load(a.serialize()))
+  b.defineSlider('gone', 0, 1)
+  assert.equal(b.get('sliders')!.rows.length, 0, 'the declaration already exists in the log — deletion sticks')
+})

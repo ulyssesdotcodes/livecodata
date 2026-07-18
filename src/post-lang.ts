@@ -172,6 +172,14 @@ function chainOps(value: unknown): OpChain {
   throw new Error('post: combine op expected a chain argument')
 }
 
+// Wired by main.ts to the editable-table store so a post cell's slider() can
+// declare its control. Post cells are re-evaluated per frame, so the definer
+// must be idempotent and cheap; null (workers, tests) leaves slider() read-only.
+let sliderDefiner: ((id: string, min?: number, max?: number) => void) | null = null
+export function setSliderDefiner(fn: ((id: string, min?: number, max?: number) => void) | null): void {
+  sliderDefiner = fn
+}
+
 // The eval scope. The scene is the implicit source, so every fx/combine op is
 // callable top-level to START a chain applied to the scene — `edges(0.2)` is
 // exactly `scene().edges(0.2)`. `scene()`/`prev()` are explicit heads (for
@@ -187,6 +195,19 @@ function headScope(): Record<string, unknown> {
       if (spec.kind === 'combine') cb.ops.push(makeCall(name, spec.kind, spec.args, raw.slice(1), [chainOps(raw[0])]))
       else cb.ops.push(makeCall(name, spec.kind, spec.args, raw))
       return cb
+    }
+  }
+  // A live on-screen slider, usable anywhere a live arg is — blur(slider("r",
+  // 0, 8)) — reading props.sliders each frame. Calling it also declares the
+  // control: one "sliders"-table row per name, via the definer hook.
+  scope.slider = (name: unknown, min?: unknown, max?: unknown): ((p: Record<string, unknown>) => number) => {
+    const id = String(name)
+    const lo = typeof min === 'number' && Number.isFinite(min) ? min : undefined
+    const hi = typeof max === 'number' && Number.isFinite(max) ? max : undefined
+    sliderDefiner?.(id, lo, hi)
+    return (p) => {
+      const v = (p.sliders as Record<string, number> | undefined)?.[id]
+      return typeof v === 'number' ? v : lo ?? 0
     }
   }
   // A transition is the head of the output chain the fold produces: it wipes

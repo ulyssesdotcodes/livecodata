@@ -215,6 +215,15 @@ export function schemaColumns(schema: Schema): EditableColumn[] {
   })
 }
 
+// The "sliders" definition table a define-slider event targets. Columns mirror
+// schemas.sliders in dsl.ts (kept local so this module stays off the DSL's
+// import graph).
+const SLIDERS_TABLE = 'sliders'
+const DEFINE_SLIDER_KIND = 'define-slider'
+const SLIDERS_COLUMNS: EditableColumn[] = schemaColumns({
+  id: 'string', min: 'number', max: 'number', default: 'number', disabled: 'boolean',
+})
+
 // ── Serialized-schema migrations ─────────────────────────────────────────────
 // Append here — never edit or reorder — when the persisted event shape changes
 // (see EventMigration); the fold only ever sees current-shape events.
@@ -288,6 +297,30 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
     t.rows = seed.map((r) => conformRow(r, effectiveColumns(t)))
     t.rowMeta = seed.map((_r, i) => (t.codeCreated ? seedMeta(i) : userMeta()))
     tables.set(name, t)
+    return
+  }
+  // A code-declared slider (expr.slider / a post cell's slider()): ensure the
+  // definitions table exists and add the row once. The row is skipped when any
+  // row already carries the id, so every replica folds the same single slider
+  // no matter how many declarations (reruns, peers, several code sites) land.
+  if (e.kind === DEFINE_SLIDER_KIND) {
+    const id = e.id != null ? String(e.id) : ''
+    if (!id) return
+    let t = tables.get(name)
+    if (!t) {
+      t = {
+        userColumns: SLIDERS_COLUMNS.map((c) => ({ ...c })), removedColumns: new Set(),
+        declared: null, rows: [], rowMeta: [], events: [], codeCreated: false,
+        lastSeed: null, removedSlots: new Set(), log: false,
+      }
+      tables.set(name, t)
+    }
+    t.events.push(eventRow(e))
+    if (t.rows.some((r) => r.id === id)) return
+    const min = typeof e.min === 'number' ? e.min : 0
+    const max = typeof e.max === 'number' ? e.max : 1
+    t.rows.push(conformRow({ id, min, max, default: min }, effectiveColumns(t)))
+    t.rowMeta.push(userMeta())
     return
   }
   const t = tables.get(name)
@@ -431,6 +464,12 @@ export interface EditableTableStore {
   // sight) — for non-row streams like Apply pulses and peer join/leave. Riding
   // the same log gives them serialize/load/multiplayer-sync for free.
   record(table: string, kind: string, payload?: Record<string, unknown>): void
+  // Declare an on-screen slider from code (expr.slider / a post cell's
+  // slider()): adds { id, min, max } to the "sliders" table. The event's src
+  // derives from the name, so a rerun re-generates the same declaration
+  // instead of a new one — one row per name, however many times code says it.
+  // A row the user deleted stays deleted.
+  defineSlider(id: string, min?: number, max?: number): void
   onChange(cb: () => void): void
   // --- runs (session history) ---------------------------------------------
   // Record the Apply bookmark (see SessionRun) and return it.
@@ -503,6 +542,11 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
 
   const listeners: (() => void)[] = []
   const notify = (): void => listeners.forEach((cb) => cb())
+
+  // Names defineSlider has already handled this log's lifetime — keeps the
+  // per-frame post-cell path O(1) after the first call. Reset when the log is
+  // replaced (load/clear).
+  let definedSliders = new Set<string>()
 
   const view = (): Map<string, TableState> => replay ?? tables
 
@@ -740,6 +784,19 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       append({ kind, table, ...payload })
     },
 
+    defineSlider(id: string, min?: number, max?: number): void {
+      id = id.trim()
+      if (!id || replay) return
+      if (definedSliders.has(id)) return
+      definedSliders.add(id)
+      if (tables.get(SLIDERS_TABLE)?.rows.some((r) => r.id === id)) return
+      const eventSrc = 'slider:' + id
+      // Already declared somewhere in this log's history (this run, a peer, a
+      // saved session) — including a declaration whose row the user deleted.
+      if (log.all().some((e) => e.src === eventSrc)) return
+      append({ kind: DEFINE_SLIDER_KIND, table: SLIDERS_TABLE, src: eventSrc, id, min: min ?? 0, max: max ?? 1 })
+    },
+
     onChange(cb: () => void): void {
       listeners.push(cb)
     },
@@ -875,6 +932,7 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       runs = []
       forked = false
       pending = []
+      definedSliders = new Set()
       invalidateTree()
       // Adopt the newest apply so a saved branching session opens on its latest
       // branch; a legacy log has none, so head stays null (linear).
@@ -897,6 +955,7 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       seenTip = null
       forked = false
       pending = []
+      definedSliders = new Set()
       invalidateTree()
       notify()
     },

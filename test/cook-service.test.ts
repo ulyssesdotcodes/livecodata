@@ -148,3 +148,17 @@ define("applies", (rand, table) => table("activity"))
     assert.deepEqual(unpackCooked(later.cooked).views.get('edits')!.rows.map((r) => r.kind), ['set-cell'])
   }
 })
+
+test('expr.slider(name, min, max) declarations ride the response for the main thread to apply', () => {
+  const service = createCookService()
+  const resp = service.handle(req(`
+define("v", () => rows([{ beat: 1 }]).derive({
+  py: expr.slider("height", 0, 2),
+  pz: expr.slider("depth"),
+  pw: expr.slider("height", 0, 2),
+}))
+`))
+  assert.equal(resp.ok, true)
+  if (!resp.ok) return
+  assert.deepEqual(resp.sliders, [{ id: 'height', min: 0, max: 2 }, { id: 'depth' }], 'deduped by name; omitted min/max stay unset')
+})

@@ -40,8 +40,16 @@ export interface DeclaredEditable {
   seedRows?: Row[]
 }
 
+// An expr.slider(name, min, max) call during the cook; the main thread applies
+// these through the store's defineSlider().
+export interface DeclaredSlider {
+  id: string
+  min?: number
+  max?: number
+}
+
 export type CookResponse =
-  | { id: number; ok: true; cooked: PackedCook; declared: DeclaredEditable[] }
+  | { id: number; ok: true; cooked: PackedCook; declared: DeclaredEditable[]; sliders: DeclaredSlider[] }
   | { id: number; ok: false; error: string }
 
 export interface CookService {
@@ -54,6 +62,7 @@ export function createCookService({ physics }: { physics?: () => PhysicsEngine |
   let taps: Row[] = []
   let seeds: Record<string, Row[]> = {}
   let declared: DeclaredEditable[] = []
+  let sliders = new Map<string, DeclaredSlider>()
 
   const runtime = createRuntime({
     physics: physics ?? (() => null),
@@ -74,6 +83,9 @@ export function createCookService({ physics }: { physics?: () => PhysicsEngine |
       if (existing) return existing
       return (seed ?? []).map((r) => conformRow(r, schemaColumns(schema)))
     },
+    defineSlider: (id, min, max) => {
+      if (!sliders.has(id)) sliders.set(id, { id, ...(min !== undefined ? { min } : {}), ...(max !== undefined ? { max } : {}) })
+    },
   })
 
   return {
@@ -83,9 +95,10 @@ export function createCookService({ physics }: { physics?: () => PhysicsEngine |
       taps = req.tapRows
       seeds = req.seeds ?? {}
       declared = []
+      sliders = new Map()
       try {
         const cooked = cookProgram(runtime, req.code, req.seed, new Map(req.dataCache))
-        return { id: req.id, ok: true, cooked: packCooked(cooked), declared }
+        return { id: req.id, ok: true, cooked: packCooked(cooked), declared, sliders: [...sliders.values()] }
       } catch (err) {
         return { id: req.id, ok: false, error: (err as Error).message }
       }

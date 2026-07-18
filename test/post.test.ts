@@ -10,7 +10,7 @@ import {
   foldVars,
   type PostFrame,
 } from '../src/post.js'
-import { evalPostCode, chainSignature, collectLiveValues } from '../src/post-lang.js'
+import { evalPostCode, chainSignature, collectLiveValues, setSliderDefiner } from '../src/post-lang.js'
 import { frameToBeat } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
 
@@ -175,4 +175,18 @@ test('op-list lowering: live-by-default, structural where the registry says, sig
 test('an unknown op leaves post inactive rather than crashing the frame', () => {
   assert.throws(() => evalPostCode('noSuchOp()'))
   assert.equal(frameAt([{ beat: 1, event: 'chain', code: 'noSuchOp()' }], 0), null)
+})
+
+test('slider() is a live arg reading props.sliders and declares through the definer hook', () => {
+  const declared: unknown[] = []
+  setSliderDefiner((id, min, max) => declared.push([id, min, max]))
+  try {
+    const chain = evalPostCode('blur(slider("r", 2, 8))')
+    assert.deepEqual(declared, [['r', 2, 8]])
+    assert.deepEqual(collectLiveValues(chain, { sliders: { r: 4 } }), [4], 'reads the slider per frame')
+    assert.deepEqual(collectLiveValues(chain, {}), [2], 'falls back to min before the slider exists')
+    assert.deepEqual(collectLiveValues(evalPostCode('blur(slider("r"))'), {}), [0], 'no min → 0')
+  } finally {
+    setSliderDefiner(null)
+  }
 })

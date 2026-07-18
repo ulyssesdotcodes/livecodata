@@ -169,6 +169,8 @@ function buildPostGlobals(root) {
     '  function scene(): PostChain;',
     '  /** The previous output frame — one-frame-behind feedback, e.g. blend(prev(), 0.4). */',
     '  function prev(): PostChain;',
+    '  /** A live on-screen slider as a live arg — blur(slider("r", 0, 8)) reads the slider each frame. Calling it also declares the control: one "sliders"-table row per name (min/max default 0–1); a name that already has a row keeps it. */',
+    '  function slider(name: string, min?: number, max?: number): (p: PostProps) => number;',
     '}',
     'export {};',
   ].join('\n')
