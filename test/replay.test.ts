@@ -45,6 +45,14 @@ test('the legacy "events" table name still cooks into the scene cache', () => {
   assert.ok(cooked.sceneRows.length > 0, 'saved sessions using "events" still render')
 })
 
+test('cookProgram surfaces a broken post chain (e.g. a trailing comment) as an error', () => {
+  const rt = createRuntime()
+  const code = `
+    define("post", () => rows([{ beat: 1, event: "chain", code: "edges(0.2)\\n// glow" }]))
+  `
+  assert.throws(() => cookProgram(rt, code, 1))
+})
+
 test('cookProgram surfaces the hydra setCode/setVariable rows from the "hydra" view', () => {
   const rt = createRuntime()
   const code = `

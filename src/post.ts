@@ -228,15 +228,10 @@ export function postFrameAt(index: Row[], f: number): PostFrame | null {
   if (frame < 0) return null
   const codeStr = foldChain(index, frame)
   if (codeStr == null) return null
-  let chain: OpChain
-  try {
-    chain = evalPostCode(codeStr)
-  } catch (err) {
-    // A broken cell (mid-edit or an unknown op) leaves post inactive rather than
-    // crashing the frame.
-    console.error('post: chain eval failed:', (err as Error).message)
-    return null
-  }
+  // Let a broken chain (syntax error, unknown op, a trailing line comment the
+  // `return (...)` wrap can't close) throw. The cook compiles every state up
+  // front, so the error surfaces to the user there rather than being swallowed.
+  const chain = evalPostCode(codeStr)
   return { stateId: chainSignature(chain), chain, vars: foldVars(index, frame) }
 }
 

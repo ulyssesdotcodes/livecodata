@@ -333,7 +333,8 @@ function headScope(): Record<string, unknown> {
 
 // Evaluate a post code cell to its op list. The cell is an expression like
 // `edges((p) => p.th, 1).bloom(0.3)` (the scene is implicit); it runs against
-// the scope and must return a chain builder. Throws on a syntax/unknown-op.
+// the scope and must return a chain builder. Throws on a syntax/unknown-op —
+// including a trailing line comment, which the `return (...)` wrap can't close.
 export function evalPostCode(code: string): OpChain {
   const scope = headScope()
   const keys = Object.keys(scope)
