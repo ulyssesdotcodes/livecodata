@@ -43,6 +43,11 @@ export const POST_OPS: Record<string, OpSpec> = {
   diff: { kind: 'combine', args: [], doc: 'Absolute difference between this chain and another.' },
   mask: { kind: 'combine', args: [], doc: 'Multiply this chain by another chain\'s luminance.' },
   layer: { kind: 'combine', args: [], doc: 'Composite another chain over this one using the layer\'s alpha.' },
+  modulate: {
+    kind: 'combine',
+    args: [{ name: 'amount', arg: 'live', default: 0.1 }],
+    doc: 'Displace this chain\'s pixels by another chain\'s red/green channels, scaled by `amount` (live) — hydra\'s modulate. A mid-grey modulator leaves the view untouched; brighter/darker regions push it around.',
+  },
   transition: { kind: 'head', args: [{ name: 'mix', arg: 'live', default: 0 }, { name: 'threshold', arg: 'structural', default: 0.1 }, { name: 'useTexture', arg: 'structural', default: 0 }], doc: 'Wipe from one chain to another; the fold builds it from a transition event (crossfade, or a mask chain).' },
   edges: {
     kind: 'fx',
@@ -86,6 +91,56 @@ export const POST_OPS: Record<string, OpSpec> = {
     kind: 'fx',
     args: [{ name: 'scale', arg: 'live', default: 8 }],
     doc: 'Mirror-tile the image into a `scale`×`scale` kaleidoscope grid (live).',
+  },
+  scale: {
+    kind: 'fx',
+    args: [{ name: 'amount', arg: 'live', default: 1.5 }],
+    doc: 'Zoom the scene around its centre by `amount` (live): >1 magnifies, <1 pulls back (edges clamp).',
+  },
+  rotate: {
+    kind: 'fx',
+    args: [{ name: 'angle', arg: 'live', default: 0.4 }],
+    doc: 'Rotate the scene around its centre by `angle` radians (live).',
+  },
+  scrollX: {
+    kind: 'fx',
+    args: [{ name: 'amount', arg: 'live', default: 0.1 }],
+    doc: 'Pan horizontally by `amount` of the width, wrapping around the far edge (live).',
+  },
+  scrollY: {
+    kind: 'fx',
+    args: [{ name: 'amount', arg: 'live', default: 0.1 }],
+    doc: 'Pan vertically by `amount` of the height, wrapping around the far edge (live).',
+  },
+  kaleid: {
+    kind: 'fx',
+    args: [{ name: 'sides', arg: 'live', default: 4 }],
+    doc: 'Kaleidoscope: fold the scene into `sides` mirrored angular wedges around the centre (live).',
+  },
+  hue: {
+    kind: 'fx',
+    args: [{ name: 'amount', arg: 'live', default: 0.1 }],
+    doc: 'Rotate every colour\'s hue by `amount` turns (live; 1 = a full circle), keeping luminance.',
+  },
+  saturate: {
+    kind: 'fx',
+    args: [{ name: 'amount', arg: 'live', default: 1.5 }],
+    doc: 'Scale colour saturation by `amount` (live): 0 = greyscale, 1 = unchanged, >1 = more vivid.',
+  },
+  brightness: {
+    kind: 'fx',
+    args: [{ name: 'amount', arg: 'live', default: 0.2 }],
+    doc: 'Add `amount` to every channel (live); negative darkens.',
+  },
+  contrast: {
+    kind: 'fx',
+    args: [{ name: 'amount', arg: 'live', default: 1.4 }],
+    doc: 'Scale contrast around mid-grey by `amount` (live): 1 = unchanged, >1 = punchier, <1 = flatter.',
+  },
+  fade: {
+    kind: 'fx',
+    args: [{ name: 'amount', arg: 'live', default: 0.5 }],
+    doc: 'Feedback trail: blend the previous output frame into this one by `amount` (live; higher = longer-lived trails). Reads the same one-frame-behind buffer as prev().',
   },
   strobe: {
     kind: 'fx',
