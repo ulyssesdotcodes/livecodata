@@ -35,8 +35,8 @@ export interface OpSpec {
 // separately in post-scene.ts under the same name; keeping the factories out of
 // this module keeps it (and its tests) free of the `three` import graph.
 export const POST_OPS: Record<string, OpSpec> = {
-  scene: { kind: 'head', args: [], doc: 'The rendered Three.js scene as the chain head — the color plane every effect starts from.' },
-  src: { kind: 'head', args: [{ name: 'bus', arg: 'structural', default: 1 }], doc: 'A feedback bus (src(b1)..src(b3)) as the chain head — samples that bus\'s previous frame for one-frame-behind feedback.' },
+  scene: { kind: 'head', args: [], doc: 'The raw rendered scene — only needed inside a branch arg (e.g. mask(scene())); a top-level chain already starts from the scene.' },
+  prev: { kind: 'head', args: [], doc: 'The previous output frame — one-frame-behind feedback. Use as a branch arg, e.g. blend(prev(), 0.4).' },
   blend: { kind: 'combine', args: [{ name: 'amount', arg: 'live', default: 0.5 }], doc: 'Cross-fade another chain over this one by `amount` (0–1, live).' },
   add: { kind: 'combine', args: [], doc: 'Add another chain to this one.' },
   mult: { kind: 'combine', args: [], doc: 'Multiply this chain by another.' },
@@ -99,8 +99,6 @@ export const POST_OPS: Record<string, OpSpec> = {
   },
   rgbsplit: { kind: 'fx', args: [], doc: 'Beat-quantized channel-strobe: offsets the R/B channels in steps locked to the beat clock.' },
 }
-
-export const POST_HEADS: string[] = Object.keys(POST_OPS).filter((n) => POST_OPS[n].kind === 'head')
 
 // A live arg carries either a constant (lowered to a uniform holding it) or a
 // per-frame function of the props object; a structural arg carries a baked
@@ -174,16 +172,23 @@ function chainOps(value: unknown): OpChain {
   throw new Error('post: combine op expected a chain argument')
 }
 
-// The eval scope: head factories plus the bus tokens (b1..b3) and the
-// transition builder. `scene`/`src` return a fresh ChainBuilder; `transition`
-// wraps the fold's before/after (and optional mask) chains.
+// The eval scope. The scene is the implicit source, so every fx/combine op is
+// callable top-level to START a chain applied to the scene — `edges(0.2)` is
+// exactly `scene().edges(0.2)`. `scene()`/`prev()` are explicit heads (for
+// branch args and feedback); `transition` is the fold-built wipe.
 function headScope(): Record<string, unknown> {
   const scope: Record<string, unknown> = {}
-  scope.scene = (): ChainBuilder => new ChainBuilder(makeCall('scene', 'head', POST_OPS.scene.args, []))
-  scope.src = (bus: unknown): ChainBuilder => new ChainBuilder(makeCall('src', 'head', POST_OPS.src.args, [bus]))
-  scope.b1 = 1
-  scope.b2 = 2
-  scope.b3 = 3
+  scope.scene = (): ChainBuilder => new ChainBuilder(makeCall('scene', 'head', [], []))
+  scope.prev = (): ChainBuilder => new ChainBuilder(makeCall('prev', 'head', [], []))
+  for (const [name, spec] of Object.entries(POST_OPS)) {
+    if (spec.kind === 'head') continue
+    scope[name] = (...raw: unknown[]): ChainBuilder => {
+      const cb = new ChainBuilder(makeCall('scene', 'head', [], []))
+      if (spec.kind === 'combine') cb.ops.push(makeCall(name, spec.kind, spec.args, raw.slice(1), [chainOps(raw[0])]))
+      else cb.ops.push(makeCall(name, spec.kind, spec.args, raw))
+      return cb
+    }
+  }
   // A transition is the head of the output chain the fold produces: it wipes
   // `before` → `after` by `pos` (0→1), optionally through a black-and-white
   // `mask` chain (null = crossfade). The pos function reads the playback clock.
@@ -199,8 +204,8 @@ function headScope(): Record<string, unknown> {
 }
 
 // Evaluate a post code cell to its op list. The cell is an expression like
-// `scene().edges((p) => p.th, 1).bloom(0.3)`; it runs against the head scope
-// and must return a chain builder. Throws on a syntax error or an unknown op.
+// `edges((p) => p.th, 1).bloom(0.3)` (the scene is implicit); it runs against
+// the scope and must return a chain builder. Throws on a syntax/unknown-op.
 export function evalPostCode(code: string): OpChain {
   const scope = headScope()
   const keys = Object.keys(scope)

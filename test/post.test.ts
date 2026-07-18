@@ -14,15 +14,18 @@ import { evalPostCode, chainSignature, collectLiveValues } from '../src/post-lan
 import { frameToBeat } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
 
-// The 1-indexed `beat` that lands a row on a given cache frame.
 const b = (frame: number): number => frameToBeat(frame)
 const frameAt = (rows: Row[], frame: number): PostFrame | null => postFrameAt(buildPostIndex(rows), frame)
+const ops = (frame: PostFrame | null): string[] => (frame?.chain ?? []).map((o) => o.op)
+const close = (a: unknown, x: number): void =>
+  assert.ok(typeof a === 'number' && Math.abs(a - x) < 1e-9, `expected ~${x}, got ${a}`)
+const vars = (rows: Row[], frame: number): Record<string, unknown> => foldVars(buildPostIndex(rows), frame)
 
 test('isPostRow/postRows keep only post events', () => {
   const rows: Row[] = [
-    { event: 'setCode', code: 'scene()' },
-    { event: 'impulse', name: 'g', value: 1 },
-    { event: 'notAnEvent' },
+    { event: 'chain', code: 'edges(0.2)' },
+    { event: 'pulse', name: 'g', value: 1 },
+    { event: 'setCode' }, // an old hydra name — not a post event
     { code: 'x' },
   ]
   assert.equal(postRows(rows).length, 2)
@@ -30,185 +33,66 @@ test('isPostRow/postRows keep only post events', () => {
   assert.equal(isPostRow(rows[2]), false)
 })
 
-test('a setCode establishes the chain; setVariable folds into vars', () => {
+test('the scene is implicit: a top-level op starts a chain, and set folds into vars', () => {
   const frame = frameAt([
-    { beat: 1, event: 'setCode', code: 'scene().edges((p) => p.th, 1)' },
-    { beat: 1, event: 'setVariable', name: 'th', value: 0.3 },
-  ], 0)
-  assert.ok(frame)
-  assert.deepEqual(frame!.chains.map((c) => c.out), ['main'])
-  assert.equal(frame!.chains[0].chain.map((o) => o.op).join('.'), 'scene.edges')
-  assert.deepEqual(frame!.vars, { th: 0.3 })
-})
-
-test('no active program before the first setCode', () => {
-  const rows: Row[] = [
-    { beat: b(2), event: 'setCode', code: 'scene().blur(4)' },
-    { beat: b(2), event: 'setVariable', name: 'r', value: 4 },
-  ]
-  assert.equal(frameAt(rows, 0), null)
-  assert.equal(frameAt(rows, 1), null)
-  assert.ok(frameAt(rows, 2))
-})
-
-test('the latest setCode wins and persists', () => {
-  const rows: Row[] = [
-    { beat: 1, event: 'setCode', code: 'scene().blur(2)' },
-    { beat: b(4), event: 'setCode', code: 'scene().bloom(0.4)' },
-  ]
-  assert.equal(frameAt(rows, 0)!.chains[0].chain.map((o) => o.op).join('.'), 'scene.blur')
-  assert.equal(frameAt(rows, 3)!.chains[0].chain.map((o) => o.op).join('.'), 'scene.blur')
-  assert.equal(frameAt(rows, 4)!.chains[0].chain.map((o) => o.op).join('.'), 'scene.bloom')
-})
-
-test('replace rebinds a live literal on the SAME state (structure unchanged)', () => {
-  const rows: Row[] = [
-    { beat: 1, event: 'setCode', out: 'main', code: 'scene().edges(0.2, 1)' },
-    { beat: b(4), event: 'replace', out: 'main', find: '0.2', value: 0.5 },
-  ]
-  const before = frameAt(rows, 0)!
-  const after = frameAt(rows, 4)!
-  assert.equal(before.stateId, after.stateId, 'a live-literal swap keeps the same precompiled state')
-  assert.equal(before.chains[0].chain[1].args[0].value, 0.2)
-  assert.equal(after.chains[0].chain[1].args[0].value, 0.5)
-})
-
-test('a structural arg change selects a different state; a live change does not', () => {
-  const same = frameAt([{ beat: 1, event: 'setCode', code: 'scene().edges(0.9, 1)' }], 0)!
-  const liveOnly = frameAt([{ beat: 1, event: 'setCode', code: 'scene().edges(0.1, 1)' }], 0)!
-  const structural = frameAt([{ beat: 1, event: 'setCode', code: 'scene().edges(0.1, 2)' }], 0)!
-  assert.equal(same.stateId, liveOnly.stateId)
-  assert.notEqual(liveOnly.stateId, structural.stateId)
-})
-
-test('each out folds independently; the state id spans all outs in name order', () => {
-  const frame = frameAt([
-    { beat: 1, event: 'setCode', out: 'main', code: 'scene().blur(4)' },
-    { beat: 1, event: 'setCode', out: 'b1', code: 'scene().edges(0.2, 0)' },
+    { beat: 1, event: 'chain', code: 'edges((p) => p.th, 1)' },
+    { beat: 1, event: 'set', name: 'th', value: 0.3 },
   ], 0)!
-  assert.deepEqual(frame.chains.map((c) => c.out), ['b1', 'main'])
-  assert.equal(frame.stateId, 'b1:scene().edges(#,0)|main:scene().blur(#)')
+  // `edges(0.2)` compiles to the same op list as `scene().edges(0.2)`.
+  assert.deepEqual(ops(frame), ['scene', 'edges'])
+  assert.equal(frame.stateId, frameAt([{ beat: 1, event: 'chain', code: 'scene().edges((p) => p.th, 1)' }], 0)!.stateId)
+  assert.deepEqual(frame.vars, { th: 0.3 })
 })
 
-test('postCodeUpToRow shows the running chain after the given row', () => {
+test('an empty chain is passthrough (post inactive); a set-only table stays inactive', () => {
+  assert.equal(frameAt([{ beat: 1, event: 'chain', code: '' }], 0), null)
+  assert.equal(frameAt([{ beat: 1, event: 'set', name: 'x', value: 1 }], 0), null)
+})
+
+test('the latest chain wins and persists', () => {
   const rows: Row[] = [
-    { beat: 1, event: 'setCode', out: 'main', code: 'scene().blur(3)' },
-    { beat: b(4), event: 'replace', out: 'main', find: '3', value: 6 },
+    { beat: 1, event: 'chain', code: 'blur(2)' },
+    { beat: b(4), event: 'chain', code: 'bloom(0.4)' },
   ]
-  assert.equal(postCodeUpToRow(rows, 0), 'scene().blur(3)')
-  assert.equal(postCodeUpToRow(rows, 1), 'scene().blur(6)')
-  assert.equal(postCodeUpToRow([{ beat: 1, event: 'setVariable', name: 'x', value: 1 }], 0), null)
+  assert.deepEqual(ops(frameAt(rows, 3)), ['scene', 'blur'])
+  assert.deepEqual(ops(frameAt(rows, 4)), ['scene', 'bloom'])
 })
 
-// ── chain eval (op-list) contracts ──────────────────────────────────────────
-
-test('evalPostCode classifies args live-by-default, structural where the registry says so', () => {
-  const chain = evalPostCode('scene().edges((p) => p.th, 1).bloom(0.3)')
-  assert.deepEqual(chain.map((o) => o.op), ['scene', 'edges', 'bloom'])
-  // edges: threshold live (a function), colorMode structural (baked 1)
-  assert.equal(chain[1].args[0].cls, 'live')
-  assert.equal(typeof chain[1].args[0].value, 'function')
-  assert.deepEqual(chain[1].args[1], { cls: 'structural', value: 1 })
-  // bloom: omitted radius/threshold fall back to registry defaults, all live
-  assert.equal(chain[2].args[0].value, 0.3)
-  assert.equal(chain[2].args[1].value, 0.5)
-  assert.equal(chain[2].args.every((a) => a.cls === 'live'), true)
+test('add appends effects (leading dot optional), including from passthrough', () => {
+  assert.deepEqual(ops(frameAt([
+    { beat: 1, event: 'chain', code: 'blur(4)' },
+    { beat: b(4), event: 'add', code: 'pixelate(6)' },
+    { beat: b(6), event: 'add', code: '.invert()' },
+  ], 6)), ['scene', 'blur', 'pixelate', 'invert'])
+  // No prior chain — add starts one from the scene.
+  assert.deepEqual(ops(frameAt([{ beat: 1, event: 'add', code: 'pixelate(6)' }], 0)), ['scene', 'pixelate'])
 })
 
-test('chainSignature masks live args and inlines structural ones', () => {
-  assert.equal(chainSignature(evalPostCode('scene().edges(0.2, 1)')), 'scene().edges(#,1)')
-  assert.equal(chainSignature(evalPostCode('scene().edges(0.5, 1)')), 'scene().edges(#,1)')
-  assert.equal(chainSignature(evalPostCode('scene().edges(0.2, 2)')), 'scene().edges(#,2)')
-})
-
-test('collectLiveValues resolves functions against props in binding order', () => {
-  const chain = evalPostCode('scene().edges((p) => p.th, 1).blur(3)')
-  assert.deepEqual(collectLiveValues(chain, { th: 0.4 }), [0.4, 3])
-})
-
-test('an unknown op throws (caught by the fold, dropping that output)', () => {
-  assert.throws(() => evalPostCode('scene().noSuchOp()'))
-  // The fold swallows it rather than crashing the frame.
-  assert.equal(frameAt([{ beat: 1, event: 'setCode', code: 'scene().noSuchOp()' }], 0), null)
-})
-
-// ── variable dynamics: tweens + impulses ────────────────────────────────────
-
-const close = (a: unknown, b: number, msg?: string): void =>
-  assert.ok(typeof a === 'number' && Math.abs(a - b) < 1e-9, `${msg ?? ''} expected ~${b}, got ${a}`)
-const vars = (rows: Row[], frame: number): Record<string, unknown> => foldVars(buildPostIndex(rows), frame)
-
-test('setVariable with dur tweens from the previous value using the eased curve', () => {
-  const rows: Row[] = [
-    { beat: 1, event: 'setVariable', name: 'th', value: 0.2 },
-    { beat: 5, event: 'setVariable', name: 'th', value: 0.5, dur: 2, ease: 'linear' }, // frame 120..180
-  ]
-  close(vars(rows, 60).th, 0.2, 'before the tween: the step value')
-  close(vars(rows, 120).th, 0.2, 'at the tween start: the previous value')
-  close(vars(rows, 150).th, 0.35, 'midpoint (linear)')
-  close(vars(rows, 180).th, 0.5, 'at the end: the target')
-  close(vars(rows, 300).th, 0.5, 'past the end: settled at the target')
-})
-
-test('impulse adds an ease-shaped, decaying contribution while active; expired rows are inert', () => {
-  const rows: Row[] = [
-    { beat: 1, event: 'setVariable', name: 'g', value: 0.3 },
-    { beat: 3, event: 'impulse', name: 'g', value: 1, dur: 1, ease: 'linear' }, // frame 60..90
-  ]
-  close(vars(rows, 30).g, 0.3, 'before the impulse')
-  close(vars(rows, 60).g, 1.3, 'at onset: full add')
-  close(vars(rows, 75).g, 0.8, 'midpoint decay (linear env = 0.5)')
-  close(vars(rows, 90).g, 0.3, 'expired: inert')
-})
-
-test('impulses stack additively and default to an easeOut envelope', () => {
-  const stacked: Row[] = [
-    { beat: 1, event: 'setVariable', name: 'g', value: 0 },
-    { beat: 3, event: 'impulse', name: 'g', value: 1, dur: 2, ease: 'linear' },
-    { beat: 3, event: 'impulse', name: 'g', value: 0.5, dur: 2, ease: 'linear' },
-  ]
-  close(vars(stacked, 60).g, 1.5, 'two onsets add')
-  // No ease → easeOut decay: env = 1 - (1-(1-u)^2); at u=0.5 that is 0.25.
-  const decay: Row[] = [{ beat: 1, event: 'impulse', name: 'g', value: 1, dur: 1 }] // frame 0..30
-  close(vars(decay, 15).g, 0.25, 'default easeOut envelope at the midpoint')
-})
-
-// ── meta-events, transitions, and state enumeration ─────────────────────────
-
-const ops = (frame: PostFrame | null, out = 'main'): string[] =>
-  (frame?.chains.find((c) => c.out === out)?.chain ?? []).map((o) => o.op)
-
-test('setSource swaps the head and keeps the effect tail', () => {
-  const rows: Row[] = [
-    { beat: 1, event: 'setCode', out: 'main', code: 'scene().blur(4)' },
-    { beat: b(4), event: 'setSource', out: 'main', code: 'src(b1)' },
-  ]
-  assert.deepEqual(ops(frameAt(rows, 4)), ['src', 'blur'])
-})
-
-test('append splices an effect fragment onto the chain', () => {
-  const rows: Row[] = [
-    { beat: 1, event: 'setCode', out: 'main', code: 'scene().blur(4)' },
-    { beat: b(4), event: 'append', out: 'main', code: '.pixelate(6)' },
-  ]
-  assert.deepEqual(ops(frameAt(rows, 4)), ['scene', 'blur', 'pixelate'])
+test('remove drops every op with the given name, even the first (next op goes top-level)', () => {
+  assert.deepEqual(ops(frameAt([
+    { beat: 1, event: 'chain', code: 'blur(4).bloom(1).pixelate(6)' },
+    { beat: b(4), event: 'remove', name: 'bloom' },
+  ], 4)), ['scene', 'blur', 'pixelate'])
+  assert.deepEqual(ops(frameAt([
+    { beat: 1, event: 'chain', code: 'blur(4).bloom(1)' },
+    { beat: b(4), event: 'remove', name: 'blur' },
+  ], 4)), ['scene', 'bloom'])
 })
 
 test('layer composites another chain via the chosen mode', () => {
-  const rows: Row[] = [
-    { beat: 1, event: 'setCode', out: 'main', code: 'scene()' },
-    { beat: b(4), event: 'layer', out: 'main', mode: 'blend', value: 0.5, code: 'scene().edges(0.2, 0)' },
-  ]
-  const chain = frameAt(rows, 4)!.chains[0].chain
-  assert.deepEqual(chain.map((o) => o.op), ['scene', 'blend'])
-  assert.deepEqual(chain[1].chainArgs![0].map((o) => o.op), ['scene', 'edges'])
+  const chain = frameAt([
+    { beat: 1, event: 'chain', code: 'edges(0.2, 0)' },
+    { beat: b(4), event: 'layer', mode: 'blend', value: 0.5, code: 'strobe(2)' },
+  ], 4)!.chain
+  assert.deepEqual(chain.map((o) => o.op), ['scene', 'edges', 'blend'])
+  assert.deepEqual(chain[2].chainArgs![0].map((o) => o.op), ['scene', 'strobe'])
 })
 
 test('a transition wraps before→after during its window, then expires to the after program', () => {
   const rows: Row[] = [
-    { beat: 1, event: 'setCode', out: 'main', code: 'scene().blur(4)' },
-    { beat: 5, event: 'transition', out: 'main', dur: 2 }, // frame 120, window [120,180)
-    { beat: 5, event: 'setCode', out: 'main', code: 'scene().edges(0.2, 0)' },
+    { beat: 1, event: 'chain', code: 'blur(4)' },
+    { beat: 5, event: 'transition', dur: 2 }, // frame 120, window [120,180)
+    { beat: 5, event: 'chain', code: 'edges(0.2, 0)' },
   ]
   const idx = buildPostIndex(rows)
   assert.deepEqual(ops(postFrameAt(idx, 120)), ['transition'], 'inside the window: the wipe')
@@ -216,35 +100,79 @@ test('a transition wraps before→after during its window, then expires to the a
   assert.ok(postStateFrames(idx).includes(180), 'the window END is an enumerated state frame')
 })
 
-test('a bus out folds independently and the main chain can sample it via src(bN)', () => {
-  const frame = frameAt([
-    { beat: 1, event: 'setCode', out: 'b1', code: 'src(b1).blend(scene(), 0.3)' },
-    { beat: 1, event: 'setCode', out: 'main', code: 'scene().layer(src(b1))' },
-  ], 0)!
-  assert.deepEqual(frame.chains.map((c) => c.out), ['b1', 'main'])
-  // src(b1) carries a structural bus index — different buses are different states.
-  assert.equal(frame.chains[0].chain[0].op, 'src')
-  assert.equal(frame.chains[0].chain[0].args[0].value, 1)
+test('prev() is an explicit feedback head usable as a branch arg', () => {
+  const chain = frameAt([{ beat: 1, event: 'chain', code: 'blend(prev().mosaic(4), 0.4)' }], 0)!.chain
+  assert.deepEqual(chain.map((o) => o.op), ['scene', 'blend'])
+  assert.deepEqual(chain[1].chainArgs![0].map((o) => o.op), ['prev', 'mosaic'])
 })
 
-test('warm-compile audit: no frame of a loop introduces a state setProgram did not enumerate', () => {
+test('a structural arg change selects a different state; a live change does not', () => {
+  const s1 = frameAt([{ beat: 1, event: 'chain', code: 'edges(0.9, 1)' }], 0)!
+  const live = frameAt([{ beat: 1, event: 'chain', code: 'edges(0.1, 1)' }], 0)!
+  const struct = frameAt([{ beat: 1, event: 'chain', code: 'edges(0.1, 2)' }], 0)!
+  assert.equal(s1.stateId, live.stateId)
+  assert.notEqual(live.stateId, struct.stateId)
+})
+
+test('set with dur tweens from the previous value using the eased curve', () => {
   const rows: Row[] = [
-    { beat: 1, event: 'setCode', out: 'b1', code: 'src(b1).blend(scene(), 0.3)' },
-    { beat: 1, event: 'setCode', out: 'main', code: 'scene().edges((p) => p.th, 1)' },
-    { beat: 1, event: 'setVariable', name: 'th', value: 0.2 },
-    { beat: 9, event: 'append', out: 'main', code: '.bloom((p) => p.glow)' },
-    { beat: 13, event: 'transition', out: 'main', dur: 2 },
-    { beat: 13, event: 'setCode', out: 'main', code: 'scene().pixelate(8)' },
+    { beat: 1, event: 'set', name: 'th', value: 0.2 },
+    { beat: 5, event: 'set', name: 'th', value: 0.5, dur: 2, ease: 'linear' }, // frame 120..180
+  ]
+  close(vars(rows, 60).th, 0.2)   // before the tween: the step value
+  close(vars(rows, 150).th, 0.35) // midpoint (linear)
+  close(vars(rows, 180).th, 0.5)  // settled at the target
+})
+
+test('pulse adds a decaying (default easeOut) contribution that stacks and expires', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'set', name: 'g', value: 0.3 },
+    { beat: 3, event: 'pulse', name: 'g', value: 1, dur: 1 }, // frame 60..90, default easeOut
+    { beat: 3, event: 'pulse', name: 'g', value: 0.5, dur: 1 },
+  ]
+  close(vars(rows, 60).g, 1.8)   // onset: 0.3 + (1 + 0.5)·env(0)=1
+  close(vars(rows, 75).g, 0.675) // midpoint easeOut env=0.25: 0.3 + 1.5·0.25
+  close(vars(rows, 90).g, 0.3)   // expired: inert
+})
+
+test('postCodeUpToRow shows the running chain after the given row', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'chain', code: 'blur(3)' },
+    { beat: b(4), event: 'add', code: 'pixelate(6)' },
+  ]
+  assert.equal(postCodeUpToRow(rows, 0), 'blur(3)')
+  assert.equal(postCodeUpToRow(rows, 1), 'blur(3).pixelate(6)')
+})
+
+test('warm-compile audit: no frame of a loop introduces an unenumerated state', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'chain', code: 'edges((p) => p.th, 1)' },
+    { beat: 1, event: 'set', name: 'th', value: 0.2 },
+    { beat: 9, event: 'add', code: 'bloom((p) => p.glow)' },
+    { beat: 11, event: 'remove', name: 'bloom' },
+    { beat: 13, event: 'transition', dur: 2 },
+    { beat: 13, event: 'chain', code: 'blend(prev().mosaic(4), 0.5)' },
   ]
   const idx = buildPostIndex(rows)
   const enumerated = new Set<string>()
-  for (const f of postStateFrames(idx)) {
-    const fr = postFrameAt(idx, f)
-    if (fr) enumerated.add(fr.stateId)
-  }
+  for (const f of postStateFrames(idx)) { const fr = postFrameAt(idx, f); if (fr) enumerated.add(fr.stateId) }
   const maxF = Math.max(...postStateFrames(idx)) + 120
   for (let f = 0; f <= maxF; f++) {
     const fr = postFrameAt(idx, f)
     if (fr) assert.ok(enumerated.has(fr.stateId), `frame ${f} state "${fr.stateId}" was not precompiled`)
   }
+})
+
+test('op-list lowering: live-by-default, structural where the registry says, signature masks live', () => {
+  const chain = evalPostCode('edges((p) => p.th, 1).blur(3)')
+  assert.equal(chain[1].args[0].cls, 'live')       // threshold: a function
+  assert.equal(typeof chain[1].args[0].value, 'function')
+  assert.deepEqual(chain[1].args[1], { cls: 'structural', value: 1 }) // colorMode baked
+  assert.equal(chainSignature(chain), chainSignature(evalPostCode('edges(0.9, 1).blur(0)')), 'live literals are masked')
+  assert.deepEqual(collectLiveValues(chain, { th: 0.4 }), [0.4, 3]) // resolved in binding order
+})
+
+test('an unknown op leaves post inactive rather than crashing the frame', () => {
+  assert.throws(() => evalPostCode('noSuchOp()'))
+  assert.equal(frameAt([{ beat: 1, event: 'chain', code: 'noSuchOp()' }], 0), null)
 })

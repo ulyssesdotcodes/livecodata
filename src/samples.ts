@@ -515,10 +515,10 @@ define("events", () => rows([
 ]))
 define("scene", (rand, table) => table("events").rasterize(16))
 
-// 2. The post chain. A cell starts from a HEAD — scene() is the rendered scene
-//    — and pipes it through fluent ops. No .out() in a cell: the \`out\` column
-//    (main = the display) terminates the chain.
-//    Every op argument is either LIVE or STRUCTURAL:
+// 2. The post chain. The scene is the IMPLICIT source, so a cell reads like
+//    hydra — \`edges(0.2).bloom(1.2)\` IS the effect stack applied to the scene.
+//    No head, no routing, no .out(). Every op argument is either LIVE or
+//    STRUCTURAL:
 //      - LIVE (the default): a number, OR a function of the props object —
 //        (p) => p.th — bound to a uniform the engine rewrites each frame, so it
 //        tracks the table live with NO recompile. props carries your folded
@@ -526,18 +526,20 @@ define("scene", (rand, table) => table("events").rasterize(16))
 //      - STRUCTURAL: an arg that picks a shader path (e.g. edges' colorMode)
 //        and so bakes into the compiled shader.
 //    The seeded "post" tab on the right holds these events:
-//      - beat 1  setCode:     scene().edges((p) => p.th, 1).bloom((p) => p.glow)
-//                             (colorMode 1 = edges drawn over the source).
-//      - beat 1  setVariable: th = 0.15, glow = 0.2 — the chain's live inputs.
-//      - beat 5  setVariable: th → 0.4 with dur:2 — a TWEEN (interpolates from
-//                             the current value over 2 beats via \`ease\`), not a
-//                             step. Automation with no per-parameter columns.
-//      - beat 7  impulse:     glow += 1.2 over dur:1, easeOut — an additive
-//                             decaying burst (impulses stack); the bloom flares.
-//      - beat 13 transition:  wipe to the program after it over dur:2 beats
-//                             (blank code = crossfade), then...
-//      - beat 13 setCode:     scene().mosaic(4).posterize(4) — the destination,
-//                             built with ordinary events at the same beat.
+//      - beat 1  chain: edges((p) => p.th, 1).bloom((p) => p.glow)
+//                       (colorMode 1 = edges drawn over the source).
+//      - beat 1  set:   th = 0.15, glow = 0.2 — the chain's live inputs.
+//      - beat 5  set:   th → 0.4 with dur:2 — a TWEEN (interpolates from the
+//                       current value over 2 beats via \`ease\`), not a step.
+//      - beat 7  pulse: glow += 1.2 over dur:1, easeOut — an additive decaying
+//                       burst (pulses stack); the bloom flares.
+//      - beat 9  add:   pixelate(6) — append an effect mid-loop.
+//      - beat 11 remove: pixelate — drop it again by op name (the beat-time
+//                       bypass, the un-add). No chain rewrite.
+//      - beat 13 transition: wipe over dur:2 beats (blank code = crossfade) to...
+//      - beat 13 chain: blend(prev().mosaic(4), 0.5) — the destination feeds
+//                       back the PREVIOUS output frame (prev()) blended with a
+//                       mosaic of it, for a trailing kaleidoscope.
 //    editable() makes the table live: click a code cell to edit the chain here,
 //    or tweak/"+ row" events on the right — \`schemas.post\` is the canonical
 //    schema (hover it for the columns). Check "disabled" to mute a row.
@@ -545,14 +547,15 @@ editable("post", schemas.post)
 `,
     tables: {
       post: [
-        { beat: 1, event: "setCode", out: "main",
-          code: "scene().edges((p) => p.th, 1).bloom((p) => p.glow)" },
-        { beat: 1, event: "setVariable", name: "th", value: 0.15 },
-        { beat: 1, event: "setVariable", name: "glow", value: 0.2 },
-        { beat: 5, event: "setVariable", name: "th", value: 0.4, dur: 2, ease: "easeInOut" },
-        { beat: 7, event: "impulse", name: "glow", value: 1.2, dur: 1, ease: "easeOut" },
-        { beat: 13, event: "transition", out: "main", dur: 2 },
-        { beat: 13, event: "setCode", out: "main", code: "scene().mosaic(4).posterize(4)" },
+        { beat: 1, event: "chain", code: "edges((p) => p.th, 1).bloom((p) => p.glow)" },
+        { beat: 1, event: "set", name: "th", value: 0.15 },
+        { beat: 1, event: "set", name: "glow", value: 0.2 },
+        { beat: 5, event: "set", name: "th", value: 0.4, dur: 2, ease: "easeInOut" },
+        { beat: 7, event: "pulse", name: "glow", value: 1.2, dur: 1, ease: "easeOut" },
+        { beat: 9, event: "add", code: "pixelate(6)" },
+        { beat: 11, event: "remove", name: "pixelate" },
+        { beat: 13, event: "transition", dur: 2 },
+        { beat: 13, event: "chain", code: "blend(prev().mosaic(4), 0.5)" },
       ],
     },
   },

@@ -1,31 +1,25 @@
 // livecodata post — table-driven TSL post-processing. The "post" view is
 // hydra's sibling: a table of events placed on the loop by a 1-indexed `beat`
-// column, folded per `out` into one running chain string, then evaluated to an
-// immutable op list (see post-lang.ts). This module is pure — no GPU, no
-// `three`; the node graph is built and rendered by post-scene.ts. It reuses
-// hydra.ts's chain surgery (chainOf/splitHead/transitionWindow) so the two
-// folds stay byte-compatible.
+// column, folded into ONE running effect chain applied to the rendered scene,
+// then evaluated to an immutable op list (see post-lang.ts). The scene is the
+// implicit source and there is one output, so the code reads like hydra
+// (`edges(0.2).bloom(1.2)`) with no routing. This module is pure — no GPU, no
+// `three`; the node graph is built and rendered by post-scene.ts.
 
 import { beatToFrame, beatsToFrames, FPS } from './constants.js'
-import { chainOf, splitHead } from './hydra.js'
 import { EASINGS, type Easings } from './dsl.js'
 import { evalPostCode, chainSignature, type OpChain } from './post-lang.js'
 import type { Row } from './lineage.js'
 
-// One folded frame: the precompiled-state id (structural signature across every
-// out), the op list per out, and the latest value of each variable.
+// One folded frame: the precompiled-state id (the chain's structural
+// signature), the op list, and the latest value of each variable.
 export interface PostFrame {
   stateId: string
-  chains: { out: string; chain: OpChain }[]
+  chain: OpChain
   vars: Record<string, unknown>
 }
 
-// Every event the post view understands. setSource/append/layer/transition and
-// impulse are recognised (so their rows fold and display) even where later
-// phases own their full behaviour.
-const POST_EVENTS = new Set([
-  'setCode', 'setSource', 'append', 'replace', 'layer', 'transition', 'setVariable', 'impulse',
-])
+const POST_EVENTS = new Set(['chain', 'add', 'remove', 'layer', 'transition', 'set', 'pulse'])
 
 export function isPostRow(row: Row | null | undefined): boolean {
   return row != null && typeof row.event === 'string' && POST_EVENTS.has(row.event)
@@ -36,14 +30,11 @@ export function postRows(rows: Row[] | null | undefined): Row[] {
 }
 
 // Place each row on the frame grid from its 1-indexed `beat` (frame stored on
-// `index`) and sort by frame — identical to buildHydraIndex, so a beat past the
-// loop's end lands the row in a later pass (the visualizer wraps the playhead).
+// `index`) and sort by frame — like buildHydraIndex, so a beat past the loop's
+// end lands the row in a later pass (the visualizer wraps the playhead).
 export function buildPostIndex(rows: Row[] | null | undefined): Row[] {
   return postRows(rows)
-    .map((row) => ({
-      ...row,
-      index: beatToFrame((row.beat as number | undefined) ?? 1),
-    }))
+    .map((row) => ({ ...row, index: beatToFrame((row.beat as number | undefined) ?? 1) }))
     .sort((a, b) => (a.index as number) - (b.index as number))
 }
 
@@ -64,11 +55,29 @@ export function postStateFrames(index: Row[]): number[] {
   return [...frames].sort((a, b) => a - b)
 }
 
-// The output a row drives: one of main/b1/b2/b3, defaulting to main.
-const OUTPUTS = new Set(['main', 'b1', 'b2', 'b3'])
-function outputOf(row: Row): string {
-  const o = typeof row.out === 'string' ? row.out.trim() : ''
-  return OUTPUTS.has(o) ? o : 'main'
+// Split a chain string into its top-level op-call segments (balanced-paren
+// aware, so dots inside args — decimals, nested calls — never split). The
+// leading identifier of each segment names the op.
+function splitOps(chain: string): string[] {
+  const segs: string[] = []
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < chain.length; i++) {
+    const c = chain[i]
+    if (c === '(' || c === '[') depth++
+    else if (c === ')' || c === ']') depth--
+    else if (c === '.' && depth === 0) { segs.push(chain.slice(start, i)); start = i + 1 }
+  }
+  segs.push(chain.slice(start))
+  return segs.filter((s) => s.trim() !== '')
+}
+
+// Drop every op named `name` from a chain, then rejoin — the beat-time bypass
+// behind the `remove` event. Dropping the first op is fine: the next op becomes
+// top-level (implicit scene), which is still a valid chain.
+function removeOp(chain: string, name: string): string {
+  const nameOf = (s: string): string => s.match(/^\s*([\w$]+)/)?.[1] ?? ''
+  return splitOps(chain).filter((s) => nameOf(s) !== name).join('.')
 }
 
 // Blend modes the `layer` event can pick, and whether each takes an amount.
@@ -89,80 +98,58 @@ function amountExpr(value: unknown): string {
 
 // A transition snapshotted mid-fold: the frozen "before" chain, its mask chain
 // ('' = plain crossfade), and the grid-frame wipe window.
-interface Transition {
-  before: string
-  mask: string
-  startFrame: number
-  durFrames: number
-}
+interface Transition { before: string; mask: string; startFrame: number; durFrames: number }
 
-// Fold one output's events (sorted, filtered to this output) into its running
-// chain string. Returns null until a setCode establishes some code. Unlike
-// hydra there is no terminal `.out(oN)` — the `out` column names the target and
-// the bare chain stands on its own. setVariable/impulse are folded separately
-// (foldVars), since variables are global to the program, not per-output.
-function foldOutput(rows: Row[], frame: number): string | null {
-  let code: string | null = null
+// Fold the event stream into the running chain string at `frame`. Returns null
+// (post stage inactive → scene shows through) until the chain is non-empty.
+// setVariable/pulse are handled separately (foldVars); this is chain shape only.
+function foldChain(index: Row[], frame: number): string | null {
+  let code = ''
   const transitions: Transition[] = []
-  for (const row of rows) {
+  for (const row of index) {
     if ((row.index as number) > frame) break
+    const c = typeof row.code === 'string' ? row.code.trim() : ''
     switch (row.event) {
-      case 'setCode':
-        if (typeof row.code === 'string' && row.code.trim() !== '') code = chainOf(row.code.trim())
+      case 'chain':
+        code = c
         break
-      case 'setSource':
-        // Swap the head, keep the effect tail (splitHead), like hydra.
-        if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
-          code = `${chainOf(row.code.trim())}${splitHead(code)[1]}`
-        }
+      case 'add':
+        if (c !== '') code = code === '' ? c.replace(/^\./, '') : `${code}.${c.replace(/^\./, '')}`
         break
-      case 'append':
-        if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
-          code = `${chainOf(code)}${row.code.trim()}`
-        }
-        break
-      case 'replace':
-        if (code != null && typeof row.find === 'string' && row.find !== '') {
-          code = code.split(row.find).join(row.value == null ? '' : String(row.value))
-        }
+      case 'remove':
+        if (code !== '' && typeof row.name === 'string' && row.name !== '') code = removeOp(code, row.name)
         break
       case 'layer':
-        if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
+        if (c !== '') {
           const mode = typeof row.mode === 'string' && LAYER_MODES.has(row.mode) ? row.mode : 'blend'
           const amt = LAYER_AMOUNT.has(mode) ? `, ${amountExpr(row.value)}` : ''
-          code = `${chainOf(code)}.${mode}(${chainOf(row.code.trim())}${amt})`
+          const base = code === '' ? 'scene()' : code
+          code = `${base}.${mode}(${c}${amt})`
         }
         break
       case 'transition': {
         // Snapshot the current chain as "before"; the wipe applies to the final
-        // "after" once folded. Elapsed windows are dropped (see postStateFrames
-        // for why the window END is its own enumerated state).
-        if (code != null) {
-          const durBeats = typeof row.dur === 'number' && row.dur > 0 ? row.dur : 1
-          const durFrames = Math.max(1, beatsToFrames(durBeats))
-          const startFrame = row.index as number
-          if (frame < startFrame + durFrames) {
-            transitions.push({
-              before: chainOf(code),
-              mask: typeof row.code === 'string' ? row.code.trim() : '',
-              startFrame,
-              durFrames,
-            })
-          }
+        // "after" once folded. Elapsed windows drop (postStateFrames enumerates
+        // the window END as its own state).
+        const durBeats = typeof row.dur === 'number' && row.dur > 0 ? row.dur : 1
+        const durFrames = Math.max(1, beatsToFrames(durBeats))
+        const startFrame = row.index as number
+        if (frame < startFrame + durFrames) {
+          transitions.push({ before: code === '' ? 'scene()' : code, mask: c, startFrame, durFrames })
         }
         break
       }
     }
   }
-  if (code == null) return null
+  if (code === '' && transitions.length === 0) return null
   // Apply wipes innermost-first so nested transitions compose in beat order.
-  let result = chainOf(code)
+  let result = code === '' ? 'scene()' : code
   for (let i = transitions.length - 1; i >= 0; i--) {
     const tr = transitions[i]
     const start = tr.startFrame / FPS
     const dur = tr.durFrames / FPS
     const posFn = `(p) => Math.min(Math.max((p.time - ${start}) / ${dur}, 0), 1)`
-    const mask = tr.mask !== '' ? `(${chainOf(tr.mask)})` : 'null'
+    const mask = tr.mask !== '' ? `(${tr.mask})` : 'null'
     result = `transition((${tr.before}), (${result}), ${mask}, ${posFn})`
   }
   return result
@@ -172,12 +159,11 @@ const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x)
 const easingOf = (name: unknown, fallback: keyof Easings): ((t: number) => number) =>
   EASINGS[(typeof name === 'string' && name in EASINGS ? name : fallback) as keyof Easings]
 
-// The base (step-or-tween) value of one variable at `frame`, from its
-// setVariable rows in index order (all at/before frame). The last row is the
-// active one: with a `dur` it interpolates from the previous row's value using
-// EASINGS[ease] over dur beats; otherwise it steps. A non-numeric value (or a
-// missing previous value) degenerates to a step, so `$expr` bindings pass
-// through untouched.
+// The base (step-or-tween) value of one variable at `frame`, from its `set`
+// rows in index order (all at/before frame). The last row is the active one:
+// with a `dur` it interpolates from the previous row's value via EASINGS[ease]
+// over dur beats; otherwise it steps. A non-numeric value (or a missing
+// previous value) degenerates to a step, so `$expr` bindings pass through.
 function baseValue(sets: Row[], frame: number): unknown {
   if (sets.length === 0) return undefined
   let prev: unknown = undefined
@@ -193,12 +179,12 @@ function baseValue(sets: Row[], frame: number): unknown {
   return target
 }
 
-// The summed contribution of one variable's active impulses at `frame`. Each
-// adds value·env(u) over `dur` beats, u = elapsed fraction, env decaying 1→0
-// shaped by `ease` (default easeOut); expired or not-yet-started rows are inert.
-function impulseSum(impulses: Row[], frame: number): number {
+// The summed contribution of one variable's active pulses at `frame`. Each adds
+// value·env(u) over `dur` beats, u = elapsed fraction, env decaying 1→0 shaped
+// by `ease` (default easeOut); expired or not-yet-started rows are inert.
+function pulseSum(pulses: Row[], frame: number): number {
   let sum = 0
-  for (const r of impulses) {
+  for (const r of pulses) {
     const dur = typeof r.dur === 'number' && r.dur > 0 ? r.dur : 0
     if (dur <= 0) continue
     const start = r.index as number
@@ -211,87 +197,56 @@ function impulseSum(impulses: Row[], frame: number): number {
   return sum
 }
 
-// Fold every setVariable/impulse row (global to the program, all outs) into the
-// variable map at `frame`: each name's base value plus its active impulses.
+// Fold every set/pulse row into the variable map at `frame`: each name's base
+// value plus its active pulses.
 export function foldVars(index: Row[], frame: number): Record<string, unknown> {
   const sets = new Map<string, Row[]>()
-  const imps = new Map<string, Row[]>()
+  const pulses = new Map<string, Row[]>()
   for (const row of index) {
     if ((row.index as number) > frame) break
     if (typeof row.name !== 'string') continue
-    if (row.event === 'setVariable') (sets.get(row.name) ?? sets.set(row.name, []).get(row.name)!).push(row)
-    else if (row.event === 'impulse') (imps.get(row.name) ?? imps.set(row.name, []).get(row.name)!).push(row)
+    const bucket = row.event === 'set' ? sets : row.event === 'pulse' ? pulses : null
+    if (bucket) (bucket.get(row.name) ?? bucket.set(row.name, []).get(row.name)!).push(row)
   }
   const vars: Record<string, unknown> = {}
-  for (const name of new Set([...sets.keys(), ...imps.keys()])) {
+  for (const name of new Set([...sets.keys(), ...pulses.keys()])) {
     const base = sets.has(name) ? baseValue(sets.get(name)!, frame) : undefined
-    const impulse = imps.has(name) ? impulseSum(imps.get(name)!, frame) : 0
-    if (typeof base === 'number' && Number.isFinite(base)) vars[name] = base + impulse
-    else if (base === undefined && imps.has(name)) vars[name] = impulse
+    const pulse = pulses.has(name) ? pulseSum(pulses.get(name)!, frame) : 0
+    if (typeof base === 'number' && Number.isFinite(base)) vars[name] = base + pulse
+    else if (base === undefined && pulses.has(name)) vars[name] = pulse
     else vars[name] = base
   }
   return vars
 }
 
 // The active program at (absolute) frame `f`: every event at/before it folds
-// in, one running chain per output. Each output's chain is evaluated to an op
-// list; the state id is the structural signature across all outputs, so two
-// frames sharing structure share a precompiled graph. Returns null until some
-// output reaches a setCode — playback then leaves the post stage inactive.
+// into one running chain, evaluated to an op list. The state id is its
+// structural signature, so frames sharing structure share a precompiled graph.
+// Returns null until the chain is non-empty — playback then leaves post inactive.
 export function postFrameAt(index: Row[], f: number): PostFrame | null {
   const frame = Math.floor(f)
   if (frame < 0) return null
-  const groups = new Map<string, Row[]>()
-  for (const row of index) {
-    const out = outputOf(row)
-    const g = groups.get(out)
-    if (g) g.push(row)
-    else groups.set(out, [row])
+  const codeStr = foldChain(index, frame)
+  if (codeStr == null) return null
+  let chain: OpChain
+  try {
+    chain = evalPostCode(codeStr)
+  } catch (err) {
+    // A broken cell (mid-edit or an unknown op) leaves post inactive rather than
+    // crashing the frame.
+    console.error('post: chain eval failed:', (err as Error).message)
+    return null
   }
-  const vars = foldVars(index, frame)
-  const chains: { out: string; chain: OpChain }[] = []
-  for (const out of [...groups.keys()].sort()) {
-    const codeStr = foldOutput(groups.get(out)!, frame)
-    if (codeStr == null) continue
-    let chain: OpChain
-    try {
-      chain = evalPostCode(codeStr)
-    } catch (err) {
-      // A broken cell (mid-edit or an unknown op) drops that output rather than
-      // the whole frame — the rest of the program still renders.
-      console.error('post: chain eval failed:', (err as Error).message)
-      continue
-    }
-    chains.push({ out, chain })
-  }
-  if (chains.length === 0) return null
-  const stateId = chains.map((c) => `${c.out}:${chainSignature(c.chain)}`).join('|')
-  return { stateId, chains, vars }
+  return { stateId: chainSignature(chain), chain, vars: foldVars(index, frame) }
 }
 
-// The compiled state as of one table row: events folded up to and INCLUDING the
-// row at `rowIndex`. Powers the table panel's per-row popover; returns the
-// folded chain source per output (not the op list), mirroring hydra/bauble.
+// The compiled chain source as of one table row: events folded up to and
+// INCLUDING the row at `rowIndex`. Powers the table panel's per-row popover.
 export function postCodeUpToRow(rows: Row[] | null | undefined, rowIndex: number): string | null {
   const all = rows ?? []
   if (!isPostRow(all[rowIndex])) return null
   const index = buildPostIndex(all.map((row, i) => ({ ...row, __row: i })))
   const pos = index.findIndex((r) => (r as { __row?: number }).__row === rowIndex)
   if (pos < 0) return null
-  const at = index[pos]
-  const upto = index.slice(0, pos + 1)
-  const frame = at.index as number
-  const groups = new Map<string, Row[]>()
-  for (const row of upto) {
-    const out = outputOf(row)
-    const g = groups.get(out)
-    if (g) g.push(row)
-    else groups.set(out, [row])
-  }
-  const codes: string[] = []
-  for (const out of [...groups.keys()].sort()) {
-    const codeStr = foldOutput(groups.get(out)!, frame)
-    if (codeStr != null) codes.push(groups.size > 1 ? `${out}: ${codeStr}` : codeStr)
-  }
-  return codes.length ? codes.join('\n') : null
+  return foldChain(index.slice(0, pos + 1), index[pos].index as number)
 }

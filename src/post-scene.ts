@@ -45,14 +45,10 @@ function liveInit(op: OpCall, i: number): number {
   return typeof v === 'number' ? v : (POST_OPS[op.op]?.args[i]?.default ?? 0)
 }
 
-// A src(bN) sampling node paired with the bus it reads — the engine repoints its
-// `.value` at that bus's previous-frame target each render.
-interface SrcRef { bus: number; node: Node }
-
 interface Graph {
   node: Node
   uniforms: Node[]
-  srcRefs: SrcRef[]
+  usesPrev: boolean
   chain: OpChain
 }
 
@@ -67,27 +63,24 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
   // node, so they stay deterministic under pause/scrub.
   const beatUniform = t.uniform(0)
 
-  // Feedback buses: a ping-pong RenderTarget pair per used index, shared across
-  // states so feedback survives a state switch (it drops on resize, like hydra).
-  interface Bus { index: number; targets: [THREE.RenderTarget, THREE.RenderTarget]; cur: number }
-  const buses = new Map<number, Bus>()
-  function ensureBus(index: number): Bus {
-    let bus = buses.get(index)
-    if (!bus) {
-      const size = renderer.getDrawingBufferSize(new THREE.Vector2())
-      const mk = (): THREE.RenderTarget => new THREE.RenderTarget(Math.max(1, size.x), Math.max(1, size.y), { depthBuffer: false })
-      bus = { index, targets: [mk(), mk()], cur: 0 }
-      buses.set(index, bus)
-    }
-    return bus
+  // Feedback: prev() samples the previous output frame. After the chain renders
+  // to the canvas, its pixels are copied into `prevTexture` for the next frame —
+  // one-frame-behind, race-proof, no extra pass. Allocated only when a state
+  // references prev(); contents drop on resize.
+  let prevTexture: THREE.FramebufferTexture | null = null
+  const prevRefs: Node[] = []
+  function ensurePrev(): void {
+    if (prevTexture) return
+    const size = renderer.getDrawingBufferSize(new THREE.Vector2())
+    prevTexture = new THREE.FramebufferTexture(Math.max(1, size.x), Math.max(1, size.y))
   }
 
-  // Build a chain's node graph, collecting live uniforms and src refs in the
+  // Build a chain's node graph, collecting live uniforms and prev refs in the
   // deterministic forEachLiveArg order (own live args of each op, then its chain
   // args) so setFrame binds uniforms positionally.
   function buildGraph(chain: OpChain): Graph {
     const uniforms: Node[] = []
-    const srcRefs: SrcRef[] = []
+    let usesPrev = false
     const live = (init: number): Node => { const u = t.uniform(init); uniforms.push(u); return u }
 
     function build(c: OpChain): Node {
@@ -100,10 +93,11 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
       switch (op.op) {
         case 'scene':
           return scenePassColor
-        case 'src': {
-          const busIndex = op.args[0].value as number
-          const texNode = t.texture(ensureBus(busIndex).targets[0].texture)
-          srcRefs.push({ bus: busIndex, node: texNode })
+        case 'prev': {
+          ensurePrev()
+          usesPrev = true
+          const texNode = t.texture(prevTexture)
+          prevRefs.push(texNode)
           return texNode
         }
         case 'edges': {
@@ -208,53 +202,29 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
     if (liveCount !== uniforms.length) {
       throw new Error(`post: bound ${uniforms.length} uniforms for ${liveCount} live args`)
     }
-    return { node, uniforms, srcRefs, chain }
+    return { node, uniforms, usesPrev, chain }
   }
 
-  interface BusGraph extends Graph { index: number; quad: Node }
-  interface State {
-    main: { pipeline: Node; graph: Graph } | null
-    buses: BusGraph[]
-    warmed: boolean
-  }
+  interface State { pipeline: Node; graph: Graph; warmed: boolean }
   const states = new Map<string, State>()
   let active: State | null = null
 
   function buildState(frame: PostFrame): State {
-    const byOut = new Map(frame.chains.map((c) => [c.out, c.chain]))
-    let main: State['main'] = null
-    const mainChain = byOut.get('main')
-    if (mainChain) {
-      const graph = buildGraph(mainChain)
-      main = { pipeline: new THREE.RenderPipeline(renderer, graph.node), graph }
-    }
-    const busGraphs: BusGraph[] = []
-    for (const idx of [1, 2, 3]) {
-      const bc = byOut.get('b' + idx)
-      if (!bc) continue
-      ensureBus(idx)
-      const graph = buildGraph(bc)
-      const mat = new THREE.NodeMaterial()
-      mat.fragmentNode = graph.node
-      const quad = new THREE.QuadMesh(mat)
-      busGraphs.push({ ...graph, index: idx, quad })
-    }
-    const state: State = { main, buses: busGraphs, warmed: false }
+    const graph = buildGraph(frame.chain)
+    const state: State = { pipeline: new THREE.RenderPipeline(renderer, graph.node), graph, warmed: false }
     states.set(frame.stateId, state)
     return state
   }
 
+  // Warm-render each state once (to the canvas — enough to force the backend
+  // pipeline/shader build) inside the cook pause, so no compile lands on a beat.
   function warmAll(): void {
     void renderer.init().then(() => {
       for (const state of states.values()) {
         if (state.warmed) continue
         try {
-          for (const bg of state.buses) {
-            renderer.setRenderTarget(buses.get(bg.index)!.targets[0])
-            bg.quad.render(renderer)
-          }
           renderer.setRenderTarget(null)
-          state.main?.pipeline.render()
+          state.pipeline.render()
           state.warmed = true
         } catch (e) {
           console.error('post: warm render failed', e)
@@ -272,6 +242,7 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
   return {
     setProgram(index): void {
       states.clear()
+      prevRefs.length = 0
       active = null
       if (index.length === 0) return
       const seen = new Set<string>()
@@ -303,39 +274,26 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
       }
       active = state
       beatUniform.value = typeof props.beat === 'number' ? props.beat : 0
-      if (state.main) writeUniforms(state.main.graph, props)
-      for (const bg of state.buses) writeUniforms(bg, props)
+      writeUniforms(state.graph, props)
     },
 
     render(): boolean {
       if (!active) return false
-      // Buses in index order to their write targets, sampling the previous frame
-      // (targets[cur]); then flip so main reads this frame's output.
-      for (const bg of active.buses) {
-        const bus = buses.get(bg.index)!
-        for (const ref of bg.srcRefs) {
-          const rb = buses.get(ref.bus)
-          if (rb) ref.node.value = rb.targets[rb.cur].texture
-        }
-        renderer.setRenderTarget(bus.targets[1 - bus.cur])
-        bg.quad.render(renderer)
-      }
-      renderer.setRenderTarget(null)
-      for (const bg of active.buses) { const bus = buses.get(bg.index)!; bus.cur = 1 - bus.cur }
-      if (!active.main) return false
-      for (const ref of active.main.graph.srcRefs) {
-        const rb = buses.get(ref.bus)
-        if (rb) ref.node.value = rb.targets[rb.cur].texture
-      }
-      active.main.pipeline.render()
+      active.pipeline.render()
+      // Grab the just-rendered canvas for next frame's prev() — one-frame-behind
+      // feedback with no extra pass.
+      if (active.graph.usesPrev && prevTexture) renderer.copyFramebufferToTexture(prevTexture)
       return true
     },
 
     resize(): void {
+      if (!prevTexture) return
+      // FramebufferTexture has no in-place resize — recreate at the new size and
+      // repoint the graphs' prev nodes; the feedback trail drops (like hydra).
       const size = renderer.getDrawingBufferSize(new THREE.Vector2())
-      for (const bus of buses.values()) {
-        for (const rt of bus.targets) rt.setSize(Math.max(1, size.x), Math.max(1, size.y))
-      }
+      prevTexture.dispose()
+      prevTexture = new THREE.FramebufferTexture(Math.max(1, size.x), Math.max(1, size.y))
+      for (const ref of prevRefs) ref.value = prevTexture
     },
 
     reset(): void {

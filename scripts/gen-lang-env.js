@@ -138,12 +138,14 @@ function buildPostGlobals(root) {
     const own = args.map((a) => `${a.name}?: ${a.arg === 'live' ? 'PostArg' : 'number'}`)
     return (combine ? ['other: PostChain', ...own] : own).join(', ')
   }
-  /** @param {string} doc */
-  const docComment = (doc) => (doc ? `    /** ${doc.replace(/\*\//g, '*\\/')} */\n` : '')
-  const methods = ops
-    .filter((o) => o.kind === 'fx' || o.kind === 'combine')
-    .map((o) => `${docComment(o.doc)}    ${o.name}(${params(o.args, o.kind === 'combine')}): PostChain;`)
-    .join('\n')
+  /** @param {string} doc @param {string} indent */
+  const docComment = (doc, indent) => (doc ? `${indent}/** ${doc.replace(/\*\//g, '*\\/')} */\n` : '')
+  const fxOps = ops.filter((o) => o.kind === 'fx' || o.kind === 'combine')
+  // Each op is both a PostChain method (chaining) and a top-level global (starts
+  // a chain from the implicit scene) — so `edges(0.2)` and `blur(4).bloom(1)`
+  // read like hydra.
+  const methods = fxOps.map((o) => `${docComment(o.doc, '    ')}    ${o.name}(${params(o.args, o.kind === 'combine')}): PostChain;`).join('\n')
+  const globals = fxOps.map((o) => `${docComment(o.doc, '  ')}  function ${o.name}(${params(o.args, o.kind === 'combine')}): PostChain;`).join('\n')
 
   return [
     "// Generated — the post chain surface, from src/post-lang.ts's op registry",
@@ -162,13 +164,11 @@ function buildPostGlobals(root) {
     '  interface PostChain {',
     methods,
     '  }',
-    '  /** The rendered 3D scene as the chain head — the colour plane every effect starts from. */',
+    globals,
+    '  /** The raw rendered scene — needed only inside a branch arg, e.g. mask(scene()). */',
     '  function scene(): PostChain;',
-    "  /** A feedback bus (src(b1)..src(b3)) as the chain head — samples that bus's previous frame. */",
-    '  function src(bus: 1 | 2 | 3): PostChain;',
-    '  const b1: 1;',
-    '  const b2: 2;',
-    '  const b3: 3;',
+    '  /** The previous output frame — one-frame-behind feedback, e.g. blend(prev(), 0.4). */',
+    '  function prev(): PostChain;',
     '}',
     'export {};',
   ].join('\n')

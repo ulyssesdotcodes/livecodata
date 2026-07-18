@@ -4,6 +4,7 @@ import { initThree } from './three-scene.js'
 import { initHydra } from './hydra-scene.js'
 import { isHydraRow } from './hydra.js'
 import { isBaubleRow } from './bauble.js'
+import { isPostRow } from './post.js'
 import { initBauble } from './bauble-scene.js'
 import { initPost } from './post-scene.js'
 import { createSceneVisualizer, createHydraVisualizer, createBaubleVisualizer, createPostVisualizer } from './visualizer.js'
@@ -130,6 +131,7 @@ const tablePanel = createTablePanel(editableStore, {
     const declaredLang = colSpec?.type === 'code' ? colSpec.language : undefined
     const lang = declaredLang
       ?? (col === 'code' && table === 'bauble' && isBaubleRow(data?.rows[rowIndex]) ? 'bauble' as const : undefined)
+      ?? (col === 'code' && table === 'post' && isPostRow(data?.rows[rowIndex]) ? 'post' as const : undefined)
       ?? (col === 'code' && isHydraRow(data?.rows[rowIndex]) ? 'hydra' as const : 'dsl' as const)
     editor.editCell(`${table}[${rowIndex}].${col}`, value, (text) => {
       editableStore.setCell(table, rowIndex, col, text)
