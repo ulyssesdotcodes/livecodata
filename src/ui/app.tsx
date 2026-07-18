@@ -54,7 +54,7 @@ function App(props: AppProps & { mounts: CanvasMounts }) {
         </div>
       </div>
       <div id="side-panels" ref={sidePanels}>
-        <EditorPane ctl={props.editor}>
+        <EditorPane ctl={props.editor} currentTable={props.tablePanel.current}>
           <SessionSelector ctl={props.sessionSelector}>
             <RoomChip ctl={props.roomChip} />
             <button
