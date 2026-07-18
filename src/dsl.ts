@@ -11,6 +11,7 @@
 // is its audience. Use /** */ for anything the editor should show on hover.
 
 import { rasterizeRows } from './rasterize.js'
+import { timelineSegments, placeBeat } from './timeline.js'
 import { withLineage, carry, unionLineage, getLineage, type Row } from './lineage.js'
 import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS } from './constants.js'
 import { compileFoldTable, foldValueAt, type FoldTableProgram } from './fold-engine.js'
@@ -709,6 +710,30 @@ export class Table {
     return this.retime({ offset: beats })
   }
 
+  /**
+   * Warp this table's `beat`s through a timeline table (see schemas.timeline):
+   * each row lands at every playback beat its source beat is shown, so a
+   * "loop" event (or a repeating "retime" block) duplicates the looped rows
+   * once per cycle, a "retime" stretch rescales `dur` along with the
+   * spacing, and rows no event plays are dropped. Rows without a numeric `beat` — and every row when the
+   * timeline has no events — pass through unchanged.
+   * e.g. table("melody").remap(table("warp")).rasterize().
+   */
+  remap(timeline: Table | Row[] | null | undefined): Table {
+    return this._xf('remap', {}, (ins) => {
+      const segments = timelineSegments(ins[1])
+      if (!segments.length) return ins[0].map(recarry)
+      return ins[0].flatMap((r) => {
+        if (typeof r.beat !== 'number') return [recarry(r)]
+        return placeBeat(segments, r.beat as number).map(({ beat, stretch }) => {
+          const next: Row = { ...r, beat }
+          if (typeof r.dur === 'number') next.dur = (r.dur as number) * stretch
+          return withLineage(next, carry(r))
+        })
+      })
+    }, false, [this._other(timeline)])
+  }
+
   /** Animate this table's scene objects over time — see ThreeChain. */
   get three(): ThreeChain {
     return {
@@ -994,6 +1019,35 @@ export const SCHEMAS = deepFreeze({
     disabled: 'boolean',
   },
   /**
+   * The "timeline" view: an OPTIONAL warp of playback time over the baked
+   * content — one event per row, covering playback beats `beat`..`end`
+   * (1-indexed). `event` picks the warp: "retime" (the general one —
+   * beats(count, { fit }) emits a single retime) stretches input source
+   * beats `from`..`to` into the output block `outFrom`..`outTo` (from > to
+   * runs backwards) and repeats the block until the window closes; "loop"
+   * cycles source `from`..`to` at natural speed (a retime whose output block
+   * is as long as its input); "hold" freezes the frame at `from`; "speed"
+   * runs from `from` at `rate` source beats per playback beat. `from`/`to`
+   * and `outFrom`/`outTo` default to `beat`/`end`, so a bare retime plays
+   * straight through and stretches to fill its window. Playback beats no
+   * event covers play unmapped, and the loop length becomes the events' full
+   * extent. An optional 0-indexed `loop` column places an event in a later
+   * pass of the loop. The same table warps any beat table via
+   * .remap(table("timeline")); check `disabled` to mute a row.
+   */
+  timeline: {
+    beat: 'number',
+    end: 'number',
+    event: ['retime', 'loop', 'hold', 'speed'],
+    from: 'number',
+    to: 'number',
+    outFrom: 'number',
+    outTo: 'number',
+    rate: 'number',
+    loop: 'number',
+    disabled: 'boolean',
+  },
+  /**
    * The "sliders" view: one on-screen control per row — `id` names it (and is
    * what slider(id) reads), `min`/`max` its range, `default` its initial
    * value. Check `disabled` to pull the control off screen without losing
@@ -1197,10 +1251,12 @@ export type DSLSurface = Easings & {
   /** Seconds per beat derived from the taps (average interval), or `fallback` (default 0.5s = 120 BPM) until two taps exist. The playhead already runs at this tempo; tempo() is for programs that want the number. */
   tempo(fallback?: number): number
   /**
-   * A timeline that loops every `count` playback beats. Tempo is automatic, so
+   * A timeline that loops every `count` playback beats — one "retime" event
+   * row in the timeline schema (see schemas.timeline). Tempo is automatic, so
    * this is purely a retime: identity by default (content plays once per
    * loop); pass { fit } in source-beats to stretch that much content across
-   * the window — beats(16, { fit: 8 }) plays 8 beats of content at half speed.
+   * the window — beats(16, { fit: 8 }) plays 8 beats of content at half
+   * speed. Concat more event rows onto it for loops, holds, and reverses.
    */
   beats(count: number, opts?: { fallback?: number; fit?: number }): Table
   /**
@@ -1315,8 +1371,7 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     beats: (count: number, { fit }: { fit?: number } = {}): Table => {
       const spanBeats = fit != null ? fit : count
       return new Table([
-        { beat: 1, source: 1 },
-        { beat: count + 1, source: spanBeats + 1 },
+        { event: 'retime', beat: 1, end: count + 1, from: 1, to: spanBeats + 1 },
       ], ctx)
     },
     ...EASINGS,

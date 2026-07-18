@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { Table, createDSL, field, hashOf } from '../src/dsl.js'
 import { getLineage, withLineage, type Row } from '../src/lineage.js'
+import { buildTimeline } from '../src/timeline.js'
 
 const t = (rows: Row[]): Table => new Table(rows)
 
@@ -71,17 +72,19 @@ test('tempo() derives the beat length from the taps table, else falls back', () 
   assert.equal(dslWithTaps(tapRowsAt(0, 1)).tempo(0.25), 0.25, 'one tap is not enough')
 })
 
-test('beats(n) builds a two-keyframe identity remap spanning n beats', () => {
-  // Tempo is automatic in playback, so the timeline itself is just a sparse
-  // beat→source map: the count-beat loop (playback beats 1..n+1) mapped identity.
-  const tl = dslWithTaps(tapRowsAt(0.5)).beats(16)
-  assert.deepEqual(tl.rows, [{ beat: 1, source: 1 }, { beat: 17, source: 17 }])
+test('beats(n) builds an identity remap spanning n beats', () => {
+  // Tempo is automatic in playback, so the timeline itself is just a
+  // playback→source remap: the count-beat loop mapped identity.
+  const tl = buildTimeline(dslWithTaps(tapRowsAt(0.5)).beats(16).rows)
+  assert.equal(tl.beats, 16)
+  assert.equal(tl.sourceBeatAt(9), 9)
 })
 
 test('beats(n, { fit }) maps a source span across the beat window', () => {
   // fit: 4 maps 4 source-beats (beats 1..5) across the whole 16-beat loop.
-  const tl = dslWithTaps(tapRowsAt(0.5)).beats(16, { fit: 4 })
-  assert.deepEqual(tl.rows, [{ beat: 1, source: 1 }, { beat: 17, source: 5 }])
+  const tl = buildTimeline(dslWithTaps(tapRowsAt(0.5)).beats(16, { fit: 4 }).rows)
+  assert.equal(tl.beats, 16)
+  assert.equal(tl.sourceBeatAt(9), 3)
 })
 
 test('beats() is tempo-independent — identical rows regardless of taps', () => {

@@ -1,58 +1,177 @@
-// livecodata timeline — an OPTIONAL remap on top of the beat-grid playhead:
-// sparse keyframes { beat, source } (both 1-indexed) warp the playback beat to
-// a source beat of the baked content, interpolated linearly; no timeline means
-// identity. An optional 0-indexed `loop` column places a keyframe in a later
-// pass of the loop; every pass spans the keyframes' full beat extent.
+// livecodata timeline — an OPTIONAL remap on top of the beat-grid playhead,
+// defined as a table of EVENTS (see schemas.timeline): each row warps the
+// playback window `beat`..`end` (1-indexed) onto source beats of the baked
+// content — "retime" stretches input `from`..`to` into the output block
+// `outFrom`..`outTo` (default the window; from > to runs backwards) and
+// repeats the block across the window, "loop" cycles `from`..`to` at natural
+// speed, "hold" freezes at `from`, "speed" runs from `from` at `rate`.
+// Playback
+// beats no event covers play unmapped (identity); no timeline means identity
+// everywhere. An optional 0-indexed `loop` column places an event in a later
+// pass of the loop; every pass spans beat 1 to the last event's end.
+//
+// Legacy sparse keyframe rows { beat, source } (no `event` column) are still
+// accepted: consecutive keyframes become linear segments, exactly the old
+// straight-map behavior.
 
 import type { Row } from './lineage.js'
 
 export interface Timeline {
   // Is a real (non-identity) timeline defined?
   active: boolean
-  // ONE loop's length in playback beats (the per-pass keyframe span) — the
-  // playhead wraps per pass, whatever `loops` is.
+  // ONE loop's length in playback beats (beat 1 to the pass's last event
+  // end) — the playhead wraps per pass, whatever `loops` is.
   beats: number
-  // How many passes of the loop the keyframes span (1 = single-loop).
+  // How many passes of the loop the events span (1 = single-loop).
   loops: number
   // Map a 1-indexed playback beat (within pass `loop`, wrapped modulo `loops`)
   // to the 1-indexed source beat it shows.
   sourceBeatAt(playbackBeat: number, loop?: number): number
 }
 
+// One linear piece of the playback→source map: playback [p0, p1] plays source
+// [s0, s1] (s0 > s1 runs backwards, s0 === s1 holds a frame).
+export interface TimelineSegment {
+  p0: number
+  p1: number
+  s0: number
+  s1: number
+}
+
+const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined)
+
+// Compile timeline rows into sorted segments on the extended playback axis
+// (pass L's events sit at beat + L * span).
+function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: number; loops: number } {
+  const rows = (timelineRows ?? [])
+    .filter((r) => !r.disabled && typeof r.beat === 'number')
+    .map((r): Row => ({ ...r, loop: Math.max(0, Math.floor(num(r.loop) ?? 0)) }))
+  if (!rows.length) return { segments: [], span: 0, loops: 1 }
+  const endOf = (r: Row): number => num(r.end) ?? (r.beat as number)
+  const loops = rows.reduce((m, r) => Math.max(m, r.loop as number), 0) + 1
+  // Beats are 1-indexed, so a pass runs from beat 1 to the last event's end —
+  // events starting mid-loop leave the early beats unmapped, not cut off.
+  const span = rows.reduce((m, r) => Math.max(m, endOf(r)), -Infinity) - 1
+
+  const segments: TimelineSegment[] = []
+  const keyframes = rows
+    .filter((r) => typeof r.event !== 'string')
+    .map((r) => ({
+      beat: (r.beat as number) + (r.loop as number) * span,
+      src: num(r.source) ?? (r.beat as number),
+    }))
+    .sort((a, b) => a.beat - b.beat)
+  for (let i = 1; i < keyframes.length; i++) {
+    segments.push({ p0: keyframes[i - 1].beat, p1: keyframes[i].beat, s0: keyframes[i - 1].src, s1: keyframes[i].src })
+  }
+
+  for (const r of rows) {
+    if (typeof r.event !== 'string') continue
+    const off = (r.loop as number) * span
+    const p0 = (r.beat as number) + off
+    const p1 = endOf(r) + off
+    if (!(p1 > p0)) continue
+    const from = num(r.from) ?? (r.beat as number)
+    const to = num(r.to) ?? endOf(r)
+    // Tile the block [o0, o1) → source [from, to] across the window [p0, p1],
+    // clipping partial blocks at both edges; o0 anchors the cycle phase, so a
+    // window starting mid-block starts mid-source.
+    const tile = (o0: number, o1: number): void => {
+      const cycle = o1 - o0
+      if (!(cycle > 0)) {
+        segments.push({ p0, p1, s0: from, s1: from })
+        return
+      }
+      for (let k = Math.floor((p0 - o0) / cycle); o0 + k * cycle < p1; k++) {
+        const b0 = o0 + k * cycle
+        const q0 = Math.max(b0, p0), q1 = Math.min(b0 + cycle, p1)
+        if (!(q1 > q0)) continue
+        segments.push({
+          p0: q0, p1: q1,
+          s0: from + ((q0 - b0) / cycle) * (to - from),
+          s1: from + ((q1 - b0) / cycle) * (to - from),
+        })
+      }
+    }
+    switch (r.event) {
+      case 'retime':
+        tile((num(r.outFrom) ?? (r.beat as number)) + off, (num(r.outTo) ?? endOf(r)) + off)
+        break
+      case 'hold':
+        segments.push({ p0, p1, s0: from, s1: from })
+        break
+      case 'speed': {
+        const rate = num(r.rate) ?? 1
+        segments.push({ p0, p1, s0: from, s1: from + rate * (p1 - p0) })
+        break
+      }
+      case 'loop':
+        tile(p0, p0 + Math.max(0, to - from))
+        break
+    }
+  }
+  segments.sort((a, b) => a.p0 - b.p0 || a.p1 - b.p1)
+  return { segments, span, loops }
+}
+
+// The compiled segments alone — what Table.remap warps content through.
+export function timelineSegments(timelineRows: Row[]): TimelineSegment[] {
+  return compile(timelineRows).segments
+}
+
+function sourceAt(segments: TimelineSegment[], p: number): number {
+  for (const seg of segments) {
+    if (p < seg.p0) break // sorted by p0 — we're in a gap, which plays unmapped
+    if (p <= seg.p1) {
+      const f = seg.p1 === seg.p0 ? 0 : (p - seg.p0) / (seg.p1 - seg.p0)
+      return seg.s0 + (seg.s1 - seg.s0) * f
+    }
+  }
+  return p
+}
+
+export interface BeatPlacement {
+  // Playback beat the source beat lands on.
+  beat: number
+  // Local playback-per-source rate — what a `dur` stretches by (1 in a hold).
+  stretch: number
+}
+
+// Invert the map: every playback beat at which source beat `b` is shown, one
+// entry per segment that plays it — a loop event yields one per cycle. Source
+// intervals are half-open (a cycle's end belongs to the next cycle) except at
+// the timeline's very end, so segment joins don't double-place a beat.
+export function placeBeat(segments: TimelineSegment[], b: number): BeatPlacement[] {
+  const out: BeatPlacement[] = []
+  const lastEnd = segments.reduce((m, s) => Math.max(m, s.p1), -Infinity)
+  for (const seg of segments) {
+    if (seg.s1 === seg.s0) {
+      if (b === seg.s0) out.push({ beat: seg.p0, stretch: 1 })
+      continue
+    }
+    const t = (b - seg.s0) / (seg.s1 - seg.s0)
+    if (t >= 0 && (t < 1 || (t <= 1 && seg.p1 === lastEnd))) {
+      out.push({
+        beat: seg.p0 + t * (seg.p1 - seg.p0),
+        stretch: Math.abs((seg.p1 - seg.p0) / (seg.s1 - seg.s0)),
+      })
+    }
+  }
+  return out
+}
+
 export function buildTimeline(timelineRows: Row[]): Timeline {
-  const keyed = (timelineRows ?? [])
-    .filter((r) => typeof r.beat === 'number')
-    .map((r): Row => ({ ...r, loop: typeof r.loop === 'number' ? Math.max(0, Math.floor(r.loop)) : 0 }))
-  if (!keyed.length) {
+  const { segments, span, loops } = compile(timelineRows)
+  if (!segments.length) {
     return { active: false, beats: 0, loops: 1, sourceBeatAt: (pb) => pb }
   }
-  const loops = keyed.reduce((m, r) => Math.max(m, r.loop as number), 0) + 1
-  // A pass-L keyframe sits at beat + L * span on the extended playback axis.
-  const minBeat = keyed.reduce((m, r) => Math.min(m, r.beat as number), Infinity)
-  const span = keyed.reduce((m, r) => Math.max(m, r.beat as number), -Infinity) - minBeat
-  const rows = keyed
-    .map((r) => ({ ...r, beat: (r.beat as number) + (r.loop as number) * span }))
-    .sort((a, b) => (a.beat as number) - (b.beat as number))
-  const first = rows[0], last = rows[rows.length - 1]
-  const srcOf = (r: Row): number => (r.source as number | undefined) ?? (r.beat as number)
   return {
     active: true,
     beats: span,
     loops,
     sourceBeatAt(playbackBeat: number, loop = 0): number {
-      const pb = playbackBeat + (loops > 1 ? (loop % loops) * span : 0)
-      if (pb <= (first.beat as number)) return srcOf(first)
-      if (pb >= (last.beat as number)) return srcOf(last)
-      for (let i = 1; i < rows.length; i++) {
-        const b1 = rows[i].beat as number
-        if (pb <= b1) {
-          const b0 = rows[i - 1].beat as number
-          const s0 = srcOf(rows[i - 1]), s1 = srcOf(rows[i])
-          const f = b1 === b0 ? 0 : (pb - b0) / (b1 - b0)
-          return s0 + (s1 - s0) * f
-        }
-      }
-      return srcOf(last)
+      const p = playbackBeat + (loops > 1 ? (loop % loops) * span : 0)
+      return sourceAt(segments, p)
     },
   }
 }
