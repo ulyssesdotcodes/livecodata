@@ -162,6 +162,39 @@ export function displayOrder(rows: Row[], columns: EditableColumn[]): number[] {
   return order
 }
 
+// Keyboard-focus a single editable cell, keyed by storage row index + column
+// name. Navigation moves through the *displayed* rows (`order`, from
+// displayOrder, already filtered to the visible ones) so up/down follow what
+// the eye sees, while left/right walk the column list.
+export interface CellFocus {
+  row: number
+  col: string
+}
+
+export type FocusDir = 'up' | 'down' | 'left' | 'right'
+
+// The cell an arrow-key press moves to, or null when the move would leave the
+// grid (the caller then keeps the current focus). `order` is the visible rows'
+// storage indices in display order.
+export function moveFocus(
+  order: number[],
+  columns: EditableColumn[],
+  focus: CellFocus,
+  dir: FocusDir,
+): CellFocus | null {
+  const pos = order.indexOf(focus.row)
+  const cIdx = columns.findIndex((c) => c.name === focus.col)
+  if (pos < 0 || cIdx < 0) return null
+  if (dir === 'up' || dir === 'down') {
+    const nextPos = pos + (dir === 'down' ? 1 : -1)
+    if (nextPos < 0 || nextPos >= order.length) return null
+    return { row: order[nextPos], col: focus.col }
+  }
+  const nextIdx = cIdx + (dir === 'right' ? 1 : -1)
+  if (nextIdx < 0 || nextIdx >= columns.length) return null
+  return { row: focus.row, col: columns[nextIdx].name }
+}
+
 // The last row whose `indexCol` value is at or before the playhead beat `idx`
 // (-1 when the playhead sits before every row).
 export function activeRowIndex(rows: Row[], indexCol: string, idx: number): number {

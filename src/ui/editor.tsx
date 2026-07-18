@@ -11,7 +11,7 @@ import { LanguageSupport } from '@codemirror/language'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { keymap } from '@codemirror/view'
 import { Prec, Compartment } from '@codemirror/state'
-import { vim } from '@replit/codemirror-vim'
+import { vim, getCM } from '@replit/codemirror-vim'
 import {
   viewNameCompletions, codeCompletions, typeHover, signatureHelp, dslHover,
   viewAtPos, defaultProgram, defaultTables, defaultTable,
@@ -114,6 +114,9 @@ export interface EditorOptions {
   // programmatic setCode — re-announcing those would echo every mirrored
   // remote keystroke back.
   onEdit?: (cell: string, code: string) => void
+  // Left a cell-target editor back to the program (Back button or Escape) —
+  // the table panel uses it to restore keyboard focus to the grid.
+  onExitCell?: () => void
 }
 
 export interface EditorAPI {
@@ -145,7 +148,7 @@ export interface EditorController extends EditorAPI {
 }
 
 export function createEditor(
-  { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange, onResetHydra, onCursor, onEdit }: EditorOptions = {},
+  { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange, onResetHydra, onCursor, onEdit, onExitCell }: EditorOptions = {},
 ): EditorController {
   const [title, setTitle] = createSignal('DSL')
   const [runLabel, setRunLabel] = createSignal('Run')
@@ -186,7 +189,17 @@ export function createEditor(
     setTitle('DSL')
     setRunLabel('Run')
     setBackVisible(false)
-    if (restoreProgram) setDoc(stashedProgram)
+    if (restoreProgram) {
+      setDoc(stashedProgram)
+      onExitCell?.()
+    }
+  }
+
+  // Vim owns Escape (leave insert mode); only treat it as "back to the table"
+  // once vim is out of insert mode (or off entirely) so a code cell's Escape
+  // doesn't swallow the modal exit vim users expect.
+  function vimInsertActive(): boolean {
+    return !!getCM(view)?.state?.vim?.insertMode
   }
 
   function editCell(label: string, code: string, onCommit: (text: string) => void, { lang = 'dsl' }: { lang?: CodeLanguage } = {}): void {
@@ -233,6 +246,13 @@ export function createEditor(
       oneDark,
       Prec.highest(keymap.of([
         { key: 'Mod-Enter', run: () => { run(); return true } },
+        // Escape a code cell back to the program; falls through (return false)
+        // to vim when there's no cell open or vim is still in insert mode.
+        { key: 'Escape', run: () => {
+          if (!cellTarget || vimInsertActive()) return false
+          exitCell(true)
+          return true
+        } },
       ])),
       EditorView.theme({
         '&': { height: '100%' },
