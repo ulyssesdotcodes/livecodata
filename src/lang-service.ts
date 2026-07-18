@@ -6,6 +6,7 @@
 // reuses its program when the text is unchanged.
 
 import ts from 'typescript'
+import { rewriteVarCalls } from './post-lang.js'
 
 // Each language gets its own service program — the ambient surfaces must never
 // see each other.
@@ -106,7 +107,11 @@ export function createLangService(env: LangEnv, lang: EditorLang = 'dsl'): LangS
 
   const ls = ts.createLanguageService(host)
 
-  const sync = (text: string): void => {
+  const sync = (rawText: string): void => {
+    // Post cells may call var(...) — a keyword to TS. The same same-length
+    // rewrite the eval applies keeps the checker happy without shifting any
+    // source position.
+    const text = lang === 'post' ? rewriteVarCalls(rawText) : rawText
     if (text === userText && version > 0) return
     userText = text
     version++
@@ -123,9 +128,9 @@ export function createLangService(env: LangEnv, lang: EditorLang = 'dsl'): LangS
       })
       if (!res) return null
       const entries = res.entries
-        // Drop the DSL's own plumbing (_-prefixed) and anything TS wants to
-        // rewrite on insert.
-        .filter((e) => !e.name.startsWith('_') && !e.insertText)
+        // Drop the DSL's own plumbing (_- and $-prefixed, e.g. post's $vr
+        // behind var()) and anything TS wants to rewrite on insert.
+        .filter((e) => !e.name.startsWith('_') && !e.name.startsWith('$') && !e.insertText)
         .map((e) => ({ name: e.name, kind: String(e.kind), sortText: e.sortText }))
       return { entries, isMemberCompletion: Boolean(res.isMemberCompletion) }
     },

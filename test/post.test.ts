@@ -10,7 +10,7 @@ import {
   foldVars,
   type PostFrame,
 } from '../src/post.js'
-import { evalPostCode, chainSignature, collectLiveValues, setSliderDefiner } from '../src/post-lang.js'
+import { evalPostCode, chainSignature, collectLiveValues, sliderDeclsInCode, postVarDecls } from '../src/post-lang.js'
 import { frameToBeat } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
 
@@ -177,16 +177,27 @@ test('an unknown op leaves post inactive rather than crashing the frame', () => 
   assert.equal(frameAt([{ beat: 1, event: 'chain', code: 'noSuchOp()' }], 0), null)
 })
 
-test('slider() is a live arg reading props.sliders and declares through the definer hook', () => {
-  const declared: unknown[] = []
-  setSliderDefiner((id, min, max) => declared.push([id, min, max]))
-  try {
-    const chain = evalPostCode('blur(slider("r", 2, 8))')
-    assert.deepEqual(declared, [['r', 2, 8]])
-    assert.deepEqual(collectLiveValues(chain, { sliders: { r: 4 } }), [4], 'reads the slider per frame')
-    assert.deepEqual(collectLiveValues(chain, {}), [2], 'falls back to min before the slider exists')
-    assert.deepEqual(collectLiveValues(evalPostCode('blur(slider("r"))'), {}), [0], 'no min → 0')
-  } finally {
-    setSliderDefiner(null)
-  }
+test('slider() is a live arg reading props.sliders; sliderDeclsInCode scans a cell for declarations', () => {
+  const chain = evalPostCode('blur(slider("r", 2, 8))')
+  assert.deepEqual(collectLiveValues(chain, { sliders: { r: 4 } }), [4], 'reads the slider per frame')
+  assert.deepEqual(collectLiveValues(chain, {}), [2], 'falls back to min before the slider exists')
+  assert.deepEqual(collectLiveValues(evalPostCode('blur(slider("r"))'), {}), [0], 'no min → 0')
+  assert.deepEqual(sliderDeclsInCode('.blur(slider("r", 2, 8))'), [{ id: 'r', min: 2, max: 8 }], 'leading-dot fragments scan too')
+  assert.deepEqual(sliderDeclsInCode('broken('), [], 'a mid-edit cell declares nothing')
+})
+
+test('var("name", initial) is a live arg reading the folded variable, with the initial as fallback', () => {
+  const chain = evalPostCode('blur(var("rad", 4))')
+  assert.deepEqual(collectLiveValues(chain, { rad: 9 }), [9], 'reads the folded variable per frame')
+  assert.deepEqual(collectLiveValues(chain, {}), [4], 'the initial is the fallback')
+  const frame = frameAt([
+    { beat: 1, event: 'chain', code: 'blur(var("rad", 4))' },
+    { beat: 1, event: 'set', name: 'rad', value: 2 },
+  ], 0)!
+  assert.deepEqual(collectLiveValues(frame.chain, frame.vars), [2], 'a set row (the fold materializes one) drives it')
+  assert.deepEqual(
+    postVarDecls('bloom(var("glow", 0.5)).blur(var("rad"))'),
+    [{ name: 'glow', value: 0.5 }, { name: 'rad', value: 0 }],
+    'declarations scan textually; no value → 0',
+  )
 })

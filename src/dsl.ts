@@ -1007,7 +1007,10 @@ export const SCHEMAS = deepFreeze({
    * rebound each frame with no recompile) or STRUCTURAL (e.g. edges' colorMode,
    * which selects a shader path). `slider("name", min?, max?)` is a live arg
    * that reads an on-screen slider each frame — and declares it (one row in
-   * the "sliders" table per name) so the control just appears. `event` picks what a row does — "chain"
+   * the "sliders" table per name) so the control just appears. `var("name",
+   * value)` likewise reads a live variable — and materializes its "set" row
+   * right after the cell, so the value becomes editable, tweenable table data
+   * (deleting the var() call deletes the row). `event` picks what a row does — "chain"
    * (`code` = the whole chain; empty = passthrough), "add" (append effects,
    * `pixelate(6)`, leading `.` optional), "remove" (`name` = op name; drop every
    * op with that name — the beat-time bypass), "set" (`name`/`value` = a live
@@ -1278,13 +1281,12 @@ export interface ExprNamespace {
   midi(note: string, channel?: number | null): Expr
   /**
    * A live on-screen slider value, e.g. expr.slider("brightness", 0, 2).
-   * Calling it also DECLARES the slider: a row { id, min, max } is added to
-   * the "sliders" table the first time the name is seen (min/max default
-   * 0–1), so the labelled control appears over the visual with no other
-   * setup. A name that already has a row — hand-edited, or declared by
-   * another call — keeps that row, so several pieces of code can read the
-   * same slider (give them all the same min/max). Each control records its
-   * automation the way MIDI does.
+   * Calling it also DECLARES the slider: every run logs the declaration and
+   * the "sliders" table keeps one row per name, the latest declaration
+   * winning min/max (default 0–1) — so the labelled control appears over the
+   * visual with no other setup, and editing the call's range updates it.
+   * Several pieces of code can read the same slider (give them all the same
+   * min/max). Each control records its automation the way MIDI does.
    */
   slider(id: string, min?: number, max?: number): Expr
   /** The playback clock in seconds at the playhead — the same clock hydra/post chains see as props.time, so pausing or scrubbing the timeline freezes or scrubs it. Live: resolves each frame, e.g. derive({ ry: expr.time().mul(0.5) }). */

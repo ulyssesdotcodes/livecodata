@@ -169,8 +169,10 @@ function buildPostGlobals(root) {
     '  function scene(): PostChain;',
     '  /** The previous output frame — one-frame-behind feedback, e.g. blend(prev(), 0.4). */',
     '  function prev(): PostChain;',
-    '  /** A live on-screen slider as a live arg — blur(slider("r", 0, 8)) reads the slider each frame. Calling it also declares the control: one "sliders"-table row per name (min/max default 0–1); a name that already has a row keeps it. */',
+    '  /** A live on-screen slider as a live arg — blur(slider("r", 0, 8)) reads the slider each frame. Calling it also declares the control: one "sliders"-table row per name, the latest declaration winning min/max (default 0–1). */',
     '  function slider(name: string, min?: number, max?: number): (p: PostProps) => number;',
+    '  /** A live post variable as a live arg — write it as var("name", initial): reads the folded variable each frame (the initial as fallback), and a "set" row for it materializes right after this cell — tweak or tween it there; deleting the var() call deletes the row. (`var` is a JS keyword, so tooling sees it as $vr.) */',
+    '  function $vr(name: string, value?: number): (p: PostProps) => number;',
     '}',
     'export {};',
   ].join('\n')

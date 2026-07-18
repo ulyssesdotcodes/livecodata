@@ -5,7 +5,6 @@ import { initHydra } from './hydra-scene.js'
 import { isHydraRow } from './hydra.js'
 import { isBaubleRow } from './bauble.js'
 import { isPostRow } from './post.js'
-import { setSliderDefiner } from './post-lang.js'
 import { particleRows, hasSpawner, particleParamsAt, type ParticleParamName } from './particles.js'
 import { initBauble } from './bauble-scene.js'
 import { initPost } from './post-scene.js'
@@ -241,10 +240,6 @@ const sliderPanel = createSliderPanel({
   onRelease: () => {},
 })
 
-// A post cell's slider(name, min, max) declares its control through the store
-// — evaluated per frame, but defineSlider is idempotent per name.
-setSliderDefiner((id, min, max) => editableStore.defineSlider(id, min, max))
-
 // Push slider definitions to the overlay and input on every cook. Prefer the
 // cooked "sliders" view, but fall back to the store so a table created by hand
 // in the table panel (never surfaced as a view) still drives the sliders.
@@ -317,7 +312,7 @@ function recordLoopBeats(n: number): void {
 // data that the real ensure() below turns into store events.
 const cookClient = createCookClient(new Worker(new URL('cook-worker.js', import.meta.url), { type: 'module' }))
 
-async function cookInWorker(code: string, seed: number, seeds?: Record<string, Row[]>): Promise<{ cooked: CookedData; declaredNames: string[] }> {
+async function cookInWorker(code: string, seed: number, seeds?: Record<string, Row[]>, declareSliders = true): Promise<{ cooked: CookedData; declaredNames: string[] }> {
   const editables = editableStore.listNames().map((name) => ({
     name,
     // Match ensure()'s filtering: disabled rows stay in the table but are
@@ -334,7 +329,10 @@ async function cookInWorker(code: string, seed: number, seeds?: Record<string, R
   }
   const { cooked, declared, sliders } = await cookClient.cook({ code, seed, dataCache, tapRows: tapRows(), editables, seeds, logs })
   for (const d of declared) editableStore.ensure(d.name, d.schema, d.seedRows)
-  for (const s of sliders) editableStore.defineSlider(s.id, s.min, s.max)
+  // Every run of ours logs its slider declarations (the stream is the record
+  // of what happened); a reactive re-cook of a peer's run declares nothing —
+  // the author's own events arrive by merge.
+  if (declareSliders) for (const s of sliders) editableStore.defineSlider(s.id, s.min, s.max)
   return { cooked, declaredNames: declared.map((d) => d.name) }
 }
 
@@ -569,7 +567,7 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
     let cooked: CookedData
     let declaredNames: string[]
     try {
-      ({ cooked, declaredNames } = await cookInWorker(code, seed, seeds))
+      ({ cooked, declaredNames } = await cookInWorker(code, seed, seeds, broadcast))
     } catch (err) {
       setError?.((err as Error).message)
       return
@@ -800,7 +798,9 @@ async function scrubSession(pos: number): Promise<void> {
     if (!codeRow || typeof codeRow.code !== 'string') return
     const code = codeRow.code
     const seed = typeof codeRow.seed === 'number' ? codeRow.seed : 0
-    const { cooked } = await cookInWorker(code, seed)
+    // A scrub re-cook renders history — it declares nothing, on or off the
+    // live head (the run that declared already logged it).
+    const { cooked } = await cookInWorker(code, seed, undefined, false)
     if (epoch !== scrubEpoch) return
     liveCode = code
     liveSeed = seed

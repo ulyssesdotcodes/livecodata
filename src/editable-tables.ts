@@ -6,6 +6,7 @@
 
 import { compareEvents, createEventLog, type EventLog, type EventMigration, type StampedEvent } from './event-log.js'
 import { buildBranchTree, branchEvents, APPLY_KIND, type ApplyNode, type BranchTree } from './branches.js'
+import { postVarDecls } from './post-lang.js'
 import type { Row } from './lineage.js'
 
 // The pseudo-table Apply pulses, peer-join/leave and session markers ride.
@@ -110,10 +111,13 @@ export function invalidColumns(row: Row, columns: EditableColumn[]): string[] {
 // Per-row provenance, parallel to `rows`. code: originated from a program seed;
 // dirty: user-edited or user-added, so a re-seed must NOT overwrite it; slot:
 // index in the seed list — the identity a re-seed aligns to (-1 for user rows).
+// varName: derived from a var() call in the nearest code row above — owned by
+// that call: the row is deleted when the call is, even if edited.
 interface RowMeta {
   code: boolean
   dirty: boolean
   slot: number
+  varName?: string
 }
 
 const userMeta = (): RowMeta => ({ code: false, dirty: true, slot: -1 })
@@ -277,6 +281,50 @@ function reseedRows(t: TableState, seed: Row[]): void {
   t.rowMeta = nextMeta
 }
 
+// ── var() rows: post code cells materialize their variables ──────────────────
+// A post-language code cell's var("name", value) calls own the "set" rows
+// immediately after it: created with the declared value (at the cell's beat),
+// value-tracked while pristine, kept through user edits, and deleted — edited
+// or not — when the call is deleted. Pure fold logic keyed on the events that
+// change code, so every replica and replay derives the same rows.
+
+function reconcileVarRows(t: TableState, i: number): void {
+  const cols = effectiveColumns(t)
+  const codeCol = cols.find((c) => c.name === 'code')
+  if (codeCol?.language !== 'post') return
+  const row = t.rows[i]
+  if (!row || t.rowMeta[i].varName != null) return
+  const decls = postVarDecls(typeof row.code === 'string' ? row.code : '')
+  let end = i + 1
+  while (end < t.rows.length && t.rowMeta[end].varName != null) end++
+  const existing = new Map<string, number>()
+  for (let k = i + 1; k < end; k++) existing.set(t.rowMeta[k].varName!, k)
+  const nextRows: Row[] = []
+  const nextMeta: RowMeta[] = []
+  for (const d of decls) {
+    const at = existing.get(d.name)
+    if (at !== undefined) {
+      if (!t.rowMeta[at].dirty) t.rows[at].value = d.value
+      nextRows.push(t.rows[at])
+      nextMeta.push(t.rowMeta[at])
+    } else {
+      const beat = typeof row.beat === 'number' ? row.beat : 1
+      nextRows.push(conformRow({ beat, event: 'set', name: d.name, value: d.value }, cols))
+      nextMeta.push({ code: false, dirty: false, slot: -1, varName: d.name })
+    }
+  }
+  t.rows.splice(i + 1, end - (i + 1), ...nextRows)
+  t.rowMeta.splice(i + 1, end - (i + 1), ...nextMeta)
+}
+
+// Reconcile every code row — for the whole-table events (create, seed-rows,
+// declare-schema). Derived rows reconcile is skipped over as it goes.
+function deriveVarRows(t: TableState): void {
+  for (let i = 0; i < t.rows.length; i++) {
+    if (t.rowMeta[i].varName == null) reconcileVarRows(t, i)
+  }
+}
+
 // Defensive (events may come from storage): unknown tables/columns/rows are
 // ignored rather than thrown.
 function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
@@ -297,12 +345,13 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
     t.rows = seed.map((r) => conformRow(r, effectiveColumns(t)))
     t.rowMeta = seed.map((_r, i) => (t.codeCreated ? seedMeta(i) : userMeta()))
     tables.set(name, t)
+    deriveVarRows(t)
     return
   }
   // A code-declared slider (expr.slider / a post cell's slider()): ensure the
-  // definitions table exists and add the row once. The row is skipped when any
-  // row already carries the id, so every replica folds the same single slider
-  // no matter how many declarations (reruns, peers, several code sites) land.
+  // definitions table exists and upsert the row keyed by id — the fold keeps
+  // one row per name however many declarations (reruns, peers, several code
+  // sites) land, and the last declaration in log order wins its range.
   if (e.kind === DEFINE_SLIDER_KIND) {
     const id = e.id != null ? String(e.id) : ''
     if (!id) return
@@ -316,11 +365,19 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
       tables.set(name, t)
     }
     t.events.push(eventRow(e))
-    if (t.rows.some((r) => r.id === id)) return
     const min = typeof e.min === 'number' ? e.min : 0
     const max = typeof e.max === 'number' ? e.max : 1
-    t.rows.push(conformRow({ id, min, max, default: min }, effectiveColumns(t)))
-    t.rowMeta.push(userMeta())
+    const i = t.rows.findIndex((r) => r.id === id)
+    if (i >= 0) {
+      // Only the declared range — default/disabled and any extra columns are
+      // the row's own state.
+      t.rows[i].min = min
+      t.rows[i].max = max
+      t.rowMeta[i].dirty = true
+    } else {
+      t.rows.push(conformRow({ id, min, max, default: min }, effectiveColumns(t)))
+      t.rowMeta.push(userMeta())
+    }
     return
   }
   const t = tables.get(name)
@@ -330,12 +387,14 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
     case 'declare-schema': {
       t.declared = eventColumns(e.columns)
       t.rows = t.rows.map((r) => conformRow(r, effectiveColumns(t)))
+      deriveVarRows(t)
       break
     }
     case 'seed-rows': {
       const seed = eventRows(e.rows)
       t.lastSeed = seed.map((r) => ({ ...r }))
       reseedRows(t, seed)
+      deriveVarRows(t)
       break
     }
     case 'add-column': {
@@ -390,6 +449,13 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
         if (meta.code) t.removedSlots.add(meta.slot)
         t.rows.splice(i, 1)
         t.rowMeta.splice(i, 1)
+        // A removed code row takes its var()-derived rows with it.
+        if (meta.varName == null) {
+          while (i < t.rows.length && t.rowMeta[i].varName != null) {
+            t.rows.splice(i, 1)
+            t.rowMeta.splice(i, 1)
+          }
+        }
       }
       break
     }
@@ -397,17 +463,34 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
       const i = e.row as number
       const row = t.rows[i]
       // The copy takes user identity — a re-seed won't overwrite or drop it.
-      if (row) { t.rows.splice(i + 1, 0, { ...row }); t.rowMeta.splice(i + 1, 0, userMeta()) }
+      // It lands after the source's var()-derived run, and derives its own.
+      if (row) {
+        let at = i + 1
+        if (t.rowMeta[i].varName == null) {
+          while (at < t.rows.length && t.rowMeta[at].varName != null) at++
+        }
+        t.rows.splice(at, 0, { ...row })
+        t.rowMeta.splice(at, 0, userMeta())
+        reconcileVarRows(t, at)
+      }
       break
     }
     case 'set-cell': {
       const row = t.rows[e.row as number]
-      if (row) { row[e.col as string] = e.value; t.rowMeta[e.row as number].dirty = true }
+      if (row) {
+        row[e.col as string] = e.value
+        t.rowMeta[e.row as number].dirty = true
+        if (e.col === 'code') reconcileVarRows(t, e.row as number)
+      }
       break
     }
     case 'set-row': {
       const row = t.rows[e.row as number]
-      if (row) { Object.assign(row, e.values as Record<string, unknown>); t.rowMeta[e.row as number].dirty = true }
+      if (row) {
+        Object.assign(row, e.values as Record<string, unknown>)
+        t.rowMeta[e.row as number].dirty = true
+        if ('code' in ((e.values as Record<string, unknown> | undefined) ?? {})) reconcileVarRows(t, e.row as number)
+      }
       break
     }
     case 'rename-table': {
@@ -465,10 +548,10 @@ export interface EditableTableStore {
   // the same log gives them serialize/load/multiplayer-sync for free.
   record(table: string, kind: string, payload?: Record<string, unknown>): void
   // Declare an on-screen slider from code (expr.slider / a post cell's
-  // slider()): adds { id, min, max } to the "sliders" table. The event's src
-  // derives from the name, so a rerun re-generates the same declaration
-  // instead of a new one — one row per name, however many times code says it.
-  // A row the user deleted stays deleted.
+  // slider()): upserts { id, min, max } in the "sliders" table. Every run's
+  // declaration is appended — the log is the canonical record — with src
+  // derived from the name; the fold keeps one row per name and the last
+  // declaration wins its range.
   defineSlider(id: string, min?: number, max?: number): void
   onChange(cb: () => void): void
   // --- runs (session history) ---------------------------------------------
@@ -542,11 +625,6 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
 
   const listeners: (() => void)[] = []
   const notify = (): void => listeners.forEach((cb) => cb())
-
-  // Names defineSlider has already handled this log's lifetime — keeps the
-  // per-frame post-cell path O(1) after the first call. Reset when the log is
-  // replaced (load/clear).
-  let definedSliders = new Set<string>()
 
   const view = (): Map<string, TableState> => replay ?? tables
 
@@ -787,14 +865,7 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
     defineSlider(id: string, min?: number, max?: number): void {
       id = id.trim()
       if (!id || replay) return
-      if (definedSliders.has(id)) return
-      definedSliders.add(id)
-      if (tables.get(SLIDERS_TABLE)?.rows.some((r) => r.id === id)) return
-      const eventSrc = 'slider:' + id
-      // Already declared somewhere in this log's history (this run, a peer, a
-      // saved session) — including a declaration whose row the user deleted.
-      if (log.all().some((e) => e.src === eventSrc)) return
-      append({ kind: DEFINE_SLIDER_KIND, table: SLIDERS_TABLE, src: eventSrc, id, min: min ?? 0, max: max ?? 1 })
+      append({ kind: DEFINE_SLIDER_KIND, table: SLIDERS_TABLE, src: 'slider:' + id, id, min: min ?? 0, max: max ?? 1 })
     },
 
     onChange(cb: () => void): void {
@@ -932,7 +1003,6 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       runs = []
       forked = false
       pending = []
-      definedSliders = new Set()
       invalidateTree()
       // Adopt the newest apply so a saved branching session opens on its latest
       // branch; a legacy log has none, so head stays null (linear).
@@ -955,7 +1025,6 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       seenTip = null
       forked = false
       pending = []
-      definedSliders = new Set()
       invalidateTree()
       notify()
     },

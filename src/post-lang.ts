@@ -172,12 +172,60 @@ function chainOps(value: unknown): OpChain {
   throw new Error('post: combine op expected a chain argument')
 }
 
-// Wired by main.ts to the editable-table store so a post cell's slider() can
-// declare its control. Post cells are re-evaluated per frame, so the definer
-// must be idempotent and cheap; null (workers, tests) leaves slider() read-only.
+// `var` is a reserved word, so post cells write var("name", value) and both
+// the eval and the editor's language service swap the keyword for the $vr
+// scope function. Same length, so source positions survive the rewrite.
+export function rewriteVarCalls(code: string): string {
+  return code.replace(/\bvar\b(?=\s*\()/g, () => '$vr')
+}
+
+// var("name", value) declarations in a cell, matched textually (literal name,
+// optional numeric literal) so the editable-table fold can derive its "set"
+// rows without evaluating the chain — and regardless of whether the rest of
+// the cell parses. First mention of a name in a cell wins.
+const VAR_DECL = /\bvar\b\s*\(\s*(['"`])(.*?)\1\s*(?:,\s*(-?(?:\d+(?:\.\d+)?|\.\d+)))?\s*\)/g
+export interface PostVarDecl {
+  name: string
+  value: number
+}
+export function postVarDecls(code: string): PostVarDecl[] {
+  const out: PostVarDecl[] = []
+  const seen = new Set<string>()
+  for (const m of code.matchAll(VAR_DECL)) {
+    if (!m[2] || seen.has(m[2])) continue
+    seen.add(m[2])
+    out.push({ name: m[2], value: m[3] !== undefined ? Number(m[3]) : 0 })
+  }
+  return out
+}
+
+// Collector active while sliderDeclsInCode scans a cell; frame-time evals run
+// with it unset, so they never write anywhere.
 let sliderDefiner: ((id: string, min?: number, max?: number) => void) | null = null
-export function setSliderDefiner(fn: ((id: string, min?: number, max?: number) => void) | null): void {
-  sliderDefiner = fn
+
+export interface SliderDecl {
+  id: string
+  min?: number
+  max?: number
+}
+
+// Every slider(name, min, max) declaration a post code cell makes, found by
+// evaluating the cell against the chain scope with a collector installed. A
+// leading-dot fragment (an "add" row) is tolerated; a cell that doesn't parse
+// standalone (mid-edit, unknown op) declares nothing. The cook reports these
+// alongside expr.slider's declarations, so they land once per run.
+export function sliderDeclsInCode(code: string): SliderDecl[] {
+  const out: SliderDecl[] = []
+  const prev = sliderDefiner
+  sliderDefiner = (id, min, max) =>
+    out.push({ id, ...(min !== undefined ? { min } : {}), ...(max !== undefined ? { max } : {}) })
+  try {
+    evalPostCode(code.trim().replace(/^\./, ''))
+  } catch { /* a broken or partial cell declares nothing */ }
+  finally {
+    sliderDefiner = prev
+  }
+  return out
 }
 
 // The eval scope. The scene is the implicit source, so every fx/combine op is
@@ -197,9 +245,21 @@ function headScope(): Record<string, unknown> {
       return cb
     }
   }
+  // A live post variable — var("glow", 0.5), rewritten to $vr(...) before
+  // eval — reading the folded variable each frame with the initial as the
+  // fallback. The editable-table fold materializes a "set" row for each
+  // var() right after the cell it appears in.
+  scope.$vr = (name: unknown, value?: unknown): ((p: Record<string, unknown>) => number) => {
+    const key = String(name)
+    const fallback = typeof value === 'number' && Number.isFinite(value) ? value : 0
+    return (p) => {
+      const v = p[key]
+      return typeof v === 'number' ? v : fallback
+    }
+  }
   // A live on-screen slider, usable anywhere a live arg is — blur(slider("r",
-  // 0, 8)) — reading props.sliders each frame. Calling it also declares the
-  // control: one "sliders"-table row per name, via the definer hook.
+  // 0, 8)) — reading props.sliders each frame. The cook declares the control
+  // from these calls (see sliderDeclsInCode).
   scope.slider = (name: unknown, min?: unknown, max?: unknown): ((p: Record<string, unknown>) => number) => {
     const id = String(name)
     const lo = typeof min === 'number' && Number.isFinite(min) ? min : undefined
@@ -230,7 +290,7 @@ function headScope(): Record<string, unknown> {
 export function evalPostCode(code: string): OpChain {
   const scope = headScope()
   const keys = Object.keys(scope)
-  const fn = new Function(...keys, `"use strict"; return (${code});`)
+  const fn = new Function(...keys, `"use strict"; return (${rewriteVarCalls(code)});`)
   const result = fn(...keys.map((k) => scope[k])) as unknown
   if (!(result instanceof ChainBuilder)) throw new Error('post: code cell must return a chain (did you start with scene()?)')
   return result.ops

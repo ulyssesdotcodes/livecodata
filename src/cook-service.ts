@@ -7,6 +7,7 @@
 
 import { createRuntime } from './runtime.js'
 import { cookProgram } from './replay.js'
+import { sliderDeclsInCode } from './post-lang.js'
 import { conformRow, schemaColumns, EVENTS_SUFFIX, type Schema } from './editable-tables.js'
 import { packCooked, type PackedCook } from './cook-transfer.js'
 import type { PhysicsEngine } from './dsl.js'
@@ -40,8 +41,10 @@ export interface DeclaredEditable {
   seedRows?: Row[]
 }
 
-// An expr.slider(name, min, max) call during the cook; the main thread applies
-// these through the store's defineSlider().
+// A slider declared by the cooked program — expr.slider(name, min, max), or a
+// slider(name, min, max) call in a post code cell. One entry per name (the
+// last declaration wins); the main thread applies each through the store's
+// defineSlider(), so every run logs its declarations.
 export interface DeclaredSlider {
   id: string
   min?: number
@@ -84,7 +87,7 @@ export function createCookService({ physics }: { physics?: () => PhysicsEngine |
       return (seed ?? []).map((r) => conformRow(r, schemaColumns(schema)))
     },
     defineSlider: (id, min, max) => {
-      if (!sliders.has(id)) sliders.set(id, { id, ...(min !== undefined ? { min } : {}), ...(max !== undefined ? { max } : {}) })
+      sliders.set(id, { id, ...(min !== undefined ? { min } : {}), ...(max !== undefined ? { max } : {}) })
     },
   })
 
@@ -98,6 +101,12 @@ export function createCookService({ physics }: { physics?: () => PhysicsEngine |
       sliders = new Map()
       try {
         const cooked = cookProgram(runtime, req.code, req.seed, new Map(req.dataCache))
+        // Post cells run per frame on the main thread, so their slider
+        // declarations are collected here, once per run, like expr.slider's.
+        for (const row of cooked.postRows) {
+          if (typeof row.code !== 'string' || row.code.trim() === '') continue
+          for (const d of sliderDeclsInCode(row.code)) sliders.set(d.id, d)
+        }
         return { id: req.id, ok: true, cooked: packCooked(cooked), declared, sliders: [...sliders.values()] }
       } catch (err) {
         return { id: req.id, ok: false, error: (err as Error).message }
