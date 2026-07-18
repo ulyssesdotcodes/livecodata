@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu'
+import { createParticleSystem, type ParticleSystem } from './compute/particles.js'
 import { FontLoader, type Font } from 'three/addons/loaders/FontLoader.js'
 import { TextGeometry } from 'three/addons/geometries/TextGeometry.js'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
@@ -13,6 +14,10 @@ export interface SceneAPI {
   reset(): void
   // Driven by `shape: "camera"` rows (see cameraPose); also exposed for tooling.
   readonly camera: THREE.PerspectiveCamera
+  // Drive a live curl-noise particle parameter (GPU particle slice). A no-op
+  // when the particle system isn't running — i.e. under the WebGL2 fallback,
+  // which has no compute shaders. See src/compute/particles.ts.
+  setParticleParam(name: 'timeMultiplier' | 'elscale' | 'speed', value: number): void
 }
 
 // Re-exported from three-points.ts, where the geometry builder is shared with
@@ -518,22 +523,44 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
     }
   }
 
+  // The GPU particle system (curl-noise compute). Only built on the WebGPU
+  // backend — null under the WebGL2 fallback, which has no compute shaders.
+  let particles: ParticleSystem | null = null
+
   function animate(): void {
     for (const o of origamis.values()) {
       if (o.shown !== o.fold) fillOrigami(o)
     }
+    particles?.tick()
     renderer.render(scene, camera)
     requestAnimationFrame(animate)
   }
   // WebGPURenderer must finish backend init before the first render() (it
   // picks WebGPU, or falls back to a WebGL2 backend, during init). Gate the
   // loop on that; a rejected init would leave the scene un-drawn, so surface it.
-  renderer.init().then(() => requestAnimationFrame(animate)).catch((e) => {
+  renderer.init().then(async () => {
+    // Compute shaders need the real WebGPU backend; skip particles entirely on
+    // the WebGL2 fallback so the rest of the scene still renders there.
+    const backend = renderer.backend as { isWebGPUBackend?: boolean } | undefined
+    if (backend?.isWebGPUBackend) {
+      try {
+        particles = await createParticleSystem(renderer)
+        scene.add(particles.sprite)
+      } catch (e) {
+        console.error('three-scene: particle system init failed', e)
+        particles = null
+      }
+    }
+    requestAnimationFrame(animate)
+  }).catch((e) => {
     console.error('three-scene: renderer init failed', e)
   })
 
   return {
     camera,
+    setParticleParam(name: 'timeMultiplier' | 'elscale' | 'speed', value: number): void {
+      if (particles) particles.params[name] = value
+    },
     createObject(row: Record<string, unknown>): void {
       const { id, shape, px, py, pz, rx, ry, rz, color } = row
       if (objects.has(id) || origamis.has(id) || texts.has(id) || lights.has(id) || cameras.has(id)) return

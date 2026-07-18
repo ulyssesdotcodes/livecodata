@@ -258,7 +258,11 @@ const playbackOptions: PlaybackOptions = {
     // Show recorded automation on the slider thumbs (skipping any being
     // dragged — see SliderPanel).
     if (sliderInput && sliderInput.defs().length) {
-      sliderPanel.showValues(sliderInput.valuesAt(beatToFrame(srcBeats)))
+      const vals = sliderInput.valuesAt(beatToFrame(srcBeats))
+      sliderPanel.showValues(vals)
+      // GPU particle slice: a slider named "particles" drives the curl speed
+      // uniform live (WebGPU only; a no-op under the WebGL2 fallback).
+      if ('particles' in vals) sceneAPI.setParticleParam('speed', vals.particles)
     }
     lastTick = tick
     if (rewinding) {

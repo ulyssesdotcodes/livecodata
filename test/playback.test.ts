@@ -38,6 +38,7 @@ function fakeScene() {
     // SceneAPI's camera is for screenshot tooling; nothing here reads it.
     camera: null as never,
     calls: [] as string[],
+    setParticleParam(): void {},
     createObject(): void { this.calls.push('create') },
     updateObject(): void { this.calls.push('update') },
     destroyObject(): void { this.calls.push('destroy') },
