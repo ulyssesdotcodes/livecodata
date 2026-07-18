@@ -7,8 +7,8 @@ const PROG = (n: number): string => `
   define("base", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
     color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
   define("noise", (rand) => math(() => rand()).range(${n}/30))
-  define("events", (rand, table) => table("base"))
-  define("scene", (rand, table) => table("events").rasterize(${n}/30))
+  define("three", (rand, table) => table("base"))
+  define("scene", (rand, table) => table("three").rasterize(${n}/30))
 `
 
 test('cookProgram resolves the scene cache and is deterministic per seed', () => {
@@ -24,15 +24,25 @@ test('cookProgram resolves the scene cache and is deterministic per seed', () =>
   )
 })
 
-test('cookProgram falls back to rasterizing events when there is no scene view', () => {
+test('cookProgram falls back to rasterizing the three table when there is no scene view', () => {
+  const rt = createRuntime()
+  const code = `
+    define("three", () => rows([{ id: "s", type: "create", beat: 1, shape: "box",
+      color: 1, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
+  `
+  const cooked = cookProgram(rt, code, 1)
+  assert.ok(cooked.sceneRows.length > 0, 'three table rasterized into a cache')
+  assert.equal(cooked.sceneRows[0].shape, 'box')
+})
+
+test('the legacy "events" table name still cooks into the scene cache', () => {
   const rt = createRuntime()
   const code = `
     define("events", () => rows([{ id: "s", type: "create", beat: 1, shape: "box",
       color: 1, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
   `
   const cooked = cookProgram(rt, code, 1)
-  assert.ok(cooked.sceneRows.length > 0, 'events rasterized into a cache')
-  assert.equal(cooked.sceneRows[0].shape, 'box')
+  assert.ok(cooked.sceneRows.length > 0, 'saved sessions using "events" still render')
 })
 
 test('cookProgram surfaces the hydra setCode/setVariable rows from the "hydra" view', () => {

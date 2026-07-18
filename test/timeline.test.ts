@@ -126,7 +126,7 @@ test('cookProgram surfaces timelineRows from a defined timeline view', () => {
 test('cookProgram yields no timeline rows when none is defined', () => {
   const rt = createRuntime()
   const code = `
-    define("events", () => rows([{ id: "s", type: "create", beat: 1, shape: "box",
+    define("three", () => rows([{ id: "s", type: "create", beat: 1, shape: "box",
       color: 1, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
   `
   const cooked = cookProgram(rt, code, 1)

@@ -121,11 +121,12 @@ export function nextTableName(views: Map<string, Table>, editableStore: Editable
   return `table${i}`
 }
 
-// Keep the current tab if it still exists, else prefer "events", else the last.
+// Keep the current tab if it still exists, else prefer the scene event table
+// ("three", or its legacy name "events"), else the last.
 export function fallbackTab(names: string[], current: string | null): string | null {
   if (!names.length) return null
   if (current != null && names.includes(current)) return current
-  return names.includes('events') ? 'events' : names[names.length - 1]
+  return names.includes('three') ? 'three' : names.includes('events') ? 'events' : names[names.length - 1]
 }
 
 // An explicit .graph() spec wins; otherwise data views auto-chart their numeric

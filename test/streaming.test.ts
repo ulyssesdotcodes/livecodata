@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  Table, field, midi, slider, isBinding, isStreamingNode, resolveBindings, hashOf, type Expr,
+  Table, field, midi, slider, time, isBinding, isStreamingNode, resolveBindings, hashOf, type Expr,
 } from '../src/dsl.js'
 import { rasterizeRows } from '../src/rasterize.js'
 import { buildMidiIndex, sampleMidiAt, midiRow, decodeMidi } from '../src/midi.js'
@@ -31,6 +31,15 @@ test('derive(slider) leaves a per-frame binding; resolveBindings reads ctx.slide
   assert.ok(isBinding(row.py), 'a streaming slider value is deferred')
   const resolved = resolveBindings(row, { slider: () => 0.4 })
   assert.equal(resolved.py, 0.4)
+})
+
+// ── time(): the playback clock as a streaming source ────────────────────────
+
+test('derive(time) leaves a per-frame binding; resolveBindings reads ctx.time', () => {
+  const row = t([{ id: 'a' }]).derive({ ry: time().mul(0.5) }).rows[0]
+  assert.ok(isBinding(row.ry), 'the playback clock is deferred to frame time')
+  assert.equal(isStreamingNode(nodeOf(time())), true)
+  assert.equal(resolveBindings(row, { time: () => 3 }).ry, 1.5)
 })
 
 test('derive with a constant Expr bakes immediately (no binding)', () => {

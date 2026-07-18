@@ -52,7 +52,7 @@ define("path", () => editable("path", schemas.path))
 //    beat, in case rows were added out of order) creates it; every later row
 //    is an update, and playback interpolates position between consecutive
 //    rows by their \`beat\`.
-define("events", (rand, table) =>
+define("three", (rand, table) =>
   table("path").orderBy("beat").map((r, i) => ({
     id: "ball", type: i === 0 ? "create" : "update", beat: r.beat,
     shape: "sphere", color: 0x4a9eff, px: r.px, py: r.py, pz: r.pz, rx: 0, ry: 0, rz: 0,
@@ -62,7 +62,7 @@ define("events", (rand, table) =>
 // 3. Bake the sparse keyframes into a dense per-frame cache for playback —
 //    at least 8 beats of it. The loop itself is the "beats" control under the
 //    scene (16 by default), so the sphere holds its last pose until it wraps.
-define("scene", (rand, table) => table("events").rasterize(8))
+define("scene", (rand, table) => table("three").rasterize(8))
 
 // 4. Post-processing is an editable table too (the "post" tab): beat-placed
 //    events build a shader chain run over the rendered scene. Seeded here: a
@@ -86,7 +86,7 @@ editable("post", schemas.post)
   },
   {
     name: "Text",
-    table: "events",
+    table: "three",
     code: `// livecodata — text in the 3D scene
 // A \`shape: "text"\` object is real extruded 3D text (three.js TextGeometry): it
 // has depth, catches the scene's lights, and moves, spins and scales like any
@@ -101,7 +101,7 @@ editable("post", schemas.post)
 // \`text\` is just a normal column: it rides through rasterize untouched and
 // steps to the newest value, so a later "update" row can swap the string
 // mid-loop the way a color pulse does.
-define("events", () => rows([
+define("three", () => rows([
   { id: "title", type: "create", beat: 1, shape: "text", text: "livecodata",
     color: 0x4a9eff, size: 0.7, px: 0, py: 0.4, pz: 0, rx: 0, ry: 0, rz: 0 },
   // A second line that gently swings side to side while turning about y.
@@ -113,7 +113,7 @@ define("events", () => rows([
 
 // The subtitle's ry keyframes ease back and forth, landing back on the start
 // pose just before the loop wraps so it repeats without a jump.
-define("scene", (rand, table) => table("events").rasterize(16))
+define("scene", (rand, table) => table("three").rasterize(16))
 `,
   },
   {
@@ -296,7 +296,7 @@ define("steps", () => editable("steps", schemas.steps))
 // the way a crane is folded so the finished bird comes out colored. The
 // fold value is one number: how many folds have landed (fractions = the
 // next flap mid-swing), so scrubbing the timeline scrubs the folding.
-define("events", (rand, table) => {
+define("three", (rand, table) => {
   const paper = origami().steps(table("steps"))
   return paper.spawn({ id: "crane", color: 0xf4efe2, backColor: 0xd94f2a, pz: 1.2, rz: 2.356 })
     .concat(paper.sequence())
@@ -305,7 +305,7 @@ define("events", (rand, table) => {
 // Bake a 64-beat cache — four passes of the 16-beat loop: the paper folds
 // itself across the first three and a bit, holds the finished crane, then
 // opens flat and folds itself all over again.
-define("scene", (rand, table) => table("events").rasterize(64))
+define("scene", (rand, table) => table("three").rasterize(64))
 
 // A whisper of video feedback (the rendered scene is hydra's s0) so the
 // paper leaves faint trails as it moves. Delete this view for a clean look.
@@ -372,7 +372,7 @@ define("hydra", () => rows([
 define("steps", () => editable("steps", schemas.steps))
 
 // Colored side down, like the crane — the finished bug comes out green.
-define("events", (rand, table) => {
+define("three", (rand, table) => {
   const paper = origami().steps(table("steps"))
   return paper.spawn({ id: "cicada", color: 0xf4efe2, backColor: 0x79b356, pz: 1.2, rz: -0.785 })
     .concat(paper.sequence())
@@ -380,7 +380,7 @@ define("events", (rand, table) => {
 
 // Bake a 32-beat cache — two passes of the 16-beat loop: fold across the
 // first and a half, hold the finished bug, then open flat and fold again.
-define("scene", (rand, table) => table("events").rasterize(32))
+define("scene", (rand, table) => table("three").rasterize(32))
 
 // Things to try, live in the "steps" tab:
 //   - Nudge wingL/wingR's p1/p2: the wings splay wider or tighter.
@@ -483,13 +483,13 @@ editable("hydra", schemas.hydra)
 //    beat 17 — and those beats land on a SECOND pass: the scene only resets
 //    once every two loops.) A small fixed tilt (rx) keeps the face in view as
 //    it turns edge-on to the camera, rather than vanishing to a line.
-define("events", () => rows([
+define("three", () => rows([
   { id: "square", type: "create", beat: 1, shape: "box", color: 0x4a9eff,
     px: 0, py: 0, pz: 0, hx: 0.6, hy: 0.6, hz: 0.05, rx: 0.3, ry: 0, rz: 0 },
   { id: "square", type: "update", beat: 16, ry: Math.PI * 2 },
 ]))
 
-define("scene", (rand, table) => table("events").rasterize(16))
+define("scene", (rand, table) => table("three").rasterize(16))
 
 // 2. A two-part hydra sketch, on the same 16-beat grid as the square's spin
 //    above: the first half echoes the rendered scene (src(s0)) with a feedback
@@ -520,12 +520,12 @@ editable("hydra", schemas.hydra)
 // through. Press "Run" (or Cmd/Ctrl-Enter), then Play.
 
 // 1. A square spinning one full turn per 16-beat loop — the thing to process.
-define("events", () => rows([
+define("three", () => rows([
   { id: "square", type: "create", beat: 1, shape: "box", color: 0x4a9eff,
     px: 0, py: 0, pz: 0, hx: 0.7, hy: 0.7, hz: 0.06, rx: 0.3, ry: 0, rz: 0 },
   { id: "square", type: "update", beat: 16, ry: Math.PI * 2 },
 ]))
-define("scene", (rand, table) => table("events").rasterize(16))
+define("scene", (rand, table) => table("three").rasterize(16))
 
 // 2. The post chain. The scene is the IMPLICIT source, so a cell reads like
 //    hydra — \`edges(0.2).bloom(1.2)\` IS the effect stack applied to the scene.
@@ -589,15 +589,17 @@ editable("post", schemas.post)
 //    the screen without losing its settings — uncheck to bring it back.
 editable("sliders", schemas.sliders)
 
-// 2. slider(id) is the sibling of midi(note): a live per-frame value you bind
-//    into any field. Here the sphere's height follows the "height" slider —
-//    drag it and the orb moves; the value is recorded against playback time and
-//    replays every loop (watch the thumb retrace your move). derive leaves a
-//    binding resolved each frame, exactly like derive({ amount: midi("c4") }).
+// 2. expr.slider(id) is the sibling of expr.midi(note): a live per-frame value
+//    you bind into any field. Here the sphere's height follows the "height"
+//    slider — drag it and the orb moves; the value is recorded against playback
+//    time and replays every loop (watch the thumb retrace your move). derive
+//    leaves a binding resolved each frame, exactly like
+//    derive({ amount: expr.midi("c4") }) — or derive({ ry: expr.time() }) to
+//    ride the playback clock itself.
 define("scene", () =>
   rows([{ id: "orb", type: "create", beat: 1, shape: "sphere", color: 0xffd43b,
           px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
-    .derive({ py: slider("height") })
+    .derive({ py: expr.slider("height") })
     .rasterize(16))
 
 // 3. In a hydra sketch every slider is also on props.sliders, keyed by id — no
@@ -1042,7 +1044,7 @@ define("hydra", () => rows([
 // A triangular pyramid of playing cards collapses when a ball drops on it.
 // Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 // Tips: Ctrl-Space completes views, Table verbs, and Expr methods (the methods
-// after field()/lit()/idx() — e.g. field("v").add(1).gt(2)); hover a "view" name
+// after expr.field()/lit()/idx() — e.g. expr.field("v").add(1).gt(2)); hover a "view" name
 // to preview its table; your caret selects that view's tab on the right.
 
 // 1. Build a 3-story pyramid of cards plus a ball held above it.
@@ -1121,27 +1123,27 @@ define("base", () => {
 //    beats; the cache interpolates between them) plus a "collision" row whenever
 //    two bodies first touch. Physics runs in real seconds internally and lands
 //    its output on the beat grid, so a collision at beat 4 always sits at beat 4.
-//    The 3rd arg tags this view into the "events" group: the engine auto-builds
-//    a view named "events" that concats every group member (beat-sorted), so
-//    multiple simulation views would merge into one "events" table — no manual
-//    .concat. "events" is the single sparse stream of object motion + collisions.
-define("sim", "events", (rand, table) =>
+//    The 3rd arg tags this view into the "three" group: the engine auto-builds
+//    a view named "three" that concats every group member (beat-sorted), so
+//    multiple simulation views would merge into one "three" table — no manual
+//    .concat. "three" is the single sparse stream of object motion + collisions.
+define("sim", "three", (rand, table) =>
   physics(table("base")).simulate({ steps: 360, gravity: -9.81 })
 )
 
-// 3. Bake the sparse "events" stream into a dense per-frame cache for playback
+// 3. Bake the sparse "three" stream into a dense per-frame cache for playback
 //    (12 beats of cache — the full simulation; the loop length itself is the
 //    "beats" control under the scene).
-define("scene", (rand, table) => table("events").rasterize(12))
+define("scene", (rand, table) => table("three").rasterize(12))
 
 // 4. Collisions are just rows — pull them into their own view to inspect, and
 //    graph the ball's height over time as it bounces and settles.
 define("collisions", (rand, table) =>
-  table("events").filter({ type: "collision" })
+  table("three").filter({ type: "collision" })
 )
 
 define("ball_height", (rand, table) =>
-  table("events")
+  table("three")
     .filter({ id: "ball", type: "update" })
     .map(r => ({ beat: r.beat, height: r.py }))
     .graph("height")

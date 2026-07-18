@@ -7,7 +7,7 @@ import { StateField, StateEffect, type Extension } from '@codemirror/state'
 import { syntaxTree } from '@codemirror/language'
 import { localCompletionSource } from '@codemirror/lang-javascript'
 import type { CompletionContext, CompletionResult, Completion } from '@codemirror/autocomplete'
-import { isExprDot, isThreeDot, cmCompletionType, completionBoost } from './completion.js'
+import { isExprDot, isExprNamespaceDot, isThreeDot, cmCompletionType, completionBoost } from './completion.js'
 import { SAMPLES } from './samples.js'
 import type { Table } from './dsl.js'
 import type { LangClient } from './lang-client.js'
@@ -40,10 +40,7 @@ export const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
   physics:    { sig: 'physics(table)',               detail: 'physics scene',    info: 'Load a base scene table into the JoltPhysics engine. Chain .simulate() to run the simulation.' },
   editable:   { sig: 'editable(name, schema, seedRows?)', detail: 'user table', info: 'A user-editable table: rows are edited in the table panel, not computed — every edit is an appended event and the visible table is the fold (see the name·events tab). schema maps column name to "number" | "string" | "boolean" | "code" (or a string[] for an enum dropdown); code cells open in this editor, and declare their language via { type: "code", language: "hydra" } so completions match (default the DSL). seedRows fill the table when first created.' },
   origami:    { sig: 'origami()', detail: 'folding paper', info: 'A sheet of paper folded by a table of fold steps, each solved exactly. Chain .steps(table) — one row per fold: p1/p2 two points "x,y" on the fold line (drawn on the current folded paper, unit-square frame), move sheet-space marker(s) for the flap(s) that swing, kind/pick to choose the move when a fold is ambiguous ("simple", "reverse", "sink", …), at/dur/to its timing. Then .spawn({ id, color, … }) for the scene create row and .sequence() for the beat-timed keyframes. Every row is verified: a fold that cannot lie flat fails with an error naming the step.' },
-  field:      { sig: 'field(name)',                   detail: 'expr: read field',  info: 'A chainable expression reading row[name]. Chain .add/.sub/.mul/.div/.mod, .eq/.gt/…, .and/.or/.not, .cond(a,b). Use in filter(expr), map(template), emit(template), derive — these are diffable (no opaque closures).' },
-  lit:        { sig: 'lit(value)',                   detail: 'expr: literal',     info: 'A constant expression. Usually you can pass a raw value directly to an Expr method.' },
-  idx:        { sig: 'idx()',                         detail: 'expr: row index',   info: 'An expression yielding the row index (0-based).' },
-  midi:       { sig: 'midi(note, channel?)',         detail: 'expr: live MIDI',   info: 'A live value from the streaming MIDI table — the most recent event for `note` (e.g. "c4", "c#4", or "cc1" for control change) at-or-before the playhead. Normalized 0–1 (note velocity / CC value). Chainable like any Expr: midi("c4").mul(2). Use in setField/map/derive; it resolves each frame, so notes you play while looping replay at the loop position they were heard. Optional 1-based `channel` filters to one channel.' },
+  expr:       { sig: 'expr.field / .lit / .idx / .midi / .slider / .time', detail: 'expression namespace', info: 'The Expr helpers, grouped under one namespace. expr.field(name)/lit(value)/idx() build diffable expressions over a row — chain .add/.mul/.gt/.cond/… and use them in filter(expr), map(template), emit(template), derive. expr.midi(note)/slider(id)/time() are LIVE per-frame sources: a field derived from one follows the note, slider, or playback clock as the loop replays. e.g. filter(expr.field("v").gt(3)), derive({ py: expr.slider("height") }).' },
   beats:      { sig: 'beats(count, { fit }?)',       detail: 'beat timeline',     info: 'A timeline that loops every `count` beats — one "retime" event row in the timeline schema (schemas.timeline). Tempo is automatic — the playhead always runs at the tapped tempo (Tap) — so this is a RETIME: define("timeline", () => beats(16)) just loops every 16 beats; { fit: beats } stretches a span of source beats across the window (e.g. beats(16, { fit: 8 }) plays 8 beats of content at half speed). Concat more timeline event rows onto it ("loop", "hold", "speed", more "retime"s) to warp sections of the loop.' },
   tempo:      { sig: 'tempo(fallback?)',             detail: 'beat length (s)',   info: 'Seconds per beat derived from the tap-beat table (Tap), or `fallback` (default 0.5s = 120 BPM) until two taps are recorded.' },
   taps:       { sig: 'taps()',                       detail: 'tap-beat table',    info: 'The tap-beat table: one row per wall-time button press ({ beat, time }, time as an absolute UTC epoch ms).' },
@@ -55,8 +52,8 @@ export const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
 }
 
 export const TABLE_METHOD_DOCS: Record<string, DocEntry> = {
-  map:         { sig: '.map(row => row | template)',          detail: 'transform rows',   info: 'Transform every row. Pass a function, or a declarative template of Expr/literals (e.g. { y: field("v").mul(2) }) — the template form is diffable.' },
-  filter:      { sig: '.filter({ field: value } | Expr)',     detail: 'keep rows',        info: 'Keep rows that match. Pass a { field: value, … } pattern to keep rows where every field strictly equals its value (multi-key = AND) — e.g. filter({ id: "ball", type: "update" }); or an Expr predicate for anything richer — filter(field("v").gt(3)). Both forms are data (no opaque closure), so the result is diffable.' },
+  map:         { sig: '.map(row => row | template)',          detail: 'transform rows',   info: 'Transform every row. Pass a function, or a declarative template of Expr/literals (e.g. { y: expr.field("v").mul(2) }) — the template form is diffable.' },
+  filter:      { sig: '.filter({ field: value } | Expr)',     detail: 'keep rows',        info: 'Keep rows that match. Pass a { field: value, … } pattern to keep rows where every field strictly equals its value (multi-key = AND) — e.g. filter({ id: "ball", type: "update" }); or an Expr predicate for anything richer — filter(expr.field("v").gt(3)). Both forms are data (no opaque closure), so the result is diffable.' },
   flatMap:     { sig: '.flatMap(row => row | row[] | null)',  detail: 'fan out rows',     info: 'Map each row to zero (null), one, or many rows and flatten the result — like Array.flatMap. The function form for fan-out; for a diffable version use .filter(...).emit(template).' },
   emit:        { sig: '.emit(template | [templates])',        detail: 'fan out rows',     info: 'Declarative fan-out: emit one or many rows per source row from Expr/literal templates. The diffable counterpart of flatMap; pair with .filter(...).' },
   concat:      { sig: '.concat(other)',                       detail: 'combine tables',   info: 'Append the rows of another Table (or array) to this one.' },
@@ -66,7 +63,7 @@ export const TABLE_METHOD_DOCS: Record<string, DocEntry> = {
   join:        { sig: '.join(other, on)',                     detail: 'key join',         info: 'Key-based join: merge rows where the `on` field (or { left, right } fields, or key fn) matches. Like SQL LEFT JOIN.' },
   zip:         { sig: '.zip(other)',                          detail: 'positional join',  info: 'Merge rows positionally — row 0 with row 0, row 1 with row 1, etc.' },
   orderBy:     { sig: '.orderBy(field | fn, dir?)',           detail: 'sort rows',        info: 'Sort rows by a field name or comparator function. Optional dir: "asc" (default) or "desc".' },
-  derive:      { sig: '.derive({ field: Expr | row => val | value })', detail: 'add fields', info: 'Add or overwrite fields on every row. Each value is an Expr (evaluated against the row), a function (r, i) => val, or a literal. A live Expr binds per frame: derive({ amount: midi("c4") }) or derive({ py: slider("height") }) follows the note/slider as the loop replays; a constant Expr bakes in immediately.' },
+  derive:      { sig: '.derive({ field: Expr | row => val | value })', detail: 'add fields', info: 'Add or overwrite fields on every row. Each value is an Expr (evaluated against the row), a function (r, i) => val, or a literal. A live Expr binds per frame: derive({ amount: expr.midi("c4") }) or derive({ py: expr.slider("height") }) follows the note/slider as the loop replays; a constant Expr bakes in immediately.' },
   rescale:     { sig: '.rescale(field, [min, max]?)',         detail: 'normalize field',  info: 'Normalize a numeric field to [0, 1] (or a custom range) across all rows.' },
   lag:         { sig: '.lag(n)',                              detail: 'shift rows',       info: 'Shift rows forward by n positions, padding the start with null rows.' },
   retime:      { sig: '.retime({ offset, scale } | beat => beat)', detail: 'move on beat axis', info: 'Shift a table along the beat axis. Declarative retime({ offset, scale }) moves every row by `offset` beats and stretches spacing about beat 1 by `scale` (durations too) — diffable. Or pass a function beat => newBeat to remap arbitrarily.' },
@@ -93,6 +90,15 @@ export const THREE_METHOD_DOCS: Record<string, DocEntry> = {
   rotate: { sig: '.three.rotate({ amount, dur, axis, ease, at })', detail: 'spin over time',  info: 'For every `create` row, add `amount` radians to its rotation about `axis` (\'x\'|\'y\'|\'z\', default y; default amount a full turn) over `dur` beats. `ease` shapes the segment; `at` overrides the start beat (default the create row\'s beat).' },
   scale:  { sig: '.three.scale({ amount, dur, ease, at })',       detail: 'grow over time',   info: 'For every `create` row, multiply its scale (sx/sy/sz, default 1) by the `amount` factor (default 2×) over `dur` beats, uniformly on all axes. `ease` shapes the segment; `at` overrides the start beat.' },
   move:   { sig: '.three.move({ amount, dur, axis, ease, at })',  detail: 'slide over time',  info: 'For every `create` row, add `amount` world units to its position along `axis` (\'x\'|\'y\'|\'z\', default x; default amount 1) over `dur` beats. `ease` shapes the segment; `at` overrides the start beat.' },
+}
+
+export const EXPR_NAMESPACE_DOCS: Record<string, DocEntry> = {
+  field:  { sig: 'expr.field(name)',          detail: 'read field',   info: 'A chainable expression reading row[name]. Chain .add/.sub/.mul/.div/.mod, .eq/.gt/…, .and/.or/.not, .cond(a,b). Use in filter(expr), map(template), emit(template), derive — these are diffable (no opaque closures).' },
+  lit:    { sig: 'expr.lit(value)',           detail: 'literal',      info: 'A constant expression. Usually you can pass a raw value directly to an Expr method.' },
+  idx:    { sig: 'expr.idx()',                detail: 'row index',    info: 'An expression yielding the row index (0-based).' },
+  midi:   { sig: 'expr.midi(note, channel?)', detail: 'live MIDI',    info: 'A live value from the streaming MIDI table — the most recent event for `note` (e.g. "c4", "c#4", or "cc1" for control change) at-or-before the playhead. Normalized 0–1 (note velocity / CC value). Chainable like any Expr: expr.midi("c4").mul(2). Resolves each frame, so notes you play while looping replay at the loop position they were heard. Optional 1-based `channel` filters to one channel.' },
+  slider: { sig: 'expr.slider(id)',           detail: 'live slider',  info: 'A live on-screen slider value. Sliders are declared by a view named "sliders" (rows { id, min, max, default? }); each shows as a labelled control over the visual and records its automation the way MIDI does. Resolves each frame: derive({ py: expr.slider("height") }) follows the slider as the loop replays.' },
+  time:   { sig: 'expr.time()',               detail: 'playback clock', info: 'The playback clock in seconds at the playhead — the same clock hydra/post chains see as props.time, so pausing or scrubbing freezes or scrubs it. Live (resolves each frame): derive({ ry: expr.time().mul(0.5) }) spins an object continuously.' },
 }
 
 export const EXPR_METHOD_DOCS: Record<string, DocEntry> = {
@@ -151,8 +157,9 @@ export function curatedDocFor(text: string, start: number, name: string): DocEnt
   while (i >= 0 && /\s/.test(text[i])) i--
   if (i >= 0 && text[i] === '.') {
     const docs = isThreeDot(text, i) ? THREE_METHOD_DOCS
-      : isExprDot(text, i) ? EXPR_METHOD_DOCS
-        : TABLE_METHOD_DOCS
+      : isExprNamespaceDot(text, i) ? EXPR_NAMESPACE_DOCS
+        : isExprDot(text, i) ? EXPR_METHOD_DOCS
+          : TABLE_METHOD_DOCS
     return docs[name] ?? null
   }
   return DSL_BUILTIN_DOCS[name] ?? null
@@ -182,8 +189,9 @@ function heuristicCompletions(context: CompletionContext, makeInfoNode: InfoNode
   if (dot) {
     const text = context.state.doc.toString()
     const docs = isThreeDot(text, dot.from) ? THREE_METHOD_DOCS
-      : isExprDot(text, dot.from) ? EXPR_METHOD_DOCS
-        : TABLE_METHOD_DOCS
+      : isExprNamespaceDot(text, dot.from) ? EXPR_NAMESPACE_DOCS
+        : isExprDot(text, dot.from) ? EXPR_METHOD_DOCS
+          : TABLE_METHOD_DOCS
     return {
       from: dot.from + 1,
       options: Object.keys(docs).map((label) => {
