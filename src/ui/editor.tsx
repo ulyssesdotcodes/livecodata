@@ -181,13 +181,19 @@ export function createEditor(
   // Nothing to commit ⇒ the button is disabled. Cell mode compares against the
   // committed value; program mode delegates to programDirty (applied-code diff
   // plus pending store edits), defaulting to always-enabled without it.
-  function refreshCanRun(): void {
+  function currentlyDirty(): boolean {
     const text = view.state.doc.toString()
-    setCanRun(cellTarget ? text !== cellBaseline : (programDirty ? programDirty(text) : true))
+    return cellTarget ? text !== cellBaseline : (programDirty ? programDirty(text) : true)
+  }
+  function refreshCanRun(): void {
+    setCanRun(currentlyDirty())
   }
 
   function run(): void {
-    if (!canRun()) return
+    // Read the live state, not the canRun() signal: the grid's Ctrl-Enter
+    // commits an edit and calls run() synchronously, before the signal's
+    // rAF-coalesced refresh has caught up.
+    if (!currentlyDirty()) return
     const text = view.state.doc.toString()
     if (cellTarget) {
       cellTarget.onCommit(text)
