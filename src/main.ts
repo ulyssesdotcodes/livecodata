@@ -606,6 +606,8 @@ const editor = createEditor({
   // Announce the in-progress buffer (throttled in presence.ts) so peers can
   // mirror it before it is ever Run.
   onEdit: (cell, code) => presence?.setLiveCode(cell, code),
+  // Escaping a code cell hands keyboard focus back to the table it came from.
+  onExitCell: () => tablePanel.focusGrid(),
 })
 
 // --- presence indicators -----------------------------------------------------

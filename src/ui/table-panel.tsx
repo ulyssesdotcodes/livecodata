@@ -12,8 +12,8 @@ import { SERIES_COLORS, computeColRanges, drawSeriesChart, fmtNum, PANEL_CHART_S
 import {
   MAX_ROWS, COLUMN_TYPES, EVENTS_SUFFIX, formatCell, formatEditableCell,
   allNames, nextTableName, fallbackTab, chartFor, displayOrder, activeRowIndex,
-  tabRingStyle, viewersOf, lastEditors,
-  type TablePanel, type TablePanelOptions, type PeerPresence,
+  tabRingStyle, viewersOf, lastEditors, moveFocus,
+  type TablePanel, type TablePanelOptions, type PeerPresence, type CellFocus, type FocusDir,
 } from '../table-panel.js'
 import { listenGlobal, focusInput } from './dom.js'
 import { isHydraRow, hydraCodeUpToRow } from '../hydra.js'
@@ -53,6 +53,9 @@ interface PanelProps extends TablePanelOptions {
   userScrolled: Accessor<boolean>
   setUserScrolled: Setter<boolean>
   presence: Accessor<PeerPresence[]>
+  // The view hands back a function that returns keyboard focus to the grid, so
+  // the controller (and, through it, the editor) can refocus after a code cell.
+  registerGridFocus: (fn: () => void) => void
 }
 
 function TablePanelView(props: PanelProps) {
@@ -83,12 +86,22 @@ function TablePanelView(props: PanelProps) {
   const [subView, setSubView] = createSignal<'table' | 'events'>('table')
   const [graphCollapsed, setGraphCollapsed] = createSignal(window.matchMedia('(max-width: 767px)').matches)
   const [colRanges, setColRanges] = createSignal<ColRange[] | null>(null)
+  // Keyboard navigation: the arrow-key cursor over editable cells (null until
+  // the grid is first driven), and the "/"-opened table picker overlay.
+  const [focusedCell, setFocusedCell] = createSignal<CellFocus | null>(null)
+  const [pickerOpen, setPickerOpen] = createSignal(false)
+
+  // Hand the controller a way to pull keyboard focus back onto the grid — used
+  // after committing an inline edit and when a code cell's editor is escaped.
+  const refocusGrid = (): void => { scrollEl?.focus() }
+  props.registerGridFocus(refocusGrid)
 
   listenGlobal(document, 'mousedown', (e) => {
     const target = e.target as HTMLElement | null
     if (editingCell() != null && !target?.closest?.('.editable-cell.editing')) setEditingCell(null)
     if (openColMenu() != null && !target?.closest?.('.col-settings-wrap')) setOpenColMenu(null)
     if (openInfoRow() != null && !target?.closest?.('.row-info-wrap')) setOpenInfoRow(null)
+    if (pickerOpen() && !target?.closest?.('.table-picker')) setPickerOpen(false)
   })
 
   const names = createMemo(() => {
@@ -117,6 +130,8 @@ function TablePanelView(props: PanelProps) {
     setOpenColMenu(null)
     setOpenInfoRow(null)
     setSubView('table')
+    setFocusedCell(null)
+    setPickerOpen(false)
   }, { defer: true }))
 
   // A genuine editable table, as opposed to a cooked view or a log table.
@@ -183,6 +198,68 @@ function TablePanelView(props: PanelProps) {
     const nextKey = `${nextRow}::${target.name}`
     setEditingCell(nextKey)
     guardFocus(nextKey)
+  }
+
+  // --- keyboard navigation -----------------------------------------------------
+
+  const cellEl = (row: number, col: string): HTMLElement | null =>
+    scrollEl?.querySelector<HTMLElement>(`.editable-cell[data-row="${row}"][data-col="${CSS.escape(col)}"]`) ?? null
+
+  const scrollCellIntoView = (fc: CellFocus): void => {
+    requestAnimationFrame(() => cellEl(fc.row, fc.col)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }))
+  }
+
+  // Enter on the focused cell: code cells open in the main editor, enums focus
+  // their live dropdown, everything else opens its inline editor.
+  function beginEditFocused(): void {
+    const fc = focusedCell()
+    const ed = editableData()
+    if (!fc || !ed) return
+    const col = ed.data.columns.find((c) => c.name === fc.col)
+    if (!col) return
+    if (col.type === 'code') {
+      const v = ed.data.rows[fc.row]?.[col.name]
+      props.onEditCell?.(ed.name, fc.row, col.name, v == null ? '' : String(v))
+      return
+    }
+    if (col.type === 'enum') {
+      cellEl(fc.row, col.name)?.querySelector('select')?.focus()
+      return
+    }
+    setEditingCell(`${fc.row}::${col.name}`)
+  }
+
+  function onGridKeyDown(e: KeyboardEvent): void {
+    if (pickerOpen() || editingCell() != null) return
+    // A cell's own editor (or the enum dropdown) owns the keys while focused.
+    const t = e.target as HTMLElement | null
+    if (t && t !== scrollEl && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return
+    // "/" opens the table switcher from any table, editable or not.
+    if (e.key === '/' && current()) { e.preventDefault(); setPickerOpen(true); return }
+    // Cell navigation is an editable-table feature; read-only views just scroll.
+    if (!isEditableTable()) return
+    const ed = editableData()
+    if (!ed) return
+    const cols = ed.data.columns
+    const order = displayOrder(ed.data.rows, cols).filter(edRowVisible)
+    if (!cols.length || !order.length) return
+    const fc = focusedCell()
+    // No cursor yet, or it points at a now-hidden/removed cell: land on the
+    // first visible cell.
+    if (!fc || order.indexOf(fc.row) < 0 || !cols.some((c) => c.name === fc.col)) {
+      if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Enter'].includes(e.key)) return
+      e.preventDefault()
+      const first = { row: order[0], col: cols[0].name }
+      setFocusedCell(first)
+      scrollCellIntoView(first)
+      return
+    }
+    if (e.key === 'Enter') { e.preventDefault(); beginEditFocused(); return }
+    const dir = ({ ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' } as const)[e.key] as FocusDir | undefined
+    if (!dir) return
+    e.preventDefault()
+    const next = moveFocus(order, cols, fc, dir)
+    if (next) { setFocusedCell(next); scrollCellIntoView(next) }
   }
 
   const roTable = createMemo(() => {
@@ -460,19 +537,32 @@ function TablePanelView(props: PanelProps) {
         advanceEdit(rowIndex, col.name, e.shiftKey ? -1 : 1)
         return
       }
-      if (e.key === 'Enter') commitNow()
+      // Escape cancels the edit (the pending blur-commit no-ops once the editor
+      // is closed) and returns to arrow-key navigation.
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setEditingCell(null)
+        queueMicrotask(refocusGrid)
+        return
+      }
+      if (e.key === 'Enter') { commitNow(); queueMicrotask(refocusGrid) }
       if (e.key === 'Enter' && e.ctrlKey && props.onCtrlEnter) props.onCtrlEnter()
     }
 
     // Collaborators whose last edit landed on this cell.
     const editors = () => lastEditors(presence(), table, rowIndex, col.name)
 
+    const focused = () => focusedCell()?.row === rowIndex && focusedCell()?.col === col.name
+
     return (
       <td
         class="editable-cell"
-        classList={{ editing: editing(), 'cell-invalid': invalid() }}
+        classList={{ editing: editing(), 'cell-invalid': invalid(), 'cell-focused': focused() }}
+        data-row={rowIndex}
+        data-col={col.name}
         style={editors().length ? { outline: `2px solid ${editors()[0].color}`, 'outline-offset': '-2px' } : undefined}
         onClick={() => {
+          setFocusedCell({ row: rowIndex, col: col.name })
           if (editing() || col.type === 'enum') return
           if (col.type === 'code') {
             const v = raw()
@@ -519,11 +609,17 @@ function TablePanelView(props: PanelProps) {
               ref={(el) => queueMicrotask(() => el.focus())}
               onChange={(e) => commit(e.currentTarget.checked)}
               onKeyDown={(e) => {
-                // A checkbox commits on toggle — Tab just advances.
-                if (e.key !== 'Tab') return
-                e.preventDefault()
-                setEditingCell(null)
-                advanceEdit(rowIndex, col.name, e.shiftKey ? -1 : 1)
+                // A checkbox commits on toggle — Tab advances, Enter/Escape
+                // just close back to arrow-key navigation.
+                if (e.key === 'Tab') {
+                  e.preventDefault()
+                  setEditingCell(null)
+                  advanceEdit(rowIndex, col.name, e.shiftKey ? -1 : 1)
+                } else if (e.key === 'Enter' || e.key === 'Escape') {
+                  e.preventDefault()
+                  setEditingCell(null)
+                  queueMicrotask(refocusGrid)
+                }
               }}
             />
           </Show>
@@ -703,6 +799,57 @@ function TablePanelView(props: PanelProps) {
     )
   }
 
+  // The "/"-opened table switcher: a filterable list of every tab, driven by
+  // the keyboard (type to filter, ↑/↓ to move, Enter to pick, Escape to close).
+  function TablePicker() {
+    const [query, setQuery] = createSignal('')
+    const [sel, setSel] = createSignal(0)
+    const matches = createMemo(() => {
+      const q = query().toLowerCase()
+      return names().filter((n) => !q || n.toLowerCase().includes(q))
+    })
+    const close = (): void => { setPickerOpen(false); queueMicrotask(refocusGrid) }
+    const choose = (name: string | undefined): void => {
+      if (name) setCurrent(name)
+      close()
+    }
+    return (
+      <div
+        class="table-picker"
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); close() }
+          else if (e.key === 'ArrowDown') { e.preventDefault(); setSel((s) => Math.min(s + 1, matches().length - 1)) }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); setSel((s) => Math.max(s - 1, 0)) }
+          else if (e.key === 'Enter') { e.preventDefault(); choose(matches()[sel()]) }
+        }}
+      >
+        <input
+          class="table-picker-input"
+          placeholder="Switch table…"
+          ref={(el) => focusInput(el, false)}
+          onInput={(e) => { setQuery(e.currentTarget.value); setSel(0) }}
+        />
+        <div class="table-picker-list">
+          <For each={matches()}>
+            {(n, i) => (
+              <button
+                class="table-picker-item"
+                classList={{ 'picker-sel': i() === sel(), 'picker-current': n === current() }}
+                onMouseEnter={() => setSel(i())}
+                onClick={() => choose(n)}
+              >
+                {n}
+              </button>
+            )}
+          </For>
+          <Show when={!matches().length}>
+            <div class="table-picker-empty">No tables</div>
+          </Show>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
       <div class="table-pane-header">
@@ -742,6 +889,9 @@ function TablePanelView(props: PanelProps) {
         </div>
       </div>
       <div class="tab-content">
+        <Show when={pickerOpen()}>
+          <TablePicker />
+        </Show>
         <Show when={isEditableTable()}>
           <div class="table-subtabs">
             <button
@@ -794,6 +944,8 @@ function TablePanelView(props: PanelProps) {
         <div
           class="tab-scroll"
           ref={scrollEl}
+          tabindex={current() ? 0 : undefined}
+          onKeyDown={onGridKeyDown}
           onScroll={() => { if (!suppressScrollEvent) props.setUserScrolled(true) }}
         >
           <table class="events-table">
@@ -902,7 +1054,10 @@ function TablePanelView(props: PanelProps) {
 
 // The pure-logic side handed to app.tsx — no DOM here; the view above is the
 // only thing that touches elements.
-export interface TablePanelController extends TablePanel, PanelProps {}
+export interface TablePanelController extends TablePanel, PanelProps {
+  // Return keyboard focus to the table grid (see registerGridFocus).
+  focusGrid(): void
+}
 
 export function createTablePanel(
   editableStore: EditableTableStore,
@@ -916,6 +1071,8 @@ export function createTablePanel(
   const [playActive, setPlayActive] = createSignal<Map<string, Set<number>> | null>(null)
   const [userScrolled, setUserScrolled] = createSignal(false)
   const [presence, setPresence] = createSignal<PeerPresence[]>([])
+  // Set by the view once mounted; lets focusGrid pull focus back to the grid.
+  let gridFocus: (() => void) | null = null
 
   return {
     store: editableStore,
@@ -933,6 +1090,12 @@ export function createTablePanel(
     onEditCell,
     onCtrlEnter,
     onSelectTable,
+    registerGridFocus(fn: () => void): void {
+      gridFocus = fn
+    },
+    focusGrid(): void {
+      gridFocus?.()
+    },
 
     selectTable(name: string | null): void {
       if (name != null && (views().has(name) || editableStore.has(name)) && name !== current()) {

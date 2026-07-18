@@ -5,9 +5,10 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   formatCell, allNames, nextTableName, fallbackTab, chartFor,
-  displayOrder, activeRowIndex, viewersOf, tabRingStyle, lastEditors,
+  displayOrder, activeRowIndex, viewersOf, tabRingStyle, lastEditors, moveFocus,
   EVENTS_SUFFIX, type PeerPresence,
 } from '../src/table-panel.js'
+import type { EditableColumn } from '../src/editable-tables.js'
 import { Table } from '../src/dsl.js'
 import type { GraphSpec } from '../src/graph-panel.js'
 import { createEditableTableStore } from '../src/editable-tables.js'
@@ -152,4 +153,33 @@ test('activeRowIndex is the last row at or before the playhead beat', () => {
   assert.equal(activeRowIndex(rows, 'beat', 2), 1)
   assert.equal(activeRowIndex(rows, 'beat', 3.9), 1)
   assert.equal(activeRowIndex(rows, 'beat', 100), 2)
+})
+
+// --- keyboard cell navigation --------------------------------------------------
+
+test('moveFocus walks display order for up/down and the column list for left/right', () => {
+  const cols: EditableColumn[] = [
+    { name: 'beat', type: 'number' },
+    { name: 'note', type: 'string' },
+    { name: 'body', type: 'code' },
+  ]
+  // Display order (storage indices), e.g. sorted by beat: rows 2, 0, 1.
+  const order = [2, 0, 1]
+
+  // down/up step through the display order, carrying the column.
+  assert.deepEqual(moveFocus(order, cols, { row: 2, col: 'note' }, 'down'), { row: 0, col: 'note' })
+  assert.deepEqual(moveFocus(order, cols, { row: 0, col: 'note' }, 'up'), { row: 2, col: 'note' })
+  // right/left step through the columns, carrying the storage row.
+  assert.deepEqual(moveFocus(order, cols, { row: 0, col: 'beat' }, 'right'), { row: 0, col: 'note' })
+  assert.deepEqual(moveFocus(order, cols, { row: 0, col: 'note' }, 'left'), { row: 0, col: 'beat' })
+
+  // Edges return null so the caller keeps the current focus.
+  assert.equal(moveFocus(order, cols, { row: 2, col: 'note' }, 'up'), null, 'top edge')
+  assert.equal(moveFocus(order, cols, { row: 1, col: 'note' }, 'down'), null, 'bottom edge')
+  assert.equal(moveFocus(order, cols, { row: 0, col: 'beat' }, 'left'), null, 'left edge')
+  assert.equal(moveFocus(order, cols, { row: 0, col: 'body' }, 'right'), null, 'right edge')
+
+  // A focus that no longer exists (hidden row / removed column) yields null.
+  assert.equal(moveFocus(order, cols, { row: 99, col: 'note' }, 'down'), null)
+  assert.equal(moveFocus(order, cols, { row: 0, col: 'gone' }, 'right'), null)
 })
