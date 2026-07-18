@@ -62,6 +62,11 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
   const scenePass = t.pass(scene, camera)
   const scenePassColor = scenePass.getTextureNode('output')
 
+  // The beat clock as a uniform, updated every frame from the props object.
+  // Beat-seeded ops (strobe/film/rgbsplit) read this instead of a TSL `time`
+  // node, so they stay deterministic under pause/scrub.
+  const beatUniform = t.uniform(0)
+
   // Feedback buses: a ping-pong RenderTarget pair per used index, shared across
   // states so feedback survives a state switch (it drops on resize, like hydra).
   interface Bus { index: number; targets: [THREE.RenderTarget, THREE.RenderTarget]; cur: number }
@@ -125,6 +130,44 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
           const cells = t.screenSize.div(size)
           const q = t.uv().mul(cells).floor().add(0.5).div(cells)
           return tex.sample(q)
+        }
+        case 'posterize': {
+          const steps = live(liveInit(op, 0))
+          return t.vec4(t.floor(t.vec3(input.rgb).mul(steps)).div(steps), 1)
+        }
+        case 'invert':
+          return t.vec4(t.oneMinus(t.vec3(input.rgb)), 1)
+        case 'rgbshift': {
+          const amount = live(liveInit(op, 0))
+          const tex = t.convertToTexture(input)
+          const off = t.vec2(amount, 0)
+          const uvN = t.uv()
+          return t.vec4(tex.sample(uvN.add(off)).r, tex.sample(uvN).g, tex.sample(uvN.sub(off)).b, 1)
+        }
+        case 'mosaic': {
+          const scale = live(liveInit(op, 0))
+          const tex = t.convertToTexture(input)
+          // Mirror each cell so tiles meet seamlessly (abs of a saw wave).
+          const uvm = t.abs(t.uv().mul(scale).fract().mul(2).sub(1))
+          return tex.sample(uvm)
+        }
+        case 'strobe': {
+          const speed = live(liveInit(op, 0))
+          const on = t.step(0.5, beatUniform.mul(speed).fract())
+          return t.vec4(t.vec3(input.rgb).mul(on.mul(0.8).add(0.2)), 1)
+        }
+        case 'film': {
+          const intensity = live(liveInit(op, 0))
+          // Beat-seeded hash grain — no wall time, so it scrubs deterministically.
+          const seed = t.uv().add(beatUniform)
+          const n = t.fract(t.sin(t.dot(seed, t.vec2(12.9898, 78.233))).mul(43758.5453))
+          return t.vec4(t.vec3(input.rgb).add(n.sub(0.5).mul(intensity)), 1)
+        }
+        case 'rgbsplit': {
+          const q = beatUniform.mul(8).floor().fract().mul(0.03).add(0.005)
+          const tex = t.convertToTexture(input)
+          const uvN = t.uv()
+          return t.vec4(tex.sample(uvN.add(t.vec2(q, 0))).r, tex.sample(uvN).g, tex.sample(uvN.sub(t.vec2(q, 0))).b, 1)
         }
         case 'transition': {
           const pos = live(liveInit(op, 0))
@@ -259,6 +302,7 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
         }
       }
       active = state
+      beatUniform.value = typeof props.beat === 'number' ? props.beat : 0
       if (state.main) writeUniforms(state.main.graph, props)
       for (const bg of state.buses) writeUniforms(bg, props)
     },

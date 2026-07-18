@@ -71,6 +71,33 @@ export const POST_OPS: Record<string, OpSpec> = {
     args: [{ name: 'size', arg: 'live', default: 6 }],
     doc: 'Quantize to square blocks `size` pixels across (live).',
   },
+  posterize: {
+    kind: 'fx',
+    args: [{ name: 'steps', arg: 'live', default: 4 }],
+    doc: 'Quantize each colour channel to `steps` levels (live).',
+  },
+  invert: { kind: 'fx', args: [], doc: 'Invert the colour (1 − c).' },
+  rgbshift: {
+    kind: 'fx',
+    args: [{ name: 'amount', arg: 'live', default: 0.005 }],
+    doc: 'Chromatic aberration: split the red and blue channels apart by `amount` in UV space (live).',
+  },
+  mosaic: {
+    kind: 'fx',
+    args: [{ name: 'scale', arg: 'live', default: 8 }],
+    doc: 'Mirror-tile the image into a `scale`×`scale` kaleidoscope grid (live).',
+  },
+  strobe: {
+    kind: 'fx',
+    args: [{ name: 'speed', arg: 'live', default: 4 }],
+    doc: 'Beat-locked brightness strobe: pulses on the beat clock at `speed` cycles per beat (deterministic — no wall time).',
+  },
+  film: {
+    kind: 'fx',
+    args: [{ name: 'intensity', arg: 'live', default: 0.3 }],
+    doc: 'Film grain seeded by the beat clock (deterministic; scrubs and pauses with the timeline). `intensity` is live.',
+  },
+  rgbsplit: { kind: 'fx', args: [], doc: 'Beat-quantized channel-strobe: offsets the R/B channels in steps locked to the beat clock.' },
 }
 
 export const POST_HEADS: string[] = Object.keys(POST_OPS).filter((n) => POST_OPS[n].kind === 'head')

@@ -94,6 +94,86 @@ function buildHydraGlobals() {
   ].join('\n')
 }
 
+// The post chain surface, generated from src/post-lang.ts's POST_OPS registry
+// (read straight from the source AST — data-driven, so it never drifts from the
+// ops the engine actually compiles). fx/combine ops become PostChain methods;
+// heads become globals. Their `doc` strings ride along as editor hover text.
+/** @param {string} root */
+function buildPostGlobals(root) {
+  const src = readFileSync(path.join(root, 'src/post-lang.ts'), 'utf8')
+  const sf = ts.createSourceFile('post-lang.ts', src, ts.ScriptTarget.ES2022, true)
+  const unquote = (/** @type {string} */ s) => s.replace(/^['"`]|['"`]$/g, '')
+  /** @param {ts.ObjectLiteralExpression} obj @param {string} key */
+  const prop = (obj, key) => obj.properties.find((p) => ts.isPropertyAssignment(p) && unquote(p.name.getText(sf)) === key)?.initializer
+  /** @type {{ name: string, kind: string, doc: string, args: { name: string, arg: string }[] }[]} */
+  const ops = []
+  sf.forEachChild((node) => {
+    if (!ts.isVariableStatement(node)) return
+    for (const decl of node.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || decl.name.text !== 'POST_OPS') continue
+      if (!decl.initializer || !ts.isObjectLiteralExpression(decl.initializer)) continue
+      for (const p of decl.initializer.properties) {
+        if (!ts.isPropertyAssignment(p) || !ts.isObjectLiteralExpression(p.initializer)) continue
+        const spec = p.initializer
+        const kindNode = prop(spec, 'kind'); const docNode = prop(spec, 'doc'); const argsNode = prop(spec, 'args')
+        const args = argsNode && ts.isArrayLiteralExpression(argsNode)
+          ? argsNode.elements.filter(ts.isObjectLiteralExpression).map((a) => ({
+              name: unquote((prop(a, 'name') ?? { getText: () => '' }).getText(sf)),
+              arg: unquote((prop(a, 'arg') ?? { getText: () => '' }).getText(sf)),
+            }))
+          : []
+        ops.push({
+          name: unquote(p.name.getText(sf)),
+          kind: kindNode ? unquote(kindNode.getText(sf)) : 'fx',
+          doc: docNode ? unquote(docNode.getText(sf)) : '',
+          args,
+        })
+      }
+    }
+  })
+  if (!ops.length) throw new Error('gen-lang-env: POST_OPS not found in src/post-lang.ts')
+
+  /** @param {{ name: string, arg: string }[]} args @param {boolean} combine */
+  const params = (args, combine) => {
+    const own = args.map((a) => `${a.name}?: ${a.arg === 'live' ? 'PostArg' : 'number'}`)
+    return (combine ? ['other: PostChain', ...own] : own).join(', ')
+  }
+  /** @param {string} doc */
+  const docComment = (doc) => (doc ? `    /** ${doc.replace(/\*\//g, '*\\/')} */\n` : '')
+  const methods = ops
+    .filter((o) => o.kind === 'fx' || o.kind === 'combine')
+    .map((o) => `${docComment(o.doc)}    ${o.name}(${params(o.args, o.kind === 'combine')}): PostChain;`)
+    .join('\n')
+
+  return [
+    "// Generated — the post chain surface, from src/post-lang.ts's op registry",
+    '// (see scripts/gen-lang-env.js).',
+    'declare global {',
+    '  /** Per-frame values passed to function-valued (live) post arguments: your folded variables plus the playback clock. */',
+    '  interface PostProps {',
+    '    time: number;',
+    '    beat: number;',
+    '    bpm: number;',
+    '    sliders?: Record<string, number>;',
+    '    [variable: string]: unknown;',
+    '  }',
+    '  /** A live post argument: a constant, or a function of the per-frame props — e.g. edges((p) => p.th). */',
+    '  type PostArg = number | ((p: PostProps) => number);',
+    '  interface PostChain {',
+    methods,
+    '  }',
+    '  /** The rendered 3D scene as the chain head — the colour plane every effect starts from. */',
+    '  function scene(): PostChain;',
+    "  /** A feedback bus (src(b1)..src(b3)) as the chain head — samples that bus's previous frame. */",
+    '  function src(bus: 1 | 2 | 3): PostChain;',
+    '  const b1: 1;',
+    '  const b2: 2;',
+    '  const b3: 3;',
+    '}',
+    'export {};',
+  ].join('\n')
+}
+
 export function buildLangEnv() {
   const dslEntry = path.join(root, 'src/dsl.ts')
   const program = ts.createProgram([dslEntry], {
@@ -158,6 +238,7 @@ export function buildLangEnv() {
   ].join('\n')
 
   files['/hydra-globals.d.ts'] = buildHydraGlobals().replace('declare global {', `declare global {\n${consoleDecl}`)
+  files['/post-globals.d.ts'] = buildPostGlobals(root).replace('declare global {', `declare global {\n${consoleDecl}`)
 
   // Standard-library closure: lib.es2022.d.ts plus everything it /// references.
   /** @param {string} name */
@@ -178,6 +259,7 @@ export function buildLangEnv() {
     langs: {
       dsl: { userFile: '/main.js', roots: ['/globals.d.ts'] },
       hydra: { userFile: '/hydra-sketch.js', roots: ['/hydra-globals.d.ts'] },
+      post: { userFile: '/post-sketch.js', roots: ['/post-globals.d.ts'] },
     },
     surfaceProps,
   }

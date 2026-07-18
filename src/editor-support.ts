@@ -47,7 +47,7 @@ export const DSL_BUILTIN_DOCS: Record<string, DocEntry> = {
   beats:      { sig: 'beats(count, { fit }?)',       detail: 'beat timeline',     info: 'A timeline that loops every `count` beats — one "retime" event row in the timeline schema (schemas.timeline). Tempo is automatic — the playhead always runs at the tapped tempo (Tap) — so this is a RETIME: define("timeline", () => beats(16)) just loops every 16 beats; { fit: beats } stretches a span of source beats across the window (e.g. beats(16, { fit: 8 }) plays 8 beats of content at half speed). Concat more timeline event rows onto it ("loop", "hold", "speed", more "retime"s) to warp sections of the loop.' },
   tempo:      { sig: 'tempo(fallback?)',             detail: 'beat length (s)',   info: 'Seconds per beat derived from the tap-beat table (Tap), or `fallback` (default 0.5s = 120 BPM) until two taps are recorded.' },
   taps:       { sig: 'taps()',                       detail: 'tap-beat table',    info: 'The tap-beat table: one row per wall-time button press ({ beat, time }, time as an absolute UTC epoch ms).' },
-  schemas:    { sig: 'schemas.hydra / .bauble / .timeline / .sliders / .path / .steps', detail: 'canonical table schemas', info: 'The column schemas of the tables the runtime knows by name, ready to pass to editable() — right columns, enum dropdowns, and code languages included: editable("hydra", schemas.hydra). Frozen; spread to extend: { ...schemas.hydra, extra: "string" }.' },
+  schemas:    { sig: 'schemas.hydra / .post / .bauble / .timeline / .sliders / .path / .steps', detail: 'canonical table schemas', info: 'The column schemas of the tables the runtime knows by name, ready to pass to editable() — right columns, enum dropdowns, and code languages included: editable("post", schemas.post). Frozen; spread to extend: { ...schemas.hydra, extra: "string" }.' },
   linear:     { sig: 'linear',                       detail: 'easing curve',     info: 'Linear easing (t → t). Pass as the ease field of a color-pulse row.' },
   easeIn:     { sig: 'easeIn',                       detail: 'easing curve',     info: 'Quadratic ease-in (t → t²). Starts slow, ends fast.' },
   easeOut:    { sig: 'easeOut',                      detail: 'easing curve',     info: 'Quadratic ease-out (t → 1-(1-t)²). Starts fast, ends slow.' },
@@ -224,7 +224,7 @@ export function codeCompletions(
     const node = syntaxTree(context.state).resolveInner(context.pos, -1)
     if (/String|Comment/.test(node.name)) return null
     const lang = getLang()
-    if (lang !== 'dsl' && lang !== 'hydra') return null // bauble (Janet) / post: no JS surface yet
+    if (lang === 'bauble') return null // Janet — no JS surface applies
 
     if (client && client.status() === 'ready') {
       const word = context.matchBefore(/[\w$]+/)
@@ -269,7 +269,7 @@ export function typeHover(client: LangClient, makeSymbolCard: SymbolCardFactory,
   return hoverTooltip(async (view, pos) => {
     if (client.status() !== 'ready') return null
     const lang = getLang()
-    if (lang !== 'dsl' && lang !== 'hydra') return null // bauble (Janet) / post: no JS surface yet
+    if (lang === 'bauble') return null // Janet — no JS surface applies
     const text = view.state.doc.toString()
     const info = await client.quickInfo(text, pos, lang)
     if (!info || !info.display) return null
@@ -327,7 +327,7 @@ export function signatureHelp(client: LangClient, makeSigCard: SigCardFactory, g
     }
     if (client.status() !== 'ready') return
     const lang = getLang()
-    if (lang !== 'dsl' && lang !== 'hydra') return // bauble (Janet) / post: no JS surface yet
+    if (lang === 'bauble') return // Janet — no JS surface applies
     const id = ++epoch
     const { view } = update
     const text = update.state.doc.toString()

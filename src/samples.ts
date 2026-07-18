@@ -499,6 +499,64 @@ editable("hydra", schemas.hydra)
     },
   },
   {
+    name: "Post",
+    table: "post",
+    code: `// livecodata — GPU post-processing on the rendered scene, as a table (TSL)
+// The "post" view is hydra's sibling: a table of EVENTS on the loop that build
+// a shader chain run over the rendered 3D scene BEFORE hydra ever sees it. Here
+// a spinning square is turned to glowing edges, then wiped to a mosaic halfway
+// through. Press "Run" (or Cmd/Ctrl-Enter), then Play.
+
+// 1. A square spinning one full turn per 16-beat loop — the thing to process.
+define("events", () => rows([
+  { id: "square", type: "create", beat: 1, shape: "box", color: 0x4a9eff,
+    px: 0, py: 0, pz: 0, hx: 0.7, hy: 0.7, hz: 0.06, rx: 0.3, ry: 0, rz: 0 },
+  { id: "square", type: "update", beat: 16, ry: Math.PI * 2 },
+]))
+define("scene", (rand, table) => table("events").rasterize(16))
+
+// 2. The post chain. A cell starts from a HEAD — scene() is the rendered scene
+//    — and pipes it through fluent ops. No .out() in a cell: the \`out\` column
+//    (main = the display) terminates the chain.
+//    Every op argument is either LIVE or STRUCTURAL:
+//      - LIVE (the default): a number, OR a function of the props object —
+//        (p) => p.th — bound to a uniform the engine rewrites each frame, so it
+//        tracks the table live with NO recompile. props carries your folded
+//        variables plus the playback clock (p.time, p.beat, p.bpm).
+//      - STRUCTURAL: an arg that picks a shader path (e.g. edges' colorMode)
+//        and so bakes into the compiled shader.
+//    The seeded "post" tab on the right holds these events:
+//      - beat 1  setCode:     scene().edges((p) => p.th, 1).bloom((p) => p.glow)
+//                             (colorMode 1 = edges drawn over the source).
+//      - beat 1  setVariable: th = 0.15, glow = 0.2 — the chain's live inputs.
+//      - beat 5  setVariable: th → 0.4 with dur:2 — a TWEEN (interpolates from
+//                             the current value over 2 beats via \`ease\`), not a
+//                             step. Automation with no per-parameter columns.
+//      - beat 7  impulse:     glow += 1.2 over dur:1, easeOut — an additive
+//                             decaying burst (impulses stack); the bloom flares.
+//      - beat 13 transition:  wipe to the program after it over dur:2 beats
+//                             (blank code = crossfade), then...
+//      - beat 13 setCode:     scene().mosaic(4).posterize(4) — the destination,
+//                             built with ordinary events at the same beat.
+//    editable() makes the table live: click a code cell to edit the chain here,
+//    or tweak/"+ row" events on the right — \`schemas.post\` is the canonical
+//    schema (hover it for the columns). Check "disabled" to mute a row.
+editable("post", schemas.post)
+`,
+    tables: {
+      post: [
+        { beat: 1, event: "setCode", out: "main",
+          code: "scene().edges((p) => p.th, 1).bloom((p) => p.glow)" },
+        { beat: 1, event: "setVariable", name: "th", value: 0.15 },
+        { beat: 1, event: "setVariable", name: "glow", value: 0.2 },
+        { beat: 5, event: "setVariable", name: "th", value: 0.4, dur: 2, ease: "easeInOut" },
+        { beat: 7, event: "impulse", name: "glow", value: 1.2, dur: 1, ease: "easeOut" },
+        { beat: 13, event: "transition", out: "main", dur: 2 },
+        { beat: 13, event: "setCode", out: "main", code: "scene().mosaic(4).posterize(4)" },
+      ],
+    },
+  },
+  {
     name: "Sliders",
     table: "sliders",
     code: `// livecodata — on-screen sliders (the twin of MIDI)
