@@ -233,7 +233,8 @@ export function createPlaybackEngine(
     const ctx: EvalCtx | null = midiCtx || sliderCtx ? { ...midiCtx, ...sliderCtx } : null
     const states: Row[] = []
     const loopFrames = beatsToFrames(loopBeats)
-    for (const v of visualizers) states.push(...v.applyFrame({ srcFrameF, loopFrames, ctx, passAt: passesSince }))
+    const bpm = tappedBpm() ?? 60 / DEFAULT_BEAT_SECONDS
+    for (const v of visualizers) states.push(...v.applyFrame({ srcFrameF, loopFrames, ctx, passAt: passesSince, bpm }))
     // Graphed/table views key their rows by `beat`, so report the source beat.
     onTick?.(pos, activeLineage(states), srcBeat)
   }

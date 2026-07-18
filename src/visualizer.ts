@@ -10,7 +10,7 @@ import { buildHydraIndex, hydraFrameAt } from './hydra.js'
 import { buildBaubleIndex, baubleFrameAt } from './bauble.js'
 import { buildPostIndex, postFrameAt } from './post.js'
 import { resolveBindings, type EvalCtx } from './dsl.js'
-import { FPS } from './constants.js'
+import { FPS, DEFAULT_BEAT_SECONDS, frameToBeat } from './constants.js'
 import type { Row } from './lineage.js'
 import type { SceneAPI } from './three-scene.js'
 import type { HydraAPI } from './hydra-scene.js'
@@ -53,6 +53,10 @@ export interface VisualizerFrame {
   // the engine, which owns time. A multi-pass visualizer shows passAt(its loop
   // epoch) modulo its own pass count.
   passAt: (epochMs: number) => number
+  // Beats per minute from the playback clock (tapped tempo, else the default).
+  // Optional so pre-existing callers/fixtures stay assignable; the post
+  // visualizer exposes it to chains as `props.bpm`.
+  bpm?: number
 }
 
 export interface Visualizer {
@@ -220,16 +224,20 @@ export function createPostVisualizer(postAPI: PostAPI): Visualizer {
       postAPI.setProgram(index)
     },
     hasContent: () => index.length > 0,
-    applyFrame({ srcFrameF, loopFrames, ctx, passAt }): Row[] {
+    applyFrame({ srcFrameF, loopFrames, ctx, passAt, bpm }): Row[] {
       const loops = loopFrames > 0 ? Math.floor(maxIndex / loopFrames) + 1 : 1
       const frameF = (loops > 1 ? (passAt(epoch) % loops) * loopFrames : 0) + srcFrameF
       const frame = postFrameAt(index, Math.floor(frameF))
       if (frame) {
         // Live-arg functions read the props object: the folded variables (with
-        // midi/slider bindings resolved), plus every slider under `p.sliders`.
+        // midi/slider bindings resolved), every slider under `p.sliders`, and
+        // the playback clock (time/beat/bpm) merged LAST so they can't be
+        // shadowed — the only clock a chain sees, which keeps post deterministic
+        // under pause/scrub.
         const vars = ctx ? resolveBindings(frame.vars, ctx) : frame.vars
         const sliders = ctx?.sliders?.()
-        postAPI.setFrame(frame, sliders ? { sliders, ...vars } : vars)
+        const clock = { time: frameF / FPS, beat: frameToBeat(frameF), bpm: bpm ?? 60 / DEFAULT_BEAT_SECONDS }
+        postAPI.setFrame(frame, { ...(sliders ? { sliders } : {}), ...vars, ...clock })
       } else {
         postAPI.setFrame(null, {})
       }

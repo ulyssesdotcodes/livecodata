@@ -6,8 +6,9 @@
 // hydra.ts's chain surgery (chainOf/splitHead/transitionWindow) so the two
 // folds stay byte-compatible.
 
-import { beatToFrame } from './constants.js'
+import { beatToFrame, beatsToFrames } from './constants.js'
 import { chainOf } from './hydra.js'
+import { EASINGS, type Easings } from './dsl.js'
 import { evalPostCode, chainSignature, type OpChain } from './post-lang.js'
 import type { Row } from './lineage.js'
 
@@ -54,19 +55,17 @@ function outputOf(row: Row): string {
 }
 
 // Fold one output's events (sorted, filtered to this output) into its running
-// chain string; setVariable folds into the shared `vars`. Returns null until a
-// setCode establishes some code. Unlike hydra there is no terminal `.out(oN)` —
-// the `out` column names the target and the bare chain stands on its own.
-function foldOutput(rows: Row[], frame: number, vars: Record<string, unknown>): string | null {
+// chain string. Returns null until a setCode establishes some code. Unlike
+// hydra there is no terminal `.out(oN)` — the `out` column names the target and
+// the bare chain stands on its own. setVariable/impulse are folded separately
+// (foldVars), since variables are global to the program, not per-output.
+function foldOutput(rows: Row[], frame: number): string | null {
   let code: string | null = null
   for (const row of rows) {
     if ((row.index as number) > frame) break
     switch (row.event) {
       case 'setCode':
         if (typeof row.code === 'string' && row.code.trim() !== '') code = chainOf(row.code.trim())
-        break
-      case 'setVariable':
-        if (typeof row.name === 'string') vars[row.name] = row.value
         break
       case 'replace':
         if (code != null && typeof row.find === 'string' && row.find !== '') {
@@ -76,6 +75,71 @@ function foldOutput(rows: Row[], frame: number, vars: Record<string, unknown>): 
     }
   }
   return code
+}
+
+const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x)
+const easingOf = (name: unknown, fallback: keyof Easings): ((t: number) => number) =>
+  EASINGS[(typeof name === 'string' && name in EASINGS ? name : fallback) as keyof Easings]
+
+// The base (step-or-tween) value of one variable at `frame`, from its
+// setVariable rows in index order (all at/before frame). The last row is the
+// active one: with a `dur` it interpolates from the previous row's value using
+// EASINGS[ease] over dur beats; otherwise it steps. A non-numeric value (or a
+// missing previous value) degenerates to a step, so `$expr` bindings pass
+// through untouched.
+function baseValue(sets: Row[], frame: number): unknown {
+  if (sets.length === 0) return undefined
+  let prev: unknown = undefined
+  for (let i = 0; i < sets.length - 1; i++) prev = sets[i].value
+  const r = sets[sets.length - 1]
+  const target = r.value
+  const dur = typeof r.dur === 'number' && r.dur > 0 ? r.dur : 0
+  if (dur > 0 && typeof target === 'number' && typeof prev === 'number') {
+    const durFrames = Math.max(1, beatsToFrames(dur))
+    const u = clamp01((frame - (r.index as number)) / durFrames)
+    return prev + (target - prev) * easingOf(r.ease, 'linear')(u)
+  }
+  return target
+}
+
+// The summed contribution of one variable's active impulses at `frame`. Each
+// adds value·env(u) over `dur` beats, u = elapsed fraction, env decaying 1→0
+// shaped by `ease` (default easeOut); expired or not-yet-started rows are inert.
+function impulseSum(impulses: Row[], frame: number): number {
+  let sum = 0
+  for (const r of impulses) {
+    const dur = typeof r.dur === 'number' && r.dur > 0 ? r.dur : 0
+    if (dur <= 0) continue
+    const start = r.index as number
+    const durFrames = Math.max(1, beatsToFrames(dur))
+    if (frame < start || frame >= start + durFrames) continue
+    const val = typeof r.value === 'number' ? r.value : 0
+    const u = clamp01((frame - start) / durFrames)
+    sum += val * (1 - easingOf(r.ease, 'easeOut')(u))
+  }
+  return sum
+}
+
+// Fold every setVariable/impulse row (global to the program, all outs) into the
+// variable map at `frame`: each name's base value plus its active impulses.
+export function foldVars(index: Row[], frame: number): Record<string, unknown> {
+  const sets = new Map<string, Row[]>()
+  const imps = new Map<string, Row[]>()
+  for (const row of index) {
+    if ((row.index as number) > frame) break
+    if (typeof row.name !== 'string') continue
+    if (row.event === 'setVariable') (sets.get(row.name) ?? sets.set(row.name, []).get(row.name)!).push(row)
+    else if (row.event === 'impulse') (imps.get(row.name) ?? imps.set(row.name, []).get(row.name)!).push(row)
+  }
+  const vars: Record<string, unknown> = {}
+  for (const name of new Set([...sets.keys(), ...imps.keys()])) {
+    const base = sets.has(name) ? baseValue(sets.get(name)!, frame) : undefined
+    const impulse = imps.has(name) ? impulseSum(imps.get(name)!, frame) : 0
+    if (typeof base === 'number' && Number.isFinite(base)) vars[name] = base + impulse
+    else if (base === undefined && imps.has(name)) vars[name] = impulse
+    else vars[name] = base
+  }
+  return vars
 }
 
 // The active program at (absolute) frame `f`: every event at/before it folds
@@ -93,10 +157,10 @@ export function postFrameAt(index: Row[], f: number): PostFrame | null {
     if (g) g.push(row)
     else groups.set(out, [row])
   }
-  const vars: Record<string, unknown> = {}
+  const vars = foldVars(index, frame)
   const chains: { out: string; chain: OpChain }[] = []
   for (const out of [...groups.keys()].sort()) {
-    const codeStr = foldOutput(groups.get(out)!, frame, vars)
+    const codeStr = foldOutput(groups.get(out)!, frame)
     if (codeStr == null) continue
     let chain: OpChain
     try {
@@ -135,7 +199,7 @@ export function postCodeUpToRow(rows: Row[] | null | undefined, rowIndex: number
   }
   const codes: string[] = []
   for (const out of [...groups.keys()].sort()) {
-    const codeStr = foldOutput(groups.get(out)!, frame, {})
+    const codeStr = foldOutput(groups.get(out)!, frame)
     if (codeStr != null) codes.push(groups.size > 1 ? `${out}: ${codeStr}` : codeStr)
   }
   return codes.length ? codes.join('\n') : null

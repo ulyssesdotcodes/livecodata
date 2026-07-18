@@ -6,6 +6,7 @@ import {
   buildPostIndex,
   postFrameAt,
   postCodeUpToRow,
+  foldVars,
   type PostFrame,
 } from '../src/post.js'
 import { evalPostCode, chainSignature, collectLiveValues } from '../src/post-lang.js'
@@ -128,4 +129,45 @@ test('an unknown op throws (caught by the fold, dropping that output)', () => {
   assert.throws(() => evalPostCode('scene().noSuchOp()'))
   // The fold swallows it rather than crashing the frame.
   assert.equal(frameAt([{ beat: 1, event: 'setCode', code: 'scene().noSuchOp()' }], 0), null)
+})
+
+// ── variable dynamics: tweens + impulses ────────────────────────────────────
+
+const close = (a: unknown, b: number, msg?: string): void =>
+  assert.ok(typeof a === 'number' && Math.abs(a - b) < 1e-9, `${msg ?? ''} expected ~${b}, got ${a}`)
+const vars = (rows: Row[], frame: number): Record<string, unknown> => foldVars(buildPostIndex(rows), frame)
+
+test('setVariable with dur tweens from the previous value using the eased curve', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'setVariable', name: 'th', value: 0.2 },
+    { beat: 5, event: 'setVariable', name: 'th', value: 0.5, dur: 2, ease: 'linear' }, // frame 120..180
+  ]
+  close(vars(rows, 60).th, 0.2, 'before the tween: the step value')
+  close(vars(rows, 120).th, 0.2, 'at the tween start: the previous value')
+  close(vars(rows, 150).th, 0.35, 'midpoint (linear)')
+  close(vars(rows, 180).th, 0.5, 'at the end: the target')
+  close(vars(rows, 300).th, 0.5, 'past the end: settled at the target')
+})
+
+test('impulse adds an ease-shaped, decaying contribution while active; expired rows are inert', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'setVariable', name: 'g', value: 0.3 },
+    { beat: 3, event: 'impulse', name: 'g', value: 1, dur: 1, ease: 'linear' }, // frame 60..90
+  ]
+  close(vars(rows, 30).g, 0.3, 'before the impulse')
+  close(vars(rows, 60).g, 1.3, 'at onset: full add')
+  close(vars(rows, 75).g, 0.8, 'midpoint decay (linear env = 0.5)')
+  close(vars(rows, 90).g, 0.3, 'expired: inert')
+})
+
+test('impulses stack additively and default to an easeOut envelope', () => {
+  const stacked: Row[] = [
+    { beat: 1, event: 'setVariable', name: 'g', value: 0 },
+    { beat: 3, event: 'impulse', name: 'g', value: 1, dur: 2, ease: 'linear' },
+    { beat: 3, event: 'impulse', name: 'g', value: 0.5, dur: 2, ease: 'linear' },
+  ]
+  close(vars(stacked, 60).g, 1.5, 'two onsets add')
+  // No ease → easeOut decay: env = 1 - (1-(1-u)^2); at u=0.5 that is 0.25.
+  const decay: Row[] = [{ beat: 1, event: 'impulse', name: 'g', value: 1, dur: 1 }] // frame 0..30
+  close(vars(decay, 15).g, 0.25, 'default easeOut envelope at the midpoint')
 })
