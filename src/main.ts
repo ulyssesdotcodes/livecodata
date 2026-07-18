@@ -638,6 +638,7 @@ const editor = createEditor({
   // Escaping a code cell hands keyboard focus back to the table it came from.
   onExitCell: () => tablePanel.focusGrid(),
   programDirty: (buffer) => (liveCode == null || buffer !== liveCode) || editableStore.hasPendingEdits(),
+  hasPendingEdits: () => editableStore.hasPendingEdits(),
 })
 
 // --- presence indicators -----------------------------------------------------

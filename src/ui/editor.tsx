@@ -119,9 +119,12 @@ export interface EditorOptions {
   onExitCell?: () => void
   // Whether Running the program `buffer` would commit anything: true when it
   // differs from the applied code or the store holds pending table edits. Gates
-  // the Run button; absent means always enabled. (Cell mode gates on the cell
-  // buffer differing from its committed value, handled internally.)
+  // the Run button; absent means always enabled.
   programDirty?: (buffer: string) => boolean
+  // Whether the store holds un-applied table edits — an Apply of the open cell
+  // commits those too, so Apply must enable for them even when the cell text is
+  // unchanged.
+  hasPendingEdits?: () => boolean
 }
 
 export interface EditorAPI {
@@ -158,7 +161,7 @@ export interface EditorController extends EditorAPI {
 }
 
 export function createEditor(
-  { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange, onResetHydra, onCursor, onEdit, onExitCell, programDirty }: EditorOptions = {},
+  { onRun, getViews, onCaretView, getPlayIndex, vimMode = true, onVimModeChange, midiEnabled = false, onMidiEnabledChange, onResetHydra, onCursor, onEdit, onExitCell, programDirty, hasPendingEdits }: EditorOptions = {},
 ): EditorController {
   const [title, setTitle] = createSignal('DSL')
   const [runLabel, setRunLabel] = createSignal('Run')
@@ -178,12 +181,13 @@ export function createEditor(
   const cellLabel = (): string => cellTarget ? cellTarget.label : PROGRAM_CELL
   const cellLang = (): CodeLanguage => cellTarget ? cellTarget.lang : 'dsl'
 
-  // Nothing to commit ⇒ the button is disabled. Cell mode compares against the
-  // committed value; program mode delegates to programDirty (applied-code diff
-  // plus pending store edits), defaulting to always-enabled without it.
+  // Nothing to commit ⇒ the button is disabled. Cell mode enables on a changed
+  // cell buffer or any pending store edit (an Apply commits those too); program
+  // mode delegates to programDirty, defaulting to always-enabled without it.
   function currentlyDirty(): boolean {
     const text = view.state.doc.toString()
-    return cellTarget ? text !== cellBaseline : (programDirty ? programDirty(text) : true)
+    if (cellTarget) return text !== cellBaseline || !!hasPendingEdits?.()
+    return programDirty ? programDirty(text) : true
   }
   function refreshCanRun(): void {
     setCanRun(currentlyDirty())
