@@ -18,6 +18,7 @@ import {
 import { listenGlobal, focusInput } from './dom.js'
 import { isHydraRow, hydraCodeUpToRow } from '../hydra.js'
 import { isBaubleRow, baubleCodeUpToRow } from '../bauble.js'
+import { isPostRow, postCodeUpToRow } from '../post.js'
 import { Icon } from './icon.js'
 import type { Table } from '../dsl.js'
 import { DISABLED_COL, cellValid, invalidColumns, type EditableTableStore, type ColumnType, type EditableColumn } from '../editable-tables.js'
@@ -687,7 +688,9 @@ function TablePanelView(props: PanelProps) {
       if (!open()) return null
       const data = store.get(table)
       if (!data) return null
-      return table === 'bauble' ? baubleCodeUpToRow(data.rows, rowIndex) : hydraCodeUpToRow(data.rows, rowIndex)
+      return table === 'bauble' ? baubleCodeUpToRow(data.rows, rowIndex)
+        : table === 'post' ? postCodeUpToRow(data.rows, rowIndex)
+        : hydraCodeUpToRow(data.rows, rowIndex)
     })
 
     createEffect(() => {
@@ -1004,7 +1007,7 @@ function TablePanelView(props: PanelProps) {
                           }}
                         >
                           <td class="row-actions">
-                            <Show when={ed().name === 'bauble' ? isBaubleRow(ed().data.rows[i]) : isHydraRow(ed().data.rows[i])}>
+                            <Show when={ed().name === 'bauble' ? isBaubleRow(ed().data.rows[i]) : ed().name === 'post' ? isPostRow(ed().data.rows[i]) : isHydraRow(ed().data.rows[i])}>
                               <RowInfo table={ed().name} rowIndex={i} />
                             </Show>
                             <button

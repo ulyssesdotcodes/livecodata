@@ -8,12 +8,14 @@
 import { buildFrameIndex, sampleFrame } from './rasterize.js'
 import { buildHydraIndex, hydraFrameAt } from './hydra.js'
 import { buildBaubleIndex, baubleFrameAt } from './bauble.js'
+import { buildPostIndex, postFrameAt } from './post.js'
 import { resolveBindings, type EvalCtx } from './dsl.js'
-import { FPS } from './constants.js'
+import { FPS, DEFAULT_BEAT_SECONDS, frameToBeat } from './constants.js'
 import type { Row } from './lineage.js'
 import type { SceneAPI } from './three-scene.js'
 import type { HydraAPI } from './hydra-scene.js'
 import type { BaubleAPI } from './bauble-scene.js'
+import type { PostAPI } from './post-scene.js'
 
 // Wall-clock instants (ms) each kind's multi-loop sequence counts passes from
 // — the `at` stamp of the newest apply that changed it. Shared by every
@@ -23,6 +25,7 @@ export interface LoopEpochs {
   timeline?: number
   hydra?: number
   bauble?: number
+  post?: number
 }
 
 // The row sets a cooked program feeds the visualizers — a structurally
@@ -31,8 +34,10 @@ export interface LoopEpochs {
 export interface CookedVisualRows {
   sceneRows: Row[]
   hydraRows: Row[]
-  // Optional so pre-bauble callers (and their test fixtures) stay assignable.
+  // Optional so pre-bauble/pre-post callers (and their test fixtures) stay
+  // assignable.
   baubleRows?: Row[]
+  postRows?: Row[]
   loopEpochs?: LoopEpochs
 }
 
@@ -48,6 +53,10 @@ export interface VisualizerFrame {
   // the engine, which owns time. A multi-pass visualizer shows passAt(its loop
   // epoch) modulo its own pass count.
   passAt: (epochMs: number) => number
+  // Beats per minute from the playback clock (tapped tempo, else the default).
+  // Optional so pre-existing callers/fixtures stay assignable; the post
+  // visualizer exposes it to chains as `props.bpm`.
+  bpm?: number
 }
 
 export interface Visualizer {
@@ -194,6 +203,51 @@ export function createBaubleVisualizer(baubleAPI: BaubleAPI): Visualizer {
     },
     blank(): void {
       baubleAPI.reset()
+    },
+  }
+}
+
+// The post layer: like hydra, folding is absolute and compilation happens at
+// load (setProgram enumerates + warm-compiles every state), so clear() must not
+// tear it down. applyFrame folds to a precompiled state and writes the frame's
+// live-uniform values; three-scene's animate loop drives the actual render.
+export function createPostVisualizer(postAPI: PostAPI): Visualizer {
+  let index: Row[] = buildPostIndex([])
+  let maxIndex = 0
+  let epoch = 0
+
+  return {
+    load(cooked): void {
+      index = buildPostIndex(cooked.postRows ?? [])
+      maxIndex = index.reduce((m, r) => Math.max(m, r.index as number), 0)
+      if (typeof cooked.loopEpochs?.post === 'number') epoch = cooked.loopEpochs.post
+      postAPI.setProgram(index)
+    },
+    hasContent: () => index.length > 0,
+    applyFrame({ srcFrameF, loopFrames, ctx, passAt, bpm }): Row[] {
+      const loops = loopFrames > 0 ? Math.floor(maxIndex / loopFrames) + 1 : 1
+      const frameF = (loops > 1 ? (passAt(epoch) % loops) * loopFrames : 0) + srcFrameF
+      const frame = postFrameAt(index, Math.floor(frameF))
+      if (frame) {
+        // Live-arg functions read the props object: the folded variables (with
+        // midi/slider bindings resolved), every slider under `p.sliders`, and
+        // the playback clock (time/beat/bpm) merged LAST so they can't be
+        // shadowed — the only clock a chain sees, which keeps post deterministic
+        // under pause/scrub.
+        const vars = ctx ? resolveBindings(frame.vars, ctx) : frame.vars
+        const sliders = ctx?.sliders?.()
+        const clock = { time: frameF / FPS, beat: frameToBeat(frameF), bpm: bpm ?? 60 / DEFAULT_BEAT_SECONDS }
+        postAPI.setFrame(frame, { ...(sliders ? { sliders } : {}), ...vars, ...clock })
+      } else {
+        postAPI.setFrame(null, {})
+      }
+      return []
+    },
+    clear(): void {
+      // setProgram is absolute — see the hydra visualizer's clear().
+    },
+    blank(): void {
+      postAPI.reset()
     },
   }
 }

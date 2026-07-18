@@ -6,6 +6,7 @@
 import { rasterizeRows } from './rasterize.js'
 import { hydraRows } from './hydra.js'
 import { baubleRows } from './bauble.js'
+import { postRows } from './post.js'
 import type { Table } from './dsl.js'
 import type { Row } from './lineage.js'
 import type { ResolvedGraph, RunOptions, RuntimeResult } from './runtime.js'
@@ -17,6 +18,7 @@ export interface CookedResult {
   timelineRows: Row[]
   hydraRows: Row[]
   baubleRows: Row[]
+  postRows: Row[]
 }
 
 // The slice of createRuntime's return value cookProgram needs.
@@ -37,5 +39,9 @@ export function cookProgram(runtime: Runtime, code: string, seed: number, dataCa
   // sniffing the generic events table would claim the same rows twice.
   const bauble = result.views.get('bauble')
   const baubleSketchRows = bauble ? baubleRows(bauble.rows) : []
-  return { views: result.views, graphs: result.graphs, sceneRows, timelineRows, hydraRows: hydraSketchRows, baubleRows: baubleSketchRows }
+  // No events-table fallback for post either — its setCode/transition/… names
+  // collide with hydra's (bauble precedent).
+  const post = result.views.get('post')
+  const postSketchRows = post ? postRows(post.rows) : []
+  return { views: result.views, graphs: result.graphs, sceneRows, timelineRows, hydraRows: hydraSketchRows, baubleRows: baubleSketchRows, postRows: postSketchRows }
 }

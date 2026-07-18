@@ -6,6 +6,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import helvetiker from 'three/examples/fonts/helvetiker_regular.typeface.json'
 import { foldTablePositions, type FoldTableProgram } from './fold-engine.js'
 import { geometryDims, primitiveGeometry, type GeometryDims } from './three-points.js'
+import type { PostAPI } from './post-scene.js'
 
 export interface SceneAPI {
   createObject(row: Record<string, unknown>): void
@@ -14,6 +15,13 @@ export interface SceneAPI {
   reset(): void
   // Driven by `shape: "camera"` rows (see cameraPose); also exposed for tooling.
   readonly camera: THREE.PerspectiveCamera
+  // The renderer and scene, exposed so initPost (post-scene.ts) can stand up a
+  // TSL RenderPipeline over the same scene the animate loop renders.
+  readonly renderer: THREE.WebGPURenderer
+  readonly scene: THREE.Scene
+  // Install (or clear) the post-processing stage. When active, its render()
+  // replaces the plain renderer.render in the animate loop.
+  setPost(api: PostAPI | null): void
   // Drive a live curl-noise particle parameter (GPU particle slice). A no-op
   // when the particle system isn't running — i.e. under the WebGL2 fallback,
   // which has no compute shaders. See src/compute/particles.ts.
@@ -534,12 +542,18 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
   // setParticleTime; the sim steps only when this moves (see particles.tick).
   let particleTime = 0
 
+  // The post-processing stage (post-scene.ts), installed by main.ts after
+  // initPost. When it has a program its render() renders the scene through a TSL
+  // RenderPipeline and returns true; with no post rows it returns false and the
+  // plain path below runs — byte-identical to the pre-post loop.
+  let post: PostAPI | null = null
+
   function animate(): void {
     for (const o of origamis.values()) {
       if (o.shown !== o.fold) fillOrigami(o)
     }
     particles?.tick(particleTime)
-    renderer.render(scene, camera)
+    if (!post?.render()) renderer.render(scene, camera)
     requestAnimationFrame(animate)
   }
   // WebGPURenderer must finish backend init before the first render() (it
@@ -565,6 +579,11 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
 
   return {
     camera,
+    renderer,
+    scene,
+    setPost(api: PostAPI | null): void {
+      post = api
+    },
     setParticleParam(name: 'timeMultiplier' | 'elscale' | 'speed', value: number): void {
       if (particles) particles.params[name] = value
     },

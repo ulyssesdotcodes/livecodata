@@ -27,10 +27,11 @@ const eventKey = (e: StampedEvent): string => `${e.src ?? ''}#${e.seq}`
 
 export type ColumnType = 'number' | 'string' | 'boolean' | 'code' | 'enum'
 
-// Language of a 'code' column's cells. 'dsl'/'hydra' are JS and get language
-// service support; 'bauble' is Janet, so the editor opens those cells with the
-// service off (see editor-support.ts) rather than offering JS completions on lisp.
-export type CodeLanguage = 'dsl' | 'hydra' | 'bauble'
+// Language of a 'code' column's cells. 'dsl'/'hydra'/'post' are JS and get
+// language service support (each with its own ambient surface); 'bauble' is
+// Janet, so the editor opens those cells with the service off (see
+// editor-support.ts) rather than offering JS completions on lisp.
+export type CodeLanguage = 'dsl' | 'hydra' | 'bauble' | 'post'
 
 // A column spec as passed to editable(name, schema). A string array is
 // shorthand for an enum over those values; enum columns are code-only — the

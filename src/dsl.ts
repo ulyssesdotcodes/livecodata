@@ -980,6 +980,45 @@ export const SCHEMAS = deepFreeze({
     disabled: 'boolean',
   },
   /**
+   * The post view's event stream: TSL post-processing built like a hydra table,
+   * one row per event placed on the loop by `beat` (1-indexed; a beat past the
+   * loop's end lands the event in a later pass). The chain runs on the rendered
+   * Three.js scene BEFORE hydra samples it as s0, so it composes with (rather
+   * than replaces) the hydra view. The scene is the IMPLICIT source and there is
+   * one output, so `code` cells read like hydra — `edges((p) => p.th,
+   * 1).bloom((p) => p.glow)` is a complete program (no head, no routing, no
+   * `.out()`). Fluent ops include `edges(threshold, colorMode)`, `blur(radius)`,
+   * `bloom(strength, radius, threshold)`, `pixelate(size)`, `posterize`,
+   * `mosaic`, `rgbshift`, `strobe`, `film`, plus combines `blend`/`add`/`mult`/
+   * `diff`/`mask`/`layer` whose argument is another chain — `prev()` (the
+   * previous output frame, for feedback), `scene()` (the raw scene), or a
+   * generator. Every op argument is either LIVE (the default: a number, or a
+   * function of the props object like `(p) => p.glow`, bound to a uniform
+   * rebound each frame with no recompile) or STRUCTURAL (e.g. edges' colorMode,
+   * which selects a shader path). `event` picks what a row does — "chain"
+   * (`code` = the whole chain; empty = passthrough), "add" (append effects,
+   * `pixelate(6)`, leading `.` optional), "remove" (`name` = op name; drop every
+   * op with that name — the beat-time bypass), "set" (`name`/`value` = a live
+   * input the chain reads through a props function; add `dur`/`ease` to TWEEN it
+   * from its current value), "pulse" (add `value·env` over `dur` beats, `ease`
+   * shaping the envelope; pulses stack), "layer" (composite another chain via
+   * `mode`, amount `value`), and "transition" (wipe to the program after it over
+   * `dur` beats; `code` = an optional black-and-white mask chain, blank =
+   * crossfade). `event`, `ease`, and `mode` are enums (dropdowns); `code` cells
+   * open in the editor with post completions; check `disabled` to mute a row.
+   */
+  post: {
+    beat: 'number',
+    event: ['chain', 'add', 'remove', 'layer', 'transition', 'set', 'pulse'],
+    code: { type: 'code', language: 'post' },
+    name: 'string',
+    value: 'number',
+    dur: 'number',
+    ease: ['linear', 'easeIn', 'easeOut', 'easeInOut'],
+    mode: ['blend', 'add', 'mult', 'diff', 'mask'],
+    disabled: 'boolean',
+  },
+  /**
    * The bauble view's event stream: one row per event, placed on the loop by
    * `beat` (1-indexed; like hydra, a beat past the loop's end lands the event
    * in a later pass of the loop) — the same table-of-events format as hydra,

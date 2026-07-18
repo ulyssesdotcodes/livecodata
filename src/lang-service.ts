@@ -7,9 +7,9 @@
 
 import ts from 'typescript'
 
-// Each language gets its own service program — the two ambient surfaces must
-// never see each other.
-export type EditorLang = 'dsl' | 'hydra'
+// Each language gets its own service program — the ambient surfaces must never
+// see each other.
+export type EditorLang = 'dsl' | 'hydra' | 'post'
 
 export interface LangEnv {
   files: Record<string, string>

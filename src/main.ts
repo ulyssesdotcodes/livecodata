@@ -4,8 +4,10 @@ import { initThree } from './three-scene.js'
 import { initHydra } from './hydra-scene.js'
 import { isHydraRow } from './hydra.js'
 import { isBaubleRow } from './bauble.js'
+import { isPostRow } from './post.js'
 import { initBauble } from './bauble-scene.js'
-import { createSceneVisualizer, createHydraVisualizer, createBaubleVisualizer } from './visualizer.js'
+import { initPost } from './post-scene.js'
+import { createSceneVisualizer, createHydraVisualizer, createBaubleVisualizer, createPostVisualizer } from './visualizer.js'
 import { mountApp } from './ui/app.js'
 import { createEditor, defaultProgram, defaultTables, defaultTable, PROGRAM_CELL } from './ui/editor.js'
 import { createTablePanel } from './ui/table-panel.js'
@@ -129,6 +131,7 @@ const tablePanel = createTablePanel(editableStore, {
     const declaredLang = colSpec?.type === 'code' ? colSpec.language : undefined
     const lang = declaredLang
       ?? (col === 'code' && table === 'bauble' && isBaubleRow(data?.rows[rowIndex]) ? 'bauble' as const : undefined)
+      ?? (col === 'code' && table === 'post' && isPostRow(data?.rows[rowIndex]) ? 'post' as const : undefined)
       ?? (col === 'code' && isHydraRow(data?.rows[rowIndex]) ? 'hydra' as const : 'dsl' as const)
     editor.editCell(`${table}[${rowIndex}].${col}`, value, (text) => {
       editableStore.setCell(table, rowIndex, col, text)
@@ -361,6 +364,7 @@ interface CookedData {
   timelineRows: Row[]
   hydraRows: Row[]
   baubleRows: Row[]
+  postRows: Row[]
 }
 
 // The streaming log tables, under the names their panel tabs wear: the
@@ -416,17 +420,18 @@ function cookedSig(rows: Row[]): string {
   return JSON.stringify(rows, (_k, v: unknown) => (typeof v === 'function' ? String(v) : v))
 }
 
-const lastCookedSigs = { scene: '', timeline: '', hydra: '', bauble: '' }
+const lastCookedSigs = { scene: '', timeline: '', hydra: '', bauble: '', post: '' }
 
 // Which cooked outputs changed (re-baselining for the next diff) — stamped
 // onto the apply pulse so the whole room resets the same multi-loop sequences.
-function diffCooked({ sceneRows, timelineRows, hydraRows, baubleRows }: CookedData): { scene: boolean; timeline: boolean; hydra: boolean; bauble: boolean } {
-  const sigs = { scene: cookedSig(sceneRows), timeline: cookedSig(timelineRows), hydra: cookedSig(hydraRows), bauble: cookedSig(baubleRows) }
+function diffCooked({ sceneRows, timelineRows, hydraRows, baubleRows, postRows }: CookedData): { scene: boolean; timeline: boolean; hydra: boolean; bauble: boolean; post: boolean } {
+  const sigs = { scene: cookedSig(sceneRows), timeline: cookedSig(timelineRows), hydra: cookedSig(hydraRows), bauble: cookedSig(baubleRows), post: cookedSig(postRows) }
   const changed = {
     scene: sigs.scene !== lastCookedSigs.scene,
     timeline: sigs.timeline !== lastCookedSigs.timeline,
     hydra: sigs.hydra !== lastCookedSigs.hydra,
     bauble: sigs.bauble !== lastCookedSigs.bauble,
+    post: sigs.post !== lastCookedSigs.post,
   }
   Object.assign(lastCookedSigs, sigs)
   return changed
@@ -1001,12 +1006,18 @@ const mounts = mountApp(document.getElementById('app') as HTMLElement, {
   onClearRuns: clearRuns,
 })
 const sceneAPI = initThree(mounts.threeCanvas, mounts.canvasPane)
+// The TSL post stage runs over the three scene BEFORE hydra samples the canvas
+// as s0; three-scene's animate loop drives its render (see setPost).
+const postAPI = initPost({ renderer: sceneAPI.renderer, scene: sceneAPI.scene, camera: sceneAPI.camera })
+sceneAPI.setPost(postAPI)
 const baubleAPI = initBauble(mounts.baubleCanvas)
 // The bauble canvas rides along as hydra source s1, so a sketch can composite
 // the SDF render.
 const hydraAPI = initHydra(mounts.hydraCanvas, mounts.threeCanvas, mounts.baubleCanvas)
+// Post is registered before hydra: it prepares the scene's post uniforms for
+// the frame hydra then samples.
 const playbackController = createPlaybackController(
-  [createSceneVisualizer(sceneAPI), createHydraVisualizer(hydraAPI), createBaubleVisualizer(baubleAPI)],
+  [createSceneVisualizer(sceneAPI), createPostVisualizer(postAPI), createHydraVisualizer(hydraAPI), createBaubleVisualizer(baubleAPI)],
   playbackOptions,
 )
 setPlaybackCtl(playbackController)
