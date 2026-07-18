@@ -813,8 +813,7 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
       const want = new Set(pending)
       for (const e of log.all()) {
         if (!want.has(eventKey(e))) continue
-        // Skip markers on log tables; only a mutation to an editable data table
-        // counts as a pending edit.
+        // Markers ride log tables; only a data-table edit counts.
         if (tables.get(e.table as string)?.log) continue
         return true
       }
