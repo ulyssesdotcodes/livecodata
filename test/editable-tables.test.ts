@@ -708,7 +708,7 @@ test('a deleted slider row stays deleted until a later run declares it again', (
   assert.equal(reopened.get('sliders')!.rows.length, 1)
 })
 
-// ── var() rows: post code cells materialize their variables ─────────────────
+// ── val() rows: post code cells materialize their variables ─────────────────
 
 const POST_SCHEMA = {
   beat: 'number',
@@ -718,9 +718,9 @@ const POST_SCHEMA = {
   value: 'number',
 } as const
 
-test("a post cell's var() derives a set row right after it, tracking the call across edits", () => {
+test("a post cell's val() derives a set row right after it, tracking the call across edits", () => {
   const store = createEditableTableStore()
-  store.ensure('post', POST_SCHEMA, [{ beat: 2, event: 'chain', code: 'bloom(var("glow", 0.5))' }])
+  store.ensure('post', POST_SCHEMA, [{ beat: 2, event: 'chain', code: 'bloom(val("glow", 0.5))' }])
   let rows = store.get('post')!.rows
   assert.equal(rows.length, 2)
   assert.deepEqual(
@@ -729,25 +729,25 @@ test("a post cell's var() derives a set row right after it, tracking the call ac
     'the derived set row lands right after the cell, at its beat',
   )
 
-  store.setCell('post', 0, 'code', 'bloom(var("glow", 0.9))')
+  store.setCell('post', 0, 'code', 'bloom(val("glow", 0.9))')
   assert.equal(store.get('post')!.rows[1].value, 0.9, 'a pristine row tracks the declared value')
 
   store.setCell('post', 1, 'value', 0.7) // the user tweaks the materialized value
-  store.setCell('post', 0, 'code', 'bloom(var("glow", 0.2)).blur(var("rad", 4))')
+  store.setCell('post', 0, 'code', 'bloom(val("glow", 0.2)).blur(val("rad", 4))')
   rows = store.get('post')!.rows
   assert.equal(rows[1].value, 0.7, 'an edited value survives re-derivation')
-  assert.deepEqual({ name: rows[2].name, value: rows[2].value }, { name: 'rad', value: 4 }, 'a new var() adds its row after')
+  assert.deepEqual({ name: rows[2].name, value: rows[2].value }, { name: 'rad', value: 4 }, 'a new val() adds its row after')
 
-  store.setCell('post', 0, 'code', 'blur(var("rad", 4))')
+  store.setCell('post', 0, 'code', 'blur(val("rad", 4))')
   rows = store.get('post')!.rows
-  assert.deepEqual(rows.map((r) => r.name), ['', 'rad'], 'a removed var() deletes its row, even edited')
+  assert.deepEqual(rows.map((r) => r.name), ['', 'rad'], 'a removed val() deletes its row, even edited')
 })
 
-test('removing a post code row removes its var()-derived rows with it', () => {
+test('removing a post code row removes its val()-derived rows with it', () => {
   const store = createEditableTableStore()
   store.ensure('post', POST_SCHEMA, [
-    { beat: 1, event: 'chain', code: 'blur(var("rad", 4))' },
-    { beat: 4, event: 'add', code: 'pixelate(var("px", 6))' },
+    { beat: 1, event: 'chain', code: 'blur(val("rad", 4))' },
+    { beat: 4, event: 'add', code: 'pixelate(val("px", 6))' },
   ])
   assert.equal(store.get('post')!.rows.length, 4)
   store.removeRow('post', 0)

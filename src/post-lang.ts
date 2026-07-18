@@ -172,18 +172,11 @@ function chainOps(value: unknown): OpChain {
   throw new Error('post: combine op expected a chain argument')
 }
 
-// `var` is a reserved word, so post cells write var("name", value) and both
-// the eval and the editor's language service swap the keyword for the $vr
-// scope function. Same length, so source positions survive the rewrite.
-export function rewriteVarCalls(code: string): string {
-  return code.replace(/\bvar\b(?=\s*\()/g, () => '$vr')
-}
-
-// var("name", value) declarations in a cell, matched textually (literal name,
+// val("name", value) declarations in a cell, matched textually (literal name,
 // optional numeric literal) so the editable-table fold can derive its "set"
 // rows without evaluating the chain — and regardless of whether the rest of
 // the cell parses. First mention of a name in a cell wins.
-const VAR_DECL = /\bvar\b\s*\(\s*(['"`])(.*?)\1\s*(?:,\s*(-?(?:\d+(?:\.\d+)?|\.\d+)))?\s*\)/g
+const VAR_DECL = /\bval\b\s*\(\s*(['"`])(.*?)\1\s*(?:,\s*(-?(?:\d+(?:\.\d+)?|\.\d+)))?\s*\)/g
 export interface PostVarDecl {
   name: string
   value: number
@@ -245,11 +238,10 @@ function headScope(): Record<string, unknown> {
       return cb
     }
   }
-  // A live post variable — var("glow", 0.5), rewritten to $vr(...) before
-  // eval — reading the folded variable each frame with the initial as the
-  // fallback. The editable-table fold materializes a "set" row for each
-  // var() right after the cell it appears in.
-  scope.$vr = (name: unknown, value?: unknown): ((p: Record<string, unknown>) => number) => {
+  // A live post variable — val("glow", 0.5) — reading the folded variable
+  // each frame with the initial as the fallback. The editable-table fold
+  // materializes a "set" row for each val() right after the cell it appears in.
+  scope.val = (name: unknown, value?: unknown): ((p: Record<string, unknown>) => number) => {
     const key = String(name)
     const fallback = typeof value === 'number' && Number.isFinite(value) ? value : 0
     return (p) => {
@@ -290,7 +282,7 @@ function headScope(): Record<string, unknown> {
 export function evalPostCode(code: string): OpChain {
   const scope = headScope()
   const keys = Object.keys(scope)
-  const fn = new Function(...keys, `"use strict"; return (${rewriteVarCalls(code)});`)
+  const fn = new Function(...keys, `"use strict"; return (${code});`)
   const result = fn(...keys.map((k) => scope[k])) as unknown
   if (!(result instanceof ChainBuilder)) throw new Error('post: code cell must return a chain (did you start with scene()?)')
   return result.ops

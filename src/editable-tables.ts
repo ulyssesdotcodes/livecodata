@@ -111,7 +111,7 @@ export function invalidColumns(row: Row, columns: EditableColumn[]): string[] {
 // Per-row provenance, parallel to `rows`. code: originated from a program seed;
 // dirty: user-edited or user-added, so a re-seed must NOT overwrite it; slot:
 // index in the seed list — the identity a re-seed aligns to (-1 for user rows).
-// varName: derived from a var() call in the nearest code row above — owned by
+// varName: derived from a val() call in the nearest code row above — owned by
 // that call: the row is deleted when the call is, even if edited.
 interface RowMeta {
   code: boolean
@@ -281,8 +281,8 @@ function reseedRows(t: TableState, seed: Row[]): void {
   t.rowMeta = nextMeta
 }
 
-// ── var() rows: post code cells materialize their variables ──────────────────
-// A post-language code cell's var("name", value) calls own the "set" rows
+// ── val() rows: post code cells materialize their variables ──────────────────
+// A post-language code cell's val("name", value) calls own the "set" rows
 // immediately after it: created with the declared value (at the cell's beat),
 // value-tracked while pristine, kept through user edits, and deleted — edited
 // or not — when the call is deleted. Pure fold logic keyed on the events that
@@ -449,7 +449,7 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
         if (meta.code) t.removedSlots.add(meta.slot)
         t.rows.splice(i, 1)
         t.rowMeta.splice(i, 1)
-        // A removed code row takes its var()-derived rows with it.
+        // A removed code row takes its val()-derived rows with it.
         if (meta.varName == null) {
           while (i < t.rows.length && t.rowMeta[i].varName != null) {
             t.rows.splice(i, 1)
@@ -463,7 +463,7 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
       const i = e.row as number
       const row = t.rows[i]
       // The copy takes user identity — a re-seed won't overwrite or drop it.
-      // It lands after the source's var()-derived run, and derives its own.
+      // It lands after the source's val()-derived run, and derives its own.
       if (row) {
         let at = i + 1
         if (t.rowMeta[i].varName == null) {

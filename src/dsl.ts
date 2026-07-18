@@ -1007,10 +1007,10 @@ export const SCHEMAS = deepFreeze({
    * rebound each frame with no recompile) or STRUCTURAL (e.g. edges' colorMode,
    * which selects a shader path). `slider("name", min?, max?)` is a live arg
    * that reads an on-screen slider each frame — and declares it (one row in
-   * the "sliders" table per name) so the control just appears. `var("name",
+   * the "sliders" table per name) so the control just appears. `val("name",
    * value)` likewise reads a live variable — and materializes its "set" row
    * right after the cell, so the value becomes editable, tweenable table data
-   * (deleting the var() call deletes the row). `event` picks what a row does — "chain"
+   * (deleting the val() call deletes the row). `event` picks what a row does — "chain"
    * (`code` = the whole chain; empty = passthrough), "add" (append effects,
    * `pixelate(6)`, leading `.` optional), "remove" (`name` = op name; drop every
    * op with that name — the beat-time bypass), "set" (`name`/`value` = a live
