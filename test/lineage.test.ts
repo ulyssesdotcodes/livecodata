@@ -49,33 +49,33 @@ test('the engine stamps each view, accumulating transitive provenance', () => {
   const rt = createRuntime()
   const code = `
     define("randsin", () => math(i => i).range(6))
-    define("events", () => table("randsin")
+    define("three", () => table("randsin")
       .scan((s, cur) => ({ state: s, emit: cur.beat === 3 ? { hit: cur.beat } : null }), null))
   `
   const { views } = rt.run(code, { seed: 1 })
 
   assert.deepEqual(getLineage(views.get('randsin')!.rows[3]), [{ table: 'randsin', index: 3 }])
 
-  const ev = views.get('events')!.rows[0]
+  const ev = views.get('three')!.rows[0]
   const tables = getLineage(ev).map((r) => r.table)
   assert.ok(tables.includes('randsin'), 'keeps upstream randsin ref')
-  assert.ok(tables.includes('events'), 'adds its own ref')
+  assert.ok(tables.includes('three'), 'adds its own ref')
 })
 
 test('end-to-end: the scene cache traces back to the randsin sample that set color', () => {
   const rt = createRuntime()
   const code = `
     define("randsin", () => math(t => Math.sin(t * Math.PI * 8)).range(2))
-    define("base", "events", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
+    define("base", "three", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
-    define("flash", "events", (rand, table) => {
+    define("flash", "three", (rand, table) => {
       const objects = table("base").flatMap(o => o.type === "create" ? { id: o.id } : null)
       return table("randsin").flatMap((cur, i, rows) =>
         i > 0 && cur.value * rows[i - 1].value < 0
           ? objects.rows.map(o => ({ id: o.id, type: "color", beat: cur.beat, color: 0xffffff }))
           : null)
     })
-    define("scene", () => table("events").rasterize(2))
+    define("scene", () => table("three").rasterize(2))
   `
   const { views } = rt.run(code, { seed: 1 })
   const scene = views.get('scene')!
@@ -83,7 +83,7 @@ test('end-to-end: the scene cache traces back to the randsin sample that set col
   const lateRows = scene.rows.filter((r) => r.frame === 20)
   const active = activeLineage(lateRows)
   assert.ok(active.has('randsin'), 'a randsin sample is referenced')
-  assert.ok(active.has('events'), 'an events row is referenced')
+  assert.ok(active.has('three'), 'a three-table row is referenced')
   assert.ok(active.get('randsin')!.size >= 1)
 })
 

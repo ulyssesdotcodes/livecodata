@@ -119,9 +119,9 @@ test('reproduces the zero-crossing events program end-to-end', () => {
   const rt = createRuntime()
   const code = `
     define("wave", () => math(i => Math.sin(i * Math.PI / 4)).range(16))
-    define("base", "events", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
+    define("base", "three", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
-    define("flash", "events", (rand, table) => {
+    define("flash", "three", (rand, table) => {
       const crossings = table("wave").flatMap((cur, i, rows) =>
         i > 0 && cur.value * rows[i - 1].value < 0 ? { beat: cur.beat } : null)
       return table("base").flatMap(o =>
@@ -130,7 +130,7 @@ test('reproduces the zero-crossing events program end-to-end', () => {
     })
   `
   const { views } = rt.run(code, { seed: 1 })
-  const events = views.get('events')!.rows
+  const events = views.get('three')!.rows
   assert.equal(events[0].type, 'create')
   assert.ok(events.some((e) => e.type === 'color'), 'a zero-crossing color event exists')
   assert.deepEqual(events.map((e) => e.beat), [...events.map((e) => e.beat)].sort((a, b) => (a as number) - (b as number)),

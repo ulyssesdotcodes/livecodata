@@ -29,17 +29,19 @@ interface Runtime {
 export function cookProgram(runtime: Runtime, code: string, seed: number, dataCache?: Map<string, string>): CookedResult {
   const result = runtime.run(code, { seed, dataCache })
   const scene = result.views.get('scene')
-  const events = result.views.get('events')
-  const sceneRows = scene ? scene.rows : events ? rasterizeRows(events.rows) : []
+  // "three" is the 3D scene's event table (matching hydra/bauble/post naming);
+  // "events" is its legacy name, kept so saved sessions still render.
+  const three = result.views.get('three') ?? result.views.get('events')
+  const sceneRows = scene ? scene.rows : three ? rasterizeRows(three.rows) : []
   const timeline = result.views.get('timeline')
   const timelineRows = timeline ? timeline.rows : []
   const hydra = result.views.get('hydra')
-  const hydraSketchRows = hydra ? hydraRows(hydra.rows) : hydraRows(events?.rows)
-  // No events-table fallback for bauble: its events share hydra's names, so
-  // sniffing the generic events table would claim the same rows twice.
+  const hydraSketchRows = hydra ? hydraRows(hydra.rows) : hydraRows(three?.rows)
+  // No three-table fallback for bauble: its events share hydra's names, so
+  // sniffing the generic scene table would claim the same rows twice.
   const bauble = result.views.get('bauble')
   const baubleSketchRows = bauble ? baubleRows(bauble.rows) : []
-  // No events-table fallback for post either — its setCode/transition/… names
+  // No three-table fallback for post either — its setCode/transition/… names
   // collide with hydra's (bauble precedent).
   const post = result.views.get('post')
   const postSketchRows = post ? postRows(post.rows) : []

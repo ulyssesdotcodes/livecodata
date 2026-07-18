@@ -11,17 +11,17 @@ import { frameToBeat } from '../src/constants.js'
 test('new verbs cook end-to-end (grid/derive/groupBy/csv/join/triggerEach + lineage)', () => {
   const code = `
 define("wave", () => math(t => Math.sin(t * Math.PI * 10)).range(0.8))
-define("base", "events", () => grid(2, 2).derive({
+define("base", "three", () => grid(2, 2).derive({
   id: r => "o" + r.i, type: "create", beat: 1, shape: "sphere",
   rx: 0, ry: 0, rz: 0, color: 0x4444ff,
 }))
-define("flash", "events", (rand, table) =>
+define("flash", "three", (rand, table) =>
   table("wave").triggerEach(
     (cur, i, rows) => i > 0 && cur.value * rows[i - 1].value < 0,
     table("base"),
     (o, cur) => ({ id: o.id, type: "color", beat: cur.beat, color: 0xff0000, dur: 4/30 })
   ))
-define("scene", () => table("events").rasterize(24/30))
+define("scene", () => table("three").rasterize(24/30))
 define("bySign", () => table("wave").derive({ sign: r => r.value >= 0 ? "pos" : "neg" }).groupBy("sign").count())
 define("cities", () => csv("id,pop\\na,8\\nb,4"))
 define("joined", () => table("cities").join(rows([{ id: "a", note: "hit" }]), "id"))
@@ -30,8 +30,8 @@ define("joined", () => table("cities").join(rows([{ id: "a", note: "hit" }]), "i
 
   assert.equal(views.get('base')!.length, 4)
 
-  const colorRows = views.get('events')!.rows.filter((r) => r.type === 'color')
-  assert.equal(views.get('events')!.length, 4 + colorRows.length)
+  const colorRows = views.get('three')!.rows.filter((r) => r.type === 'color')
+  assert.equal(views.get('three')!.length, 4 + colorRows.length)
   assert.ok(colorRows.length >= 4 && colorRows.length % 4 === 0, 'color events fan out per object')
 
   assert.equal(views.get('bySign')!.rows.reduce((s, r) => s + (r.count as number), 0), 24)
@@ -71,7 +71,7 @@ test('Origami Crane sample: 17 exact fold steps, wings held half-raised', () => 
       (seed ?? sample.tables?.[name] ?? []).map((r) => conformRow(r, schemaColumns(schema))),
   }).run(sample.code, { seed: 1 })
 
-  const events = views.get('events')!
+  const events = views.get('three')!
   const create = events.rows.find((r) => r.type === 'create')!
   const program = create.program as FoldTableProgram
   assert.equal(program.kind, 'fold-table')
@@ -164,7 +164,7 @@ test('Origami Cicada sample: nine simple folds, all exact', () => {
     editableRows: (name: string, schema: Record<string, ColumnType>, seed?: Record<string, unknown>[]) =>
       (seed ?? sample.tables?.[name] ?? []).map((r) => conformRow(r, schemaColumns(schema))),
   }).run(sample.code, { seed: 1 })
-  const events = views.get('events')!
+  const events = views.get('three')!
   const program = events.rows.find((r) => r.type === 'create')!.program as FoldTableProgram
   assert.equal(program.steps.length, 9)
   for (const step of program.steps) assert.equal(step.type, 'Pureland')

@@ -36,10 +36,11 @@ export type ExprNode =
   | { k: 'logic'; op: 'and' | 'or'; a: ExprNode; b: ExprNode }
   | { k: 'not'; a: ExprNode }
   | { k: 'cond'; t: ExprNode; a: ExprNode; b: ExprNode }
-  // midi/slider read a streaming source at the current frame, so they can't be
-  // resolved at bake time — bakeExpr defers them into per-row bindings.
+  // midi/slider/time read a streaming source at the current frame, so they
+  // can't be resolved at bake time — bakeExpr defers them into per-row bindings.
   | { k: 'midi'; note: string; channel: number | null }
   | { k: 'slider'; id: string }
+  | { k: 'time' }
 
 type ExprInput = Expr | number | string | boolean | null
 
@@ -95,19 +96,24 @@ export const midi = (note: string, channel: number | null = null): Expr =>
 export const slider = (id: string): Expr =>
   new Expr({ k: 'slider', id: String(id) })
 
+export const time = (): Expr => new Expr({ k: 'time' })
+
 // Per-frame evaluation context, supplied by playback at apply time; samplers
 // read the streaming tables at the playhead's current source frame.
 export interface EvalCtx {
   midi?: (note: string, channel: number | null) => number
   slider?: (id: string) => number
   sliders?: () => Record<string, number>
+  // Playback seconds at the playhead — the same clock hydra/post chains see,
+  // so pausing/scrubbing freezes/scrubs it.
+  time?: () => number
 }
 
 // True if the node reads a streaming source and so must be carried as a
 // binding and evaluated per frame rather than at bake time.
 export function isStreamingNode(n: ExprNode): boolean {
   switch (n.k) {
-    case 'midi': case 'slider': return true
+    case 'midi': case 'slider': case 'time': return true
     case 'field': case 'lit': case 'idx': return false
     case 'not': return isStreamingNode(n.a)
     case 'bin': case 'cmp': case 'logic': return isStreamingNode(n.a) || isStreamingNode(n.b)
@@ -122,6 +128,7 @@ export function evalExpr(n: ExprNode, row: Row, i: number, ctx?: EvalCtx): unkno
     case 'idx': return i
     case 'midi': return ctx?.midi ? ctx.midi(n.note, n.channel) : 0
     case 'slider': return ctx?.slider ? ctx.slider(n.id) : 0
+    case 'time': return ctx?.time ? ctx.time() : 0
     case 'bin': {
       const a = evalExpr(n.a, row, i, ctx) as number
       const b = evalExpr(n.b, row, i, ctx) as number
@@ -563,8 +570,8 @@ export class Table {
   /**
    * Add or overwrite fields on every row; each spec value is an Expr, a
    * function (r, i) => val, or a literal. A streaming Expr binds per frame —
-   * derive({ py: slider("height") }) follows the slider as the loop replays —
-   * while a constant Expr is baked in immediately.
+   * derive({ py: expr.slider("height") }) follows the slider as the loop
+   * replays — while a constant Expr is baked in immediately.
    */
   derive(spec: Record<string, Expr | ((r: Row, i: number) => unknown) | unknown>): Table {
     return this._xf('derive', { spec }, (ins) => ins[0].map((r, i) => {
@@ -1108,7 +1115,7 @@ export const SCHEMAS = deepFreeze({
   },
   /**
    * The "sliders" view: one on-screen control per row — `id` names it (and is
-   * what slider(id) reads), `min`/`max` its range, `default` its initial
+   * what expr.slider(id) reads), `min`/`max` its range, `default` its initial
    * value. Check `disabled` to pull the control off screen without losing
    * its settings.
    */
@@ -1224,7 +1231,7 @@ export interface ThreeNamespace {
    * the look-at target (default origin), fov the vertical field of view in
    * degrees. The first row becomes the camera's create row, the rest updates,
    * so it rides events → rasterize and interpolates like any object — concat
-   * it into your events stream, then rasterize.
+   * it into your "three" table, then rasterize.
    */
   camera(keyframes: Row[] | null | undefined): Table
   /**
@@ -1244,6 +1251,34 @@ export interface ThreeNamespace {
    * rx/ry/rz on each create row. For a spin over time use .three.rotate.
    */
   rotate(table: Table | Row[], x?: number, y?: number, z?: number): Table
+}
+
+/**
+ * The Expr helpers, grouped like `three`: sources for building serializable,
+ * chainable expressions over a row. expr.field/lit/idx read the row itself;
+ * expr.midi/slider/time are LIVE — they read a streaming source at the
+ * playhead each frame, so a field derived from one follows the note, slider,
+ * or clock as the loop replays. The JSDoc on each member IS the editor hover
+ * doc — write it for the livecoder.
+ */
+export interface ExprNamespace {
+  /** A chainable expression reading row[name] — expr.field("v").add(1).gt(2). Use in filter(expr), map(template), emit(template), derive: these are diffable (no opaque closures). */
+  field(name: string): Expr
+  /** A constant expression. Usually you can pass a raw value directly to an Expr method instead. */
+  lit(v: number | string | boolean | null): Expr
+  /** An expression yielding the row index (0-based). */
+  idx(): Expr
+  /** A live MIDI value at the playhead, e.g. expr.midi("c4") — the most recent event for the note (or "cc1" for control change) at-or-before the playhead, normalized 0–1. Chainable like any Expr: expr.midi("c4").mul(2). Resolves each frame, so notes played while looping replay at the loop position they were heard. Optional 1-based `channel` filters to one channel. */
+  midi(note: string, channel?: number | null): Expr
+  /**
+   * A live on-screen slider value, e.g. expr.slider("brightness"). Sliders
+   * are declared by defining a view named "sliders" (rows { id, min, max,
+   * default? }); each shows as a labelled control over the visual and records
+   * its automation the way MIDI does.
+   */
+  slider(id: string): Expr
+  /** The playback clock in seconds at the playhead — the same clock hydra/post chains see as props.time, so pausing or scrubbing the timeline freezes or scrubs it. Live: resolves each frame, e.g. derive({ ry: expr.time().mul(0.5) }). */
+  time(): Expr
 }
 
 // The globals a user program sees. JSDoc on these members IS the editor's
@@ -1293,18 +1328,14 @@ export type DSLSurface = Easings & {
    * the table the first time it's created.
    */
   editable(name: string, schema: Schema, seedRows?: Row[]): Table
-  field(name: string): Expr
-  lit(v: number | string | boolean | null): Expr
-  idx(): Expr
-  /** A live MIDI value at the playhead, e.g. midi("c4") — usable anywhere an Expr is, and chainable: midi("c4").mul(2). */
-  midi(note: string, channel?: number | null): Expr
   /**
-   * A live on-screen slider value, e.g. slider("brightness"). Sliders are
-   * declared by defining a view named "sliders" (rows { id, min, max,
-   * default? }); each shows as a labelled control over the visual and records
-   * its automation the way MIDI does.
+   * The Expr helpers, grouped: expr.field/lit/idx build diffable expressions
+   * over a row (chain .add/.mul/.gt/.cond/…); expr.midi/slider/time are live
+   * per-frame sources — a field derived from one follows the note, slider, or
+   * playback clock as the loop replays. e.g. filter(expr.field("v").gt(3)),
+   * derive({ py: expr.slider("height") }).
    */
-  slider(id: string): Expr
+  expr: ExprNamespace
   /** The tap-beat table: one row per wall-time button press ({ beat, time }) — the source of truth for tempo. */
   taps(): Table
   /** Seconds per beat derived from the taps (average interval), or `fallback` (default 0.5s = 120 BPM) until two taps exist. The playhead already runs at this tempo; tempo() is for programs that want the number. */
@@ -1420,11 +1451,7 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       const rows = (ctx?.editableRows?.(name, schema, seedRows) ?? []).map((r) => ({ ...r }))
       return new Table(rows, ctx).save(name)
     },
-    field,
-    lit,
-    idx,
-    midi,
-    slider,
+    expr: { field, lit, idx, midi, slider, time },
     taps: () => new Table((ctx?.tapRows?.() ?? []).map((r) => ({ ...r })), ctx),
     tempo: (fallback = DEFAULT_BEAT_SECONDS): number => beatSecondsFromTaps(ctx?.tapRows?.()) ?? fallback,
     beats: (count: number, { fit }: { fit?: number } = {}): Table => {

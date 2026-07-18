@@ -51,11 +51,11 @@ const req = (code: string, extra: Partial<Parameters<ReturnType<typeof createCoo
 test('the service cooks a program end-to-end and the packed result unpacks to tables', () => {
   const service = createCookService()
   const resp = service.handle(req(`
-define("base", "events", () => grid(2, 2).derive({
+define("base", "three", () => grid(2, 2).derive({
   id: r => "o" + r.i, type: "create", beat: 1, shape: "sphere",
   rx: 0, ry: 0, rz: 0, color: 0x4444ff,
 }))
-define("scene", () => table("events").rasterize(4/30))
+define("scene", () => table("three").rasterize(4/30))
 `))
   assert.equal(resp.ok, true)
   if (!resp.ok) return

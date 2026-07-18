@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { buildLangEnv } from '../scripts/gen-lang-env.js'
 import { createLangService } from '../src/lang-service.js'
 import {
-  curatedDocFor, DSL_BUILTIN_DOCS, TABLE_METHOD_DOCS, EXPR_METHOD_DOCS, THREE_METHOD_DOCS,
+  curatedDocFor, DSL_BUILTIN_DOCS, TABLE_METHOD_DOCS, EXPR_NAMESPACE_DOCS, EXPR_METHOD_DOCS, THREE_METHOD_DOCS,
 } from '../src/editor-support.js'
 
 // One env + service for the whole file: building the env runs a real tsc
@@ -19,11 +19,11 @@ const namesAt = (text: string, pos = text.length): string[] => {
 }
 
 test('env: DSL surface enumerated from dsl.ts, declarations + libs present', () => {
-  assert.ok(env.surfaceProps.includes('field'))
+  assert.ok(env.surfaceProps.includes('expr'))
   assert.ok(env.surfaceProps.includes('table'))
   assert.ok(env.surfaceProps.includes('origami'))
   assert.ok(env.files['/dts/dsl.d.ts'].includes('DSLSurface'))
-  assert.ok(env.files['/globals.d.ts'].includes('const field:'))
+  assert.ok(env.files['/globals.d.ts'].includes('const expr:'))
   assert.ok(env.files['/lib.es2022.d.ts'])
 })
 
@@ -37,9 +37,18 @@ test('member completions on a Table chain come from the checker', () => {
 })
 
 test('Expr chains complete Expr methods, not Table ones', () => {
-  const names = namesAt('field("v").gt(2).')
+  const names = namesAt('expr.field("v").gt(2).')
   for (const m of ['add', 'and', 'cond', 'mul']) assert.ok(names.includes(m), `expected Expr member ${m}`)
   assert.ok(!names.includes('rasterize'), 'Table methods must not appear on an Expr')
+})
+
+test('the expr namespace completes its sources', () => {
+  const res = svc.completionsAt('expr.', 'expr.'.length)
+  assert.ok(res && res.isMemberCompletion)
+  const names = res.entries.map((e) => e.name)
+  for (const m of ['field', 'lit', 'idx', 'midi', 'slider', 'time']) {
+    assert.ok(names.includes(m), `expected expr.${m}`)
+  }
 })
 
 test('a chain the old heuristic could not type still completes', () => {
@@ -57,8 +66,8 @@ test('.three completes the scene animators', () => {
 })
 
 test('globals include the DSL surface, console, and the ES library', () => {
-  const names = namesAt('fie', 3)
-  for (const g of ['field', 'define', 'three', 't', 'console', 'Math']) assert.ok(names.includes(g), `expected global ${g}`)
+  const names = namesAt('exp', 3)
+  for (const g of ['expr', 'define', 'three', 't', 'console', 'Math']) assert.ok(names.includes(g), `expected global ${g}`)
 })
 
 test('quickinfo shows the complete signature', () => {
@@ -144,7 +153,7 @@ test('hydra: generators, sources, and outputs are globals; the DSL is not', () =
     assert.ok(names.includes(g), `expected hydra global ${g}`)
   }
   assert.ok(!names.includes('table'), 'DSL surface must not leak into hydra sketches')
-  assert.ok(!names.includes('field'), 'DSL surface must not leak into hydra sketches')
+  assert.ok(!names.includes('expr'), 'DSL surface must not leak into hydra sketches')
 })
 
 test('hydra: chains complete the modifier methods', () => {
@@ -187,10 +196,12 @@ test('hydra: the DSL program keeps its own surface (no hydra leak)', () => {
 test('curatedDocFor picks the doc table from the chain context', () => {
   const t1 = 'table("x").map'
   assert.equal(curatedDocFor(t1, t1.indexOf('map'), 'map'), TABLE_METHOD_DOCS.map)
-  const t2 = 'field("v").gt'
+  const t2 = 'expr.field("v").gt'
   assert.equal(curatedDocFor(t2, t2.indexOf('gt'), 'gt'), EXPR_METHOD_DOCS.gt)
   const t3 = 't.box().three.rotate'
   assert.equal(curatedDocFor(t3, t3.indexOf('rotate'), 'rotate'), THREE_METHOD_DOCS.rotate)
-  assert.equal(curatedDocFor('field', 0, 'field'), DSL_BUILTIN_DOCS.field)
+  const t4 = 'expr.time'
+  assert.equal(curatedDocFor(t4, t4.indexOf('time'), 'time'), EXPR_NAMESPACE_DOCS.time)
+  assert.equal(curatedDocFor('expr', 0, 'expr'), DSL_BUILTIN_DOCS.expr)
   assert.equal(curatedDocFor('const x = 1', 6, 'x'), null)
 })

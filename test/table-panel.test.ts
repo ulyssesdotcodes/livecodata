@@ -75,10 +75,11 @@ test('nextTableName skips names taken by views or editable tables', () => {
   assert.equal(nextTableName(views, store), 'table3')
 })
 
-test('fallbackTab keeps the current tab, else prefers events, else the last tab', () => {
+test('fallbackTab keeps the current tab, else prefers the scene table, else the last tab', () => {
   assert.equal(fallbackTab([], 'x'), null)
   assert.equal(fallbackTab(['a', 'b'], 'a'), 'a')
-  assert.equal(fallbackTab(['a', 'events', 'b'], 'gone'), 'events')
+  assert.equal(fallbackTab(['a', 'three', 'b'], 'gone'), 'three')
+  assert.equal(fallbackTab(['a', 'events', 'b'], 'gone'), 'events', 'legacy name still preferred')
   assert.equal(fallbackTab(['a', 'b'], 'gone'), 'b')
 })
 

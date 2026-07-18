@@ -1,10 +1,10 @@
 // Editor completion helpers (pure; no CodeMirror/DOM deps). Whether a "."
 // offers Expr or Table methods comes down to the root of the member-access
-// chain: every Expr method returns an Expr, so a chain rooted at
-// field()/lit()/idx() stays an Expr. The program is untyped JS-in-a-string, so
-// this is a backward text scan, not a type-checker query.
+// chain: every Expr method returns an Expr, so a chain rooted at the `expr`
+// namespace (expr.field(...)...) stays an Expr. The program is untyped
+// JS-in-a-string, so this is a backward text scan, not a type-checker query.
 
-export const EXPR_ROOTS: ReadonlySet<string> = new Set(['field', 'lit', 'idx'])
+export const EXPR_ROOTS: ReadonlySet<string> = new Set(['expr'])
 
 const isIdentChar = (c: string): boolean => /[A-Za-z0-9_$]/.test(c)
 const isWs = (c: string): boolean => c === ' ' || c === '\t' || c === '\n' || c === '\r'
@@ -56,7 +56,23 @@ export function chainRoot(text: string, dotPos: number): string | null {
   return null
 }
 
+// The dot right after the bare `expr` global (namespace member access, offers
+// field/lit/midi/…) — as opposed to a dot later in the chain, which is on an
+// Expr value and offers the Expr methods.
+export function isExprNamespaceDot(text: string, dotPos: number): boolean {
+  let i = dotPos - 1
+  while (i >= 0 && isWs(text[i])) i--
+  if (i < 0 || !isIdentChar(text[i])) return false
+  const end = i
+  while (i >= 0 && isIdentChar(text[i])) i--
+  if (text.slice(i + 1, end + 1) !== 'expr') return false
+  // A bare global, not a member access named expr.
+  while (i >= 0 && isWs(text[i])) i--
+  return i < 0 || text[i] !== '.'
+}
+
 export function isExprDot(text: string, dotPos: number): boolean {
+  if (isExprNamespaceDot(text, dotPos)) return false
   const root = chainRoot(text, dotPos)
   return root !== null && EXPR_ROOTS.has(root)
 }

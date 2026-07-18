@@ -7,7 +7,7 @@
 import { createSignal, For, Show } from 'solid-js'
 import { listenGlobal } from './dom.js'
 import {
-  DSL_BUILTIN_DOCS, TABLE_METHOD_DOCS, EXPR_METHOD_DOCS, THREE_METHOD_DOCS,
+  DSL_BUILTIN_DOCS, TABLE_METHOD_DOCS, EXPR_NAMESPACE_DOCS, EXPR_METHOD_DOCS, THREE_METHOD_DOCS,
   type DocEntry,
 } from '../editor-support.js'
 
@@ -29,8 +29,13 @@ const FN_SECTIONS: FnSection[] = [
     docs: TABLE_METHOD_DOCS,
   },
   {
+    title: 'expr.* sources',
+    blurb: 'The expression namespace: row readers plus the live midi / slider / time sources.',
+    docs: EXPR_NAMESPACE_DOCS,
+  },
+  {
     title: 'Expression methods',
-    blurb: 'Chain off field() / lit() / idx() to build a diffable expression.',
+    blurb: 'Chain off expr.field() / expr.lit() / expr.idx() to build a diffable expression.',
     docs: EXPR_METHOD_DOCS,
   },
   {
@@ -70,12 +75,12 @@ const TABLE_DOCS: TableDoc[] = [
   {
     name: 'midi / midi·events',
     detail: 'live MIDI input',
-    info: 'With MIDI enabled (⚙ settings), incoming notes stream into the "midi·events" log; the folded "midi" table holds, per note, the latest loop\'s take. midi("c4") bindings resolve against it each frame, so notes you play while looping replay at the loop position they were heard.',
+    info: 'With MIDI enabled (⚙ settings), incoming notes stream into the "midi·events" log; the folded "midi" table holds, per note, the latest loop\'s take. expr.midi("c4") bindings resolve against it each frame, so notes you play while looping replay at the loop position they were heard.',
   },
   {
     name: 'sliders / slider',
     detail: 'on-screen controls',
-    info: 'Define a view named "sliders" of rows { id, min, max, default? } to draw labelled sliders over the visual. Dragging one records automation as "slider" events; slider("id") resolves against the folded "slider" table (raw log: "slider·events"), exactly like MIDI.',
+    info: 'Define a view named "sliders" of rows { id, min, max, default? } to draw labelled sliders over the visual. Dragging one records automation as "slider" events; expr.slider("id") resolves against the folded "slider" table (raw log: "slider·events"), exactly like MIDI.',
   },
   {
     name: 'taps',

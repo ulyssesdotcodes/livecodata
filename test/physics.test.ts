@@ -131,10 +131,10 @@ test('physics() builder bakes the source table and stays chainable', () => {
   const runtime = createRuntime({ physics: () => fakeEngine(baked) })
   const { views } = runtime.run(`
     define("scene", () => rows([{ id: "x", type: "create", motion: "dynamic" }]))
-    define("events", (rand, table) => physics(table("scene")).simulate({ steps: 1 }))
+    define("three", (rand, table) => physics(table("scene")).simulate({ steps: 1 }))
   `, { seed: 1 })
 
-  const events = views.get('events')
+  const events = views.get('three')
   assert.ok(events, 'result cooks like any other view')
   assert.equal(events!.rows.length, 2)
   assert.equal(events!.rows[1].py, 1)
@@ -143,6 +143,6 @@ test('physics() builder bakes the source table and stays chainable', () => {
 test('physics() throws a friendly error while the engine is still loading', () => {
   const runtime = createRuntime({ physics: () => null })
   assert.throws(() => runtime.run(`
-    define("events", (rand, table) => physics(rows([{ id: "x", type: "create" }])).simulate())
+    define("three", (rand, table) => physics(rows([{ id: "x", type: "create" }])).simulate())
   `, { seed: 1 }), /still loading/)
 })

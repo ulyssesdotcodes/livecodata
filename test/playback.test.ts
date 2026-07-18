@@ -31,6 +31,7 @@ import { createPlaybackEngine, type PlaybackEngine, type TapControl } from '../s
 import { createSceneVisualizer, createHydraVisualizer } from '../src/visualizer.js'
 import { rasterizeRows } from '../src/rasterize.js'
 import { DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS } from '../src/constants.js'
+import { Table, time as timeExpr } from '../src/dsl.js'
 import type { Row } from '../src/lineage.js'
 
 function fakeScene() {
@@ -318,6 +319,24 @@ test('a hydra event past the loop plays once the wall-aligned pass reaches it', 
   time.advance(2 * DEFAULT_BEAT_SECONDS * 1000) // pass 2 wraps back to pass 0
   time.frame()
   assert.equal(sketches.at(-1), 'a.out(o0)', 'the sequence wraps to pass 0')
+})
+
+test('the engine supplies ctx.time: a time() binding resolves to source seconds', () => {
+  const time = fakeTime(0)
+  const states: Row[] = []
+  const scene = {
+    ...fakeScene(),
+    createObject: (s: Record<string, unknown>): void => { states.push(s as Row) },
+    updateObject: (s: Record<string, unknown>): void => { states.push(s as Row) },
+  }
+  const engine = createPlaybackEngine([createSceneVisualizer(scene)], { clock: time.clock })
+  const rows = new Table([sceneCreate()]).derive({ ry: timeExpr() }).rows
+  engine.load({ sceneRows: rasterizeRows(rows, 4), timelineRows: [], hydraRows: [] })
+  engine.toggle() // epoch 0 → phase 0
+  assert.equal(states.at(-1)!.ry, 0)
+  time.advance(1000) // 2 beats at 0.5 s/beat → 1 s of source time
+  time.frame()
+  assert.equal(states.at(-1)!.ry, 1, 'ry follows the playback clock in seconds')
 })
 
 test('scene: content past the loop plays in later passes; short content resets every loop', () => {

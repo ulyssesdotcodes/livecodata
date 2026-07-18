@@ -5,7 +5,7 @@
 import { buildTimeline, type Timeline } from './timeline.js'
 import { activeLineage } from './lineage.js'
 import type { EvalCtx } from './dsl.js'
-import { FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS, beatsToFrames } from './constants.js'
+import { FPS, FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS, beatsToFrames } from './constants.js'
 import type { Row } from './lineage.js'
 import type { CookedVisualRows, LoopEpochs, Visualizer } from './visualizer.js'
 import { beatSecondsFromTaps } from './tap-log.js'
@@ -230,7 +230,9 @@ export function createPlaybackEngine(
     const srcFrame = Math.round(srcFrameF)
     const midiCtx = midiCtxAt ? midiCtxAt(srcFrame) : null
     const sliderCtx = sliderCtxAt ? sliderCtxAt(srcFrame) : null
-    const ctx: EvalCtx | null = midiCtx || sliderCtx ? { ...midiCtx, ...sliderCtx } : null
+    // Always present so time() bindings resolve even with no midi/slider
+    // stream; the clock is the source position, so scrubbing scrubs it.
+    const ctx: EvalCtx = { ...midiCtx, ...sliderCtx, time: () => srcFrameF / FPS }
     const states: Row[] = []
     const loopFrames = beatsToFrames(loopBeats)
     const bpm = tappedBpm() ?? 60 / DEFAULT_BEAT_SECONDS
