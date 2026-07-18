@@ -599,6 +599,9 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
     if (persist) persistSession()
   } finally {
     cooking--
+    // The apply re-baselined the applied code and cleared pending, so the
+    // button falls back to disabled until the next edit.
+    editor.refreshCanRun()
   }
 }
 
@@ -634,6 +637,9 @@ const editor = createEditor({
   onEdit: (cell, code) => presence?.setLiveCode(cell, code),
   // Escaping a code cell hands keyboard focus back to the table it came from.
   onExitCell: () => tablePanel.focusGrid(),
+  // Run has something to commit when the buffer diverges from the applied
+  // program or the store holds un-applied table edits.
+  programDirty: (buffer) => (liveCode == null || buffer !== liveCode) || editableStore.hasPendingEdits(),
 })
 
 // --- presence indicators -----------------------------------------------------
@@ -713,6 +719,9 @@ editableStore.onChange(() => {
   requestAnimationFrame(() => {
     storeRefreshScheduled = false
     tablePanel.setTables(tablesForDisplay(lastViews))
+    // An inline grid edit just became pending (or a peer's apply claimed ours),
+    // so the Run button's enabled state may have flipped.
+    editor.refreshCanRun()
     // A store event may be a peer's set-cell — their "last edited" marker.
     schedulePresenceRefresh()
   })

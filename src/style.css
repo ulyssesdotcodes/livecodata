@@ -396,10 +396,15 @@ html, body {
   transition: background 0.15s, border-color 0.15s;
 }
 
-.run-btn:hover {
+.run-btn:hover:not(:disabled) {
   background: #e94560;
   border-color: #e94560;
   color: #fff;
+}
+
+.run-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .session-selector {
