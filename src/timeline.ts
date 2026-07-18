@@ -1,9 +1,11 @@
 // livecodata timeline — an OPTIONAL remap on top of the beat-grid playhead,
 // defined as a table of EVENTS (see schemas.timeline): each row warps the
 // playback window `beat`..`end` (1-indexed) onto source beats of the baked
-// content — "retime" plays `from`..`to` linearly across the window, "loop"
-// cycles `from`..`to` at natural speed, "hold" freezes at `from`, "speed" runs
-// from `from` at `rate`, "reverse" plays `from`..`to` backwards. Playback
+// content — "retime" stretches input `from`..`to` into the output block
+// `outFrom`..`outTo` (default the window; from > to runs backwards) and
+// repeats the block across the window, "loop" cycles `from`..`to` at natural
+// speed, "hold" freezes at `from`, "speed" runs from `from` at `rate`.
+// Playback
 // beats no event covers play unmapped (identity); no timeline means identity
 // everywhere. An optional 0-indexed `loop` column places an event in a later
 // pass of the loop; every pass spans beat 1 to the last event's end.
@@ -71,12 +73,29 @@ function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: numb
     if (!(p1 > p0)) continue
     const from = num(r.from) ?? (r.beat as number)
     const to = num(r.to) ?? endOf(r)
+    // Tile the block [o0, o1) → source [from, to] across the window [p0, p1],
+    // clipping partial blocks at both edges; o0 anchors the cycle phase, so a
+    // window starting mid-block starts mid-source.
+    const tile = (o0: number, o1: number): void => {
+      const cycle = o1 - o0
+      if (!(cycle > 0)) {
+        segments.push({ p0, p1, s0: from, s1: from })
+        return
+      }
+      for (let k = Math.floor((p0 - o0) / cycle); o0 + k * cycle < p1; k++) {
+        const b0 = o0 + k * cycle
+        const q0 = Math.max(b0, p0), q1 = Math.min(b0 + cycle, p1)
+        if (!(q1 > q0)) continue
+        segments.push({
+          p0: q0, p1: q1,
+          s0: from + ((q0 - b0) / cycle) * (to - from),
+          s1: from + ((q1 - b0) / cycle) * (to - from),
+        })
+      }
+    }
     switch (r.event) {
       case 'retime':
-        segments.push({ p0, p1, s0: from, s1: to })
-        break
-      case 'reverse':
-        segments.push({ p0, p1, s0: to, s1: from })
+        tile((num(r.outFrom) ?? (r.beat as number)) + off, (num(r.outTo) ?? endOf(r)) + off)
         break
       case 'hold':
         segments.push({ p0, p1, s0: from, s1: from })
@@ -86,18 +105,9 @@ function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: numb
         segments.push({ p0, p1, s0: from, s1: from + rate * (p1 - p0) })
         break
       }
-      case 'loop': {
-        const cycle = to - from
-        if (cycle <= 0) {
-          segments.push({ p0, p1, s0: from, s1: from })
-          break
-        }
-        for (let p = p0; p < p1; p += cycle) {
-          const pe = Math.min(p + cycle, p1)
-          segments.push({ p0: p, p1: pe, s0: from, s1: from + (pe - p) })
-        }
+      case 'loop':
+        tile(p0, p0 + Math.max(0, to - from))
         break
-      }
     }
   }
   segments.sort((a, b) => a.p0 - b.p0 || a.p1 - b.p1)

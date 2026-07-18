@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildTimeline } from '../src/timeline.js'
 import { Table } from '../src/dsl.js'
+import { withLineage, getLineage } from '../src/lineage.js'
 import { createRuntime } from '../src/runtime.js'
 import { cookProgram } from '../src/replay.js'
 
@@ -39,11 +40,26 @@ test('hold event freezes the source frame across its window', () => {
   assert.equal(tl.sourceBeatAt(4.5), 3)
 })
 
-test('reverse event plays the source range backwards', () => {
-  const tl = buildTimeline([{ event: 'reverse', beat: 1, end: 5, from: 1, to: 5 }])
+test('retime with from > to plays the source range backwards', () => {
+  const tl = buildTimeline([{ event: 'retime', beat: 1, end: 5, from: 5, to: 1 }])
   assert.equal(tl.sourceBeatAt(1), 5)
   assert.equal(tl.sourceBeatAt(3), 3)
   assert.equal(tl.sourceBeatAt(5), 1)
+})
+
+test('retime with an output block repeats the stretched block across its window', () => {
+  // Source 1..5 stretched to half speed (an 8-beat block), looping across 16.
+  const tl = buildTimeline([{ event: 'retime', beat: 1, end: 17, from: 1, to: 5, outFrom: 1, outTo: 9 }])
+  assert.equal(tl.beats, 16)
+  assert.equal(tl.sourceBeatAt(5), 3, 'halfway through the first block')
+  assert.equal(tl.sourceBeatAt(10), 1.5, 'second block restarts the source')
+  assert.equal(tl.sourceBeatAt(13), 3)
+})
+
+test('retime output block anchors phase: a window starting mid-block starts mid-source', () => {
+  const tl = buildTimeline([{ event: 'retime', beat: 5, end: 13, from: 1, to: 5, outFrom: 1, outTo: 9 }])
+  assert.equal(tl.sourceBeatAt(6), 3.5, 'beat 6 sits in the block that began (unheard) at beat 1')
+  assert.equal(tl.sourceBeatAt(10), 1.5)
 })
 
 test('speed event advances from `from` at `rate` source beats per playback beat', () => {
@@ -140,7 +156,7 @@ test('a loop column gives each pass its own remap; beats stays the per-pass span
 test('event rows take the loop column too', () => {
   const tl = buildTimeline([
     { event: 'retime', beat: 1, end: 5, loop: 0 },
-    { event: 'reverse', beat: 1, end: 5, from: 1, to: 5, loop: 1 },
+    { event: 'retime', beat: 1, end: 5, from: 5, to: 1, loop: 1 },
   ])
   assert.equal(tl.loops, 2)
   assert.equal(tl.beats, 4)
@@ -183,6 +199,21 @@ test('remap drops rows no event plays; non-beat rows pass through', () => {
   ])
   const out = content.remap([{ event: 'loop', beat: 1, end: 9, from: 1, to: 5 }]).rows
   assert.deepEqual(out.map((r) => r.id), ['meta'])
+})
+
+test('remap through a repeating retime block places rows once per repeat, dur stretched', () => {
+  const content = new Table([{ id: 'a', beat: 3, dur: 2 }])
+  const out = content.remap([
+    { event: 'retime', beat: 1, end: 17, from: 1, to: 5, outFrom: 1, outTo: 9 },
+  ]).rows
+  assert.deepEqual(out.map((r) => [r.beat, r.dur]), [[5, 4], [13, 4]])
+})
+
+test('remap carries each source row\'s lineage onto every placed copy', () => {
+  const src = withLineage({ id: 'a', beat: 1 }, [{ table: 'melody', index: 0 }])
+  const out = new Table([src]).remap([{ event: 'loop', beat: 1, end: 9, from: 1, to: 5 }]).rows
+  assert.equal(out.length, 2)
+  for (const r of out) assert.deepEqual(getLineage(r), [{ table: 'melody', index: 0 }])
 })
 
 test('remap with an empty timeline is a no-op', () => {
