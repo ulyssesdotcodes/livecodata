@@ -145,6 +145,79 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
           const uvm = t.abs(t.uv().mul(scale).fract().mul(2).sub(1))
           return tex.sample(uvm)
         }
+        case 'scale': {
+          const amount = live(liveInit(op, 0))
+          const tex = t.convertToTexture(input)
+          const uvS = t.uv().sub(0.5).div(amount).add(0.5)
+          return tex.sample(uvS)
+        }
+        case 'rotate': {
+          const angle = live(liveInit(op, 0))
+          const tex = t.convertToTexture(input)
+          const c = t.cos(angle)
+          const s = t.sin(angle)
+          const p = t.uv().sub(0.5)
+          const uvR = t.vec2(p.x.mul(c).sub(p.y.mul(s)), p.x.mul(s).add(p.y.mul(c))).add(0.5)
+          return tex.sample(uvR)
+        }
+        case 'scrollX': {
+          const amount = live(liveInit(op, 0))
+          const tex = t.convertToTexture(input)
+          const uvN = t.uv()
+          return tex.sample(t.vec2(uvN.x.add(amount).fract(), uvN.y))
+        }
+        case 'scrollY': {
+          const amount = live(liveInit(op, 0))
+          const tex = t.convertToTexture(input)
+          const uvN = t.uv()
+          return tex.sample(t.vec2(uvN.x, uvN.y.add(amount).fract()))
+        }
+        case 'kaleid': {
+          const sides = live(liveInit(op, 0))
+          const tex = t.convertToTexture(input)
+          const p = t.uv().sub(0.5)
+          const r = t.length(p)
+          const wedge = t.float(Math.PI * 2).div(sides)
+          const a = t.abs(t.mod(t.atan(p.y, p.x), wedge).sub(wedge.mul(0.5)))
+          const uvK = t.vec2(t.cos(a), t.sin(a)).mul(r).add(0.5)
+          return tex.sample(uvK)
+        }
+        case 'hue': {
+          // Rodrigues rotation of the colour about the grey axis — a
+          // luminance-preserving hue shift with no HSV round-trip.
+          const amount = live(liveInit(op, 0))
+          const angle = amount.mul(Math.PI * 2)
+          const col = t.vec3(input.rgb)
+          const k = t.vec3(0.57735, 0.57735, 0.57735)
+          const cosA = t.cos(angle)
+          const rotated = col.mul(cosA)
+            .add(t.cross(k, col).mul(t.sin(angle)))
+            .add(k.mul(t.dot(k, col)).mul(t.oneMinus(cosA)))
+          return t.vec4(rotated, 1)
+        }
+        case 'saturate': {
+          const amount = live(liveInit(op, 0))
+          const col = t.vec3(input.rgb)
+          return t.vec4(t.mix(t.vec3(t.luminance(col)), col, amount), 1)
+        }
+        case 'brightness': {
+          const amount = live(liveInit(op, 0))
+          return t.vec4(t.vec3(input.rgb).add(amount), 1)
+        }
+        case 'contrast': {
+          const amount = live(liveInit(op, 0))
+          return t.vec4(t.vec3(input.rgb).sub(0.5).mul(amount).add(0.5), 1)
+        }
+        case 'fade': {
+          // Feedback trail: mix in the previous output frame (the same
+          // one-frame-behind buffer prev() samples).
+          const amount = live(liveInit(op, 0))
+          ensurePrev()
+          usesPrev = true
+          const prevNode = t.texture(prevTexture)
+          prevRefs.push(prevNode)
+          return t.mix(t.vec4(input), t.vec4(prevNode), amount)
+        }
         case 'strobe': {
           const speed = live(liveInit(op, 0))
           const on = t.step(0.5, beatUniform.mul(speed).fract())
@@ -187,6 +260,13 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
           return t.abs(t.vec4(input).sub(t.vec4(build(op.chainArgs![0]))))
         case 'mask':
           return t.vec4(input).mul(t.luminance(t.vec3(build(op.chainArgs![0]))))
+        case 'modulate': {
+          const amount = live(liveInit(op, 0))
+          const mod = t.convertToTexture(build(op.chainArgs![0]))
+          const src = t.convertToTexture(input)
+          const off = t.vec2(mod.r, mod.g).sub(0.5).mul(amount)
+          return src.sample(t.uv().add(off))
+        }
         case 'layer': {
           const b = t.vec4(build(op.chainArgs![0]))
           return t.mix(t.vec4(input), b, b.a)

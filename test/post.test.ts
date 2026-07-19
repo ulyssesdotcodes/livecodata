@@ -172,6 +172,17 @@ test('op-list lowering: live-by-default, structural where the registry says, sig
   assert.deepEqual(collectLiveValues(chain, { th: 0.4 }), [0.4, 3]) // resolved in binding order
 })
 
+test('the hydra-style ops lower: geometry/colour fx are live, modulate carries its modulator chain', () => {
+  const chain = evalPostCode('scale(1.2).rotate(0.3).scrollX(0.1).kaleid(4).hue(0.1).saturate(1.5).modulate(prev(), 0.2).fade(0.4)')
+  assert.deepEqual(chain.map((o) => o.op),
+    ['scene', 'scale', 'rotate', 'scrollX', 'kaleid', 'hue', 'saturate', 'modulate', 'fade'])
+  assert.equal(chain[1].args[0].cls, 'live') // scale amount is a uniform, no recompile on change
+  const modulate = chain.find((o) => o.op === 'modulate')!
+  assert.equal(modulate.kind, 'combine')
+  assert.equal(modulate.args[0].cls, 'live') // amount
+  assert.deepEqual(modulate.chainArgs![0].map((o) => o.op), ['prev']) // the modulator feeds off prev()
+})
+
 test('an unknown op leaves post inactive rather than crashing the frame', () => {
   assert.throws(() => evalPostCode('noSuchOp()'))
   assert.equal(frameAt([{ beat: 1, event: 'chain', code: 'noSuchOp()' }], 0), null)
