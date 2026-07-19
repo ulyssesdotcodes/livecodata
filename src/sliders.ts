@@ -26,6 +26,18 @@ export interface SliderDef {
 const clamp = (v: number, lo: number, hi: number): number =>
   hi < lo ? v : Math.min(hi, Math.max(lo, v))
 
+// Structural equality for a def / a def list — the canonical "did the
+// definitions actually change" test, since the store's onChange carries no
+// delta. Backs both the refresh gate and the overlay's def-object reuse.
+export function sameSliderDef(a: SliderDef, b: SliderDef): boolean {
+  return a.id === b.id && a.min === b.min && a.max === b.max &&
+    a.default === b.default && a.step === b.step
+}
+
+export function sameSliderDefs(a: SliderDef[], b: SliderDef[]): boolean {
+  return a.length === b.length && a.every((d, i) => sameSliderDef(d, b[i]))
+}
+
 // Parse one definition row into a normalized def, or null if it has no id.
 export function sliderDef(row: Row): SliderDef | null {
   const id = row.id != null ? String(row.id) : ''

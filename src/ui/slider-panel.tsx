@@ -7,7 +7,7 @@
 
 import { createSignal, For, Show, type Accessor } from 'solid-js'
 import { listenGlobal } from './dom.js'
-import type { SliderDef } from '../sliders.js'
+import { sameSliderDef, type SliderDef } from '../sliders.js'
 
 export interface SliderPanelCallbacks {
   onInput(id: string, value: number): void
@@ -43,9 +43,19 @@ export function createSliderPanel(cb: SliderPanelCallbacks): SliderPanelControll
     view,
     setDefs(defs: SliderDef[]): void {
       setView((s) => {
+        // Reuse the prior object for an unchanged def so <For> (which keys on
+        // identity) keeps its live <input> — rebuilding the node mid-drag
+        // aborts a touch drag on mobile, and setDefs re-runs on other cooks.
+        const prev = new Map(s.defs.map((d) => [d.id, d]))
+        const next = defs.map((d) => {
+          const old = prev.get(d.id)
+          return old && sameSliderDef(old, d) ? old : d
+        })
+        const unchanged = next.length === s.defs.length && next.every((d, i) => d === s.defs[i])
+        if (unchanged) return s
         const values: Record<string, number> = {}
-        for (const d of defs) values[d.id] = d.id in s.values ? s.values[d.id] : d.default
-        return { defs, values }
+        for (const d of next) values[d.id] = d.id in s.values ? s.values[d.id] : d.default
+        return { defs: next, values }
       })
     },
     showValues(values: Record<string, number>): void {
