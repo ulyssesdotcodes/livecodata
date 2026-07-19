@@ -148,3 +148,22 @@ define("applies", (rand, table) => table("activity"))
     assert.deepEqual(unpackCooked(later.cooked).views.get('edits')!.rows.map((r) => r.kind), ['set-cell'])
   }
 })
+
+test('slider declarations — expr.slider and post-cell slider() — ride the response, one per name, last wins', () => {
+  const service = createCookService()
+  const resp = service.handle(req(`
+define("v", () => rows([{ beat: 1 }]).derive({
+  py: expr.slider("height", 0, 2),
+  pz: expr.slider("depth"),
+  pw: expr.slider("height", 0, 4),
+}))
+define("post", () => rows([{ beat: 1, event: "chain", code: 'blur(slider("glow", 1, 5))' }]))
+`))
+  assert.equal(resp.ok, true)
+  if (!resp.ok) return
+  assert.deepEqual(
+    resp.sliders,
+    [{ id: 'height', min: 0, max: 4 }, { id: 'depth' }, { id: 'glow', min: 1, max: 5 }],
+    'one per name (last declaration wins); omitted min/max stay unset; post cells scanned too',
+  )
+})

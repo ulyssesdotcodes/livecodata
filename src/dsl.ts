@@ -362,6 +362,9 @@ export interface DSLContext {
   getData?(url: string): string
   // Live rows for a user-editable table, creating/reconciling it on first use.
   editableRows?(name: string, schema: Schema, seedRows?: Row[]): Row[]
+  // Declare an on-screen slider: expr.slider(name, min, max) adds { id, min,
+  // max } to the "sliders" table the first time the name is seen.
+  defineSlider?(id: string, min?: number, max?: number): void
 }
 
 export type ViewFn = (rand: () => number, table: (name: string) => Table) => Table | Row[]
@@ -1002,7 +1005,12 @@ export const SCHEMAS = deepFreeze({
    * generator. Every op argument is either LIVE (the default: a number, or a
    * function of the props object like `(p) => p.glow`, bound to a uniform
    * rebound each frame with no recompile) or STRUCTURAL (e.g. edges' colorMode,
-   * which selects a shader path). `event` picks what a row does — "chain"
+   * which selects a shader path). `slider("name", min?, max?)` is a live arg
+   * that reads an on-screen slider each frame — and declares it (one row in
+   * the "sliders" table per name) so the control just appears. `val("name",
+   * value)` likewise reads a live variable — and materializes its "set" row
+   * right after the cell, so the value becomes editable, tweenable table data
+   * (deleting the val() call deletes the row). `event` picks what a row does — "chain"
    * (`code` = the whole chain; empty = passthrough), "add" (append effects,
    * `pixelate(6)`, leading `.` optional), "remove" (`name` = op name; drop every
    * op with that name — the beat-time bypass), "set" (`name`/`value` = a live
@@ -1116,8 +1124,9 @@ export const SCHEMAS = deepFreeze({
   /**
    * The "sliders" view: one on-screen control per row — `id` names it (and is
    * what expr.slider(id) reads), `min`/`max` its range, `default` its initial
-   * value. Check `disabled` to pull the control off screen without losing
-   * its settings.
+   * value. Rows are usually declared by just calling expr.slider(id, min, max)
+   * (or a post cell's slider(id, min, max)). Check `disabled` to pull the
+   * control off screen without losing its settings.
    */
   sliders: { id: 'string', min: 'number', max: 'number', default: 'number', disabled: 'boolean' },
   /**
@@ -1271,12 +1280,15 @@ export interface ExprNamespace {
   /** A live MIDI value at the playhead, e.g. expr.midi("c4") — the most recent event for the note (or "cc1" for control change) at-or-before the playhead, normalized 0–1. Chainable like any Expr: expr.midi("c4").mul(2). Resolves each frame, so notes played while looping replay at the loop position they were heard. Optional 1-based `channel` filters to one channel. */
   midi(note: string, channel?: number | null): Expr
   /**
-   * A live on-screen slider value, e.g. expr.slider("brightness"). Sliders
-   * are declared by defining a view named "sliders" (rows { id, min, max,
-   * default? }); each shows as a labelled control over the visual and records
-   * its automation the way MIDI does.
+   * A live on-screen slider value, e.g. expr.slider("brightness", 0, 2).
+   * Calling it also DECLARES the slider: every run logs the declaration and
+   * the "sliders" table keeps one row per name, the latest declaration
+   * winning min/max (default 0–1) — so the labelled control appears over the
+   * visual with no other setup, and editing the call's range updates it.
+   * Several pieces of code can read the same slider (give them all the same
+   * min/max). Each control records its automation the way MIDI does.
    */
-  slider(id: string): Expr
+  slider(id: string, min?: number, max?: number): Expr
   /** The playback clock in seconds at the playhead — the same clock hydra/post chains see as props.time, so pausing or scrubbing the timeline freezes or scrubs it. Live: resolves each frame, e.g. derive({ ry: expr.time().mul(0.5) }). */
   time(): Expr
 }
@@ -1451,7 +1463,13 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       const rows = (ctx?.editableRows?.(name, schema, seedRows) ?? []).map((r) => ({ ...r }))
       return new Table(rows, ctx).save(name)
     },
-    expr: { field, lit, idx, midi, slider, time },
+    expr: {
+      field, lit, idx, midi, time,
+      slider: (id: string, min?: number, max?: number): Expr => {
+        ctx?.defineSlider?.(String(id), min, max)
+        return slider(id)
+      },
+    },
     taps: () => new Table((ctx?.tapRows?.() ?? []).map((r) => ({ ...r })), ctx),
     tempo: (fallback = DEFAULT_BEAT_SECONDS): number => beatSecondsFromTaps(ctx?.tapRows?.()) ?? fallback,
     beats: (count: number, { fit }: { fit?: number } = {}): Table => {

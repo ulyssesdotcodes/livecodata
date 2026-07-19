@@ -80,7 +80,7 @@ const TABLE_DOCS: TableDoc[] = [
   {
     name: 'sliders / slider',
     detail: 'on-screen controls',
-    info: 'Define a view named "sliders" of rows { id, min, max, default? } to draw labelled sliders over the visual. Dragging one records automation as "slider" events; expr.slider("id") resolves against the folded "slider" table (raw log: "slider·events"), exactly like MIDI.',
+    info: 'Calling expr.slider("id", min?, max?) — or slider("id", min?, max?) in a post cell — declares a labelled slider over the visual: a row lands in the "sliders" table (rows { id, min, max, default? }, also definable by hand or as a view). Dragging one records automation as "slider" events; the value resolves against the folded "slider" table (raw log: "slider·events"), exactly like MIDI.',
   },
   {
     name: 'taps',

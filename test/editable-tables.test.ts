@@ -662,3 +662,96 @@ test('concurrent applies at the same tip linearize onto one branch across replic
   assert.deepEqual(a.branchTree().heads, b.branchTree().heads)
   assert.equal(a.branchTree().heads.length, 1, 'the race resolves to one branch')
 })
+
+// ── defineSlider: code-declared slider rows ──────────────────────────────────
+
+test('every declaration is logged; the fold keeps one row per name and the last range wins', () => {
+  const store = createEditableTableStore()
+  store.defineSlider('height', 0, 2)
+  assert.deepEqual(
+    store.get('sliders')!.rows.map((r) => ({ id: r.id, min: r.min, max: r.max, default: r.default })),
+    [{ id: 'height', min: 0, max: 2, default: 0 }],
+  )
+  assert.equal(store.log.all().find((e) => e.kind === 'define-slider')!.src, 'slider:height')
+  const len = store.log.length
+  store.defineSlider('height', 0, 2) // rerun of the same code
+  assert.equal(store.log.length, len + 1, 'the rerun is recorded — the log is what happened')
+  assert.equal(store.get('sliders')!.rows.length, 1, 'still one slider')
+  store.defineSlider('height', 0, 4) // the user changed the call's range
+  const row = store.get('sliders')!.rows[0]
+  assert.deepEqual({ min: row.min, max: row.max }, { min: 0, max: 4 }, 'last declaration wins')
+  store.defineSlider('warp') // min/max default 0–1
+  const warp = store.get('sliders')!.rows.find((r) => r.id === 'warp')!
+  assert.deepEqual({ min: warp.min, max: warp.max }, { min: 0, max: 1 })
+})
+
+test('declarations from two replicas fold to one slider row after merge', () => {
+  const a = createEditableTableStore({ src: 'A' })
+  const b = createEditableTableStore({ src: 'B' })
+  b.createTable('other') // offsets b's clock so the two declarations get distinct (src, seq) keys
+  a.defineSlider('x', 0, 1)
+  b.defineSlider('x', 0, 1)
+  a.log.merge(b.log.all())
+  b.log.merge(a.log.all())
+  assert.equal(a.get('sliders')!.rows.length, 1)
+  assert.equal(b.get('sliders')!.rows.length, 1)
+})
+
+test('a deleted slider row stays deleted until a later run declares it again', () => {
+  const store = createEditableTableStore()
+  store.defineSlider('x', 0, 1)
+  store.removeRow('sliders', 0)
+  const reopened = createEditableTableStore()
+  assert.ok(reopened.load(store.serialize()))
+  assert.equal(reopened.get('sliders')!.rows.length, 0, 'the removal folds after the declaration')
+  reopened.defineSlider('x', 0, 1) // the program runs again — the code still declares it
+  assert.equal(reopened.get('sliders')!.rows.length, 1)
+})
+
+// ── val() rows: post code cells materialize their variables ─────────────────
+
+const POST_SCHEMA = {
+  beat: 'number',
+  event: ['chain', 'add', 'remove', 'layer', 'transition', 'set', 'pulse'],
+  code: { type: 'code', language: 'post' },
+  name: 'string',
+  value: 'number',
+} as const
+
+test("a post cell's val() derives a set row right after it, tracking the call across edits", () => {
+  const store = createEditableTableStore()
+  store.ensure('post', POST_SCHEMA, [{ beat: 2, event: 'chain', code: 'bloom(val("glow", 0.5))' }])
+  let rows = store.get('post')!.rows
+  assert.equal(rows.length, 2)
+  assert.deepEqual(
+    { beat: rows[1].beat, event: rows[1].event, name: rows[1].name, value: rows[1].value },
+    { beat: 2, event: 'set', name: 'glow', value: 0.5 },
+    'the derived set row lands right after the cell, at its beat',
+  )
+
+  store.setCell('post', 0, 'code', 'bloom(val("glow", 0.9))')
+  assert.equal(store.get('post')!.rows[1].value, 0.9, 'a pristine row tracks the declared value')
+
+  store.setCell('post', 1, 'value', 0.7) // the user tweaks the materialized value
+  store.setCell('post', 0, 'code', 'bloom(val("glow", 0.2)).blur(val("rad", 4))')
+  rows = store.get('post')!.rows
+  assert.equal(rows[1].value, 0.7, 'an edited value survives re-derivation')
+  assert.deepEqual({ name: rows[2].name, value: rows[2].value }, { name: 'rad', value: 4 }, 'a new val() adds its row after')
+
+  store.setCell('post', 0, 'code', 'blur(val("rad", 4))')
+  rows = store.get('post')!.rows
+  assert.deepEqual(rows.map((r) => r.name), ['', 'rad'], 'a removed val() deletes its row, even edited')
+})
+
+test('removing a post code row removes its val()-derived rows with it', () => {
+  const store = createEditableTableStore()
+  store.ensure('post', POST_SCHEMA, [
+    { beat: 1, event: 'chain', code: 'blur(val("rad", 4))' },
+    { beat: 4, event: 'add', code: 'pixelate(val("px", 6))' },
+  ])
+  assert.equal(store.get('post')!.rows.length, 4)
+  store.removeRow('post', 0)
+  const rows = store.get('post')!.rows
+  assert.equal(rows.length, 2, 'the cell and its derived row are both gone')
+  assert.deepEqual(rows.map((r) => r.name), ['', 'px'])
+})

@@ -312,7 +312,7 @@ function recordLoopBeats(n: number): void {
 // data that the real ensure() below turns into store events.
 const cookClient = createCookClient(new Worker(new URL('cook-worker.js', import.meta.url), { type: 'module' }))
 
-async function cookInWorker(code: string, seed: number, seeds?: Record<string, Row[]>): Promise<{ cooked: CookedData; declaredNames: string[] }> {
+async function cookInWorker(code: string, seed: number, seeds?: Record<string, Row[]>, declareSliders = true): Promise<{ cooked: CookedData; declaredNames: string[] }> {
   const editables = editableStore.listNames().map((name) => ({
     name,
     // Match ensure()'s filtering: disabled rows stay in the table but are
@@ -327,8 +327,12 @@ async function cookInWorker(code: string, seed: number, seeds?: Record<string, R
   for (const name of [ACTIVITY_TABLE, 'code' + EVENTS_SUFFIX]) {
     if (!logs.some((l) => l.name === name)) logs.push({ name, rows: [] })
   }
-  const { cooked, declared } = await cookClient.cook({ code, seed, dataCache, tapRows: tapRows(), editables, seeds, logs })
+  const { cooked, declared, sliders } = await cookClient.cook({ code, seed, dataCache, tapRows: tapRows(), editables, seeds, logs })
   for (const d of declared) editableStore.ensure(d.name, d.schema, d.seedRows)
+  // Every run of ours logs its slider declarations (the stream is the record
+  // of what happened); a reactive re-cook of a peer's run declares nothing —
+  // the author's own events arrive by merge.
+  if (declareSliders) for (const s of sliders) editableStore.defineSlider(s.id, s.min, s.max)
   return { cooked, declaredNames: declared.map((d) => d.name) }
 }
 
@@ -563,7 +567,7 @@ async function evaluate(code: string, { setError, persist = true, seed = randomS
     let cooked: CookedData
     let declaredNames: string[]
     try {
-      ({ cooked, declaredNames } = await cookInWorker(code, seed, seeds))
+      ({ cooked, declaredNames } = await cookInWorker(code, seed, seeds, broadcast))
     } catch (err) {
       setError?.((err as Error).message)
       return
@@ -721,6 +725,9 @@ editableStore.onChange(() => {
   requestAnimationFrame(() => {
     storeRefreshScheduled = false
     tablePanel.setTables(tablesForDisplay(lastViews))
+    // A slider may have been declared between cooks — a post cell's slider()
+    // lands at frame time, a peer's declaration by merge.
+    updateSliderDefs(lastViews)
     // A store event may be a peer's set-cell — their "last edited" marker.
     schedulePresenceRefresh()
   })
@@ -791,7 +798,9 @@ async function scrubSession(pos: number): Promise<void> {
     if (!codeRow || typeof codeRow.code !== 'string') return
     const code = codeRow.code
     const seed = typeof codeRow.seed === 'number' ? codeRow.seed : 0
-    const { cooked } = await cookInWorker(code, seed)
+    // A scrub re-cook renders history — it declares nothing, on or off the
+    // live head (the run that declared already logged it).
+    const { cooked } = await cookInWorker(code, seed, undefined, false)
     if (epoch !== scrubEpoch) return
     liveCode = code
     liveSeed = seed

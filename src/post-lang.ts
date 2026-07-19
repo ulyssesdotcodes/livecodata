@@ -227,6 +227,55 @@ function chainOps(value: unknown): OpChain {
   throw new Error('post: combine op expected a chain argument')
 }
 
+// val("name", value) declarations in a cell, matched textually (literal name,
+// optional numeric literal) so the editable-table fold can derive its "set"
+// rows without evaluating the chain — and regardless of whether the rest of
+// the cell parses. First mention of a name in a cell wins.
+const VAR_DECL = /\bval\b\s*\(\s*(['"`])(.*?)\1\s*(?:,\s*(-?(?:\d+(?:\.\d+)?|\.\d+)))?\s*\)/g
+export interface PostVarDecl {
+  name: string
+  value: number
+}
+export function postVarDecls(code: string): PostVarDecl[] {
+  const out: PostVarDecl[] = []
+  const seen = new Set<string>()
+  for (const m of code.matchAll(VAR_DECL)) {
+    if (!m[2] || seen.has(m[2])) continue
+    seen.add(m[2])
+    out.push({ name: m[2], value: m[3] !== undefined ? Number(m[3]) : 0 })
+  }
+  return out
+}
+
+// Collector active while sliderDeclsInCode scans a cell; frame-time evals run
+// with it unset, so they never write anywhere.
+let sliderDefiner: ((id: string, min?: number, max?: number) => void) | null = null
+
+export interface SliderDecl {
+  id: string
+  min?: number
+  max?: number
+}
+
+// Every slider(name, min, max) declaration a post code cell makes, found by
+// evaluating the cell against the chain scope with a collector installed. A
+// leading-dot fragment (an "add" row) is tolerated; a cell that doesn't parse
+// standalone (mid-edit, unknown op) declares nothing. The cook reports these
+// alongside expr.slider's declarations, so they land once per run.
+export function sliderDeclsInCode(code: string): SliderDecl[] {
+  const out: SliderDecl[] = []
+  const prev = sliderDefiner
+  sliderDefiner = (id, min, max) =>
+    out.push({ id, ...(min !== undefined ? { min } : {}), ...(max !== undefined ? { max } : {}) })
+  try {
+    evalPostCode(code.trim().replace(/^\./, ''))
+  } catch { /* a broken or partial cell declares nothing */ }
+  finally {
+    sliderDefiner = prev
+  }
+  return out
+}
+
 // The eval scope. The scene is the implicit source, so every fx/combine op is
 // callable top-level to START a chain applied to the scene — `edges(0.2)` is
 // exactly `scene().edges(0.2)`. `scene()`/`prev()` are explicit heads (for
@@ -242,6 +291,30 @@ function headScope(): Record<string, unknown> {
       if (spec.kind === 'combine') cb.ops.push(makeCall(name, spec.kind, spec.args, raw.slice(1), [chainOps(raw[0])]))
       else cb.ops.push(makeCall(name, spec.kind, spec.args, raw))
       return cb
+    }
+  }
+  // A live post variable — val("glow", 0.5) — reading the folded variable
+  // each frame with the initial as the fallback. The editable-table fold
+  // materializes a "set" row for each val() right after the cell it appears in.
+  scope.val = (name: unknown, value?: unknown): ((p: Record<string, unknown>) => number) => {
+    const key = String(name)
+    const fallback = typeof value === 'number' && Number.isFinite(value) ? value : 0
+    return (p) => {
+      const v = p[key]
+      return typeof v === 'number' ? v : fallback
+    }
+  }
+  // A live on-screen slider, usable anywhere a live arg is — blur(slider("r",
+  // 0, 8)) — reading props.sliders each frame. The cook declares the control
+  // from these calls (see sliderDeclsInCode).
+  scope.slider = (name: unknown, min?: unknown, max?: unknown): ((p: Record<string, unknown>) => number) => {
+    const id = String(name)
+    const lo = typeof min === 'number' && Number.isFinite(min) ? min : undefined
+    const hi = typeof max === 'number' && Number.isFinite(max) ? max : undefined
+    sliderDefiner?.(id, lo, hi)
+    return (p) => {
+      const v = (p.sliders as Record<string, number> | undefined)?.[id]
+      return typeof v === 'number' ? v : lo ?? 0
     }
   }
   // A transition is the head of the output chain the fold produces: it wipes

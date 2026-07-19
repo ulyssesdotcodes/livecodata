@@ -7,6 +7,7 @@
 
 import { createRuntime } from './runtime.js'
 import { cookProgram } from './replay.js'
+import { sliderDeclsInCode } from './post-lang.js'
 import { conformRow, schemaColumns, EVENTS_SUFFIX, type Schema } from './editable-tables.js'
 import { packCooked, type PackedCook } from './cook-transfer.js'
 import type { PhysicsEngine } from './dsl.js'
@@ -40,8 +41,18 @@ export interface DeclaredEditable {
   seedRows?: Row[]
 }
 
+// A slider declared by the cooked program — expr.slider(name, min, max), or a
+// slider(name, min, max) call in a post code cell. One entry per name (the
+// last declaration wins); the main thread applies each through the store's
+// defineSlider(), so every run logs its declarations.
+export interface DeclaredSlider {
+  id: string
+  min?: number
+  max?: number
+}
+
 export type CookResponse =
-  | { id: number; ok: true; cooked: PackedCook; declared: DeclaredEditable[] }
+  | { id: number; ok: true; cooked: PackedCook; declared: DeclaredEditable[]; sliders: DeclaredSlider[] }
   | { id: number; ok: false; error: string }
 
 export interface CookService {
@@ -54,6 +65,7 @@ export function createCookService({ physics }: { physics?: () => PhysicsEngine |
   let taps: Row[] = []
   let seeds: Record<string, Row[]> = {}
   let declared: DeclaredEditable[] = []
+  let sliders = new Map<string, DeclaredSlider>()
 
   const runtime = createRuntime({
     physics: physics ?? (() => null),
@@ -74,6 +86,9 @@ export function createCookService({ physics }: { physics?: () => PhysicsEngine |
       if (existing) return existing
       return (seed ?? []).map((r) => conformRow(r, schemaColumns(schema)))
     },
+    defineSlider: (id, min, max) => {
+      sliders.set(id, { id, ...(min !== undefined ? { min } : {}), ...(max !== undefined ? { max } : {}) })
+    },
   })
 
   return {
@@ -83,9 +98,16 @@ export function createCookService({ physics }: { physics?: () => PhysicsEngine |
       taps = req.tapRows
       seeds = req.seeds ?? {}
       declared = []
+      sliders = new Map()
       try {
         const cooked = cookProgram(runtime, req.code, req.seed, new Map(req.dataCache))
-        return { id: req.id, ok: true, cooked: packCooked(cooked), declared }
+        // Post cells run per frame on the main thread, so their slider
+        // declarations are collected here, once per run, like expr.slider's.
+        for (const row of cooked.postRows) {
+          if (typeof row.code !== 'string' || row.code.trim() === '') continue
+          for (const d of sliderDeclsInCode(row.code)) sliders.set(d.id, d)
+        }
+        return { id: req.id, ok: true, cooked: packCooked(cooked), declared, sliders: [...sliders.values()] }
       } catch (err) {
         return { id: req.id, ok: false, error: (err as Error).message }
       }

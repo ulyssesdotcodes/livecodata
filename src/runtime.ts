@@ -47,6 +47,8 @@ export interface RuntimeOptions {
   // logs as ordinary data (null/undefined = no such log, keep the not-found
   // error). Mirrors the display rule: a program view of the same name wins.
   logRows?: (name: string) => Row[] | null | undefined
+  // expr.slider(name, min, max) declarations — see DSLContext.defineSlider.
+  defineSlider?: (id: string, min?: number, max?: number) => void
 }
 
 export interface RunOptions {
@@ -54,7 +56,7 @@ export interface RunOptions {
   dataCache?: Map<string, string>
 }
 
-export function createRuntime({ physics, tapRows, editableRows, logRows }: RuntimeOptions = {}): { run: (code: string, opts?: RunOptions) => RuntimeResult } {
+export function createRuntime({ physics, tapRows, editableRows, logRows, defineSlider }: RuntimeOptions = {}): { run: (code: string, opts?: RunOptions) => RuntimeResult } {
   let defs: Map<string, DefEntry>
   let cache: Map<string, Table>
   let deps: Map<string, string[]>
@@ -180,6 +182,7 @@ export function createRuntime({ physics, tapRows, editableRows, logRows }: Runti
     getData: (url: string) => dataCache.get(url) ?? '',
     editableRows: (name: string, schema: Record<string, ColumnType>, seedRows?: Row[]) =>
       (editableRows ? editableRows(name, schema, seedRows) : []),
+    defineSlider: (id: string, min?: number, max?: number) => defineSlider?.(id, min, max),
   }
 
   const api = createDSL(ctx)

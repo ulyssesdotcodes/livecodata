@@ -3,7 +3,7 @@
 // Takes anything Worker-shaped so tests can drive it with a fake channel.
 
 import { unpackCooked } from './cook-transfer.js'
-import type { CookRequest, CookResponse, DeclaredEditable } from './cook-service.js'
+import type { CookRequest, CookResponse, DeclaredEditable, DeclaredSlider } from './cook-service.js'
 import type { CookedResult } from './replay.js'
 import type { Row } from './lineage.js'
 
@@ -27,6 +27,7 @@ export interface CookInput {
 export interface CookOutcome {
   cooked: CookedResult
   declared: DeclaredEditable[]
+  sliders: DeclaredSlider[]
 }
 
 export interface CookClient {
@@ -42,7 +43,7 @@ export function createCookClient(worker: WorkerLike): CookClient {
     const p = pending.get(resp.id)
     if (!p) return
     pending.delete(resp.id)
-    if (resp.ok) p.resolve({ cooked: unpackCooked(resp.cooked), declared: resp.declared })
+    if (resp.ok) p.resolve({ cooked: unpackCooked(resp.cooked), declared: resp.declared, sliders: resp.sliders ?? [] })
     else p.reject(new Error(resp.error))
   })
 
