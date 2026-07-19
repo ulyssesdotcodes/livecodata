@@ -116,6 +116,9 @@ let currentTable: string | null = null
 
 const tablePanel = createTablePanel(editableStore, {
   onEditCell: (table, rowIndex, col, value) => {
+    // Clicking a code cell should reveal the editor if it's collapsed (the
+    // default on mobile).
+    editor.expand()
     // The "code" cell is the program itself: clicking it just syncs the main
     // editor back to the stored value — no cell-target mode.
     if (table === 'code' && col === 'code') {
