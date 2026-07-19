@@ -7,7 +7,7 @@
 
 import { createSignal, For, Show, type Accessor } from 'solid-js'
 import { listenGlobal } from './dom.js'
-import type { SliderDef } from '../sliders.js'
+import { sameSliderDef, type SliderDef } from '../sliders.js'
 
 export interface SliderPanelCallbacks {
   onInput(id: string, value: number): void
@@ -31,10 +31,6 @@ export interface SliderPanelController {
   release(id: string): void
 }
 
-const sameDef = (a: SliderDef, b: SliderDef): boolean =>
-  a.id === b.id && a.min === b.min && a.max === b.max &&
-  a.default === b.default && a.step === b.step
-
 export function createSliderPanel(cb: SliderPanelCallbacks): SliderPanelController {
   const [view, setView] = createSignal<SliderPanelState>({ defs: [], values: {} })
   const dragging = new Set<string>()
@@ -55,7 +51,7 @@ export function createSliderPanel(cb: SliderPanelCallbacks): SliderPanelControll
         const prev = new Map(s.defs.map((d) => [d.id, d]))
         const next = defs.map((d) => {
           const old = prev.get(d.id)
-          return old && sameDef(old, d) ? old : d
+          return old && sameSliderDef(old, d) ? old : d
         })
         const unchanged = next.length === s.defs.length && next.every((d, i) => d === s.defs[i])
         if (unchanged) return s

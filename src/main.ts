@@ -27,7 +27,7 @@ import { Table } from './dsl.js'
 import { createEditableTableStore, DISABLED_COL, CLEAR_RUNS_KIND, ACTIVITY_TABLE, type ColumnType, type SessionRun } from './editable-tables.js'
 import type { ApplyNode } from './branches.js'
 import { createMidiInput, subscribeWebMidi, type MidiInput, type MidiStore } from './midi.js'
-import { createSliderInput, sliderDefs, type SliderInput, type SliderStore } from './sliders.js'
+import { createSliderInput, sliderDefs, sameSliderDefs, type SliderDef, type SliderInput, type SliderStore } from './sliders.js'
 import { createSliderPanel } from './ui/slider-panel.js'
 import { beatToFrame } from './constants.js'
 import { createTapLog } from './tap-log.js'
@@ -243,11 +243,18 @@ const sliderPanel = createSliderPanel({
 // Push slider definitions to the overlay and input on every cook. Prefer the
 // cooked "sliders" view, but fall back to the store so a table created by hand
 // in the table panel (never surfaced as a view) still drives the sliders.
+let lastSliderDefs: SliderDef[] = []
 function updateSliderDefs(views: Map<string, Table>): void {
   // The cooked view already reflects ensure()'s disabled-row filtering; the
   // raw fallback needs it applied here.
   const rows = views.get('sliders')?.rows ?? (editableStore.get('sliders')?.rows ?? []).filter((r) => r[DISABLED_COL] !== true)
   const defs = sliderDefs(rows)
+  // The store's onChange fires on every event, including the "slider" value
+  // writes a drag emits — none of which touch the "sliders" definition table.
+  // Only push when the definitions actually changed, so a drag never rebuilds
+  // its own control (and the overlay/table refresh don't churn per move).
+  if (sameSliderDefs(defs, lastSliderDefs)) return
+  lastSliderDefs = defs
   sliderPanel.setDefs(defs)
   if (defs.length) ensureSliderInput().setDefs(defs)
   else sliderInput?.setDefs(defs)

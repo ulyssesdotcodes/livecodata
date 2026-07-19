@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   sliderDef, sliderDefs, buildSliderIndex, sampleSliderAt,
-  currentSliderRows, createSliderInput,
+  currentSliderRows, createSliderInput, sameSliderDefs,
 } from '../src/sliders.js'
 import { frameToBeat } from '../src/constants.js'
 import { createEditableTableStore } from '../src/editable-tables.js'
@@ -137,6 +137,19 @@ test('a fresh take (clearId then record) replaces the old one; untouched sliders
   assert.equal(a[0].beat, 1.5)
   assert.equal(a[0].value, 0.7)
   assert.equal(bb.length, 1, 'b was never grabbed — it carries forward')
+})
+
+// sameSliderDefs gates the definition refresh: a "slider" value write (a drag)
+// must fold to "unchanged" so updateSliderDefs skips rebuilding the control.
+test('sameSliderDefs is true only when every def matches, in order', () => {
+  const a = sliderDefs([{ id: 'h', min: -3, max: 3, default: 0 }])
+  assert.equal(sameSliderDefs(a, sliderDefs([{ id: 'h', min: -3, max: 3, default: 0 }])), true,
+    'a value write leaves the definitions untouched')
+  assert.equal(sameSliderDefs(a, sliderDefs([{ id: 'h', min: -5, max: 5, default: 0 }])), false,
+    'a retuned range is a real change')
+  assert.equal(sameSliderDefs(a, sliderDefs([
+    { id: 'h', min: -3, max: 3, default: 0 }, { id: 'w', min: 0, max: 1 },
+  ])), false, 'a newly declared slider is a real change')
 })
 
 // ── Live input: grab clears the take and records anew ────────────────────────
