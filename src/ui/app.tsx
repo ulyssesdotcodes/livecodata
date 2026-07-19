@@ -15,6 +15,7 @@ import { RoomChip, type RoomChipController } from './room-chip.js'
 import { SliderPanel, type SliderPanelController } from './slider-panel.js'
 import { PaneDivider } from './pane-divider.js'
 import { Icon } from './icon.js'
+import type { Row } from '../lineage.js'
 
 export interface AppProps {
   editor: EditorController
@@ -24,6 +25,9 @@ export interface AppProps {
   roomChip: RoomChipController
   sliderPanel: SliderPanelController
   playback: Accessor<PlaybackController | null>
+  // The applied cook's timeline rows, for the strip's coverage shading —
+  // the "applied" half of the live/applied split (see playback's vs/engine).
+  timelineRows: Accessor<Row[]>
   onClearRuns: () => void
 }
 
@@ -49,7 +53,22 @@ function App(props: AppProps & { mounts: CanvasMounts }) {
         <SliderPanel ctl={props.sliderPanel} />
         <div id="playback-controls">
           <Show when={props.playback()}>
-            {(p) => <PlaybackControls vs={p().vs} engine={p().engine} tapControl={p().tapControl} />}
+            {(p) => (
+              <PlaybackControls
+                vs={p().vs}
+                engine={p().engine}
+                tapControl={p().tapControl}
+                timelineRows={props.timelineRows}
+                store={props.tablePanel.store}
+                currentTable={props.tablePanel.current}
+                onSelectRow={(table, row) => props.tablePanel.focusRow(table, row)}
+                presence={props.tablePanel.presence}
+                focusedRow={() => {
+                  const fr = props.tablePanel.focusedRow()
+                  return fr && fr.table === props.tablePanel.current() ? fr.row : null
+                }}
+              />
+            )}
           </Show>
         </div>
       </div>

@@ -8,17 +8,26 @@ import { listenGlobal } from './dom.js'
 import { Icon } from './icon.js'
 import { createPlaybackEngine } from '../playback.js'
 import type { PlaybackEngine, PlaybackOptions, PlaybackViewState, TapControl } from '../playback.js'
-import { FRAMES_PER_BEAT, DEFAULT_LOOP_BEATS } from '../constants.js'
+import { DEFAULT_LOOP_BEATS } from '../constants.js'
 import type { Visualizer } from '../visualizer.js'
+import { TimelineStrip } from './timeline-strip.js'
+import type { Row } from '../lineage.js'
+import type { EditableTableStore } from '../editable-tables.js'
+import type { PeerPresence } from '../table-panel.js'
 
 export function PlaybackControls(props: {
   vs: Accessor<PlaybackViewState>
   engine: PlaybackEngine
   tapControl?: TapControl
+  timelineRows?: Accessor<Row[]>
+  store: EditableTableStore
+  currentTable: Accessor<string | null>
+  onSelectRow?: (table: string, row: number) => void
+  presence: Accessor<PeerPresence[]>
+  focusedRow: Accessor<number | null>
 }) {
   const vs = props.vs
   const playing = () => vs().state === 'playing'
-  const fillPct = () => (vs().maxBeats > 0 ? Math.min(100, (vs().scrubPos / vs().maxBeats) * 100) : 0)
   const timeText = () => {
     const { pos, srcBeat, timelineActive } = vs()
     return timelineActive ? `${(pos + 1).toFixed(2)}→${srcBeat.toFixed(2)} beat` : `beat ${srcBeat.toFixed(2)}`
@@ -84,15 +93,15 @@ export function PlaybackControls(props: {
           </div>
         )}
       </Show>
-      <input
-        type="range"
-        id="scrub-bar"
-        min="0"
-        max={String(vs().maxBeats || 100)}
-        step={String(1 / FRAMES_PER_BEAT)}
-        value={String(vs().scrubPos)}
-        style={{ background: `linear-gradient(to right, #e94560 ${fillPct()}%, #1a3a5e ${fillPct()}%)` }}
-        onInput={(e) => props.engine.scrub(parseFloat(e.currentTarget.value))}
+      <TimelineStrip
+        vs={vs}
+        engine={props.engine}
+        timelineRows={props.timelineRows ?? (() => [])}
+        store={props.store}
+        currentTable={props.currentTable}
+        onSelectRow={props.onSelectRow}
+        presence={props.presence}
+        focusedRow={props.focusedRow}
       />
     </>
   )

@@ -263,6 +263,9 @@ function updateSliderDefs(views: Map<string, Table>): void {
 }
 
 const [playbackCtl, setPlaybackCtl] = createSignal<PlaybackController | null>(null)
+// The applied cook's timeline rows, for the timeline strip's coverage shading
+// — refreshed on every applyCooked, same cadence as the panel's tables.
+const [timelineRows, setTimelineRows] = createSignal<Row[]>([])
 const playbackOptions: PlaybackOptions = {
   onTick: (tick, active, srcBeats) => {
     currentPlayIndex = srcBeats
@@ -473,6 +476,7 @@ function applyCooked(cooked: CookedData): void {
   sceneAPI.setParticlesEnabled(hasSpawner(particleTableRows))
   tablePanel.setTables(tablesForDisplay(cooked.views))
   tablePanel.setGraphs(cooked.graphs)
+  setTimelineRows(cooked.timelineRows)
   // With hydra rows present, hydra's output is the display and it reads the
   // bauble render as s1 — only a bauble-only sketch shows this canvas directly.
   mounts.baubleCanvas.classList.toggle('visible', cooked.baubleRows.length > 0 && cooked.hydraRows.length === 0)
@@ -1042,6 +1046,7 @@ const mounts = mountApp(document.getElementById('app') as HTMLElement, {
   roomChip,
   sliderPanel,
   playback: playbackCtl,
+  timelineRows,
   onClearRuns: clearRuns,
 })
 const sceneAPI = initThree(mounts.threeCanvas, mounts.canvasPane)

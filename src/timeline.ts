@@ -36,6 +36,10 @@ export interface TimelineSegment {
   p1: number
   s0: number
   s1: number
+  // The event row that produced this segment — undefined for the legacy
+  // sparse-keyframe segments, which have no event kind of their own. Purely
+  // descriptive (coverage-shading tint); playback never reads it.
+  kind?: 'retime' | 'loop' | 'hold' | 'speed'
 }
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined)
@@ -73,13 +77,14 @@ function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: numb
     if (!(p1 > p0)) continue
     const from = num(r.from) ?? (r.beat as number)
     const to = num(r.to) ?? endOf(r)
+    const kind = r.event as TimelineSegment['kind']
     // Tile the block [o0, o1) → source [from, to] across the window [p0, p1],
     // clipping partial blocks at both edges; o0 anchors the cycle phase, so a
     // window starting mid-block starts mid-source.
     const tile = (o0: number, o1: number): void => {
       const cycle = o1 - o0
       if (!(cycle > 0)) {
-        segments.push({ p0, p1, s0: from, s1: from })
+        segments.push({ p0, p1, s0: from, s1: from, kind })
         return
       }
       for (let k = Math.floor((p0 - o0) / cycle); o0 + k * cycle < p1; k++) {
@@ -90,6 +95,7 @@ function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: numb
           p0: q0, p1: q1,
           s0: from + ((q0 - b0) / cycle) * (to - from),
           s1: from + ((q1 - b0) / cycle) * (to - from),
+          kind,
         })
       }
     }
@@ -98,11 +104,11 @@ function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: numb
         tile((num(r.outFrom) ?? (r.beat as number)) + off, (num(r.outTo) ?? endOf(r)) + off)
         break
       case 'hold':
-        segments.push({ p0, p1, s0: from, s1: from })
+        segments.push({ p0, p1, s0: from, s1: from, kind })
         break
       case 'speed': {
         const rate = num(r.rate) ?? 1
-        segments.push({ p0, p1, s0: from, s1: from + rate * (p1 - p0) })
+        segments.push({ p0, p1, s0: from, s1: from + rate * (p1 - p0), kind })
         break
       }
       case 'loop':
