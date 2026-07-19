@@ -31,6 +31,10 @@ export interface SliderPanelController {
   release(id: string): void
 }
 
+const sameDef = (a: SliderDef, b: SliderDef): boolean =>
+  a.id === b.id && a.min === b.min && a.max === b.max &&
+  a.default === b.default && a.step === b.step
+
 export function createSliderPanel(cb: SliderPanelCallbacks): SliderPanelController {
   const [view, setView] = createSignal<SliderPanelState>({ defs: [], values: {} })
   const dragging = new Set<string>()
@@ -43,9 +47,21 @@ export function createSliderPanel(cb: SliderPanelCallbacks): SliderPanelControll
     view,
     setDefs(defs: SliderDef[]): void {
       setView((s) => {
+        // Reuse the prior def object for any slider whose definition is
+        // unchanged so <For> keeps its <input> node. updateSliderDefs re-runs
+        // on every store change — including the record a drag itself emits —
+        // and rebuilds fresh SliderDef objects each time; swapping the node
+        // out from under a live touch drag aborts it on mobile.
+        const prev = new Map(s.defs.map((d) => [d.id, d]))
+        const next = defs.map((d) => {
+          const old = prev.get(d.id)
+          return old && sameDef(old, d) ? old : d
+        })
+        const unchanged = next.length === s.defs.length && next.every((d, i) => d === s.defs[i])
+        if (unchanged) return s
         const values: Record<string, number> = {}
-        for (const d of defs) values[d.id] = d.id in s.values ? s.values[d.id] : d.default
-        return { defs, values }
+        for (const d of next) values[d.id] = d.id in s.values ? s.values[d.id] : d.default
+        return { defs: next, values }
       })
     },
     showValues(values: Record<string, number>): void {
