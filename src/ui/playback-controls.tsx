@@ -12,12 +12,19 @@ import { DEFAULT_LOOP_BEATS } from '../constants.js'
 import type { Visualizer } from '../visualizer.js'
 import { TimelineStrip } from './timeline-strip.js'
 import type { Row } from '../lineage.js'
+import type { EditableTableStore } from '../editable-tables.js'
+import type { PeerPresence } from '../table-panel.js'
 
 export function PlaybackControls(props: {
   vs: Accessor<PlaybackViewState>
   engine: PlaybackEngine
   tapControl?: TapControl
   timelineRows?: Accessor<Row[]>
+  store: EditableTableStore
+  currentTable: Accessor<string | null>
+  onSelectRow?: (table: string, row: number) => void
+  presence: Accessor<PeerPresence[]>
+  focusedRow: Accessor<number | null>
 }) {
   const vs = props.vs
   const playing = () => vs().state === 'playing'
@@ -86,7 +93,16 @@ export function PlaybackControls(props: {
           </div>
         )}
       </Show>
-      <TimelineStrip vs={vs} engine={props.engine} timelineRows={props.timelineRows ?? (() => [])} />
+      <TimelineStrip
+        vs={vs}
+        engine={props.engine}
+        timelineRows={props.timelineRows ?? (() => [])}
+        store={props.store}
+        currentTable={props.currentTable}
+        onSelectRow={props.onSelectRow}
+        presence={props.presence}
+        focusedRow={props.focusedRow}
+      />
     </>
   )
 }

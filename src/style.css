@@ -1795,6 +1795,94 @@ html, body {
   pointer-events: none;
 }
 
+/* Handles for the open editable table's rows (phase 3, read-only — see
+   ui/timeline-strip.tsx). The layer itself ignores pointer events so the
+   grid/coverage beneath stay reachable everywhere except a handle's own box;
+   handle clicks are decided by the model's hitTest on the strip's own
+   pointerdown, not by which DOM element was actually hit, so pointer-events
+   here only gates hover (the title-attribute tooltip). */
+.timeline-strip-handles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.timeline-strip-handle {
+  position: absolute;
+  pointer-events: auto;
+}
+
+.timeline-strip-handle-point {
+  width: 14px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.timeline-strip-handle-dot {
+  width: 8px;
+  height: 8px;
+  background: #4a9eff;
+  border: 1px solid #16324f;
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+
+.timeline-strip-handle-span {
+  box-sizing: border-box;
+  min-width: 2px;
+  background: rgba(74, 158, 255, 0.28);
+  border-top: 1px solid #4a9eff;
+  border-bottom: 1px solid #4a9eff;
+}
+
+.timeline-strip-handle-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #4a9eff;
+}
+
+.timeline-strip-handle-edge-start {
+  left: 0;
+}
+
+.timeline-strip-handle-edge-end {
+  right: 0;
+}
+
+/* Ghost: a later placement of a row a loop event plays more than once — not
+   the primary click target, so it reads as translucent. */
+.timeline-strip-handle-ghost {
+  opacity: 0.5;
+}
+
+/* The row's own `disabled` column, not a UI state — matches the table
+   panel's row-disabled dimming (.row-disabled in this file). */
+.timeline-strip-handle-disabled {
+  filter: grayscale(1) brightness(0.8);
+}
+
+/* The store's live row differs from the applied cook (v1: `timeline` table
+   only — see pendingTimelineRows). Outline, not box-shadow, so it never
+   collides with the focused/peer rings below (those stack as box-shadow). */
+.timeline-strip-handle-pending {
+  outline: 1.5px dashed #e9a23b;
+  outline-offset: 1px;
+}
+
+@media (max-width: 767px) {
+  /* Touch target floor for a lane band that would otherwise be thinner than
+     a thumb — visual only: the hit test still resolves by lane, so a very
+     crowded multi-lane timeline still divides the strip's actual height. */
+  .timeline-strip-handle-point,
+  .timeline-strip-handle-span {
+    min-height: 24px;
+  }
+}
+
 /* ── Editor hover preview (table + sparkline) ── */
 .cm-preview {
   max-width: 320px;

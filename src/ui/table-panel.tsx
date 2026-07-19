@@ -57,6 +57,13 @@ interface PanelProps extends TablePanelOptions {
   // The view hands back a function that returns keyboard focus to the grid, so
   // the controller (and, through it, the editor) can refocus after a code cell.
   registerGridFocus: (fn: () => void) => void
+  // Same registration pattern, for the timeline strip's handle clicks
+  // (ui/timeline-strip.tsx): the view hands back a function that focuses a
+  // row's first cell when that row's table is the open tab.
+  registerFocusRow: (fn: (table: string, row: number) => void) => void
+  // Mirrors the view's focused cell out to the controller (table-scoped),
+  // so the strip can ring the matching handle.
+  reportFocusedRow: (focus: { table: string; row: number } | null) => void
 }
 
 function TablePanelView(props: PanelProps) {
@@ -209,6 +216,27 @@ function TablePanelView(props: PanelProps) {
   const scrollCellIntoView = (fc: CellFocus): void => {
     requestAnimationFrame(() => cellEl(fc.row, fc.col)?.scrollIntoView({ block: 'nearest', inline: 'nearest' }))
   }
+
+  // A handle click on the timeline strip lands here: focus the row's first
+  // column (a no-op if the click's table isn't the open tab — the strip only
+  // ever renders handles for the current table, so this is a safety guard,
+  // not the common path).
+  props.registerFocusRow((table, row) => {
+    if (table !== current()) return
+    const firstCol = editableData()?.data.columns[0]?.name
+    if (!firstCol) return
+    const fc = { row, col: firstCol }
+    setFocusedCell(fc)
+    scrollCellIntoView(fc)
+  })
+
+  // Mirror the focused cell out to the controller, table-scoped, so the strip
+  // can highlight the matching handle.
+  createEffect(() => {
+    const fc = focusedCell()
+    const cur = current()
+    props.reportFocusedRow(fc && cur ? { table: cur, row: fc.row } : null)
+  })
 
   // Enter on the focused cell: code cells open in the main editor, enums focus
   // their live dropdown, everything else opens its inline editor.
@@ -1060,6 +1088,13 @@ function TablePanelView(props: PanelProps) {
 export interface TablePanelController extends TablePanel, PanelProps {
   // Return keyboard focus to the table grid (see registerGridFocus).
   focusGrid(): void
+  // Focus `row`'s first cell in the panel when `table` is the open tab —
+  // wired from the timeline strip's handle clicks.
+  focusRow(table: string, row: number): void
+  // The panel's current focus, table-scoped; null once focus leaves that
+  // table (tab switch, or no focus yet). Consumed by the strip to ring the
+  // matching handle.
+  focusedRow: Accessor<{ table: string; row: number } | null>
 }
 
 export function createTablePanel(
@@ -1076,6 +1111,9 @@ export function createTablePanel(
   const [presence, setPresence] = createSignal<PeerPresence[]>([])
   // Set by the view once mounted; lets focusGrid pull focus back to the grid.
   let gridFocus: (() => void) | null = null
+  // Set by the view once mounted; lets focusRow drive the panel's focused cell.
+  let focusRowImpl: ((table: string, row: number) => void) | null = null
+  const [focusedRow, setFocusedRow] = createSignal<{ table: string; row: number } | null>(null)
 
   return {
     store: editableStore,
@@ -1099,6 +1137,16 @@ export function createTablePanel(
     focusGrid(): void {
       gridFocus?.()
     },
+    registerFocusRow(fn: (table: string, row: number) => void): void {
+      focusRowImpl = fn
+    },
+    reportFocusedRow(focus: { table: string; row: number } | null): void {
+      setFocusedRow(focus)
+    },
+    focusRow(table: string, row: number): void {
+      focusRowImpl?.(table, row)
+    },
+    focusedRow,
 
     selectTable(name: string | null): void {
       if (name != null && (views().has(name) || editableStore.has(name)) && name !== current()) {

@@ -9,6 +9,7 @@ import {
   hitTest,
   snap,
   dragUpdate,
+  pendingTimelineRows,
   type Handle,
 } from '../src/timeline-strip.js'
 import type { EditableColumn } from '../src/editable-tables.js'
@@ -75,6 +76,27 @@ test('handlesFor: a content row played by a loop event gets one handle per place
     handles.map((h) => ({ beat: h.beat, ghost: h.ghost })),
     [{ beat: 1, ghost: false }, { beat: 5, ghost: true }],
   )
+})
+
+// --- pendingTimelineRows ----------------------------------------------------
+
+test('pendingTimelineRows: a row whose live beat/end drifted from the applied cook is pending; a disabled row is skipped (the applied view excludes it too)', () => {
+  const rows = [
+    { beat: 1, end: 9 },
+    { beat: 20, end: 21, disabled: true },
+    { beat: 9, end: 17 },
+  ]
+  const applied = [
+    { beat: 1, end: 9 },
+    { beat: 10, end: 17 }, // row 2 moved after Apply
+  ]
+  assert.deepEqual(pendingTimelineRows(rows, applied), new Set([2]))
+})
+
+test('pendingTimelineRows: an unapplied trailing row past the applied cook length is pending', () => {
+  const rows = [{ beat: 1, end: 9 }, { beat: 9, end: 17 }]
+  const applied = [{ beat: 1, end: 9 }]
+  assert.deepEqual(pendingTimelineRows(rows, applied), new Set([1]))
 })
 
 // --- hitTest ----------------------------------------------------------------

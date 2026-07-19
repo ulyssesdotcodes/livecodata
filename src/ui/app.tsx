@@ -54,7 +54,20 @@ function App(props: AppProps & { mounts: CanvasMounts }) {
         <div id="playback-controls">
           <Show when={props.playback()}>
             {(p) => (
-              <PlaybackControls vs={p().vs} engine={p().engine} tapControl={p().tapControl} timelineRows={props.timelineRows} />
+              <PlaybackControls
+                vs={p().vs}
+                engine={p().engine}
+                tapControl={p().tapControl}
+                timelineRows={props.timelineRows}
+                store={props.tablePanel.store}
+                currentTable={props.tablePanel.current}
+                onSelectRow={(table, row) => props.tablePanel.focusRow(table, row)}
+                presence={props.tablePanel.presence}
+                focusedRow={() => {
+                  const fr = props.tablePanel.focusedRow()
+                  return fr && fr.table === props.tablePanel.current() ? fr.row : null
+                }}
+              />
             )}
           </Show>
         </div>

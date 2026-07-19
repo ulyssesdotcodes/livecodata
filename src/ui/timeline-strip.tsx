@@ -1,28 +1,41 @@
 // The timeline strip — the humble Solid view over ../timeline-strip.ts (the
-// pure geometry/grid model) and ../timeline.ts (coverage shading). Replaces
-// the transport's `#scrub-bar` range input.
+// pure geometry/grid/handle model) and ../timeline.ts (coverage shading).
+// Replaces the transport's `#scrub-bar` range input.
 //
-// Phase 2 (this file): beat grid, timeline coverage shading, playhead +
-// elapsed tint, and scrub parity with the old range input (pointer drag,
-// keyboard nudge). The handles layer for the open table's rows (drag-to-edit)
-// lands in a later phase — see notes/timeline-strip-plan.md — so the layer
-// stack below is ordered to leave room for it between coverage and playhead
-// without disturbing this phase's rendering.
+// Phase 3 (this file): a read-only handles layer for the currently open
+// editable table's rows, synced with the table panel (hover tooltip, click
+// focuses the row, panel focus and peer presence ring the matching handle).
+// Dragging (phase 4) lands later — see notes/timeline-strip-plan.md.
 
-import { createSignal, createMemo, onMount, onCleanup, For, type Accessor } from 'solid-js'
-import { beatToX, xToBeat, gridLines, type StripGeometry } from '../timeline-strip.js'
+import { createSignal, createMemo, onMount, onCleanup, For, Show, type Accessor } from 'solid-js'
+import {
+  beatToX, xToBeat, gridLines, handlesFor, hitTest, pendingTimelineRows,
+  type StripGeometry, type Handle,
+} from '../timeline-strip.js'
 import { timelineSegments } from '../timeline.js'
+import { fmtNum } from '../graph-panel.js'
 import type { PlaybackEngine, PlaybackViewState } from '../playback.js'
 import type { Row } from '../lineage.js'
+import type { EditableTableStore } from '../editable-tables.js'
+import type { PeerPresence } from '../table-panel.js'
 
 // One minor grid tick (a beat) per ArrowLeft/ArrowRight, matching the grid's
 // own step so keyboard nudges land exactly on a tick.
 const KEY_NUDGE_BEATS = 1
 
+// Accent color for the strip's focused-handle ring — matches the playhead
+// (#e94560), the strip's one other "this is the important one" signal.
+const FOCUS_RING = '0 0 0 2px #e94560'
+
 export function TimelineStrip(props: {
   vs: Accessor<PlaybackViewState>
   engine: PlaybackEngine
   timelineRows: Accessor<Row[]>
+  store: EditableTableStore
+  currentTable: Accessor<string | null>
+  onSelectRow?: (table: string, row: number) => void
+  presence: Accessor<PeerPresence[]>
+  focusedRow: Accessor<number | null>
 }) {
   let el: HTMLDivElement | undefined
   const [width, setWidth] = createSignal(0)
@@ -58,6 +71,87 @@ export function TimelineStrip(props: {
   // The only two things that move per playback frame.
   const playheadX = createMemo(() => beatToX(geometry(), scrubPos() + 1))
 
+  // --- handles: the currently open table's rows ---------------------------
+  // store.onChange has no unsubscribe; the strip is mounted once for the
+  // app's lifetime (ui/app.tsx), so one subscription for life is fine —
+  // mirrors table-panel.tsx's own `tick`.
+  const [tick, setTick] = createSignal(0)
+  props.store.onChange(() => setTick((t) => t + 1))
+
+  // A genuinely editable, non-log table — same test table-panel.tsx uses to
+  // decide whether the open tab gets row/column editing at all.
+  const currentData = createMemo(() => {
+    tick()
+    const name = props.currentTable()
+    if (!name || !props.store.has(name) || props.store.isLog(name)) return null
+    const data = props.store.get(name)
+    return data ? { name, ...data } : null
+  })
+
+  // Handle placement reads the store's *own* `timeline` rows — pending, live
+  // — even though the coverage layer above reads the applied `timelineRows`
+  // prop: a content table's handles should track this session's in-progress
+  // retiming as it's being edited, not wait for Apply (see notes/timeline-
+  // strip-plan.md's "live/applied split" — the grid already works this way).
+  const liveTimelineRows = createMemo(() => {
+    tick()
+    return props.store.get('timeline')?.rows ?? []
+  })
+
+  const handles = createMemo(() => {
+    const cur = currentData()
+    return cur ? handlesFor(cur.name, cur.rows, cur.columns, liveTimelineRows()) : []
+  })
+
+  const laneCount = createMemo(() => handles().reduce((m, h) => Math.max(m, h.lane + 1), 1))
+
+  // Dashed-outline "pending" style: v1 only detects drift for the `timeline`
+  // table itself (see pendingTimelineRows) — every other table's handles skip
+  // this check and never render pending this phase.
+  const pendingRows = createMemo(() => {
+    const cur = currentData()
+    if (!cur || cur.name !== 'timeline') return new Set<number>()
+    return pendingTimelineRows(cur.rows, props.timelineRows())
+  })
+
+  // Any collaborator whose last edit landed on this row, any column — like
+  // table-panel.ts's lastEditors, but column-agnostic: a handle represents
+  // the whole row's position, not one cell.
+  function peerRingColor(table: string, row: number): string | undefined {
+    return props.presence().find((p) => p.lastEdit && p.lastEdit.table === table && p.lastEdit.row === row)?.color
+  }
+
+  function handleTitle(row: Row, h: Handle): string {
+    const parts: string[] = []
+    if (typeof row.event === 'string' && row.event) parts.push(row.event)
+    parts.push(`beat ${fmtNum(h.beat)}`)
+    if (h.end != null) parts.push(h.endField === 'dur' ? `dur ${fmtNum(h.end - h.beat)}` : `end ${fmtNum(h.end)}`)
+    if (h.disabled) parts.push('disabled')
+    if (h.ghost) parts.push('ghost placement')
+    return parts.join(' · ')
+  }
+
+  function handleBox(h: Handle): { left: string; width?: string; top: string; height: string } {
+    const geo = geometry()
+    const top = `${(h.lane / laneCount()) * 100}%`
+    const height = `${100 / laneCount()}%`
+    if (h.kind === 'span' && h.end != null) {
+      const left = beatToX(geo, h.beat)
+      const width = Math.max(1, beatToX(geo, h.end) - left)
+      return { left: `${left}px`, width: `${width}px`, top, height }
+    }
+    return { left: `${beatToX(geo, h.beat)}px`, top, height }
+  }
+
+  function ringStyle(table: string, h: Handle): string | undefined {
+    const focused = !h.ghost && h.row === props.focusedRow()
+    const peerColor = peerRingColor(table, h.row)
+    const rings: string[] = []
+    if (focused) rings.push(FOCUS_RING)
+    if (peerColor) rings.push(`0 0 0 ${focused ? 4 : 2}px ${peerColor}`)
+    return rings.length ? rings.join(', ') : undefined
+  }
+
   // Client-x → elapsed beats (0-based, matching PlaybackViewState.scrubPos),
   // clamped to the strip's range — the inverse of playheadX above.
   function elapsedBeatAt(clientX: number): number {
@@ -67,12 +161,31 @@ export function TimelineStrip(props: {
     return Math.max(0, Math.min(geo.maxBeats, beat - 1))
   }
 
-  // Background drag scrubs (there's no handles layer yet to hit-test against
-  // in this phase) — pointer capture so the drag tracks outside the strip's
-  // bounds; playback-controls.tsx's global pointerup is the fallback if
-  // capture is ever lost (e.g. a cancelled touch).
+  // Which lane a pointer's client-y falls in — the inverse of handleBox's
+  // top/height split, both dividing the strip's full height evenly.
+  function laneAt(clientY: number): number {
+    const count = laneCount()
+    if (count <= 1) return 0
+    const rect = el!.getBoundingClientRect()
+    if (!(rect.height > 0)) return 0
+    return Math.min(count - 1, Math.max(0, Math.floor(((clientY - rect.top) / rect.height) * count)))
+  }
+
+  // Background drag scrubs; a pointerdown that lands on a handle (per the
+  // model's hitTest, not DOM element identity — handles bubble their
+  // pointerdown up to this element) selects that row instead and does not
+  // start a scrub.
   let dragging = false
   function onPointerDown(e: PointerEvent): void {
+    const cur = currentData()
+    if (cur) {
+      const rect = el!.getBoundingClientRect()
+      const hit = hitTest(handles(), geometry(), e.clientX - rect.left, laneAt(e.clientY))
+      if (hit) {
+        props.onSelectRow?.(cur.name, hit.row)
+        return
+      }
+    }
     dragging = true
     el?.setPointerCapture(e.pointerId)
     props.engine.scrub(elapsedBeatAt(e.clientX))
@@ -123,6 +236,34 @@ export function TimelineStrip(props: {
           </div>
         )}
       </For>
+      <Show when={currentData()}>
+        {(cur) => (
+          <div class="timeline-strip-handles">
+            <For each={handles()}>
+              {(h) => (
+                <div
+                  class={`timeline-strip-handle timeline-strip-handle-${h.kind}`}
+                  classList={{
+                    'timeline-strip-handle-ghost': h.ghost,
+                    'timeline-strip-handle-disabled': h.disabled,
+                    'timeline-strip-handle-pending': pendingRows().has(h.row),
+                  }}
+                  style={{ ...handleBox(h), 'box-shadow': ringStyle(cur().name, h) }}
+                  title={handleTitle(cur().rows[h.row] ?? {}, h)}
+                >
+                  <Show when={h.kind === 'point'}>
+                    <span class="timeline-strip-handle-dot" />
+                  </Show>
+                  <Show when={h.kind === 'span'}>
+                    <span class="timeline-strip-handle-edge timeline-strip-handle-edge-start" />
+                    <span class="timeline-strip-handle-edge timeline-strip-handle-edge-end" />
+                  </Show>
+                </div>
+              )}
+            </For>
+          </div>
+        )}
+      </Show>
       <div class="timeline-strip-playhead" style={{ left: `${playheadX()}px` }} />
     </div>
   )

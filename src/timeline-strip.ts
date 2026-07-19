@@ -132,6 +132,26 @@ export function handlesFor(name: string, rows: Row[], columns: EditableColumn[],
   return handles
 }
 
+// Which storage rows of the `timeline` table have drifted from the applied
+// cook (the strip's dashed-outline "pending" style). v1 only covers this
+// table: its store rows and the applied cook's `table("timeline")` rows line
+// up index-for-index once disabled rows are excluded (ensure()'s
+// visibleRows filters the same way before a program ever sees them), so a
+// straight positional comparison works without needing row identity carried
+// through the cook.
+export function pendingTimelineRows(rows: Row[], appliedRows: Row[]): Set<number> {
+  const pending = new Set<number>()
+  let pos = 0
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]
+    if (row.disabled === true) continue
+    const applied = appliedRows[pos]
+    pos++
+    if (!applied || num(row.beat) !== num(applied.beat) || num(row.end) !== num(applied.end)) pending.add(i)
+  }
+  return pending
+}
+
 export type HitPart = 'start' | 'end' | 'body'
 
 export interface HitResult {
