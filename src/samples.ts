@@ -613,11 +613,15 @@ define("hydra", () => rows([
 ]))
 
 // Recording & sync: while you're not touching a slider, its recorded automation
-// drives the thumb as the loop plays. The moment you grab one it loses sync —
-// its old take is cleared and it records anew from the playhead (drag while
-// playing to draw a sweep). Slider moves ride the shared session log, so they
-// sync to everyone in a room and persist with the session. The raw moves show
-// in the "slider·events" tab, the folded current take in "slider".
+// drives the thumb as the loop plays. Grabbing one opens a one-cycle recording
+// window anchored where you grabbed: for one full loop it follows your hand
+// instead of playing back, so you can draw a sweep that runs right across the
+// loop seam (end into beginning). Once the playhead returns to the grab point
+// the window closes and your take replays every loop — a single click just
+// holds that value for the cycle, then loops it. Slider moves ride the shared
+// session log, so they sync to everyone in a room and persist with the session.
+// The raw moves show in the "slider·events" tab, the folded current take in
+// "slider".
 `,
     tables: {
       sliders: [

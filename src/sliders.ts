@@ -159,8 +159,21 @@ export interface SliderInput {
   defs(): SliderDef[]
   // Record a value for `id` at the current source position.
   set(id: string, value: number): void
-  // Drop one slider's recorded take — fired when the user grabs it, so it
-  // records a fresh take instead of fighting the old one.
+  // Open a recording window: drop the old take and start recording anew,
+  // anchored at the current source position (the grab beat). Fired when the
+  // user grabs the slider.
+  beginRecord(id: string): void
+  // Stream a live value into the open window at the current source position.
+  // Fired on every pointer move while grabbed.
+  setLive(id: string, value: number): void
+  // Advance every open window by the playhead. Once a window has swept one full
+  // cycle back to its grab beat, it closes and the fresh take starts replaying.
+  recordTick(srcBeat: number): void
+  // Whether `id` has an open recording window (its value follows the live hand,
+  // not the recorded take).
+  recording(id: string): boolean
+  // Drop one slider's recorded take. beginRecord does this at grab; kept as a
+  // standalone primitive.
   clearId(id: string): void
   clear(): void
   // Per-frame evaluation context for resolveBindings: slider(id) samples the
@@ -170,6 +183,18 @@ export interface SliderInput {
   valuesAt(srcFrame: number): Record<string, number>
 }
 
+// One slider's open recording window. `grabBeat` anchors the window; it closes
+// after the playhead sweeps a full cycle back to it (`wrapped` guards against
+// closing on the first tick, before the position has climbed past the grab).
+// `value` is the live hand — what the slider reads while recording, since the
+// fresh take isn't a full cycle yet.
+interface Recording {
+  grabBeat: number
+  value: number
+  lastBeat: number
+  wrapped: boolean
+}
+
 export function createSliderInput({ store, getIndex }: SliderInputOptions): SliderInput {
   let defList: SliderDef[] = []
   let defById = new Map<string, SliderDef>()
@@ -177,15 +202,24 @@ export function createSliderInput({ store, getIndex }: SliderInputOptions): Slid
   // session load).
   let current: Row[] | null = null
   let index: SliderIndex | null = null
+  // Ids with an open recording window: their value follows the live hand, not
+  // the recorded take, until the window closes one cycle after the grab.
+  const rec = new Map<string, Recording>()
 
   store.onChange(() => { current = null; index = null })
 
   const rows = (): Row[] => (current ??= currentSliderRows(store.events()))
   const idx = (): SliderIndex => (index ??= buildSliderIndex(rows()))
   const fallbackFor = (id: string): number => defById.get(id)?.default ?? 0
+  // Record without playback: while a window is open the slider holds the live
+  // hand; only once it closes does the recorded take drive the value again.
+  const sampleId = (id: string, srcFrame: number, fallback: number): number => {
+    const r = rec.get(id)
+    return r ? r.value : sampleSliderAt(idx(), id, srcFrame, fallback)
+  }
   const readAll = (srcFrame: number): Record<string, number> => {
     const out: Record<string, number> = {}
-    for (const d of defList) out[d.id] = sampleSliderAt(idx(), d.id, srcFrame, d.default)
+    for (const d of defList) out[d.id] = sampleId(d.id, srcFrame, d.default)
     return out
   }
 
@@ -202,6 +236,24 @@ export function createSliderInput({ store, getIndex }: SliderInputOptions): Slid
     set(id: string, value: number): void {
       store.record('slider', { id, value, beat: getIndex() })
     },
+    beginRecord(id: string): void {
+      const grabBeat = getIndex()
+      rec.set(id, { grabBeat, value: sampleSliderAt(idx(), id, beatToFrame(grabBeat), fallbackFor(id)), lastBeat: grabBeat, wrapped: false })
+      store.record('clear', { id })
+    },
+    setLive(id: string, value: number): void {
+      const r = rec.get(id)
+      if (r) r.value = value
+      store.record('slider', { id, value, beat: getIndex() })
+    },
+    recordTick(srcBeat: number): void {
+      for (const [id, r] of rec) {
+        if (srcBeat < r.lastBeat) r.wrapped = true
+        r.lastBeat = srcBeat
+        if (r.wrapped && srcBeat >= r.grabBeat) rec.delete(id)
+      }
+    },
+    recording: (id: string) => rec.has(id),
     clearId(id: string): void {
       store.record('clear', { id })
     },
@@ -210,7 +262,7 @@ export function createSliderInput({ store, getIndex }: SliderInputOptions): Slid
     },
     ctxAt(srcFrame: number): EvalCtx {
       return {
-        slider: (id) => sampleSliderAt(idx(), id, srcFrame, fallbackFor(id)),
+        slider: (id) => sampleId(id, srcFrame, fallbackFor(id)),
         sliders: () => readAll(srcFrame),
       }
     },
