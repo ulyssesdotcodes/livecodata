@@ -43,11 +43,9 @@ export function createSliderPanel(cb: SliderPanelCallbacks): SliderPanelControll
     view,
     setDefs(defs: SliderDef[]): void {
       setView((s) => {
-        // Reuse the prior def object for any slider whose definition is
-        // unchanged so <For> keeps its <input> node. updateSliderDefs re-runs
-        // on every store change — including the record a drag itself emits —
-        // and rebuilds fresh SliderDef objects each time; swapping the node
-        // out from under a live touch drag aborts it on mobile.
+        // Reuse the prior object for an unchanged def so <For> (which keys on
+        // identity) keeps its live <input> — rebuilding the node mid-drag
+        // aborts a touch drag on mobile, and setDefs re-runs on other cooks.
         const prev = new Map(s.defs.map((d) => [d.id, d]))
         const next = defs.map((d) => {
           const old = prev.get(d.id)

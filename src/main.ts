@@ -249,10 +249,9 @@ function updateSliderDefs(views: Map<string, Table>): void {
   // raw fallback needs it applied here.
   const rows = views.get('sliders')?.rows ?? (editableStore.get('sliders')?.rows ?? []).filter((r) => r[DISABLED_COL] !== true)
   const defs = sliderDefs(rows)
-  // The store's onChange fires on every event, including the "slider" value
-  // writes a drag emits — none of which touch the "sliders" definition table.
-  // Only push when the definitions actually changed, so a drag never rebuilds
-  // its own control (and the overlay/table refresh don't churn per move).
+  // onChange fires on every store event, including a drag's "slider" value
+  // writes, which never touch the "sliders" definitions. Skip the churn unless
+  // the defs actually changed.
   if (sameSliderDefs(defs, lastSliderDefs)) return
   lastSliderDefs = defs
   sliderPanel.setDefs(defs)

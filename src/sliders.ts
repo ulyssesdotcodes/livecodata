@@ -26,10 +26,9 @@ export interface SliderDef {
 const clamp = (v: number, lo: number, hi: number): number =>
   hi < lo ? v : Math.min(hi, Math.max(lo, v))
 
-// Structural equality for a def / a def list. The store's onChange carries no
-// delta, so this is how a definition refresh distinguishes a real change to the
-// "sliders" table from an unrelated store event (e.g. the "slider" value writes
-// a drag emits), and how the overlay reuses def objects across a refresh.
+// Structural equality for a def / a def list — the canonical "did the
+// definitions actually change" test, since the store's onChange carries no
+// delta. Backs both the refresh gate and the overlay's def-object reuse.
 export function sameSliderDef(a: SliderDef, b: SliderDef): boolean {
   return a.id === b.id && a.min === b.min && a.max === b.max &&
     a.default === b.default && a.step === b.step
