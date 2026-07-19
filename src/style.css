@@ -1719,42 +1719,80 @@ html, body {
   border-color: #e94560;
 }
 
-#scrub-bar {
+/* Timeline strip: replaces the old #scrub-bar range input. A sized, focusable
+   div with an absolutely-positioned layer stack (see ui/timeline-strip.tsx) —
+   coverage shading, beat grid, elapsed tint, playhead, in that paint order.
+   Mobile-first: the base size here is the ≤767px touch target; the
+   min-width:768px query below shrinks it for desktop/mouse. */
+.timeline-strip {
+  position: relative;
   width: 100%;
-  height: 4px;
-  -webkit-appearance: none;
-  appearance: none;
+  height: 56px;
   background: #1a3a5e;
-  border-radius: 2px;
+  border-radius: 4px;
   outline: none;
   cursor: pointer;
+  touch-action: none;
+  overflow: hidden;
 }
 
-#scrub-bar::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
+.timeline-strip:focus-visible {
+  box-shadow: inset 0 0 0 2px #e94560;
+}
+
+@media (min-width: 768px) {
+  .timeline-strip {
+    height: 44px;
+  }
+}
+
+.timeline-strip-coverage {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(233, 69, 96, 0.16);
+}
+
+.timeline-strip-elapsed {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  background: rgba(233, 69, 96, 0.22);
+  pointer-events: none;
+}
+
+.timeline-strip-tick {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #2a4d70;
+  pointer-events: none;
+}
+
+.timeline-strip-tick-major {
+  background: #3f6a94;
+}
+
+.timeline-strip-tick-label {
+  position: absolute;
+  left: 3px;
+  bottom: 2px;
+  color: #8fa9c4;
+  font-size: 10px;
+  font-family: monospace;
+  white-space: nowrap;
+}
+
+.timeline-strip-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
   background: #e94560;
-  cursor: pointer;
-  transition: transform 0.1s;
-}
-
-#scrub-bar:active::-webkit-slider-thumb {
-  transform: scale(1.25);
-}
-
-#scrub-bar::-moz-range-thumb {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #e94560;
-  border: none;
-  cursor: pointer;
-}
-
-#scrub-bar::-moz-range-track {
-  background: transparent;
+  pointer-events: none;
 }
 
 /* ── Editor hover preview (table + sparkline) ── */
