@@ -6,7 +6,7 @@
 import { rasterizeRows } from './rasterize.js'
 import { hydraRows } from './hydra.js'
 import { baubleRows } from './bauble.js'
-import { postRows } from './post.js'
+import { postRows, buildPostIndex, postStateFrames, postFrameAt } from './post.js'
 import type { Table } from './dsl.js'
 import type { Row } from './lineage.js'
 import type { ResolvedGraph, RunOptions, RuntimeResult } from './runtime.js'
@@ -45,5 +45,9 @@ export function cookProgram(runtime: Runtime, code: string, seed: number, dataCa
   // collide with hydra's (bauble precedent).
   const post = result.views.get('post')
   const postSketchRows = post ? postRows(post.rows) : []
+  // Compile every post state now so a broken chain throws here — surfaced to
+  // the user as a cook error — instead of failing silently at frame time.
+  const postIndex = buildPostIndex(postSketchRows)
+  for (const f of postStateFrames(postIndex)) postFrameAt(postIndex, f)
   return { views: result.views, graphs: result.graphs, sceneRows, timelineRows, hydraRows: hydraSketchRows, baubleRows: baubleSketchRows, postRows: postSketchRows }
 }

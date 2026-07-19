@@ -183,9 +183,13 @@ test('the hydra-style ops lower: geometry/colour fx are live, modulate carries i
   assert.deepEqual(modulate.chainArgs![0].map((o) => o.op), ['prev']) // the modulator feeds off prev()
 })
 
-test('an unknown op leaves post inactive rather than crashing the frame', () => {
+test('a broken chain (unknown op, or a last-line comment) surfaces its error', () => {
+  // The cook compiles every state, so these throws reach the user instead of
+  // being swallowed. A trailing `//` comment is the classic case: the wrapping
+  // `return (...)` can't close past it.
   assert.throws(() => evalPostCode('noSuchOp()'))
-  assert.equal(frameAt([{ beat: 1, event: 'chain', code: 'noSuchOp()' }], 0), null)
+  assert.throws(() => frameAt([{ beat: 1, event: 'chain', code: 'noSuchOp()' }], 0))
+  assert.throws(() => frameAt([{ beat: 1, event: 'chain', code: 'edges(0.2)\n// glow' }], 0))
 })
 
 test('slider() is a live arg reading props.sliders; sliderDeclsInCode scans a cell for declarations', () => {
