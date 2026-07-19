@@ -1,10 +1,13 @@
-// Info popover (the ℹ button): the DSL function reference — reusing the doc
-// dictionaries that drive editor autocomplete, so it never drifts from what
-// completion shows — plus a plain-language guide to the system's tables.
-// Unlike other panes it owns its own open/close state; nothing worth hoisting
-// into main.ts.
+// Info popover (the ℹ button): a tabbed reference. The "code" tab is the DSL
+// function reference — reusing the doc dictionaries that drive editor
+// autocomplete, so it never drifts from what completion shows — plus a
+// plain-language guide to the system's tables. Each further tab is one of the
+// event-driven DSLs (hydra / bauble / post), listing the events its table
+// supports and what each one does. Opening the info while on a DSL's table
+// jumps straight to that tab. Unlike other panes it owns its own open/close
+// state; nothing worth hoisting into main.ts.
 
-import { createSignal, For, Show } from 'solid-js'
+import { createSignal, For, Show, type Accessor } from 'solid-js'
 import { listenGlobal } from './dom.js'
 import {
   DSL_BUILTIN_DOCS, TABLE_METHOD_DOCS, EXPR_NAMESPACE_DOCS, EXPR_METHOD_DOCS, THREE_METHOD_DOCS,
@@ -99,8 +102,83 @@ const TABLE_DOCS: TableDoc[] = [
   },
 ]
 
-export function DocsPopover() {
+// One event a DSL table row can carry: its `event` value, the other columns it
+// reads, and what folding it does. The `cols` string is the terse column hint
+// shown next to the event name (mirrors DocEntry's `detail`).
+interface EventDoc {
+  event: string
+  cols: string
+  info: string
+}
+
+interface DslHelp {
+  // Matches the table-panel tab name, so opening the info on that table lands
+  // here (see tabForTable).
+  id: string
+  title: string
+  blurb: string
+  events: EventDoc[]
+}
+
+const DSL_HELP: DslHelp[] = [
+  {
+    id: 'hydra',
+    title: 'hydra',
+    blurb: 'A table of events folded per `out` output into one running hydra chain. `out` (o0 by default) is appended as the terminal `.out(oN)`; check `disabled` to mute a row.',
+    events: [
+      { event: 'setCode', cols: 'code', info: 'Replace the whole sketch for this output with `code`, a full hydra chain. The terminal `.out()` is added from the `out` column, so `code` needn\'t write its own.' },
+      { event: 'setSource', cols: 'code', info: 'Swap just the head generator (e.g. osc(...) → noise(...)), keeping every effect after it in the running chain.' },
+      { event: 'append', cols: 'code', info: 'Append a `.effect(…)` fragment onto the running chain.' },
+      { event: 'replace', cols: 'find · value', info: 'Literal substring swap over the whole current sketch: every occurrence of `find` becomes `value`.' },
+      { event: 'layer', cols: 'code · mode · value', info: 'Composite another sketch (`code`) over the current one via `mode` (blend / add / mult / diff / layer / mask); `value` is the blend amount where the mode takes one.' },
+      { event: 'transition', cols: 'code · value', info: 'Wipe from the program so far to the program after it over `value` beats. `code` is an optional black-and-white mask sketch; blank = a plain crossfade.' },
+      { event: 'setVariable', cols: 'name · value', info: 'Set a live input `name` to `value`; the sketch reads it as a per-frame props function, so driving it never recompiles.' },
+    ],
+  },
+  {
+    id: 'bauble',
+    title: 'bauble',
+    blurb: 'Hydra\'s sibling for 3D SDF sketches: one row per event, folded into a Janet shape expression. `code` cells are Janet (no JS completions); check `disabled` to mute a row.',
+    events: [
+      { event: 'setCode', cols: 'code', info: 'Replace the whole sketch with a Janet shape expression, e.g. `(rotate (box 50) :y t)`.' },
+      { event: 'transform', cols: 'code', info: 'Wrap a Janet form around the shape: a standalone `_` marks the hole (used for each occurrence), otherwise the shape is inserted as the form\'s first argument.' },
+      { event: 'duplicate', cols: 'code · mode · value', info: 'Combine the shape with a copy of itself run through `code` (blank = a verbatim copy), via `mode`; `value` is the smooth-blend radius / morph amount.' },
+      { event: 'combine', cols: 'code · mode · value', info: 'Composite another whole shape (`code`) onto the current one via `mode` — union / intersect / subtract take `value` as the :r blend radius, morph as its amount.' },
+      { event: 'replace', cols: 'find · value', info: 'Literal substring swap over the whole current sketch: every occurrence of `find` becomes `value`.' },
+      { event: 'slice', cols: 'code · value · axis', info: 'Cut the shape open as a shell: an onion `value` thick (default 3) minus `code` — or a half-space about `axis` when `code` is blank.' },
+      { event: 'tile', cols: 'value', info: 'Repeat the shape on an infinite lattice. A number spaces all three axes evenly; a string is a Janet vec3 like `[80 120 80]`.' },
+      { event: 'radial', cols: 'value · axis', info: 'Repeat the shape in a circular array of `value` copies (default 6) about `axis`.' },
+      { event: 'transition', cols: 'value', info: 'Morph from the program so far to the program after it over `value` beats, on the playback clock. Build the destination with ordinary events at the same beat.' },
+      { event: 'setVariable', cols: 'name · value', info: 'Compile `(def name value)` ahead of the sketch (changing one recompiles), except the reserved camera-x / camera-y / camera-zoom names, which orbit the camera as live uniforms.' },
+    ],
+  },
+  {
+    id: 'post',
+    title: 'post',
+    blurb: 'TSL post-processing built like a hydra table, folded into one effect chain run on the rendered scene before hydra samples it. The scene is the implicit source and there is one output, so `code` reads like hydra with no head or routing; check `disabled` to mute a row.',
+    events: [
+      { event: 'chain', cols: 'code', info: 'Set the whole effect chain, e.g. `edges(0.2).bloom(1.2)`. Empty = passthrough (the scene shows through untouched).' },
+      { event: 'add', cols: 'code', info: 'Append effects onto the running chain (`pixelate(6)`; a leading `.` is optional).' },
+      { event: 'remove', cols: 'name', info: 'Drop every op named `name` from the chain — the beat-time bypass.' },
+      { event: 'layer', cols: 'code · mode · value', info: 'Composite another chain (`code`) via `mode` (blend / add / mult / diff / mask); `value` is the blend amount where the mode takes one.' },
+      { event: 'transition', cols: 'code · dur', info: 'Wipe to the program after it over `dur` beats. `code` is an optional black-and-white mask chain; blank = a plain crossfade.' },
+      { event: 'set', cols: 'name · value · dur · ease', info: 'Set a live input `name` the chain reads through a props function. Add `dur`/`ease` to tween it from its current value instead of stepping.' },
+      { event: 'pulse', cols: 'name · value · dur · ease', info: 'Add `value·env` to `name` over `dur` beats, `ease` shaping the decaying envelope. Pulses stack.' },
+    ],
+  },
+]
+
+const HELP_IDS = new Set(DSL_HELP.map((d) => d.id))
+
+// The tab to open on: a DSL's own table jumps to its help tab, everything else
+// (the program, editable tables, logs) falls back to the DSL reference.
+function tabForTable(name: string | null | undefined): string {
+  return name && HELP_IDS.has(name) ? name : 'code'
+}
+
+export function DocsPopover(props: { currentTable?: Accessor<string | null> }) {
   const [open, setOpen] = createSignal(false)
+  const [tab, setTab] = createSignal<string>('code')
   let wrap: HTMLDivElement | undefined
   let btn: HTMLButtonElement | undefined
   const [pos, setPos] = createSignal<{ top: number; right: number }>({ top: 0, right: 0 })
@@ -111,6 +189,8 @@ export function DocsPopover() {
   listenGlobal(window, 'keydown', (e) => {
     if (e.key === 'Escape') setOpen(false)
   })
+
+  const activeHelp = () => DSL_HELP.find((d) => d.id === tab())
 
   return (
     <div class="settings-wrap docs-wrap" ref={wrap}>
@@ -125,6 +205,7 @@ export function DocsPopover() {
           if (opening && btn) {
             const r = btn.getBoundingClientRect()
             setPos({ top: r.bottom + 4, right: window.innerWidth - r.right })
+            setTab(tabForTable(props.currentTable?.()))
           }
           setOpen(opening)
         }}
@@ -140,52 +221,103 @@ export function DocsPopover() {
             <span class="docs-popover-title">Reference</span>
             <button class="docs-close" aria-label="Close" onClick={() => setOpen(false)}>×</button>
           </div>
+          <div class="docs-tabs" role="tablist">
+            <button
+              class="docs-tab"
+              classList={{ 'docs-tab-active': tab() === 'code' }}
+              role="tab"
+              aria-selected={tab() === 'code'}
+              onClick={() => setTab('code')}
+            >
+              code
+            </button>
+            <For each={DSL_HELP}>
+              {(d) => (
+                <button
+                  class="docs-tab"
+                  classList={{ 'docs-tab-active': tab() === d.id }}
+                  role="tab"
+                  aria-selected={tab() === d.id}
+                  onClick={() => setTab(d.id)}
+                >
+                  {d.title}
+                </button>
+              )}
+            </For>
+          </div>
           <div class="docs-popover-body">
-            <section class="docs-section">
-              <h3 class="docs-h">Tables the system uses</h3>
-              <p class="docs-blurb">
-                Every value is a Table — rows keyed by <code>beat</code>. These
-                are the tables you'll meet as tabs in the panel below.
-              </p>
-              <dl class="docs-list">
-                <For each={TABLE_DOCS}>
-                  {(t) => (
-                    <>
-                      <dt class="docs-term">
-                        <code>{t.name}</code>
-                        <span class="docs-detail">{t.detail}</span>
-                      </dt>
-                      <dd class="docs-def">{t.info}</dd>
-                    </>
-                  )}
-                </For>
-              </dl>
-            </section>
-
-            <section class="docs-section">
-              <h3 class="docs-h">DSL functions</h3>
-              <For each={FN_SECTIONS}>
-                {(sec) => (
-                  <div class="docs-fn-group">
-                    <h4 class="docs-h4">{sec.title}</h4>
-                    <p class="docs-blurb">{sec.blurb}</p>
+            <Show
+              when={activeHelp()}
+              fallback={
+                <>
+                  <section class="docs-section">
+                    <h3 class="docs-h">Tables the system uses</h3>
+                    <p class="docs-blurb">
+                      Every value is a Table — rows keyed by <code>beat</code>. These
+                      are the tables you'll meet as tabs in the panel below.
+                    </p>
                     <dl class="docs-list">
-                      <For each={Object.keys(sec.docs)}>
-                        {(key) => (
+                      <For each={TABLE_DOCS}>
+                        {(t) => (
                           <>
                             <dt class="docs-term">
-                              <code>{sec.docs[key].sig}</code>
-                              <span class="docs-detail">{sec.docs[key].detail}</span>
+                              <code>{t.name}</code>
+                              <span class="docs-detail">{t.detail}</span>
                             </dt>
-                            <dd class="docs-def">{sec.docs[key].info}</dd>
+                            <dd class="docs-def">{t.info}</dd>
                           </>
                         )}
                       </For>
                     </dl>
-                  </div>
-                )}
-              </For>
-            </section>
+                  </section>
+
+                  <section class="docs-section">
+                    <h3 class="docs-h">DSL functions</h3>
+                    <For each={FN_SECTIONS}>
+                      {(sec) => (
+                        <div class="docs-fn-group">
+                          <h4 class="docs-h4">{sec.title}</h4>
+                          <p class="docs-blurb">{sec.blurb}</p>
+                          <dl class="docs-list">
+                            <For each={Object.keys(sec.docs)}>
+                              {(key) => (
+                                <>
+                                  <dt class="docs-term">
+                                    <code>{sec.docs[key].sig}</code>
+                                    <span class="docs-detail">{sec.docs[key].detail}</span>
+                                  </dt>
+                                  <dd class="docs-def">{sec.docs[key].info}</dd>
+                                </>
+                              )}
+                            </For>
+                          </dl>
+                        </div>
+                      )}
+                    </For>
+                  </section>
+                </>
+              }
+            >
+              {(help) => (
+                <section class="docs-section">
+                  <h3 class="docs-h">{help().title} events</h3>
+                  <p class="docs-blurb">{help().blurb}</p>
+                  <dl class="docs-list">
+                    <For each={help().events}>
+                      {(ev) => (
+                        <>
+                          <dt class="docs-term">
+                            <code>{ev.event}</code>
+                            <span class="docs-detail">{ev.cols}</span>
+                          </dt>
+                          <dd class="docs-def">{ev.info}</dd>
+                        </>
+                      )}
+                    </For>
+                  </dl>
+                </section>
+              )}
+            </Show>
           </div>
         </div>
       </Show>

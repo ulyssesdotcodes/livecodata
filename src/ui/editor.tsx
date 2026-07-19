@@ -344,7 +344,7 @@ export function createEditor(
 
 // `children` slots between the header and the CodeMirror host (app.tsx puts
 // the session selector/bar there).
-export function EditorPane(props: { ctl: EditorController; children?: JSX.Element }) {
+export function EditorPane(props: { ctl: EditorController; currentTable?: Accessor<string | null>; children?: JSX.Element }) {
   const { ctl } = props
   const [collapsed, setCollapsed] = createSignal(window.matchMedia('(max-width: 767px)').matches)
   // The settings menu is positioned fixed (not absolute) so it isn't clipped
@@ -378,7 +378,7 @@ export function EditorPane(props: { ctl: EditorController; children?: JSX.Elemen
           Back
         </button>
         <button class="run-btn" disabled={!ctl.canRun()} onClick={() => ctl.run()}>{ctl.runLabel()}</button>
-        <DocsPopover />
+        <DocsPopover currentTable={props.currentTable} />
         <div class="settings-wrap" ref={settingsWrap}>
           <button
             class="settings-btn"
