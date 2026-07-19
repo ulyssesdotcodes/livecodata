@@ -9,7 +9,7 @@
 
 import type { Row } from './lineage.js'
 import type { EditableColumn } from './editable-tables.js'
-import { placeBeat, timelineSegments, type Timeline } from './timeline.js'
+import { placeBeat, timelineSegments, buildTimeline, type Timeline, type TimelineSegment } from './timeline.js'
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
 
@@ -78,6 +78,25 @@ export interface Handle {
   // once) — draggable, but not the "primary" one a click should focus.
   ghost: boolean
   disabled: boolean
+  // Set (> 0) when this placement wrapped past one pass's worth of beats —
+  // an active timeline's span with loops > 1, or (with no timeline) the
+  // GUI loop length — so later content forms another pass instead of
+  // running off the strip. Omitted (not just 0) for the common unwrapped
+  // case, so existing handle-shape assertions don't need to know about it.
+  pass?: number
+}
+
+// Which pass `beat` falls in, and its beat local to that pass — a beat past
+// one `unit`-length pass wraps into the next rather than rendering off-strip
+// (notes/timeline-strip-plan.md "Beats past maxBeats"). `maxPass` clamps to
+// an active timeline's actual loop count (so the map's shared terminal instant
+// resolves to the last pass, not a phantom one after it); omitted when passes
+// are unbounded (content run long with no timeline defined).
+function wrapPass(beat: number, unit: number, maxPass?: number): { local: number; pass: number } {
+  if (!(unit > 0)) return { local: beat, pass: 0 }
+  let pass = Math.max(0, Math.floor((beat - 1) / unit))
+  if (maxPass !== undefined) pass = Math.min(pass, maxPass)
+  return { local: beat - pass * unit, pass }
 }
 
 // Applies an in-progress drag's not-yet-committed values to one row before
@@ -94,7 +113,7 @@ export function withPreview(rows: Row[], preview: { row: number; values: Record<
   return next
 }
 
-export function handlesFor(name: string, rows: Row[], columns: EditableColumn[], timelineRows: Row[]): Handle[] {
+export function handlesFor(name: string, rows: Row[], columns: EditableColumn[], timelineRows: Row[], loopBeats?: number): Handle[] {
   const colNames = new Set(columns.map((c) => c.name))
   const handles: Handle[] = []
 
@@ -121,8 +140,18 @@ export function handlesFor(name: string, rows: Row[], columns: EditableColumn[],
 
   // Content table: beat is a source beat. With no timeline defined this is
   // the identity map (the common case); with one, every playback placement
-  // of that source beat (placeBeat) gets its own handle.
+  // of that source beat (placeBeat) gets its own handle. Either way, a
+  // placement can land past one pass's worth of beats — a multi-pass active
+  // timeline's span, or (with none) the GUI loop length — and wraps into a
+  // "pass n" badge (wrapPass) rather than rendering off-strip. An active
+  // timeline's passes get their own lane (matching the coverage shading,
+  // which is lane-per-pass too — see coverageBands); with no timeline there
+  // are no lanes to place a later pass into, so it stays in lane 0 with just
+  // the badge.
   const segments = timelineSegments(timelineRows)
+  const timeline = segments.length ? buildTimeline(timelineRows) : null
+  const wrapUnit = timeline ? timeline.beats : loopBeats
+  const maxPass = timeline ? Math.max(0, timeline.loops - 1) : undefined
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
     const beat = num(row.beat)
@@ -131,19 +160,57 @@ export function handlesFor(name: string, rows: Row[], columns: EditableColumn[],
     const disabled = row.disabled === true
     const placements = segments.length ? placeBeat(segments, beat) : [{ beat, stretch: 1 }]
     placements.forEach((p, idx) => {
+      const w = wrapUnit && wrapUnit > 0 ? wrapPass(p.beat, wrapUnit, maxPass) : { local: p.beat, pass: 0 }
       handles.push({
         row: i,
         kind: dur !== undefined ? 'span' : 'point',
-        beat: p.beat,
-        end: dur !== undefined ? p.beat + dur * p.stretch : undefined,
+        beat: w.local,
+        end: dur !== undefined ? w.local + dur * p.stretch : undefined,
         endField: dur !== undefined ? 'dur' : undefined,
-        lane: 0,
+        lane: timeline ? w.pass : 0,
         ghost: idx > 0,
         disabled,
+        ...(w.pass > 0 ? { pass: w.pass } : {}),
       })
     })
   }
   return handles
+}
+
+// How many lane bands the strip needs: at least the current table's own
+// handles (the `timeline` table's `loop` column, or a content table's
+// pass-wrapped ghosts), and at least the timeline's own pass count — so
+// lanes still show (for the coverage layer's sake) when the open table has
+// no handle past lane 0, e.g. a content table with nothing looping.
+export function laneCountFor(handles: Handle[], timelineRows: Row[]): number {
+  const fromHandles = handles.reduce((m, h) => Math.max(m, h.lane + 1), 1)
+  return Math.max(fromHandles, buildTimeline(timelineRows).loops)
+}
+
+export interface CoverageBand {
+  p0: number
+  p1: number
+  lane: number
+  kind?: TimelineSegment['kind']
+}
+
+// One tinted band per compiled segment, its beats mapped from the extended
+// playback axis (see timeline.ts's compile) onto its own pass's local
+// 0..span axis and tagged with which lane that pass is — mirrors
+// handlesFor's content-row wrap, but exact rather than approximate: a
+// segment never straddles a pass boundary (compile builds every segment
+// within one loop's `beat + L*span` offset), so its p0 and p1 always fall
+// in the same lane.
+export function coverageBands(timelineRows: Row[]): CoverageBand[] {
+  const timeline = buildTimeline(timelineRows)
+  if (!timeline.active) return []
+  const span = timeline.beats
+  const maxLane = Math.max(0, timeline.loops - 1)
+  return timelineSegments(timelineRows).map((seg) => {
+    const lane = span > 0 ? Math.min(maxLane, Math.max(0, Math.floor((seg.p0 - 1) / span))) : 0
+    const off = lane * span
+    return { p0: seg.p0 - off, p1: seg.p1 - off, lane, kind: seg.kind }
+  })
 }
 
 // Which storage rows of the `timeline` table have drifted from the applied
@@ -279,8 +346,12 @@ const DEFAULT_MIN_SPAN = 0.25
 
 export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts: DragOptions = {}): DragResult {
   const minSpan = opts.minSpan ?? DEFAULT_MIN_SPAN
-  const { row, beat, end, endField } = handle
-  const toSource = (b: number): number => (opts.timeline?.active ? opts.timeline.sourceBeatAt(b) : b)
+  const { row, beat, end, endField, pass } = handle
+  // A wrapped placement's `beat`/`end` are local to its own pass (wrapPass) —
+  // sourceBeatAt needs that pass back to re-derive the right extended-axis
+  // point, the same `loop` argument buildTimeline's own multi-pass playback
+  // uses.
+  const toSource = (b: number): number => (opts.timeline?.active ? opts.timeline.sourceBeatAt(b, pass ?? 0) : b)
 
   if (mode === 'move') {
     const nextBeat = Math.max(1, beat + dBeats)

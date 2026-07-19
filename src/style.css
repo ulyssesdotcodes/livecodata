@@ -1772,11 +1772,84 @@ html, body {
   }
 }
 
+/* Multi-pass timeline (phase 5): the strip grows one lane band per pass,
+   driven by --lane-rows (set from JS, capped at MAX_VISIBLE_LANES — a
+   timeline with more passes than that keeps all its lanes, just thinner,
+   rather than growing the strip unbounded). Single-lane strips never set
+   this class, so their height is exactly the rule above, unchanged. */
+.timeline-strip-multilane {
+  height: calc(var(--lane-rows, 1) * 28px);
+}
+
+@media (max-width: 767px) {
+  .timeline-strip-multilane {
+    height: calc(var(--lane-rows, 1) * 36px);
+  }
+}
+
+/* One band per pass — a subtle top separator (the first pass's band has
+   nothing above it to separate from) and a small label naming the pass.
+   Purely decorative: hit-testing divides the strip's actual rendered height
+   by the same lane count independently (see laneAt in the view). */
+.timeline-strip-lane {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+
+.timeline-strip-lane:not(:first-child) {
+  border-top: 1px solid rgba(143, 169, 196, 0.25);
+}
+
+.timeline-strip-lane-label {
+  position: absolute;
+  right: 3px;
+  top: 1px;
+  color: #607a96;
+  font-size: 9px;
+  font-family: monospace;
+  white-space: nowrap;
+}
+
+.timeline-strip-lane-overflow {
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  z-index: 1;
+  padding: 0 3px;
+  background: #12203c;
+  color: #8fa9c4;
+  font-size: 9px;
+  font-family: monospace;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
 .timeline-strip-coverage {
   position: absolute;
-  top: 0;
-  bottom: 0;
   background: rgba(233, 69, 96, 0.16);
+}
+
+/* Event-kind tints — distinct hues so a multi-event timeline reads at a
+   glance, reusing colors already established elsewhere on the strip/table
+   panel (retime's blue matches the handle accent; the rest pulled from the
+   existing dark-theme palette). Legacy sparse-keyframe segments carry no
+   `event` and fall back to the base rule above (the original pink tint). */
+.timeline-strip-coverage-retime {
+  background: rgba(74, 158, 255, 0.18);
+}
+
+.timeline-strip-coverage-loop {
+  background: rgba(160, 111, 214, 0.22);
+}
+
+.timeline-strip-coverage-hold {
+  background: rgba(233, 162, 59, 0.2);
+}
+
+.timeline-strip-coverage-speed {
+  background: rgba(63, 191, 127, 0.2);
 }
 
 .timeline-strip-elapsed {
@@ -1918,6 +1991,29 @@ html, body {
   color: #c8d6e5;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 10px;
+  border-radius: 2px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* A content row wrapped into a later pass (wrapPass — no lane of its own
+   with no timeline active, see handlesFor) — a small always-on tag, unlike
+   the drag label above which only shows mid-gesture. Anchored inside the
+   handle's own box (not above/below it, like the drag label) because a
+   single-lane strip's handle already spans the strip's full height, and
+   `.timeline-strip`'s overflow:hidden (it clips horizontally too, for long
+   labels) would clip anything positioned outside that box. */
+.timeline-strip-handle-pass {
+  position: absolute;
+  top: 1px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0 3px;
+  background: #12203c;
+  color: #8fa9c4;
+  font-family: monospace;
+  font-size: 8px;
+  line-height: 1.4;
   border-radius: 2px;
   white-space: nowrap;
   pointer-events: none;

@@ -16,6 +16,8 @@ import {
   exceedsDragThreshold,
   withPreview,
   pendingTimelineRows,
+  laneCountFor,
+  coverageBands,
   type Handle,
 } from '../src/timeline-strip.js'
 import type { EditableColumn } from '../src/editable-tables.js'
@@ -82,6 +84,74 @@ test('handlesFor: a content row played by a loop event gets one handle per place
     handles.map((h) => ({ beat: h.beat, ghost: h.ghost })),
     [{ beat: 1, ghost: false }, { beat: 5, ghost: true }],
   )
+})
+
+// --- handlesFor: phase 5 (lanes + pass wrapping) ----------------------------
+
+test('handlesFor: a content row placed across a multi-pass timeline lands each ghost in its own pass lane', () => {
+  // Two "loop" passes, each cycling source 1..5 twice across their own
+  // 8-beat span — a content row at source beat 3 (the cycle's midpoint)
+  // lands twice per pass, once per cycle.
+  const timelineRows = [
+    { event: 'loop', beat: 1, end: 9, from: 1, to: 5, loop: 0 },
+    { event: 'loop', beat: 1, end: 9, from: 1, to: 5, loop: 1 },
+  ]
+  const rows = [{ beat: 3 }]
+  const handles = handlesFor('hits', rows, cols('beat'), timelineRows)
+  assert.deepEqual(
+    handles.map((h) => ({ beat: h.beat, lane: h.lane, ghost: h.ghost })),
+    [
+      { beat: 3, lane: 0, ghost: false },
+      { beat: 7, lane: 0, ghost: true },
+      { beat: 3, lane: 1, ghost: true },
+      { beat: 7, lane: 1, ghost: true },
+    ],
+    'pass 2\'s placements repeat pass 1\'s local shape, just in lane 1',
+  )
+})
+
+test('handlesFor: a content row whose beat runs past loopBeats wraps into a later pass, tagged but still in lane 0', () => {
+  // No timeline defined, so there's no lane to place a later pass into —
+  // only a badge (see notes/timeline-strip-plan.md "Beats past maxBeats").
+  const rows = [{ beat: 20 }]
+  const handles = handlesFor('hits', rows, cols('beat'), [], 8)
+  assert.deepEqual(
+    handles.map((h) => ({ beat: h.beat, lane: h.lane, pass: h.pass })),
+    [{ beat: 4, lane: 0, pass: 2 }],
+    '(20 - 1) % 8 + 1 == 4, in the third 8-beat pass',
+  )
+})
+
+// --- laneCountFor ----------------------------------------------------------
+
+test('laneCountFor: the max of the open handles\' own lanes and the timeline\'s own pass count', () => {
+  const twoPassTimeline = [
+    { event: 'hold', beat: 1, end: 9, from: 1, loop: 0 },
+    { event: 'hold', beat: 1, end: 9, from: 1, loop: 1 },
+  ]
+  assert.equal(laneCountFor([], twoPassTimeline), 2, 'a two-pass timeline needs 2 lanes even with no handles past lane 0')
+  const handles: Handle[] = [{ row: 0, kind: 'point', beat: 1, lane: 3, ghost: false, disabled: false }]
+  assert.equal(laneCountFor(handles, []), 4, 'a handle already in lane 3 needs 4 lanes even with no timeline')
+})
+
+// --- coverageBands -----------------------------------------------------------
+
+test('coverageBands: each pass\'s segments map onto its own local axis, tagged with that pass\'s lane and event kind', () => {
+  const timelineRows = [
+    { event: 'hold', beat: 1, end: 9, from: 1, loop: 0 },
+    { event: 'hold', beat: 1, end: 9, from: 1, loop: 1 },
+  ]
+  assert.deepEqual(
+    coverageBands(timelineRows).map((b) => ({ p0: b.p0, p1: b.p1, lane: b.lane, kind: b.kind })),
+    [
+      { p0: 1, p1: 9, lane: 0, kind: 'hold' },
+      { p0: 1, p1: 9, lane: 1, kind: 'hold' },
+    ],
+  )
+})
+
+test('coverageBands: no active timeline yields no bands', () => {
+  assert.deepEqual(coverageBands([]), [])
 })
 
 // --- pendingTimelineRows ----------------------------------------------------
@@ -159,6 +229,27 @@ test('dragUpdate maps a content-table drop back through the timeline sourceBeatA
   const { values } = dragUpdate(handle, 'move', 4, { timeline })
   assert.equal(values.beat, timeline.sourceBeatAt(5), 'stored source beat matches the visual landing spot')
   assert.equal(values.beat, 3)
+})
+
+test('dragUpdate maps a wrapped ghost back through its own pass, not pass 0', () => {
+  // Two holds a pass apart, each freezing on a different source beat — the
+  // only way to tell which pass's sourceBeatAt actually ran.
+  const timeline = buildTimeline([
+    { event: 'hold', beat: 1, end: 5, from: 3, loop: 0 },
+    { event: 'hold', beat: 1, end: 5, from: 7, loop: 1 },
+  ])
+  const handle: Handle = { row: 0, kind: 'point', beat: 2, lane: 1, ghost: true, disabled: false, pass: 1 }
+  const { values } = dragUpdate(handle, 'move', 0, { timeline })
+  assert.equal(values.beat, 7, "pass 2's hold source (7), not pass 1's (3)")
+})
+
+// --- dragUpdate: lanes never move on a horizontal drag ----------------------
+
+test('dragUpdate never touches loop — a horizontal drag on a lane-1 timeline row keeps its pass, only beat/end move', () => {
+  const handle: Handle = { row: 1, kind: 'span', beat: 9, end: 17, endField: 'end', lane: 1, ghost: false, disabled: false }
+  const { values } = dragUpdate(handle, 'move', 2)
+  assert.deepEqual(values, { beat: 11, end: 19 })
+  assert.ok(!('loop' in values), "a horizontal drag's payload never carries the row's pass assignment")
 })
 
 // --- drag gesture helpers (phase 4) ----------------------------------------
