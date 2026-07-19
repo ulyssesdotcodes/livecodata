@@ -130,7 +130,10 @@ export interface EditorOptions {
 export interface EditorAPI {
   run(): void
   getCode(): string
-  setCode(code: string): void
+  // preserveView keeps the caret and scroll where they are (offsets clamped to
+  // the new length) — a scrub swaps in a past run's program but shouldn't fling
+  // the cursor to the top.
+  setCode(code: string, opts?: { preserveView?: boolean }): void
   setError(msg: string | null): void
   // Point the editor at a single table cell: the program text is stashed, the
   // cell's text loads, and Run/Ctrl-Enter calls onCommit instead of running
@@ -311,9 +314,33 @@ export function createEditor(
 
   // External loads always mean "show the program" — leave any cell target
   // without restoring its stash (the new code wins).
-  function setCode(code: string): void {
+  function setCode(code: string, opts: { preserveView?: boolean } = {}): void {
     exitCell(false)
-    setDoc(code)
+    if (!opts.preserveView) {
+      setDoc(code)
+      return
+    }
+    // Keep the caret and scroll put across the swap. Offsets are clamped so a
+    // shorter program doesn't throw. Scroll is reapplied after the layout
+    // measure that a full-doc change schedules, since that measure resets it.
+    const { anchor, head } = view.state.selection.main
+    const top = view.scrollDOM.scrollTop
+    const left = view.scrollDOM.scrollLeft
+    programmaticDoc = true
+    try {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: code },
+        selection: { anchor: Math.min(anchor, code.length), head: Math.min(head, code.length) },
+      })
+    } finally {
+      programmaticDoc = false
+    }
+    // Reapply across the next two frames: a full-doc replace clamps scrollTop
+    // to 0 as the lines are torn down, and the caller re-renders other panes in
+    // the same frame, so one restore can be undone before layout settles.
+    const restore = (): void => { view.scrollDOM.scrollTop = top; view.scrollDOM.scrollLeft = left }
+    restore()
+    requestAnimationFrame(() => { restore(); requestAnimationFrame(restore) })
   }
 
   return {
