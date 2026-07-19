@@ -1,0 +1,134 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { buildTimeline } from '../src/timeline.js'
+import {
+  beatToX,
+  xToBeat,
+  gridLines,
+  handlesFor,
+  hitTest,
+  snap,
+  dragUpdate,
+  type Handle,
+} from '../src/timeline-strip.js'
+import type { EditableColumn } from '../src/editable-tables.js'
+
+const cols = (...names: string[]): EditableColumn[] => names.map((name) => ({ name, type: 'number' }))
+
+// --- geometry ----------------------------------------------------------------
+
+test('beatToX/xToBeat round-trip: beat 1 sits at x=0, beat maxBeats+1 at the right edge', () => {
+  const geometry = { width: 320, maxBeats: 16 }
+  assert.equal(beatToX(geometry, 1), 0)
+  assert.equal(beatToX(geometry, 17), 320)
+  assert.equal(xToBeat(geometry, 0), 1)
+  assert.equal(xToBeat(geometry, 320), 17)
+  assert.equal(xToBeat(geometry, beatToX(geometry, 9)), 9)
+})
+
+// --- grid ----------------------------------------------------------------
+
+test('gridLines: minor tick per beat, major every 4, labels only major', () => {
+  const lines = gridLines(8, 800)
+  assert.equal(lines.length, 9, 'beats 1..maxBeats+1')
+  assert.deepEqual(lines.map((l) => l.kind), ['major', 'minor', 'minor', 'minor', 'major', 'minor', 'minor', 'minor', 'major'])
+  assert.deepEqual(lines.filter((l) => l.label).map((l) => l.beat), [1, 5, 9])
+})
+
+test('gridLines: labels drop wholesale once major spacing collides (<24px)', () => {
+  const roomy = gridLines(8, 800) // 100px/beat, 400px between majors
+  const cramped = gridLines(800, 800) // 1px/beat, 4px between majors
+  assert.ok(roomy.some((l) => l.label))
+  assert.ok(cramped.every((l) => !l.label))
+})
+
+// --- handlesFor ----------------------------------------------------------------
+
+test('handlesFor: timeline table rows become span handles on their own beat..end, loop picks the lane', () => {
+  const rows = [
+    { beat: 1, end: 9, loop: 0 },
+    { beat: 1, end: 9, loop: 1, disabled: true },
+  ]
+  const handles = handlesFor('timeline', rows, cols('beat', 'end', 'loop'), rows)
+  assert.deepEqual(
+    handles.map((h) => ({ row: h.row, kind: h.kind, beat: h.beat, end: h.end, lane: h.lane, disabled: h.disabled })),
+    [
+      { row: 0, kind: 'span', beat: 1, end: 9, lane: 0, disabled: false },
+      { row: 1, kind: 'span', beat: 1, end: 9, lane: 1, disabled: true },
+    ],
+  )
+})
+
+test('handlesFor: with no timeline defined, a content row is identity — one non-ghost handle at its own beat', () => {
+  const rows = [{ beat: 3, dur: 2 }]
+  const handles = handlesFor('three', rows, cols('beat', 'dur'), [])
+  assert.deepEqual(handles, [
+    { row: 0, kind: 'span', beat: 3, end: 5, endField: 'dur', lane: 0, ghost: false, disabled: false },
+  ])
+})
+
+test('handlesFor: a content row played by a loop event gets one handle per placement, first primary, rest ghosts', () => {
+  const timelineRows = [{ event: 'loop', beat: 1, end: 9, from: 1, to: 5 }]
+  const rows = [{ id: 'a', beat: 1 }]
+  const handles = handlesFor('hits', rows, cols('beat'), timelineRows)
+  assert.deepEqual(
+    handles.map((h) => ({ beat: h.beat, ghost: h.ghost })),
+    [{ beat: 1, ghost: false }, { beat: 5, ghost: true }],
+  )
+})
+
+// --- hitTest ----------------------------------------------------------------
+
+test('hitTest: an edge wins over the body within tolerance; background misses return null', () => {
+  const geometry = { width: 400, maxBeats: 16 }
+  const handles: Handle[] = [
+    { row: 0, kind: 'span', beat: 1, end: 9, endField: 'end', lane: 0, ghost: false, disabled: false },
+  ]
+  const startX = beatToX(geometry, 1)
+  const midX = beatToX(geometry, 5)
+  assert.deepEqual(hitTest(handles, geometry, startX + 2, 0), { row: 0, part: 'start' })
+  assert.deepEqual(hitTest(handles, geometry, midX, 0), { row: 0, part: 'body' })
+  assert.equal(hitTest(handles, geometry, geometry.width, 0), null, 'no handle in lane at that x')
+})
+
+// --- snap ----------------------------------------------------------------
+
+test('snap: quarter-beat by default, whole beats under coarse, unsnapped under free, clamped to >= 1', () => {
+  assert.equal(snap(3.1), 3.0, 'nearest quarter')
+  assert.equal(snap(3.13), 3.25)
+  assert.equal(snap(3.6, { mode: 'coarse' }), 4)
+  assert.equal(snap(3.567, { mode: 'free' }), 3.567)
+  assert.equal(snap(-2), 1, 'clamped to the first beat')
+})
+
+// --- dragUpdate ----------------------------------------------------------------
+
+test('dragUpdate move on a timeline span shifts beat and end together, preserving duration', () => {
+  const handle: Handle = { row: 2, kind: 'span', beat: 5, end: 13, endField: 'end', lane: 0, ghost: false, disabled: false }
+  const { row, values } = dragUpdate(handle, 'move', 3)
+  assert.equal(row, 2)
+  assert.deepEqual(values, { beat: 8, end: 16 })
+})
+
+test('dragUpdate move on a dur-span only moves beat; dur is left out of the payload untouched', () => {
+  const handle: Handle = { row: 0, kind: 'span', beat: 4, end: 6, endField: 'dur', lane: 0, ghost: false, disabled: false }
+  const { values } = dragUpdate(handle, 'move', 2)
+  assert.deepEqual(values, { beat: 6 })
+})
+
+test('dragUpdate end-edge drag respects the minimum span', () => {
+  const handle: Handle = { row: 0, kind: 'span', beat: 5, end: 6, endField: 'end', lane: 0, ghost: false, disabled: false }
+  // Dragging the end edge far to the left would collapse the span below minSpan.
+  const { values } = dragUpdate(handle, 'end', -10, { minSpan: 0.25 })
+  assert.deepEqual(values, { end: 5.25 })
+})
+
+test('dragUpdate maps a content-table drop back through the timeline sourceBeatAt', () => {
+  // Half speed: source 1..5 stretched across playback 1..9 (see timeline.test.ts).
+  const timeline = buildTimeline([{ event: 'retime', beat: 1, end: 9, from: 1, to: 5 }])
+  const handle: Handle = { row: 0, kind: 'point', beat: 1, lane: 0, ghost: false, disabled: false }
+  // Drag the handle from playback beat 1 to playback beat 5 (the midpoint).
+  const { values } = dragUpdate(handle, 'move', 4, { timeline })
+  assert.equal(values.beat, timeline.sourceBeatAt(5), 'stored source beat matches the visual landing spot')
+  assert.equal(values.beat, 3)
+})
