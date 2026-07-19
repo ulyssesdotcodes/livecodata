@@ -7,8 +7,14 @@ import {
   gridLines,
   handlesFor,
   hitTest,
+  resolveHandle,
   snap,
+  snapDelta,
+  dragModeFor,
   dragUpdate,
+  valuesDiffer,
+  exceedsDragThreshold,
+  withPreview,
   pendingTimelineRows,
   type Handle,
 } from '../src/timeline-strip.js'
@@ -153,4 +159,57 @@ test('dragUpdate maps a content-table drop back through the timeline sourceBeatA
   const { values } = dragUpdate(handle, 'move', 4, { timeline })
   assert.equal(values.beat, timeline.sourceBeatAt(5), 'stored source beat matches the visual landing spot')
   assert.equal(values.beat, 3)
+})
+
+// --- drag gesture helpers (phase 4) ----------------------------------------
+
+test('exceedsDragThreshold: below the threshold is a click, beyond it a drag, diagonal movement included', () => {
+  assert.equal(exceedsDragThreshold(2, 0), false)
+  assert.equal(exceedsDragThreshold(3, 0), false, 'exactly at the threshold is still a click')
+  assert.equal(exceedsDragThreshold(4, 0), true)
+  assert.equal(exceedsDragThreshold(3, 1), true, 'diagonal distance can exceed the threshold even though neither component alone does')
+})
+
+test('dragModeFor: hitTest parts map onto dragUpdate modes, body becomes a move', () => {
+  assert.equal(dragModeFor('body'), 'move')
+  assert.equal(dragModeFor('start'), 'start')
+  assert.equal(dragModeFor('end'), 'end')
+})
+
+test('snapDelta: snaps the point the drag actually moves, not the raw delta, so an off-grid start still lands on-grid', () => {
+  // Handle starts at beat 3.1, off the quarter grid. Adding the raw delta
+  // would land at 3.6; snapDelta's returned delta must instead land the
+  // anchor exactly where snap() would put 3.6 — not the same as snapping
+  // the raw 0.5 delta on its own.
+  const anchor = 3.1
+  const rawDBeats = 0.5
+  assert.equal(anchor + snapDelta(anchor, rawDBeats), snap(anchor + rawDBeats))
+  assert.notEqual(snapDelta(anchor, rawDBeats), snap(rawDBeats), 'not the same as snapping the delta in isolation')
+  assert.equal(snapDelta(anchor, rawDBeats, { mode: 'free' }), rawDBeats, 'free mode is a pass-through')
+})
+
+test('withPreview: patches one row with a drag-in-progress payload, leaving the rest and a no-op untouched', () => {
+  const rows = [{ beat: 1 }, { beat: 5, dur: 2 }]
+  assert.deepEqual(withPreview(rows, null), rows)
+  const patched = withPreview(rows, { row: 1, values: { beat: 7 } })
+  assert.deepEqual(patched, [{ beat: 1 }, { beat: 7, dur: 2 }])
+  assert.deepEqual(rows[1], { beat: 5, dur: 2 }, 'the original row is untouched')
+})
+
+test('valuesDiffer: true only when a payload actually changes a stored field', () => {
+  assert.equal(valuesDiffer({ beat: 3 }, { beat: 3 }), false)
+  assert.equal(valuesDiffer({ beat: 3, end: 5 }, { beat: 3, end: 5.5 }), true)
+})
+
+test('resolveHandle: picks the specific ghost placement under the pointer, not just any handle on that row', () => {
+  const geometry = { width: 800, maxBeats: 16 }
+  const handles: Handle[] = [
+    { row: 0, kind: 'point', beat: 1, lane: 0, ghost: false, disabled: false },
+    { row: 0, kind: 'point', beat: 9, lane: 0, ghost: true, disabled: false },
+  ]
+  const xNearGhost = beatToX(geometry, 9)
+  const hit = hitTest(handles, geometry, xNearGhost, 0)
+  assert.deepEqual(hit, { row: 0, part: 'body' })
+  const handle = resolveHandle(handles, geometry, hit!, xNearGhost, 0)
+  assert.equal(handle?.ghost, true, 'the ghost placement actually under the pointer, not the primary one')
 })

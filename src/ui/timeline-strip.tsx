@@ -1,19 +1,27 @@
 // The timeline strip — the humble Solid view over ../timeline-strip.ts (the
-// pure geometry/grid/handle model) and ../timeline.ts (coverage shading).
+// pure geometry/grid/handle/drag model) and ../timeline.ts (coverage shading,
+// source-beat mapping).
 // Replaces the transport's `#scrub-bar` range input.
 //
-// Phase 3 (this file): a read-only handles layer for the currently open
-// editable table's rows, synced with the table panel (hover tooltip, click
-// focuses the row, panel focus and peer presence ring the matching handle).
-// Dragging (phase 4) lands later — see notes/timeline-strip-plan.md.
+// Phase 4 (this file): dragging. A handle's pointerdown starts a pending
+// gesture rather than an immediate click; a small movement threshold decides
+// whether pointerup is a click (select the row, as phase 3) or the end of a
+// drag (commit one store.setRow with the dragged values). Mid-drag, the
+// dragged row's values are only ever previewed locally (the `preview` signal,
+// merged over the store row by `withPreview` before handle derivation) — nothing
+// touches the store until release, so peers see the handle jump once, not a
+// pointermove's worth of history events.
 
 import { createSignal, createMemo, onMount, onCleanup, For, Show, type Accessor } from 'solid-js'
 import {
   beatToX, xToBeat, gridLines, handlesFor, hitTest, pendingTimelineRows,
-  type StripGeometry, type Handle,
+  resolveHandle, dragModeFor, snapDelta, dragUpdate, withPreview,
+  valuesDiffer, exceedsDragThreshold,
+  type StripGeometry, type Handle, type HitPart, type DragOptions, type SnapMode,
 } from '../timeline-strip.js'
-import { timelineSegments } from '../timeline.js'
+import { timelineSegments, buildTimeline } from '../timeline.js'
 import { fmtNum } from '../graph-panel.js'
+import { listenGlobal } from './dom.js'
 import type { PlaybackEngine, PlaybackViewState } from '../playback.js'
 import type { Row } from '../lineage.js'
 import type { EditableTableStore } from '../editable-tables.js'
@@ -98,9 +106,18 @@ export function TimelineStrip(props: {
     return props.store.get('timeline')?.rows ?? []
   })
 
+  // The in-progress drag's not-yet-committed values — a signal, not a plain
+  // variable, so this memo (and the tooltip/label/dragging-style reads below)
+  // re-render as the pointer moves. Cleared on commit or cancel; the store
+  // itself is never touched mid-gesture.
+  const [preview, setPreview] = createSignal<{ table: string; row: number; part: HitPart; values: Record<string, unknown> } | null>(null)
+
   const handles = createMemo(() => {
     const cur = currentData()
-    return cur ? handlesFor(cur.name, cur.rows, cur.columns, liveTimelineRows()) : []
+    if (!cur) return []
+    const p = preview()
+    const rows = p && p.table === cur.name ? withPreview(cur.rows, p) : cur.rows
+    return handlesFor(cur.name, rows, cur.columns, liveTimelineRows())
   })
 
   const laneCount = createMemo(() => handles().reduce((m, h) => Math.max(m, h.lane + 1), 1))
@@ -171,32 +188,157 @@ export function TimelineStrip(props: {
     return Math.min(count - 1, Math.max(0, Math.floor(((clientY - rect.top) / rect.height) * count)))
   }
 
-  // Background drag scrubs; a pointerdown that lands on a handle (per the
-  // model's hitTest, not DOM element identity — handles bubble their
-  // pointerdown up to this element) selects that row instead and does not
-  // start a scrub.
-  let dragging = false
-  function onPointerDown(e: PointerEvent): void {
-    const cur = currentData()
-    if (cur) {
-      const rect = el!.getBoundingClientRect()
-      const hit = hitTest(handles(), geometry(), e.clientX - rect.left, laneAt(e.clientY))
-      if (hit) {
-        props.onSelectRow?.(cur.name, hit.row)
-        return
+  // A handle drag in progress — a plain (non-reactive) var: geometry/pointer
+  // bookkeeping the drag needs frame to frame, distinct from `preview` (the
+  // reactive signal the render actually reads). `moved` flips once the
+  // pointer clears the click/drag threshold; until then pointerup is a click.
+  interface Gesture {
+    table: string
+    handle: Handle
+    part: HitPart
+    pointerId: number
+    startClientX: number
+    startClientY: number
+    moved: boolean
+  }
+  let gesture: Gesture | null = null
+
+  // Background scrub — unrelated to a handle gesture, kept as its own flag
+  // exactly as before phase 4.
+  let scrubbing = false
+
+  // Idle hover (no gesture, no scrub): which part sits under the pointer,
+  // purely for the grab/ew-resize cursor affordance.
+  const [hoverPart, setHoverPart] = createSignal<HitPart | null>(null)
+
+  function snapModeFor(e: PointerEvent): SnapMode {
+    return e.shiftKey ? 'coarse' : e.altKey ? 'free' : 'quarter'
+  }
+
+  // Pointer dx (converted to beats via the geometry, snapped per the live
+  // modifier keys) → the model's dragUpdate payload, previewed locally.
+  function updateGesturePreview(g: Gesture, e: PointerEvent): void {
+    if (!el) return
+    const geo = geometry()
+    const rect = el.getBoundingClientRect()
+    const rawDBeats = xToBeat(geo, e.clientX - rect.left) - xToBeat(geo, g.startClientX - rect.left)
+    const anchor = g.part === 'end' ? (g.handle.end ?? g.handle.beat) : g.handle.beat
+    const dBeats = snapDelta(anchor, rawDBeats, { mode: snapModeFor(e) })
+    const opts: DragOptions = {}
+    // The `timeline` table's own rows are already playback-axis positions —
+    // only a content table's drop needs mapping back through sourceBeatAt.
+    if (g.table !== 'timeline') {
+      const tl = buildTimeline(liveTimelineRows())
+      if (tl.active) opts.timeline = tl
+    }
+    const { values } = dragUpdate(g.handle, dragModeFor(g.part), dBeats, opts)
+    setPreview({ table: g.table, row: g.handle.row, part: g.part, values })
+  }
+
+  // One store.setRow for the whole gesture (a no-op if the drag snapped back
+  // to where it started), then focus the row exactly like a plain click.
+  function commitGesture(g: Gesture): void {
+    if (g.moved) {
+      const p = preview()
+      const cur = currentData()
+      if (p && cur && cur.name === p.table) {
+        const row = cur.rows[p.row]
+        if (row && valuesDiffer(row, p.values)) props.store.setRow(p.table, p.row, p.values)
       }
     }
-    dragging = true
+    props.onSelectRow?.(g.table, g.handle.row)
+    setPreview(null)
+  }
+
+  function cancelGesture(): void {
+    if (!gesture) return
+    el?.releasePointerCapture(gesture.pointerId)
+    gesture = null
+    setPreview(null)
+  }
+
+  // Escape cancels a drag wherever keyboard focus happens to be — a mouse
+  // drag rarely leaves focus on the strip itself.
+  listenGlobal(window, 'keydown', (e) => {
+    if (e.key === 'Escape' && gesture) {
+      e.preventDefault()
+      cancelGesture()
+    }
+  })
+
+  function updateHover(e: PointerEvent): void {
+    const cur = currentData()
+    if (!cur || !el) { setHoverPart(null); return }
+    const rect = el.getBoundingClientRect()
+    const hit = hitTest(handles(), geometry(), e.clientX - rect.left, laneAt(e.clientY))
+    setHoverPart(hit?.part ?? null)
+  }
+
+  // Background drag scrubs; a pointerdown that lands on a handle (per the
+  // model's hitTest, not DOM element identity — handles bubble their
+  // pointerdown up to this element) begins a pending gesture instead — a
+  // click or a drag, decided on pointerup/pointermove by the movement
+  // threshold.
+  function onPointerDown(e: PointerEvent): void {
+    const cur = currentData()
+    if (cur && el) {
+      const rect = el.getBoundingClientRect()
+      const x = e.clientX - rect.left
+      const lane = laneAt(e.clientY)
+      const hit = hitTest(handles(), geometry(), x, lane)
+      if (hit) {
+        const handle = resolveHandle(handles(), geometry(), hit, x, lane)
+        if (handle) {
+          gesture = {
+            table: cur.name,
+            handle,
+            part: hit.part,
+            pointerId: e.pointerId,
+            startClientX: e.clientX,
+            startClientY: e.clientY,
+            moved: false,
+          }
+          el.setPointerCapture(e.pointerId)
+          return
+        }
+      }
+    }
+    scrubbing = true
     el?.setPointerCapture(e.pointerId)
     props.engine.scrub(elapsedBeatAt(e.clientX))
   }
   function onPointerMove(e: PointerEvent): void {
-    if (!dragging) return
-    props.engine.scrub(elapsedBeatAt(e.clientX))
+    if (gesture) {
+      const g = gesture
+      if (!g.moved) {
+        if (!exceedsDragThreshold(e.clientX - g.startClientX, e.clientY - g.startClientY)) return
+        g.moved = true
+      }
+      updateGesturePreview(g, e)
+      return
+    }
+    if (scrubbing) {
+      props.engine.scrub(elapsedBeatAt(e.clientX))
+      return
+    }
+    updateHover(e)
+  }
+  function onPointerUp(): void {
+    if (gesture) {
+      const g = gesture
+      gesture = null
+      commitGesture(g)
+      return
+    }
+    endDrag()
+  }
+  function onPointerCancel(): void {
+    if (gesture) { cancelGesture(); return }
+    endDrag()
   }
   function endDrag(): void {
-    if (!dragging) return
-    dragging = false
+    if (!scrubbing) return
+    scrubbing = false
     props.engine.endScrub()
   }
 
@@ -219,10 +361,16 @@ export function TimelineStrip(props: {
       aria-valuemin={0}
       aria-valuemax={props.vs().maxBeats}
       aria-valuenow={props.vs().scrubPos}
+      classList={{
+        'timeline-strip-dragging-move': preview()?.part === 'body',
+        'timeline-strip-dragging-resize': preview()?.part === 'start' || preview()?.part === 'end',
+        'timeline-strip-hover-grab': !preview() && hoverPart() === 'body',
+        'timeline-strip-hover-resize': !preview() && (hoverPart() === 'start' || hoverPart() === 'end'),
+      }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
       onKeyDown={onKeyDown}
     >
       <For each={coverage()}>
@@ -247,6 +395,7 @@ export function TimelineStrip(props: {
                     'timeline-strip-handle-ghost': h.ghost,
                     'timeline-strip-handle-disabled': h.disabled,
                     'timeline-strip-handle-pending': pendingRows().has(h.row),
+                    'timeline-strip-handle-dragging': preview()?.table === cur().name && preview()?.row === h.row,
                   }}
                   style={{ ...handleBox(h), 'box-shadow': ringStyle(cur().name, h) }}
                   title={handleTitle(cur().rows[h.row] ?? {}, h)}
@@ -257,6 +406,11 @@ export function TimelineStrip(props: {
                   <Show when={h.kind === 'span'}>
                     <span class="timeline-strip-handle-edge timeline-strip-handle-edge-start" />
                     <span class="timeline-strip-handle-edge timeline-strip-handle-edge-end" />
+                  </Show>
+                  <Show when={preview()?.table === cur().name && preview()?.row === h.row}>
+                    <span class="timeline-strip-handle-label">
+                      {h.end != null ? `${fmtNum(h.beat)}–${fmtNum(h.end)}` : fmtNum(h.beat)}
+                    </span>
                   </Show>
                 </div>
               )}

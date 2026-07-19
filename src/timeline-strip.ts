@@ -80,6 +80,20 @@ export interface Handle {
   disabled: boolean
 }
 
+// Applies an in-progress drag's not-yet-committed values to one row before
+// handle derivation, so every placement of that row (a loop event's ghosts
+// included) recomputes from the dragged position — merging at the Handle
+// level instead would miss ghosts, since they're re-derived from the row via
+// placeBeat, not copied from the primary handle.
+export function withPreview(rows: Row[], preview: { row: number; values: Record<string, unknown> } | null): Row[] {
+  if (!preview) return rows
+  const row = rows[preview.row]
+  if (!row) return rows
+  const next = rows.slice()
+  next[preview.row] = { ...row, ...preview.values }
+  return next
+}
+
 export function handlesFor(name: string, rows: Row[], columns: EditableColumn[], timelineRows: Row[]): Handle[] {
   const colNames = new Set(columns.map((c) => c.name))
   const handles: Handle[] = []
@@ -200,6 +214,25 @@ export function hitTest(handles: Handle[], geometry: StripGeometry, x: number, l
   return best ? best.result : null
 }
 
+// hitTest only identifies a row+part, not which physical Handle answered it —
+// a row played by a loop event has one ghost per placement, each at its own
+// x, and a drag needs the actual placement grabbed (its beat/end/lane) to
+// compute dBeats against. Re-scans just that row's candidates by the same
+// edge-vs-body distance hitTest itself used; the common case (one placement)
+// short-circuits without the scan.
+export function resolveHandle(handles: Handle[], geometry: StripGeometry, hit: HitResult, x: number, lane: number): Handle | undefined {
+  const candidates = handles.filter((h) => h.row === hit.row && h.lane === lane)
+  if (candidates.length <= 1) return candidates[0]
+  let best: Handle | undefined
+  let bestDist = Infinity
+  for (const h of candidates) {
+    const target = hit.part === 'end' ? (h.end ?? h.beat) : h.beat
+    const dist = Math.abs(x - beatToX(geometry, target))
+    if (dist < bestDist) { bestDist = dist; best = h }
+  }
+  return best
+}
+
 export type SnapMode = 'quarter' | 'coarse' | 'free'
 
 // Quarter-beat by default, whole beats under 'coarse' (Shift), unsnapped
@@ -210,7 +243,22 @@ export function snap(beat: number, opts: { mode?: SnapMode } = {}): number {
   return Math.max(1, snapped)
 }
 
+// Snaps a drag delta so the point it actually moves (`anchor` — the handle's
+// own beat for a move/start drag, its end for an end drag) lands exactly on
+// the snap grid. Snapping the raw delta itself would only land on-grid when
+// the handle's starting position already was.
+export function snapDelta(anchor: number, dBeats: number, opts: { mode?: SnapMode } = {}): number {
+  return snap(anchor + dBeats, opts) - anchor
+}
+
 export type DragMode = 'move' | 'start' | 'end'
+
+// hitTest's part vocabulary ('start'/'end'/'body') maps directly onto
+// dragUpdate's mode vocabulary ('start'/'end'/'move') — a handle's body is
+// dragged by moving it, an edge by resizing that edge.
+export function dragModeFor(part: HitPart): DragMode {
+  return part === 'body' ? 'move' : part
+}
 
 export interface DragOptions {
   // Minimum span (beats) a 'start'/'end' drag may shrink a span to.
@@ -257,4 +305,16 @@ export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts:
   const nextEnd = Math.max((end ?? beat) + dBeats, beat + minSpan)
   if (endField === 'dur') return { row, values: { dur: toSource(nextEnd) - toSource(beat) } }
   return { row, values: { end: toSource(nextEnd) } }
+}
+
+// Whether a drag's payload actually changes the stored row — a gesture that
+// snaps back to where it started (or a sub-threshold press that never became
+// a drag) must commit nothing.
+export function valuesDiffer(row: Row, values: Record<string, unknown>): boolean {
+  return Object.entries(values).some(([k, v]) => row[k] !== v)
+}
+
+// Pointerdown-to-drag movement threshold, squared to skip a sqrt per move.
+export function exceedsDragThreshold(dx: number, dy: number, thresholdPx = 3): boolean {
+  return dx * dx + dy * dy > thresholdPx * thresholdPx
 }
