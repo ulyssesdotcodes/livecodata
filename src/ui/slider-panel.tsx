@@ -1,9 +1,10 @@
 // Slider overlay: one labelled range control per slider the program defines,
 // drawn over the visual output. A slider is two-way — while untouched,
 // playback pushes the recorded value at the playhead into showValues() and
-// the thumb follows the loop; grabbing one marks its id dragging (onGrab
-// clears its old take, showValues skips it so the playhead can't fight the
-// drag) and each move records via onInput, until release.
+// the thumb follows the loop; grabbing one marks its id dragging (onGrab opens
+// a recording window, showValues skips it so the playhead can't fight the
+// drag) and each move records via onInput, until release. Release ends the
+// pointer drag, not the recording — the window closes a cycle later (main.ts).
 
 import { createSignal, For, Show, type Accessor } from 'solid-js'
 import { listenGlobal } from './dom.js'

@@ -4,7 +4,7 @@ import {
   sliderDef, sliderDefs, buildSliderIndex, sampleSliderAt,
   currentSliderRows, createSliderInput, sameSliderDefs,
 } from '../src/sliders.js'
-import { frameToBeat } from '../src/constants.js'
+import { frameToBeat, beatToFrame } from '../src/constants.js'
 import { createEditableTableStore } from '../src/editable-tables.js'
 import type { Row } from '../src/lineage.js'
 import type { StampedEvent } from '../src/event-log.js'
@@ -170,6 +170,50 @@ test('createSliderInput stamps moves at the source position and samples them', (
   assert.equal(input.ctxAt(120).slider!('x'), 0.2, 'second move')
   assert.equal(input.ctxAt(0).slider!('x'), 0.8, 'before the first move: jumps to the first value')
   assert.deepEqual(input.valuesAt(60), { x: 0.8 }, 'valuesAt maps every defined id')
+})
+
+// ── Recording window: grab records without playback for one cycle, then replays ─
+
+test('an open recording window holds the live hand, then replays the take once a cycle completes', () => {
+  let src = 5 // beats — getIndex and recordTick share the beat unit
+  const input = createSliderInput({ store: fakeStore(), getIndex: () => src })
+  input.setDefs([{ id: 'x', min: 0, max: 1, default: 0.2, step: 0.01 }])
+
+  src = 5; input.beginRecord('x'); input.setLive('x', 0.8)
+  assert.equal(input.recording('x'), true)
+  // Record without playback: while the window is open the value is the live
+  // hand everywhere, not a sample of the (incomplete) take.
+  assert.equal(input.ctxAt(beatToFrame(1)).slider!('x'), 0.8, 'live value before the grab beat')
+  assert.equal(input.valuesAt(beatToFrame(3)).x, 0.8, 'live value past the grab beat')
+
+  // Release: no more moves, but the window stays open and keeps holding 0.8.
+  input.recordTick(6); input.recordTick(8)
+  assert.equal(input.recording('x'), true, 'release does not close the window')
+  input.recordTick(2) // wrapped past the loop seam
+  assert.equal(input.recording('x'), true, 'still open before returning to the grab beat')
+  input.recordTick(5) // back at the grab beat, one full cycle later
+  assert.equal(input.recording('x'), false, 'the window closes one cycle after the grab')
+  assert.equal(input.ctxAt(beatToFrame(1)).slider!('x'), 0.8, 'the take replays')
+})
+
+test('a motion across the loop seam is captured as one continuous take', () => {
+  let src = 7 // beats
+  const input = createSliderInput({ store: fakeStore(), getIndex: () => src })
+  input.setDefs([{ id: 'x', min: 0, max: 1, default: 0.1, step: 0.01 }])
+
+  // Grab near the loop end and sweep past the seam into the next cycle.
+  src = 7; input.beginRecord('x'); input.setLive('x', 0.2); input.recordTick(7)
+  src = 8; input.setLive('x', 0.4); input.recordTick(8)
+  src = 1; input.setLive('x', 0.6); input.recordTick(1)
+  src = 2; input.setLive('x', 0.8); input.recordTick(2)
+  // Sweep the rest of the cycle back to the grab beat to close the window.
+  input.recordTick(4); input.recordTick(6); input.recordTick(7)
+  assert.equal(input.recording('x'), false)
+
+  assert.equal(input.ctxAt(beatToFrame(7)).slider!('x'), 0.2, 'the take spans the seam: beat 7')
+  assert.equal(input.ctxAt(beatToFrame(8)).slider!('x'), 0.4, 'beat 8')
+  assert.equal(input.ctxAt(beatToFrame(1)).slider!('x'), 0.6, 'beat 1, after the seam')
+  assert.equal(input.ctxAt(beatToFrame(2)).slider!('x'), 0.8, 'beat 2')
 })
 
 test('clearId only affects the named slider; sliders() covers all defined ids', () => {

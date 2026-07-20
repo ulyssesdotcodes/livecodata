@@ -241,8 +241,11 @@ function ensureSliderInput(): SliderInput {
 // handler already refreshes the tables and persists — no separate refresh.
 // The callbacks only fire on user interaction, well after `playback` lands.
 const sliderPanel = createSliderPanel({
-  onGrab: (id) => ensureSliderInput().clearId(id),
-  onInput: (id, value) => ensureSliderInput().set(id, value),
+  onGrab: (id) => ensureSliderInput().beginRecord(id),
+  onInput: (id, value) => ensureSliderInput().setLive(id, value),
+  // Release doesn't end the take: the recording window stays open, holding the
+  // last value, until the playhead sweeps a full cycle back to the grab beat
+  // (see recordTick in onTick). That's what lets a motion cross the loop seam.
   onRelease: () => {},
 })
 
@@ -278,6 +281,9 @@ const playbackOptions: PlaybackOptions = {
     // play/pause/scrub (onTick fires on play frames and scrubs, not while
     // paused — so a held playhead freezes it). No-op off the WebGPU backend.
     sceneAPI.setParticleTime(srcBeats)
+    // Advance any open slider recording window before reading values, so a take
+    // that completes its cycle this tick starts replaying immediately.
+    sliderInput?.recordTick(srcBeats)
     // Show recorded automation on the slider thumbs (skipping any being
     // dragged — see SliderPanel).
     const sliderVals = sliderInput && sliderInput.defs().length
