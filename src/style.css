@@ -1796,9 +1796,14 @@ html, body {
   font-size: 11px;
   border: 1px solid #2a4d70;
   border-radius: 3px;
-  white-space: nowrap;
+  text-align: left;
   pointer-events: none;
   z-index: 3;
+}
+
+/* One meaningful column per line, stacked. */
+.timeline-strip-readout-line {
+  white-space: nowrap;
 }
 
 /* Cursor affordances (phase 4 — dragging). Hover states are set from a cheap

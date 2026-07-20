@@ -113,13 +113,13 @@ function codeSnippet(code: string, max = 48): string {
   return collapsed.length > max ? collapsed.slice(0, max - 1) + '…' : collapsed
 }
 
-// The row's *meaningful* columns, as readout text: what the row IS — its
-// event kind (unlabeled, it's the identity), a code cell's first line, and
-// the remaining non-blank values labeled by column — never its position
-// (POSITIONAL_COLS), which the strip shows visually. Column order is the
-// schema's, so each event type naturally leads with whatever its table puts
-// first; capped at `max` entries so a wide row stays one line.
-export function meaningfulSummary(row: Row, columns: EditableColumn[], max = 4): string {
+// The row's *meaningful* columns, one readout line each (the view stacks
+// them): what the row IS — its event kind (unlabeled, it's the identity), a
+// code cell's first line, and the remaining non-blank values labeled by
+// column — never its position (POSITIONAL_COLS), which the strip shows
+// visually. Column order is the schema's, so each event type naturally leads
+// with whatever its table puts first; capped at `max` lines.
+export function meaningfulSummary(row: Row, columns: EditableColumn[], max = 4): string[] {
   const parts: string[] = []
   for (const c of columns) {
     if (parts.length >= max) break
@@ -130,7 +130,7 @@ export function meaningfulSummary(row: Row, columns: EditableColumn[], max = 4):
     else if (c.type === 'code') parts.push(codeSnippet(String(v)))
     else parts.push(`${c.name} ${formatEditableCell(c.type, v)}`)
   }
-  return parts.join(' · ')
+  return parts
 }
 
 // Applies an in-progress drag's not-yet-committed values to one row before

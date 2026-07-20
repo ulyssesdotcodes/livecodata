@@ -313,9 +313,9 @@ test('meaningfulSummary: identity columns per event type, never position', () =>
     { name: 'from', type: 'number' }, { name: 'to', type: 'number' },
     { name: 'disabled', type: 'boolean' },
   ]
-  assert.equal(
+  assert.deepEqual(
     meaningfulSummary({ beat: 1, end: 8, event: 'retime', from: 1, to: 4, disabled: false }, timelineCols),
-    'retime · from 1 · to 4',
+    ['retime', 'from 1', 'to 4'],
     'event kind unlabeled, params labeled, beat/end/disabled-false skipped',
   )
   const codeCols: EditableColumn[] = [
@@ -324,14 +324,14 @@ test('meaningfulSummary: identity columns per event type, never position', () =>
     { name: 'code', type: 'code', language: 'hydra' },
   ]
   const sketch = 'osc(10, 0.1)\n  .rotate(1)\n  .out(o0)'
-  assert.equal(meaningfulSummary({ beat: 3, event: 'setCode', code: sketch }, codeCols), 'setCode · osc(10, 0.1)')
+  assert.deepEqual(meaningfulSummary({ beat: 3, event: 'setCode', code: sketch }, codeCols), ['setCode', 'osc(10, 0.1)'])
   const longLine = 'x'.repeat(80)
-  assert.ok(meaningfulSummary({ code: longLine }, [{ name: 'code', type: 'code' }]).endsWith('…'), 'long code truncates')
+  assert.ok(meaningfulSummary({ code: longLine }, [{ name: 'code', type: 'code' }])[0].endsWith('…'), 'long code truncates')
 })
 
 test('meaningfulSummary: caps entries and is empty for a position-only row', () => {
   const wide: EditableColumn[] = Array.from({ length: 8 }, (_v, i) => ({ name: `c${i}`, type: 'number' as const }))
   const row = Object.fromEntries(wide.map((c, i) => [c.name, i + 1]))
-  assert.equal(meaningfulSummary(row, wide).split(' · ').length, 4)
-  assert.equal(meaningfulSummary({ beat: 2, dur: 1 }, [{ name: 'beat', type: 'number' }, { name: 'dur', type: 'number' }]), '')
+  assert.equal(meaningfulSummary(row, wide).length, 4)
+  assert.deepEqual(meaningfulSummary({ beat: 2, dur: 1 }, [{ name: 'beat', type: 'number' }, { name: 'dur', type: 'number' }]), [])
 })
