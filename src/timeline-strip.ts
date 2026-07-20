@@ -9,6 +9,7 @@
 
 import type { Row } from './lineage.js'
 import type { EditableColumn } from './editable-tables.js'
+import { formatEditableCell } from './table-panel.js'
 import { placeBeat, timelineSegments, buildTimeline, type Timeline, type TimelineSegment } from './timeline.js'
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
@@ -97,6 +98,39 @@ function wrapPass(beat: number, unit: number, maxPass?: number): { local: number
   let pass = Math.max(0, Math.floor((beat - 1) / unit))
   if (maxPass !== undefined) pass = Math.min(pass, maxPass)
   return { local: beat - pass * unit, pass }
+}
+
+// Positional/bookkeeping columns the hover/drag readout skips: position is
+// what the strip already shows visually (and as the unlabeled tag on the
+// handle itself), so the readout is reserved for what identifies the row.
+const POSITIONAL_COLS = new Set(['beat', 'end', 'dur', 'loop', 'disabled'])
+
+// First non-blank line of a code cell, whitespace-collapsed and capped — a
+// sketch identifies its row at a glance without flooding the readout.
+function codeSnippet(code: string, max = 48): string {
+  const line = code.split('\n').map((l) => l.trim()).find((l) => l.length > 0) ?? ''
+  const collapsed = line.replace(/\s+/g, ' ')
+  return collapsed.length > max ? collapsed.slice(0, max - 1) + '…' : collapsed
+}
+
+// The row's *meaningful* columns, as readout text: what the row IS — its
+// event kind (unlabeled, it's the identity), a code cell's first line, and
+// the remaining non-blank values labeled by column — never its position
+// (POSITIONAL_COLS), which the strip shows visually. Column order is the
+// schema's, so each event type naturally leads with whatever its table puts
+// first; capped at `max` entries so a wide row stays one line.
+export function meaningfulSummary(row: Row, columns: EditableColumn[], max = 4): string {
+  const parts: string[] = []
+  for (const c of columns) {
+    if (parts.length >= max) break
+    if (POSITIONAL_COLS.has(c.name)) continue
+    const v = row[c.name]
+    if (v == null || v === '' || v === false) continue
+    if (c.name === 'event') parts.push(String(v))
+    else if (c.type === 'code') parts.push(codeSnippet(String(v)))
+    else parts.push(`${c.name} ${formatEditableCell(c.type, v)}`)
+  }
+  return parts.join(' · ')
 }
 
 // Applies an in-progress drag's not-yet-committed values to one row before
