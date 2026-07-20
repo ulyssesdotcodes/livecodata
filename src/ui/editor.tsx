@@ -14,7 +14,7 @@ import { Prec, Compartment } from '@codemirror/state'
 import { vim, getCM } from '@replit/codemirror-vim'
 import {
   viewNameCompletions, codeCompletions, typeHover, signatureHelp, dslHover,
-  viewAtPos, defaultProgram, defaultTables, defaultTable,
+  viewAtPos, minimalEdit, defaultProgram, defaultTables, defaultTable,
   remoteCursorField, setRemoteCursorsEffect, PROGRAM_CELL,
   type RemoteCursor, type SymbolCardData, type SigCardFactory,
 } from '../editor-support.js'
@@ -130,7 +130,9 @@ export interface EditorOptions {
 export interface EditorAPI {
   run(): void
   getCode(): string
-  setCode(code: string): void
+  // preserveView applies the code as a minimal edit so the caret and scroll
+  // stay put — used when scrubbing to a past run's program.
+  setCode(code: string, opts?: { preserveView?: boolean }): void
   setError(msg: string | null): void
   // Point the editor at a single table cell: the program text is stashed, the
   // cell's text loads, and Run/Ctrl-Enter calls onCommit instead of running
@@ -217,11 +219,16 @@ export function createEditor(
 
   // Programmatic doc replacements must not read as the user typing — mutes
   // onEdit for the dispatch (the update listener runs synchronously inside it).
+  // preserveView applies the code as a minimal splice so the caret and scroll
+  // ride the unchanged text (a scrub to a past run shouldn't jump either).
   let programmaticDoc = false
-  function setDoc(code: string): void {
+  function setDoc(code: string, preserveView = false): void {
+    const changes = preserveView
+      ? minimalEdit(view.state.doc.toString(), code)
+      : { from: 0, to: view.state.doc.length, insert: code }
     programmaticDoc = true
     try {
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } })
+      view.dispatch({ changes })
     } finally {
       programmaticDoc = false
     }
@@ -311,9 +318,9 @@ export function createEditor(
 
   // External loads always mean "show the program" — leave any cell target
   // without restoring its stash (the new code wins).
-  function setCode(code: string): void {
+  function setCode(code: string, opts: { preserveView?: boolean } = {}): void {
     exitCell(false)
-    setDoc(code)
+    setDoc(code, opts.preserveView)
   }
 
   return {

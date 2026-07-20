@@ -140,6 +140,20 @@ export function viewAtPos(text: string, pos: number): string | null {
   return name
 }
 
+// The smallest single splice turning `a` into `b`: the shared prefix and
+// suffix are left untouched, so an editor applying it maps the caret and scroll
+// through the unchanged text instead of resetting on a full replace. Identical
+// strings yield an empty splice (from === to, insert === '').
+export function minimalEdit(a: string, b: string): { from: number; to: number; insert: string } {
+  const max = Math.min(a.length, b.length)
+  let from = 0
+  while (from < max && a.charCodeAt(from) === b.charCodeAt(from)) from++
+  let endA = a.length
+  let endB = b.length
+  while (endA > from && endB > from && a.charCodeAt(endA - 1) === b.charCodeAt(endB - 1)) { endA--; endB-- }
+  return { from, to: endA, insert: b.slice(from, endB) }
+}
+
 export type InfoNodeFactory = (sig: string, info: string) => () => { dom: HTMLElement; destroy?: () => void }
 
 export interface SymbolCardData {
