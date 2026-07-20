@@ -208,18 +208,16 @@ export function TimelineStrip(props: {
     return rings.length ? rings.join(', ') : undefined
   }
 
-  // The floating readout's text: the row's meaningful columns — what it IS
-  // (event kind, a code cell's first line, names/values) — never its
-  // position, which the strip shows visually and the handle's own unlabeled
-  // tag states precisely. Handle-state annotations ride along at the end.
-  function readoutText(row: Row, columns: EditableColumn[], h: Handle): string {
-    const parts: string[] = []
-    const summary = meaningfulSummary(row, columns)
-    if (summary) parts.push(summary)
-    if (h.disabled) parts.push('disabled')
-    if (h.ghost) parts.push('ghost placement')
-    if (h.pass) parts.push(`pass ${h.pass + 1}`)
-    return parts.join(' · ')
+  // The floating readout's lines, stacked: the row's meaningful columns —
+  // what it IS (event kind, a code cell's first line, names/values) — never
+  // its position, which the strip shows visually and the handle's own
+  // unlabeled tag states precisely. Handle-state annotations ride at the end.
+  function readoutLines(row: Row, columns: EditableColumn[], h: Handle): string[] {
+    const lines = meaningfulSummary(row, columns)
+    if (h.disabled) lines.push('disabled')
+    if (h.ghost) lines.push('ghost placement')
+    if (h.pass) lines.push(`pass ${h.pass + 1}`)
+    return lines
   }
 
   // The hovered or dragged placement — the one handle the readout and the
@@ -237,20 +235,20 @@ export function TimelineStrip(props: {
     return hs.find((hh) => hh.row === target.row && hh.ghost === target.ghost) ?? hs.find((hh) => hh.row === target.row) ?? null
   })
 
-  // Floating readout position and text — live for exactly as long as a
+  // Floating readout position and lines — live for exactly as long as a
   // handle is hovered or dragged, and hidden entirely for a row with nothing
   // meaningful beyond its position (the tag on the handle covers that).
-  const readout = createMemo<{ left: number; text: string } | null>(() => {
+  const readout = createMemo<{ left: number; lines: string[] } | null>(() => {
     const cur = currentData()
     const h = activeHandle()
     const row = h ? cur?.rows[h.row] : undefined
     if (!cur || !h || !row) return null
-    const text = readoutText(row, cur.columns, h)
-    if (!text) return null
+    const lines = readoutLines(row, cur.columns, h)
+    if (!lines.length) return null
     const geo = geometry()
     const x = beatToX(geo, h.beat)
     const left = Math.max(READOUT_MARGIN, Math.min(geo.width - READOUT_MARGIN, x))
-    return { left, text }
+    return { left, lines }
   })
 
   // The unlabeled position tag on the active handle itself: `beat` or
@@ -405,10 +403,13 @@ export function TimelineStrip(props: {
     if (!hit) return
     const handle = resolveHandle(handles(), geometry(), hit, x, lane)
     if (!handle) return
+    // A finger can't reliably land on a few-px edge, so touch drags always
+    // move the whole row — duration edits stay in the table on mobile.
+    const part = e.pointerType === 'touch' ? 'body' : hit.part
     gesture = {
       table: cur.name,
       handle,
-      part: hit.part,
+      part,
       pointerId: e.pointerId,
       startClientX: e.clientX,
       startClientY: e.clientY,
@@ -451,7 +452,11 @@ export function TimelineStrip(props: {
     // (overflow: visible) wrapper instead of inside the strip itself.
     <div class="timeline-strip-wrap">
       <Show when={readout()}>
-        {(r) => <div class="timeline-strip-readout" style={{ left: `${r().left}px` }}>{r().text}</div>}
+        {(r) => (
+          <div class="timeline-strip-readout" style={{ left: `${r().left}px` }}>
+            <For each={r().lines}>{(line) => <div class="timeline-strip-readout-line">{line}</div>}</For>
+          </div>
+        )}
       </Show>
       <div
         class="timeline-strip"
