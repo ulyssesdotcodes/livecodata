@@ -34,7 +34,7 @@ import { createTapLog } from './tap-log.js'
 import { connectMultiplayer } from './multiplayer.js'
 import type { MultiplayerConnection, MultiplayerStatus } from './multiplayer.js'
 import { PRESENCE_LOG } from './room-core.js'
-import { loopEpochsFromApplies, loopBeatsFromEvents } from './playback.js'
+import { loopEpochsFromApplies, loopBeatsFromEvents, pausedMsBefore, transportStateFromEvents, playbackOrigin } from './playback.js'
 import type { PlaybackAPI, PlaybackOptions } from './playback.js'
 import type { Row } from './lineage.js'
 import type { PeerPresence } from './ui/table-panel.js'
@@ -154,10 +154,13 @@ const tablePanel = createTablePanel(editableStore, {
 
 // Taps are stamped with wall-clock time (tap-log.ts), letting playback anchor
 // "beat 0" to the tap rather than to when Play was pressed — which keeps
-// independently-started (or multiplayer-synced) clients in phase.
+// independently-started (or multiplayer-synced) clients in phase. Absent a
+// tap, playbackOrigin falls back to the room's/session's own origin (see
+// playback.ts) rather than the engine's raw Unix-epoch default.
 const tapLog = createTapLog()
 const tapRows = (): Row[] => tapLog.rows()
-const tapAnchor = (): number | null => tapLog.anchor()
+const tapAnchor = (): number | null =>
+  playbackOrigin(editableStore.get(ACTIVITY_TABLE)?.events ?? [], tapLog.anchor())
 
 function recordTap(): void {
   tapLog.tap()
@@ -300,7 +303,9 @@ const playbackOptions: PlaybackOptions = {
   },
   onPlay: () => {
     tablePanel.resetAutoscroll()
+    recordTransport('playback-play')
   },
+  onPause: () => recordTransport('playback-pause'),
   onLoop: () => { loopCount++ },
   tapControl: { tap: recordTap, clear: clearTaps, rows: tapRows, anchor: tapAnchor },
   // Not gated on the local hardware toggle: the recording may be a peer's or
@@ -308,6 +313,7 @@ const playbackOptions: PlaybackOptions = {
   midiCtxAt: (srcFrame) => (midiInput.rows().length ? midiInput.ctxAt(srcFrame) : null),
   sliderCtxAt: (srcFrame) => (sliderInput && sliderInput.defs().length ? sliderInput.ctxAt(srcFrame) : null),
   onLoopBeats: (n) => recordLoopBeats(n),
+  pausedMsBefore: (wallMs) => pausedMsBefore(editableStore.get(ACTIVITY_TABLE)?.events ?? [], wallMs),
 }
 
 // The loop length rides the activity table so it syncs, persists, and replays
@@ -316,6 +322,32 @@ const playbackOptions: PlaybackOptions = {
 function recordLoopBeats(n: number): void {
   if (loopBeatsFromEvents(editableStore.get(ACTIVITY_TABLE)?.events ?? []) === n) return
   editableStore.record(ACTIVITY_TABLE, 'set-loop-beats', { beats: n, at: Date.now() })
+}
+
+// Play/pause ride the activity table too, so they sync, persist, and show in
+// the activity tab. Two guards keep the stream honest:
+// - `transportQuiet`: only a genuine local toggle is a user transport action.
+//   Programmatic transitions — the autoplay on opening a page, mirroring a
+//   peer's merged event — must not record: a late joiner's autoplay races the
+//   room's join snapshot, and recording it would stamp a fresh 'play' that
+//   overrides the room's paused state (an un-recorded autoplay just gets
+//   corrected by the mirror once the snapshot merges).
+// - The recordLoopBeats-style echo guard: a state already folded from the
+//   table (our own event echoing back) must not re-record, or two clients
+//   ping-pong the same transition. "No events yet" (null) deliberately does
+//   NOT count as a match for 'playing', so a session's first real toggle is
+//   still recorded rather than looking like a silent echo.
+let transportQuiet = false
+function quietTransport(fn: () => void): void {
+  transportQuiet = true
+  try { fn() } finally { transportQuiet = false }
+}
+function recordTransport(kind: 'playback-play' | 'playback-pause'): void {
+  if (transportQuiet) return
+  const events = editableStore.get(ACTIVITY_TABLE)?.events ?? []
+  const wants = kind === 'playback-play' ? 'playing' : 'paused'
+  if (transportStateFromEvents(events) === wants) return
+  editableStore.record(ACTIVITY_TABLE, kind, { at: Date.now() })
 }
 
 // The cook runs in a Web Worker (cook-worker.ts) so a heavy Apply never blocks
@@ -1111,8 +1143,10 @@ async function bootRoom(room: string): Promise<void> {
   // Guarantee "activity" exists before joining: the server authors peer-join/
   // leave events referencing it, and its peer-join for this very connection
   // could otherwise arrive before any replica's "create" and be silently
-  // dropped by the fold.
-  editableStore.record(ACTIVITY_TABLE, 'session-start')
+  // dropped by the fold. Stamped with `at`: peer-join itself carries no
+  // usable domain wall-clock field (see playbackOrigin's comment), so this
+  // is the room's "first join" stand-in the origin fold reads instead.
+  editableStore.record(ACTIVITY_TABLE, 'session-start', { at: Date.now() })
 
   editableStore.log.onMerge((added) => {
     // A merged Apply pulse means treat it like they pressed Apply for us too:
@@ -1122,17 +1156,28 @@ async function bootRoom(room: string): Promise<void> {
     let applied = false
     let presenceChanged = false
     let loopBeatsChanged = false
+    let transportChanged = false
     for (const e of added) {
       if (e.table !== ACTIVITY_TABLE) continue
       if (e.kind === 'apply') applied = true
       else if (e.kind === 'peer-join' || e.kind === 'peer-leave') presenceChanged = true
       else if (e.kind === 'set-loop-beats') loopBeatsChanged = true
+      else if (e.kind === 'playback-play' || e.kind === 'playback-pause') transportChanged = true
     }
     // A peer resized the loop without applying — fold the merged value in (an
     // apply's copy via applyCooked is harmless: setLoopBeats no-ops unchanged).
     if (loopBeatsChanged) {
       const n = loopBeatsFromEvents(editableStore.get(ACTIVITY_TABLE)?.events ?? [])
       if (n != null) playback.setLoopBeats(n)
+    }
+    // A peer toggled play/pause — mirror it locally so the whole room's
+    // transport stays together. play()/pause() are idempotent, so this is
+    // harmless even when the merge is just our own recorded event echoing
+    // back (already reflected locally before we ever recorded it). Quiet:
+    // a mirrored transition is not a user action to re-record.
+    if (transportChanged) {
+      const state = transportStateFromEvents(editableStore.get(ACTIVITY_TABLE)?.events ?? [])
+      quietTransport(() => (state === 'paused' ? playback.pause() : playback.play()))
     }
     if (applied) {
       const latest = editableStore.get('code')?.rows[0] as { code: string; seed: number } | undefined
@@ -1175,8 +1220,18 @@ async function firstRun(): Promise<void> {
   }
   syncSessionBar()
   refreshSelector()
-  // Opening the page shows the program already playing, not waiting on Play.
-  playback.play()
+  // Opening the page shows the program already in the session's transport
+  // state — playing by default (today's behavior with no transport history),
+  // but paused if the room (or a resumed session) already is. This is also
+  // the late-joiner landing spot: bootRoom's local-log restore/merge above
+  // has already folded in whatever transport history exists before this
+  // runs. Quiet — this is a default, not a user toggle, so it must record
+  // nothing (see recordTransport); the onMerge mirror corrects it once the
+  // room's join snapshot lands.
+  quietTransport(() => {
+    if (transportStateFromEvents(editableStore.get(ACTIVITY_TABLE)?.events ?? []) === 'paused') playback.pause()
+    else playback.play()
+  })
 }
 
 // A room boot awaits the locally-persisted room log first, so firstRun's
@@ -1197,7 +1252,7 @@ async function boot(): Promise<void> {
   const exampleIndex = exampleSlug ? sampleIndexForSlug(exampleSlug) : -1
   if (exampleIndex >= 0) {
     await loadExample(exampleIndex)
-    playback.play()
+    quietTransport(() => playback.play())
   } else {
     await firstRun()
   }

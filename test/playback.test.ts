@@ -27,7 +27,10 @@ test('wallAlignedTick returns 0 for a non-positive loop length', () => {
 // --- Engine tests: the timing/loop/scrub state machine, driven through the
 // injectable clock (see PlaybackClock in playback.ts) ------------------------
 
-import { createPlaybackEngine, type PlaybackEngine, type TapControl } from '../src/playback.js'
+import {
+  createPlaybackEngine, pausedMsBefore, transportStateFromEvents, playbackOrigin,
+  type PlaybackEngine, type TapControl,
+} from '../src/playback.js'
 import { createSceneVisualizer, createHydraVisualizer } from '../src/visualizer.js'
 import { rasterizeRows } from '../src/rasterize.js'
 import { DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS } from '../src/constants.js'
@@ -87,7 +90,16 @@ const sceneCreate = (): Row => ({
   px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0,
 })
 
-function makeEngine(time: ReturnType<typeof fakeTime>, extra: { tapControl?: TapControl; onLoop?: () => void; onLoopBeats?: (n: number) => void } = {}): PlaybackEngine {
+function makeEngine(
+  time: ReturnType<typeof fakeTime>,
+  extra: {
+    tapControl?: TapControl
+    onLoop?: () => void
+    onLoopBeats?: (n: number) => void
+    onPause?: () => void
+    pausedMsBefore?: (wallMs: number) => number
+  } = {},
+): PlaybackEngine {
   const engine = createPlaybackEngine(
     [createSceneVisualizer(fakeScene()), createHydraVisualizer(fakeHydra())],
     { clock: time.clock, ...extra },
@@ -233,6 +245,168 @@ test('retempo re-anchors to the new tapped tempo without moving a paused playhea
   time.advance(250)
   time.frame()
   assert.equal(engine.viewState().pos, 3)
+})
+
+// --- pausedMsBefore — the wall→musical clock shift ---------------------------
+
+test('pausedMsBefore sums closed pause/play pairs elapsed before t', () => {
+  const events: Row[] = [
+    { kind: 'playback-pause', at: 1000 },
+    { kind: 'playback-play', at: 1500 },
+    { kind: 'playback-pause', at: 2000 },
+    { kind: 'playback-play', at: 2200 },
+  ]
+  assert.equal(pausedMsBefore(events, 1000), 0, 'right at the pause boundary, no elapsed pause yet')
+  assert.equal(pausedMsBefore(events, 1500), 500)
+  assert.equal(pausedMsBefore(events, 3000), 700, 'both closed pairs: 500 + 200')
+})
+
+test('pausedMsBefore counts an open (unclosed) pause up to t', () => {
+  const events: Row[] = [{ kind: 'playback-pause', at: 1000 }]
+  assert.equal(pausedMsBefore(events, 1000), 0)
+  assert.equal(pausedMsBefore(events, 4000), 3000)
+})
+
+test('pausedMsBefore ignores events with a missing or invalid at', () => {
+  const events: Row[] = [
+    { kind: 'playback-pause' }, // no `at`
+    { kind: 'playback-pause', at: 'nope' }, // not a number
+    { kind: 'playback-pause', at: NaN },
+  ]
+  assert.equal(pausedMsBefore(events, 9000), 0)
+})
+
+test('pausedMsBefore treats a lone leading play (or no events at all) as zero pause', () => {
+  assert.equal(pausedMsBefore([{ kind: 'playback-play', at: 1000 }], 9000), 0)
+  assert.equal(pausedMsBefore([], 9000), 0)
+})
+
+test('pausedMsBefore is idempotent under interleaved authors recording the same transition twice', () => {
+  const events: Row[] = [
+    { kind: 'playback-pause', at: 1000, client: 'a' },
+    { kind: 'playback-pause', at: 1001, client: 'b' }, // both paused near-simultaneously
+    { kind: 'playback-play', at: 2000, client: 'a' },
+    { kind: 'playback-play', at: 2001, client: 'b' },
+  ]
+  assert.equal(pausedMsBefore(events, 3000), 1000, 'the redundant pause/play pair contributes nothing extra')
+})
+
+// --- transportStateFromEvents — the room's current play/pause state ----------
+
+test('transportStateFromEvents reads the latest event by at (not encounter order); null with nothing recorded', () => {
+  assert.equal(transportStateFromEvents([]), null)
+  assert.equal(transportStateFromEvents([{ kind: 'playback-play', at: 1000 }]), 'playing')
+  assert.equal(
+    transportStateFromEvents([
+      { kind: 'playback-play', at: 1000 },
+      { kind: 'playback-pause', at: 500 }, // logged later but wall-earlier
+    ]),
+    'playing',
+  )
+})
+
+// --- playbackOrigin — the musical grid's origin absent a tap tempo -----------
+
+test('playbackOrigin prefers a tap anchor over anything on the activity table', () => {
+  assert.equal(playbackOrigin([{ kind: 'session-start', at: 100 }], 999), 999)
+})
+
+test('playbackOrigin falls back to the earliest session-start; a playback-play is never an origin', () => {
+  assert.equal(
+    playbackOrigin([{ kind: 'session-start', at: 500 }, { kind: 'playback-play', at: 900 }], null),
+    500,
+    'the room began before anyone pressed play',
+  )
+  // A recorded play is usually a resume — adopting it would re-base the grid
+  // mid-session (the snap-at-wrap regression), so solo stays epoch-anchored.
+  assert.equal(playbackOrigin([{ kind: 'playback-play', at: 700 }], null), 0)
+})
+
+test('playbackOrigin is the Unix epoch with no taps and no activity events (or only invalid ones)', () => {
+  assert.equal(playbackOrigin([], null), 0)
+  assert.equal(playbackOrigin([{ kind: 'session-start' }, { kind: 'playback-play', at: 'x' }], null), 0)
+})
+
+// --- pause()/play() and the pause-shifted resume regression ------------------
+
+test('pause() and play() are idempotent, and pause() from idle lands frozen on the wall-aligned position', () => {
+  const time = fakeTime(1000) // matches the "pressing play" test's numbers: phase 2 beats
+  const engine = makeEngine(time)
+  engine.pause() // idle → paused directly, no ticking first
+  assert.equal(engine.viewState().state, 'paused')
+  assert.equal(engine.viewState().pos, 2, 'lands where a client playing since the anchor would be')
+  engine.pause() // already paused — no-op
+  assert.equal(engine.viewState().pos, 2)
+  engine.play() // resumes from the frozen position
+  assert.equal(engine.viewState().state, 'playing')
+  assert.equal(engine.viewState().pos, 2)
+  engine.play() // already playing — no-op
+  assert.equal(engine.viewState().state, 'playing')
+})
+
+test('onPause fires on every transition into paused, including pause() from idle; never on a no-op', () => {
+  const time = fakeTime(0)
+  let pauses = 0
+  const engine = makeEngine(time, { onPause: () => pauses++ })
+  engine.pause() // idle → paused
+  assert.equal(pauses, 1)
+  engine.pause() // already paused
+  assert.equal(pauses, 1)
+  engine.play()
+  engine.pause() // playing → paused
+  assert.equal(pauses, 2)
+})
+
+test('resume continues from the paused musical moment across a loop wrap — the snap-back regression', () => {
+  const time = fakeTime(1000)
+  const transportEvents: Row[] = []
+  const engine = makeEngine(time, { pausedMsBefore: (wallMs) => pausedMsBefore(transportEvents, wallMs) })
+  engine.toggle() // playing at pos 2 (epoch 1000 into the default 8s loop)
+  time.advance(1000)
+  time.frame() // pos 4
+  engine.toggle() // pause at pos 4
+  transportEvents.push({ kind: 'playback-pause', at: time.clock.epochNow() }) // at 2000
+  time.advance(7000) // paused for 7s of wall time
+  transportEvents.push({ kind: 'playback-play', at: time.clock.epochNow() }) // at 9000
+  engine.toggle() // resume — still shows 4, unaffected by the paused wall time
+  assert.equal(engine.viewState().pos, 4)
+  // 7s more of wall time at 0.5 s/beat = 14 beats past the resume, wrapping
+  // the 16-beat loop once: 4 + 14 = 18 → 18 - 16 = 2. Without the pause
+  // shift, the wall-aligned re-derivation at wrap would instead jump to
+  // wherever raw wall time says (here, phase 0) — the bug this feature fixes.
+  time.advance(7000)
+  time.frame()
+  assert.equal(engine.viewState().pos, 2, 'wraps to where 4 + 14 elapsed beats would land, not raw wall time')
+})
+
+test('passesSince (multi-pass content) is unaffected by a pause spanning the loop epoch and now', () => {
+  const time = fakeTime(0)
+  const hydra = fakeHydra()
+  const sketches: (string | null)[] = []
+  hydra.setSketch = (s?: { code: string } | null) => { sketches.push(s?.code ?? null) }
+  // A pause from 500ms to 1500ms sits wholly between the loop epoch (0, the
+  // default with no apply stamp) and "now" once the clock reaches 2000ms —
+  // 1000ms of paused wall time that must not count toward pass advancement.
+  const transportEvents: Row[] = [
+    { kind: 'playback-pause', at: 500 },
+    { kind: 'playback-play', at: 1500 },
+  ]
+  const engine = createPlaybackEngine([createHydraVisualizer(hydra)], {
+    clock: time.clock,
+    pausedMsBefore: (wallMs) => pausedMsBefore(transportEvents, wallMs),
+  })
+  engine.setLoopBeats(2)
+  engine.load({ sceneRows: [], timelineRows: [], hydraRows: [
+    { event: 'setCode', code: 'a', beat: 1 },
+    { event: 'setCode', code: 'b', beat: 3 },
+  ] })
+  engine.toggle() // epoch 0 → phase 0, pass 0
+  assert.equal(sketches.at(-1), 'a.out(o0)')
+  // Raw wall time to reach one loop of MUSICAL time: 1s of loop plus the 1s
+  // the pause ate = 2s of wall time.
+  time.advance(2000)
+  time.frame()
+  assert.equal(sketches.at(-1), 'b.out(o0)', 'exactly pass 1, matching one loop of musical (not wall) time elapsed')
 })
 
 // --- wallAlignedLoop — the quotient companion to wallAlignedTick -------------

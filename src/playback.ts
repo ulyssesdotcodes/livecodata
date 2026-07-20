@@ -14,9 +14,10 @@ export interface TapControl {
   tap(): void
   clear(): void
   rows(): Row[]
-  // Wall-clock epoch (ms) of the first tap once two taps establish a tempo —
-  // the instant "beat 0" anchors to. Null before that, in which case phase
-  // anchors to the Unix epoch instead (see wallAlignedPhase).
+  // Wall-clock epoch (ms) "beat 0" anchors to: the first tap once two taps
+  // establish a tempo, else (main.ts wires this) the session's origin per
+  // playbackOrigin below, else the Unix epoch (see wallAlignedPhase). Null
+  // only for a caller with no origin fallback of its own.
   anchor?(): number | null
 }
 
@@ -64,6 +65,10 @@ export interface PlaybackOptions {
   // srcBeats is a 1-indexed beat — the unit every table's `beat` column uses.
   onTick?: (tick: number, active: Map<string, Set<number>>, srcBeats: number) => void
   onPlay?: () => void
+  // Mirrors onPlay for a pause: fires on every transition into 'paused',
+  // whether from a local toggle/pause() or a programmatic one (main.ts drives
+  // the latter to mirror a peer's transport event — see pause() below).
+  onPause?: () => void
   // Called each time the loop wraps.
   onLoop?: () => void
   tapControl?: TapControl
@@ -76,6 +81,15 @@ export interface PlaybackOptions {
   // Fired when setLoopBeats actually changes the loop length — main.ts records
   // it on the activity table so the count syncs and replays with the session.
   onLoopBeats?: (n: number) => void
+  // Wall→musical clock shift: total ms the transport has spent paused before
+  // wallMs (this module's own pausedMsBefore fold, over the live activity
+  // events — main.ts wires it). Every wall timestamp the engine feeds into
+  // the wall-aligned math — "now", the tap anchor, a loop's shared apply
+  // stamp — passes through this first, so resuming continues from the paused
+  // musical moment instead of losing the paused span to the wall-aligned
+  // snap. Absent (tests, and any caller with no transport log) means "never
+  // paused" — today's behavior exactly.
+  pausedMsBefore?: (wallMs: number) => number
 }
 
 // Injectable clocks/scheduler so tests can drive timing deterministically.
@@ -121,6 +135,89 @@ export function loopEpochsFromApplies(events: Row[]): LoopEpochs {
   return out
 }
 
+// --- Transport (play/pause) folds -------------------------------------------
+// Play/pause ride the activity table (main.ts records/echo-guards them, same
+// pattern as loopBeatsFromEvents above); these are the pure folds over that
+// stream the engine and main.ts both need.
+
+export type TransportState = 'playing' | 'paused'
+
+interface TransportEvent { kind: 'playback-play' | 'playback-pause'; at: number }
+
+// Valid playback-play/-pause events, sorted chronologically by `at`. An event
+// with a missing/invalid `at` can't be placed on the wall-clock axis
+// pausedMsBefore walks, so it's dropped rather than guessed at; ties
+// (simultaneous stamps from different authors) keep encounter order, so the
+// fold stays deterministic without needing a tie-break field.
+function transportEvents(events: Row[]): TransportEvent[] {
+  const out: TransportEvent[] = []
+  for (const e of events ?? []) {
+    if ((e.kind === 'playback-play' || e.kind === 'playback-pause') && typeof e.at === 'number' && Number.isFinite(e.at)) {
+      out.push({ kind: e.kind, at: e.at })
+    }
+  }
+  return out
+    .map((e, i) => ({ e, i }))
+    .sort((a, b) => a.e.at - b.e.at || a.i - b.i)
+    .map(({ e }) => e)
+}
+
+// The room's current transport state: the latest playback-play/-pause event
+// by wall time, regardless of author — a peer's pause pauses the room just as
+// well as the local user's. Null with nothing recorded (a solo session that
+// has never touched play/pause, or a room mid-join): callers that need a
+// default (drive the engine, decide whether to autoplay) treat null as
+// playing; main.ts's echo guard deliberately does not, so a session's very
+// first play still gets recorded rather than looking like a no-op echo.
+export function transportStateFromEvents(events: Row[]): TransportState | null {
+  const evs = transportEvents(events)
+  if (!evs.length) return null
+  return evs[evs.length - 1].kind === 'playback-pause' ? 'paused' : 'playing'
+}
+
+// Total ms the transport has spent paused before wall time `t` — a state
+// machine over play/pause events sorted by `at`. A pause with no closing play
+// at-or-before `t` is "open" and counts up to `t` itself, so a still-paused
+// room keeps accumulating; a pause right at `t` itself has contributed zero
+// (the instant of pausing, not yet any elapsed pause). The machine is
+// idempotent on a repeated same-kind event (two authors racing to record the
+// same transition), not just main.ts's recorder: a redundant pause/play is a
+// no-op here too. A lone leading play (or no events at all) contributes
+// zero — the "never paused" default every un-augmented caller keeps.
+export function pausedMsBefore(events: Row[], t: number): number {
+  let paused = 0
+  let pauseStart: number | null = null
+  for (const e of transportEvents(events)) {
+    if (e.at > t) break
+    if (e.kind === 'playback-pause') pauseStart ??= e.at
+    else if (pauseStart != null) { paused += e.at - pauseStart; pauseStart = null }
+  }
+  if (pauseStart != null) paused += t - pauseStart
+  return paused
+}
+
+// The musical grid's origin (the wall-clock ms "beat 0" anchors to) absent a
+// tap tempo: the earliest session-start on the activity table — the "first
+// join" stand-in (worker/room.ts's peer-join carries no domain `at` field,
+// only the event-log's internal `t` bookkeeping stamp, which is NOT a
+// reliable wall clock: it's relative-to-log-start for a client's own events
+// and absolute only for the server's, so nothing here reads it). Solo
+// sessions record no session-start and fall back to the Unix epoch, exactly
+// like today. Deliberately NOT a playback-play: the first *recorded* play is
+// usually a resume (the open-page autoplay records nothing), and adopting it
+// would retroactively move the anchor mid-session — the playhead would snap
+// at the next loop wrap. An origin must predate all playback or not exist.
+export function playbackOrigin(events: Row[], tapAnchorMs: number | null): number {
+  if (tapAnchorMs != null) return tapAnchorMs
+  let earliest: number | null = null
+  for (const e of events ?? []) {
+    if (e.kind === 'session-start' && typeof e.at === 'number' && Number.isFinite(e.at)) {
+      if (earliest == null || e.at < earliest) earliest = e.at
+    }
+  }
+  return earliest ?? 0
+}
+
 // What load() consumes — the timeline is the engine's own (it remaps time, it
 // doesn't render). replay's CookedResult is structurally assignable.
 export type LoadedRows = CookedVisualRows & { timelineRows: Row[] }
@@ -134,8 +231,15 @@ export interface PlaybackAPI {
   // MIDI events are stamped here, so a recorded sweep's speed follows the
   // timeline mapping.
   currentSourceBeats(): number
-  // No-op if already playing.
+  // No-op if already playing (or nothing loaded). Lands idle straight into
+  // 'playing' (startFresh), same as toggle() from idle.
   play(): void
+  // play()'s mirror: no-op if already paused (or nothing loaded). From idle
+  // it lands frozen on the wall-aligned musical position rather than ticking
+  // first — the shape a late joiner into an already-paused room needs (see
+  // main.ts's bootRoom, which drives play()/pause() directly to mirror a
+  // peer's transport state rather than going through the local toggle()).
+  pause(): void
   // On PlaybackAPI (not just the engine) so main.ts can fold the loop length
   // back out of activity events.
   setLoopBeats(n: number): void
@@ -152,11 +256,20 @@ export interface PlaybackEngine extends PlaybackAPI {
 
 export function createPlaybackEngine(
   visualizers: Visualizer[],
-  { onTick, onPlay, onLoop, tapControl, midiCtxAt, sliderCtxAt, onLoopBeats, onViewChange, clock }: PlaybackEngineOptions = {},
+  { onTick, onPlay, onPause, onLoop, tapControl, midiCtxAt, sliderCtxAt, onLoopBeats, onViewChange, clock, pausedMsBefore: pausedMsBeforeCb }: PlaybackEngineOptions = {},
 ): PlaybackEngine {
   const now = clock?.now ?? ((): number => performance.now())
   const epochNow = clock?.epochNow ?? ((): number => Date.now())
   const raf = clock?.raf ?? ((cb: () => void): void => { requestAnimationFrame(cb) })
+
+  // Wall→musical: subtract however much of `wallMs` was spent paused. Every
+  // wall-clock instant the wall-aligned math touches goes through this first
+  // (see wallAlignedPhase/passesSince below), so a resume continues from the
+  // paused musical moment and a loop wrap agrees with it, instead of the
+  // paused span reappearing as a snap-forward jump. Absent the callback
+  // (tests, solo with no transport log) this is the identity — today's
+  // un-paused behavior exactly.
+  const musical = (wallMs: number): number => wallMs - (pausedMsBeforeCb?.(wallMs) ?? 0)
 
   let state: PlayState = 'idle'
   // The playhead is measured in BEATS: live position is
@@ -260,10 +373,10 @@ export function createPlaybackEngine(
   // Anchored to an absolute instant (first tap, else the Unix epoch) so any
   // two clients land on the same phase purely from their own system clocks.
   function wallAlignedPhase(): number | null {
-    const anchorMs = tapControl?.anchor?.() ?? 0
+    const anchorMs = musical(tapControl?.anchor?.() ?? 0)
     const bs = beatSeconds()
     if (maxBeats <= 0) return null
-    return wallAlignedTick(epochNow(), anchorMs, maxBeats * bs) / bs
+    return wallAlignedTick(musical(epochNow()), anchorMs, maxBeats * bs) / bs
   }
 
   // Wall-aligned loops completed since `epochMs` — which pass of a multi-loop
@@ -271,9 +384,9 @@ export function createPlaybackEngine(
   // agrees. The time half of multi-loop playback; the content half lives in
   // each visualizer, which calls this with its own shared apply stamp.
   function passesSince(epochMs: number): number {
-    const anchorMs = tapControl?.anchor?.() ?? 0
+    const anchorMs = musical(tapControl?.anchor?.() ?? 0)
     const loopSec = maxBeats * beatSeconds()
-    return Math.max(0, wallAlignedLoop(epochNow(), anchorMs, loopSec) - wallAlignedLoop(epochMs, anchorMs, loopSec))
+    return Math.max(0, wallAlignedLoop(musical(epochNow()), anchorMs, loopSec) - wallAlignedLoop(musical(epochMs), anchorMs, loopSec))
   }
 
   // The 1-indexed source beat on screen — wrapped and timeline-mapped exactly
@@ -371,19 +484,28 @@ export function createPlaybackEngine(
 
   function toggle(): void {
     if (!hasContent()) return
-    if (state === 'playing') {
-      state = 'paused'
-      pausedBeat = position()
-      emit()
-    } else if (state === 'paused') {
-      state = 'playing'
-      anchor(pausedBeat)
-      emit()
-      onPlay?.()
-      tick()
-    } else {
-      startFresh()
-    }
+    if (state === 'playing') pauseNow()
+    else if (state === 'paused') resume()
+    else startFresh()
+  }
+
+  // Resume ticking from pausedBeat — toggle()'s paused→playing branch, shared
+  // with the public play().
+  function resume(): void {
+    state = 'playing'
+    anchor(pausedBeat)
+    emit()
+    onPlay?.()
+    tick()
+  }
+
+  // Freeze at the live position — toggle()'s playing→paused branch, shared
+  // with the public pause().
+  function pauseNow(): void {
+    state = 'paused'
+    pausedBeat = position()
+    emit()
+    onPause?.()
   }
 
   function startFresh(): void {
@@ -399,6 +521,20 @@ export function createPlaybackEngine(
     emit()
     onPlay?.()
     tick()
+  }
+
+  // startFresh's frozen counterpart: join the wall-aligned grid but land
+  // straight in 'paused' rather than ticking — for a client whose very first
+  // frame should already show paused (a late joiner into a paused room; see
+  // pause() below). The pause-shifted wallAlignedPhase is what makes this
+  // agree with wherever the room that paused it is frozen.
+  function pauseFresh(): void {
+    const aligned = wallAlignedPhase() ?? 0
+    reset(aligned)
+    pausedBeat = aligned
+    state = 'paused'
+    emit()
+    onPause?.()
   }
 
   function position(): number {
@@ -432,8 +568,20 @@ export function createPlaybackEngine(
     raf(tick)
   }
 
+  // No-op if already playing (or nothing loaded) — safe to call from any
+  // state, unlike toggle(). main.ts calls this directly to mirror a peer's
+  // transport event, not just from the local Play button.
   function play(): void {
-    if (state !== 'playing') toggle()
+    if (!hasContent() || state === 'playing') return
+    if (state === 'paused') resume()
+    else startFresh()
+  }
+
+  // play()'s mirror image: no-op if already paused (or nothing loaded).
+  function pause(): void {
+    if (!hasContent() || state === 'paused') return
+    if (state === 'playing') pauseNow()
+    else pauseFresh()
   }
 
   return {
@@ -441,6 +589,7 @@ export function createPlaybackEngine(
     retempo,
     currentSourceBeats,
     play,
+    pause,
     toggle,
     setLoop,
     setLoopBeats,
