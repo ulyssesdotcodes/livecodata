@@ -1048,6 +1048,12 @@ const mounts = mountApp(document.getElementById('app') as HTMLElement, {
   playback: playbackCtl,
   timelineRows,
   onClearRuns: clearRuns,
+  // A timeline-strip drag committed its one setRow — re-run at the current
+  // seed immediately, same as a code-cell commit (onEditCell above), so the
+  // drop applies right away instead of sitting pending.
+  onDragCommit: () => {
+    if (liveCode != null) void evaluate(liveCode, { setError: editor.setError, seed: liveSeed })
+  },
 })
 const sceneAPI = initThree(mounts.threeCanvas, mounts.canvasPane)
 // The TSL post stage runs over the three scene BEFORE hydra samples the canvas

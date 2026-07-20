@@ -245,7 +245,8 @@ const EDGE_TOLERANCE_PX = 6
 // Which handle (and which part of it) sits under a pointer at `(x, lane)`.
 // Edges win over body within EDGE_TOLERANCE_PX; among body hits a point
 // handle (a precise target) wins over a span's body (a broad one) at the
-// same spot. Null means background — the caller falls back to scrub.
+// same spot. Null means background — the strip's view treats that as inert
+// (it no longer scrubs).
 interface Candidate {
   result: HitResult
   priority: number

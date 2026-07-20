@@ -4,7 +4,6 @@
 // lives here.
 
 import { createSignal, Show, type Accessor } from 'solid-js'
-import { listenGlobal } from './dom.js'
 import { Icon } from './icon.js'
 import { createPlaybackEngine } from '../playback.js'
 import type { PlaybackEngine, PlaybackOptions, PlaybackViewState, TapControl } from '../playback.js'
@@ -25,6 +24,8 @@ export function PlaybackControls(props: {
   onSelectRow?: (table: string, row: number) => void
   presence: Accessor<PeerPresence[]>
   focusedRow: Accessor<number | null>
+  onDraggingRowChange?: (row: { table: string; row: number } | null) => void
+  onDragCommit?: () => void
 }) {
   const vs = props.vs
   const playing = () => vs().state === 'playing'
@@ -32,9 +33,6 @@ export function PlaybackControls(props: {
     const { pos, srcBeat, timelineActive } = vs()
     return timelineActive ? `${(pos + 1).toFixed(2)}→${srcBeat.toFixed(2)} beat` : `beat ${srcBeat.toFixed(2)}`
   }
-
-  // A scrub drag can end anywhere on the page, so the commit listens globally.
-  listenGlobal(window, 'pointerup', () => props.engine.endScrub())
 
   return (
     <>
@@ -95,13 +93,14 @@ export function PlaybackControls(props: {
       </Show>
       <TimelineStrip
         vs={vs}
-        engine={props.engine}
         timelineRows={props.timelineRows ?? (() => [])}
         store={props.store}
         currentTable={props.currentTable}
         onSelectRow={props.onSelectRow}
         presence={props.presence}
         focusedRow={props.focusedRow}
+        onDraggingRowChange={props.onDraggingRowChange}
+        onDragCommit={props.onDragCommit}
       />
     </>
   )

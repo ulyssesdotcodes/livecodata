@@ -64,6 +64,10 @@ interface PanelProps extends TablePanelOptions {
   // Mirrors the view's focused cell out to the controller (table-scoped),
   // so the strip can ring the matching handle.
   reportFocusedRow: (focus: { table: string; row: number } | null) => void
+  // The timeline strip's in-progress handle drag, table-scoped — set for the
+  // gesture's duration so the matching row gets a stronger row-level
+  // highlight than the ordinary focused-cell ring (see .row-dragging below).
+  draggingRow: Accessor<{ table: string; row: number } | null>
 }
 
 function TablePanelView(props: PanelProps) {
@@ -1032,6 +1036,7 @@ function TablePanelView(props: PanelProps) {
                             // own mute switch (see DISABLED_COL).
                             'row-disabled': ed().data.rows[i]?.[DISABLED_COL] === true,
                             'row-invalid': invalidColumns(ed().data.rows[i], ed().data.columns).length > 0,
+                            'row-dragging': props.draggingRow()?.table === ed().name && props.draggingRow()?.row === i,
                           }}
                         >
                           <td class="row-actions">
@@ -1095,6 +1100,9 @@ export interface TablePanelController extends TablePanel, PanelProps {
   // table (tab switch, or no focus yet). Consumed by the strip to ring the
   // matching handle.
   focusedRow: Accessor<{ table: string; row: number } | null>
+  // Set by the strip for the duration of a handle drag (null once it ends or
+  // cancels) — drives the grid's stronger .row-dragging highlight.
+  setDraggingRow(row: { table: string; row: number } | null): void
 }
 
 export function createTablePanel(
@@ -1114,6 +1122,7 @@ export function createTablePanel(
   // Set by the view once mounted; lets focusRow drive the panel's focused cell.
   let focusRowImpl: ((table: string, row: number) => void) | null = null
   const [focusedRow, setFocusedRow] = createSignal<{ table: string; row: number } | null>(null)
+  const [draggingRow, setDraggingRowSignal] = createSignal<{ table: string; row: number } | null>(null)
 
   return {
     store: editableStore,
@@ -1147,6 +1156,10 @@ export function createTablePanel(
       focusRowImpl?.(table, row)
     },
     focusedRow,
+    draggingRow,
+    setDraggingRow(row: { table: string; row: number } | null): void {
+      setDraggingRowSignal(row)
+    },
 
     selectTable(name: string | null): void {
       if (name != null && (views().has(name) || editableStore.has(name)) && name !== current()) {
