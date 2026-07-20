@@ -26,6 +26,10 @@
 // makes a scrub position non-sticky anyway, and scrubbing only fought handle
 // dragging for the same gesture space. The playhead/elapsed tint stay as a
 // pure display of playback, driven by `vs` alone.
+//
+// Hovering a handle shows the same floating readout a drag does (the resting
+// store values) and highlights the row in the table panel — one channel
+// (onStripRowChange) carries "the row the strip is pointing at" for both.
 
 import { createSignal, createMemo, onMount, onCleanup, For, Show, type Accessor } from 'solid-js'
 import {
@@ -35,7 +39,6 @@ import {
   type StripGeometry, type Handle, type HitPart, type DragOptions, type SnapMode,
 } from '../timeline-strip.js'
 import { buildTimeline } from '../timeline.js'
-import { fmtNum } from '../graph-panel.js'
 import { formatEditableCell } from '../table-panel.js'
 import { listenGlobal } from './dom.js'
 import type { PlaybackViewState } from '../playback.js'
@@ -65,11 +68,12 @@ export function TimelineStrip(props: {
   onSelectRow?: (table: string, row: number) => void
   presence: Accessor<PeerPresence[]>
   focusedRow: Accessor<number | null>
-  // Fired the instant a gesture crosses the drag threshold (with the row
-  // being dragged) and again with null on every exit — drop, cancel, or
-  // Escape — so the table panel can give that row a stronger row-level
-  // highlight for the gesture's duration (see .row-dragging in style.css).
-  onDraggingRowChange?: (row: { table: string; row: number } | null) => void
+  // The row the strip is pointing at — fired with the row when a hover lands
+  // on a handle or a gesture crosses the drag threshold, and with null when
+  // the pointer leaves / the gesture ends (drop, cancel, Escape) — so the
+  // table panel can give that row a row-level highlight for exactly as long
+  // as the strip is interacting with it (see .row-strip-active in style.css).
+  onStripRowChange?: (row: { table: string; row: number } | null) => void
   // Fired right after a drag's one store.setRow actually lands — never for a
   // no-op release or a sub-threshold click. main.ts wires this to the same
   // "re-evaluate at the current seed" call onEditCell's commit uses, so a
@@ -183,17 +187,6 @@ export function TimelineStrip(props: {
     return props.presence().find((p) => p.lastEdit && p.lastEdit.table === table && p.lastEdit.row === row)?.color
   }
 
-  function handleTitle(row: Row, h: Handle): string {
-    const parts: string[] = []
-    if (typeof row.event === 'string' && row.event) parts.push(row.event)
-    parts.push(`beat ${fmtNum(h.beat)}`)
-    if (h.end != null) parts.push(h.endField === 'dur' ? `dur ${fmtNum(h.end - h.beat)}` : `end ${fmtNum(h.end)}`)
-    if (h.disabled) parts.push('disabled')
-    if (h.ghost) parts.push('ghost placement')
-    if (h.pass) parts.push(`pass ${h.pass + 1}`)
-    return parts.join(' · ')
-  }
-
   function handleBox(h: Handle): { left: string; width?: string; top: string; height: string } {
     const geo = geometry()
     const top = `${(h.lane / laneCount()) * 100}%`
@@ -215,12 +208,12 @@ export function TimelineStrip(props: {
     return rings.length ? rings.join(', ') : undefined
   }
 
-  // The floating drag readout's text — beat/end (or dur) plus identifying
-  // context, read off the same Handle (post-preview, display-space) the
-  // handle itself renders from, so the numbers track live while dragging;
-  // `row` only supplies context Handle doesn't carry (event name, from/to),
-  // none of which a beat/end drag ever touches.
-  function dragReadoutText(row: Row, tableName: string, h: Handle): string {
+  // The floating readout's text — beat/end (or dur) plus identifying context,
+  // read off the same Handle (post-preview, display-space) the handle itself
+  // renders from, so the numbers track live while dragging; `row` only
+  // supplies context Handle doesn't carry (event name, from/to), none of
+  // which a beat/end drag ever touches.
+  function readoutText(row: Row, tableName: string, h: Handle): string {
     const num = (v: unknown): string => (typeof v === 'number' ? formatEditableCell('number', v) : '')
     const parts: string[] = []
     if (tableName === 'timeline') {
@@ -233,27 +226,32 @@ export function TimelineStrip(props: {
       parts.push(`beat ${num(h.beat)}`)
       if (h.end != null) parts.push(`dur ${num(h.endField === 'dur' ? h.end - h.beat : h.end)}`)
     }
+    if (h.disabled) parts.push('disabled')
+    if (h.ghost) parts.push('ghost placement')
+    if (h.pass) parts.push(`pass ${h.pass + 1}`)
     return parts.join(' · ')
   }
 
-  // The floating readout's screen position and text, live for exactly the
-  // gesture's duration (preview() is null outside a real drag). `ghost`
-  // (captured on the preview at grab time) picks the same placement out of
-  // handles() a multi-placement row re-derives on every move — the row's
-  // primary handle otherwise, which covers the overwhelmingly common case of
-  // a row with no loop-event ghosts.
-  const dragReadout = createMemo<{ left: number; text: string } | null>(() => {
-    const p = preview()
+  // The floating readout's screen position and text — live during a drag (the
+  // preview picks the handle, so the numbers track the pointer) and on a
+  // plain hover over a handle (the resting store values). `ghost` picks the
+  // same placement out of handles() a multi-placement row re-derives on every
+  // move — the row's primary handle otherwise, which covers the
+  // overwhelmingly common case of a row with no loop-event ghosts.
+  const readout = createMemo<{ left: number; text: string } | null>(() => {
     const cur = currentData()
-    if (!p || !cur || cur.name !== p.table) return null
+    if (!cur) return null
+    const p = preview()
+    const target = p && cur.name === p.table ? p : hover()
+    if (!target) return null
     const hs = handles()
-    const h = hs.find((hh) => hh.row === p.row && hh.ghost === p.ghost) ?? hs.find((hh) => hh.row === p.row)
-    const row = cur.rows[p.row]
+    const h = hs.find((hh) => hh.row === target.row && hh.ghost === target.ghost) ?? hs.find((hh) => hh.row === target.row)
+    const row = cur.rows[target.row]
     if (!h || !row) return null
     const geo = geometry()
     const x = beatToX(geo, h.beat)
     const left = Math.max(READOUT_MARGIN, Math.min(geo.width - READOUT_MARGIN, x))
-    return { left, text: dragReadoutText(row, cur.name, h) }
+    return { left, text: readoutText(row, cur.name, h) }
   })
 
   // Which lane a pointer's client-y falls in — the inverse of handleBox's
@@ -281,9 +279,20 @@ export function TimelineStrip(props: {
   }
   let gesture: Gesture | null = null
 
-  // Idle hover (no gesture in progress): which part sits under the pointer,
-  // purely for the grab/ew-resize cursor affordance.
-  const [hoverPart, setHoverPart] = createSignal<HitPart | null>(null)
+  // Idle hover (no gesture in progress): the handle under the pointer — the
+  // cursor affordance, the floating readout, and the panel's row highlight
+  // all read it. `row`/`ghost` mirror the preview's shape so the readout memo
+  // treats a hover and a drag through the same lookup.
+  const [hover, setHover] = createSignal<{ row: number; ghost: boolean; part: HitPart } | null>(null)
+  // Last row reported to onStripRowChange — hover fires per pointermove, so
+  // dedupe to actual row changes rather than spamming the panel every frame.
+  let reportedRow: string | null = null
+  function reportStripRow(next: { table: string; row: number } | null): void {
+    const key = next ? `${next.table}::${next.row}` : null
+    if (key === reportedRow) return
+    reportedRow = key
+    props.onStripRowChange?.(next)
+  }
 
   function snapModeFor(e: PointerEvent): SnapMode {
     return e.shiftKey ? 'coarse' : e.altKey ? 'free' : 'quarter'
@@ -327,8 +336,11 @@ export function TimelineStrip(props: {
       }
     }
     props.onSelectRow?.(g.table, g.handle.row)
-    props.onDraggingRowChange?.(null)
+    reportStripRow(null)
     setPreview(null)
+    // The pointer may have been dragged (or released) off the strip — a stale
+    // hover would pin the readout there; the next pointermove re-derives it.
+    setHover(null)
   }
 
   function cancelGesture(): void {
@@ -336,7 +348,8 @@ export function TimelineStrip(props: {
     el?.releasePointerCapture(gesture.pointerId)
     gesture = null
     setPreview(null)
-    props.onDraggingRowChange?.(null)
+    setHover(null)
+    reportStripRow(null)
   }
 
   // Escape cancels a drag wherever keyboard focus happens to be — a mouse
@@ -350,10 +363,20 @@ export function TimelineStrip(props: {
 
   function updateHover(e: PointerEvent): void {
     const cur = currentData()
-    if (!cur || !el) { setHoverPart(null); return }
+    if (!cur || !el) { clearHover(); return }
     const rect = el.getBoundingClientRect()
-    const hit = hitTest(handles(), geometry(), e.clientX - rect.left, laneAt(e.clientY))
-    setHoverPart(hit?.part ?? null)
+    const x = e.clientX - rect.left
+    const lane = laneAt(e.clientY)
+    const hit = hitTest(handles(), geometry(), x, lane)
+    const handle = hit ? resolveHandle(handles(), geometry(), hit, x, lane) : null
+    if (!hit || !handle) { clearHover(); return }
+    setHover({ row: handle.row, ghost: handle.ghost, part: hit.part })
+    reportStripRow({ table: cur.name, row: handle.row })
+  }
+
+  function clearHover(): void {
+    setHover(null)
+    reportStripRow(null)
   }
 
   // A pointerdown that lands on a handle (per the model's hitTest, not DOM
@@ -391,7 +414,7 @@ export function TimelineStrip(props: {
       // The moment it's a real drag (not just yet a click) — focus and
       // row-highlight the dragged row live, not only once the pointer lifts.
       props.onSelectRow?.(g.table, g.handle.row)
-      props.onDraggingRowChange?.({ table: g.table, row: g.handle.row })
+      reportStripRow({ table: g.table, row: g.handle.row })
     }
     updateGesturePreview(g, e)
   }
@@ -404,6 +427,11 @@ export function TimelineStrip(props: {
   function onPointerCancel(): void {
     if (gesture) cancelGesture()
   }
+  function onPointerLeave(): void {
+    // Not during a gesture: pointer capture routes moves here even outside
+    // the strip, and the gesture's own exit paths clear the row highlight.
+    if (!gesture) clearHover()
+  }
 
   return (
     // The readout floats above `.timeline-strip`'s own overflow:hidden (which
@@ -411,7 +439,7 @@ export function TimelineStrip(props: {
     // badge's comment below), so it renders as a sibling in a plain
     // (overflow: visible) wrapper instead of inside the strip itself.
     <div class="timeline-strip-wrap">
-      <Show when={dragReadout()}>
+      <Show when={readout()}>
         {(r) => <div class="timeline-strip-readout" style={{ left: `${r().left}px` }}>{r().text}</div>}
       </Show>
       <div
@@ -421,14 +449,15 @@ export function TimelineStrip(props: {
           'timeline-strip-multilane': laneCount() > 1,
           'timeline-strip-dragging-move': preview()?.part === 'body',
           'timeline-strip-dragging-resize': preview()?.part === 'start' || preview()?.part === 'end',
-          'timeline-strip-hover-grab': !preview() && hoverPart() === 'body',
-          'timeline-strip-hover-resize': !preview() && (hoverPart() === 'start' || hoverPart() === 'end'),
+          'timeline-strip-hover-grab': !preview() && hover()?.part === 'body',
+          'timeline-strip-hover-resize': !preview() && (hover()?.part === 'start' || hover()?.part === 'end'),
         }}
         style={{ '--lane-rows': String(visibleLanes()) }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
+        onPointerLeave={onPointerLeave}
       >
       <Show when={laneCount() > 1}>
         <For each={Array.from({ length: laneCount() })}>
@@ -477,7 +506,6 @@ export function TimelineStrip(props: {
                     'timeline-strip-handle-dragging': preview()?.table === cur().name && preview()?.row === h.row,
                   }}
                   style={{ ...handleBox(h), 'box-shadow': ringStyle(cur().name, h) }}
-                  title={handleTitle(cur().rows[h.row] ?? {}, h)}
                 >
                   <Show when={h.kind === 'point'}>
                     <span class="timeline-strip-handle-dot" />

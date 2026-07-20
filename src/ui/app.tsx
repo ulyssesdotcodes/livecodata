@@ -71,7 +71,7 @@ function App(props: AppProps & { mounts: CanvasMounts }) {
                   const fr = props.tablePanel.focusedRow()
                   return fr && fr.table === props.tablePanel.current() ? fr.row : null
                 }}
-                onDraggingRowChange={(row) => props.tablePanel.setDraggingRow(row)}
+                onStripRowChange={(row) => props.tablePanel.setStripRow(row)}
                 onDragCommit={props.onDragCommit}
               />
             )}

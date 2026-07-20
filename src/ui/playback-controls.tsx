@@ -24,7 +24,7 @@ export function PlaybackControls(props: {
   onSelectRow?: (table: string, row: number) => void
   presence: Accessor<PeerPresence[]>
   focusedRow: Accessor<number | null>
-  onDraggingRowChange?: (row: { table: string; row: number } | null) => void
+  onStripRowChange?: (row: { table: string; row: number } | null) => void
   onDragCommit?: () => void
 }) {
   const vs = props.vs
@@ -99,7 +99,7 @@ export function PlaybackControls(props: {
         onSelectRow={props.onSelectRow}
         presence={props.presence}
         focusedRow={props.focusedRow}
-        onDraggingRowChange={props.onDraggingRowChange}
+        onStripRowChange={props.onStripRowChange}
         onDragCommit={props.onDragCommit}
       />
     </>

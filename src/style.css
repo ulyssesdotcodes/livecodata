@@ -1095,11 +1095,12 @@ html, body {
   background: rgba(233, 162, 59, 0.1);
 }
 
-/* The timeline strip's handle drag, live for the gesture's duration (see
-   ui/timeline-strip.tsx's onDraggingRowChange) — stronger than the plain
-   focused-cell ring (.cell-focused, an inset outline only) since this marks
-   the row actually being moved, not just the last-focused cell. */
-.events-table tbody tr.row-dragging td {
+/* The row the timeline strip is pointing at — a hover over its handle or an
+   in-progress drag (see ui/timeline-strip.tsx's onStripRowChange) — stronger
+   than the plain focused-cell ring (.cell-focused, an inset outline only)
+   since this marks the row the strip is interacting with right now, not just
+   the last-focused cell. */
+.events-table tbody tr.row-strip-active td {
   background: rgba(233, 69, 96, 0.18);
   box-shadow: inset 0 0 0 1px rgba(233, 69, 96, 0.7);
 }
