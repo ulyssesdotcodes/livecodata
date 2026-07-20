@@ -64,6 +64,11 @@ interface PanelProps extends TablePanelOptions {
   // Mirrors the view's focused cell out to the controller (table-scoped),
   // so the strip can ring the matching handle.
   reportFocusedRow: (focus: { table: string; row: number } | null) => void
+  // The row the timeline strip is pointing at (a hover over a handle, or an
+  // in-progress drag), table-scoped — the matching row gets a stronger
+  // row-level highlight than the ordinary focused-cell ring for exactly that
+  // long (see .row-strip-active below).
+  stripRow: Accessor<{ table: string; row: number } | null>
 }
 
 function TablePanelView(props: PanelProps) {
@@ -1032,6 +1037,7 @@ function TablePanelView(props: PanelProps) {
                             // own mute switch (see DISABLED_COL).
                             'row-disabled': ed().data.rows[i]?.[DISABLED_COL] === true,
                             'row-invalid': invalidColumns(ed().data.rows[i], ed().data.columns).length > 0,
+                            'row-strip-active': props.stripRow()?.table === ed().name && props.stripRow()?.row === i,
                           }}
                         >
                           <td class="row-actions">
@@ -1095,6 +1101,10 @@ export interface TablePanelController extends TablePanel, PanelProps {
   // table (tab switch, or no focus yet). Consumed by the strip to ring the
   // matching handle.
   focusedRow: Accessor<{ table: string; row: number } | null>
+  // Set by the strip while it points at a row — a hover over a handle or an
+  // in-progress drag (null once the pointer leaves / the gesture ends) —
+  // drives the grid's stronger .row-strip-active highlight.
+  setStripRow(row: { table: string; row: number } | null): void
 }
 
 export function createTablePanel(
@@ -1114,6 +1124,7 @@ export function createTablePanel(
   // Set by the view once mounted; lets focusRow drive the panel's focused cell.
   let focusRowImpl: ((table: string, row: number) => void) | null = null
   const [focusedRow, setFocusedRow] = createSignal<{ table: string; row: number } | null>(null)
+  const [stripRow, setStripRowSignal] = createSignal<{ table: string; row: number } | null>(null)
 
   return {
     store: editableStore,
@@ -1147,6 +1158,10 @@ export function createTablePanel(
       focusRowImpl?.(table, row)
     },
     focusedRow,
+    stripRow,
+    setStripRow(row: { table: string; row: number } | null): void {
+      setStripRowSignal(row)
+    },
 
     selectTable(name: string | null): void {
       if (name != null && (views().has(name) || editableStore.has(name)) && name !== current()) {

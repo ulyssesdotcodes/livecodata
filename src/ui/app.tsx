@@ -29,6 +29,10 @@ export interface AppProps {
   // the "applied" half of the live/applied split (see playback's vs/engine).
   timelineRows: Accessor<Row[]>
   onClearRuns: () => void
+  // A timeline-strip drag just committed its one store.setRow — re-run so
+  // the drop applies immediately instead of sitting pending (see main.ts's
+  // evaluate()).
+  onDragCommit: () => void
 }
 
 // Canvases this render creates but does not draw into — main.ts hands them
@@ -67,6 +71,8 @@ function App(props: AppProps & { mounts: CanvasMounts }) {
                   const fr = props.tablePanel.focusedRow()
                   return fr && fr.table === props.tablePanel.current() ? fr.row : null
                 }}
+                onStripRowChange={(row) => props.tablePanel.setStripRow(row)}
+                onDragCommit={props.onDragCommit}
               />
             )}
           </Show>
