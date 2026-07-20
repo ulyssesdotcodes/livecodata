@@ -14,7 +14,7 @@ import { Prec, Compartment } from '@codemirror/state'
 import { vim, getCM } from '@replit/codemirror-vim'
 import {
   viewNameCompletions, codeCompletions, typeHover, signatureHelp, dslHover,
-  viewAtPos, defaultProgram, defaultTables, defaultTable,
+  viewAtPos, minimalEdit, defaultProgram, defaultTables, defaultTable,
   remoteCursorField, setRemoteCursorsEffect, PROGRAM_CELL,
   type RemoteCursor, type SymbolCardData, type SigCardFactory,
 } from '../editor-support.js'
@@ -130,9 +130,8 @@ export interface EditorOptions {
 export interface EditorAPI {
   run(): void
   getCode(): string
-  // preserveView keeps the caret and scroll where they are (offsets clamped to
-  // the new length) — a scrub swaps in a past run's program but shouldn't fling
-  // the cursor to the top.
+  // preserveView applies the code as a minimal edit so the caret and scroll
+  // stay put — used when scrubbing to a past run's program.
   setCode(code: string, opts?: { preserveView?: boolean }): void
   setError(msg: string | null): void
   // Point the editor at a single table cell: the program text is stashed, the
@@ -220,11 +219,16 @@ export function createEditor(
 
   // Programmatic doc replacements must not read as the user typing — mutes
   // onEdit for the dispatch (the update listener runs synchronously inside it).
+  // preserveView applies the code as a minimal splice so the caret and scroll
+  // ride the unchanged text (a scrub to a past run shouldn't jump either).
   let programmaticDoc = false
-  function setDoc(code: string): void {
+  function setDoc(code: string, preserveView = false): void {
+    const changes = preserveView
+      ? minimalEdit(view.state.doc.toString(), code)
+      : { from: 0, to: view.state.doc.length, insert: code }
     programmaticDoc = true
     try {
-      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: code } })
+      view.dispatch({ changes })
     } finally {
       programmaticDoc = false
     }
@@ -316,31 +320,7 @@ export function createEditor(
   // without restoring its stash (the new code wins).
   function setCode(code: string, opts: { preserveView?: boolean } = {}): void {
     exitCell(false)
-    if (!opts.preserveView) {
-      setDoc(code)
-      return
-    }
-    // Keep the caret and scroll put across the swap. Offsets are clamped so a
-    // shorter program doesn't throw. Scroll is reapplied after the layout
-    // measure that a full-doc change schedules, since that measure resets it.
-    const { anchor, head } = view.state.selection.main
-    const top = view.scrollDOM.scrollTop
-    const left = view.scrollDOM.scrollLeft
-    programmaticDoc = true
-    try {
-      view.dispatch({
-        changes: { from: 0, to: view.state.doc.length, insert: code },
-        selection: { anchor: Math.min(anchor, code.length), head: Math.min(head, code.length) },
-      })
-    } finally {
-      programmaticDoc = false
-    }
-    // Reapply across the next two frames: a full-doc replace clamps scrollTop
-    // to 0 as the lines are torn down, and the caller re-renders other panes in
-    // the same frame, so one restore can be undone before layout settles.
-    const restore = (): void => { view.scrollDOM.scrollTop = top; view.scrollDOM.scrollLeft = left }
-    restore()
-    requestAnimationFrame(() => { restore(); requestAnimationFrame(restore) })
+    setDoc(code, opts.preserveView)
   }
 
   return {

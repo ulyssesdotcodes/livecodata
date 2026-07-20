@@ -817,9 +817,9 @@ async function scrubSession(pos: number): Promise<void> {
     if (epoch !== scrubEpoch) return
     liveCode = code
     liveSeed = seed
-    // A scrub previews a past run — keep the caret and scroll where the user
-    // left them, and the selected table follows the same rule (fallbackTab
-    // holds the tab unless the run no longer has it).
+    // A scrub previews a past run: keep the caret and scroll put. The selected
+    // table needs nothing extra — fallbackTab holds the tab unless the run's
+    // fold no longer has it.
     editor.setCode(code, { preserveView: true })
     editor.setError(null)
     // Re-baseline changed-detection so the next Run's apply pulse diffs
