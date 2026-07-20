@@ -2,6 +2,24 @@
 
 Guidance for Claude Code agents working in this repository.
 
+## Keeping the codebase small
+
+The repo grows faster than it shrinks: features tend to add code without
+removing any. Push against that.
+
+- Prefer the simpler solution. If two designs work, take the one with less
+  code and fewer moving parts.
+- By default, fit new features into the existing abstractions — extend a
+  current function, method, or data shape rather than introducing a new
+  function, module, or concept. Only add a new abstraction when the existing
+  ones genuinely can't express the feature without contortion.
+- Treat new work as an opportunity to refactor: when a feature touches code
+  that has drifted, duplicated, or outgrown its shape, fold the cleanup into
+  the change instead of layering on top of it. Delete code the change makes
+  dead.
+- A feature that lands with a net-negative or near-zero line count is a good
+  sign, not a fluke to apologize for.
+
 ## Comments
 
 Keep comments sparse: the TypeScript types carry the "what". Write a comment
