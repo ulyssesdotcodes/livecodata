@@ -2064,6 +2064,26 @@ html, body {
   pointer-events: none;
 }
 
+/* Unlabeled beat / beat–end tag on the hovered or dragged handle — position
+   lives over the strip (where it's the visual story) while the floating
+   readout above carries the row's meaningful columns. Bottom-anchored, the
+   pass badge's mirror, for the same overflow reason. */
+.timeline-strip-handle-postag {
+  position: absolute;
+  bottom: 1px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0 3px;
+  background: rgba(18, 32, 60, 0.85);
+  color: #c8d6e5;
+  font-family: monospace;
+  font-size: 9px;
+  line-height: 1.5;
+  border-radius: 2px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
 @media (max-width: 767px) {
   /* Touch target floor for a lane band that would otherwise be thinner than
      a thumb — visual only: the hit test still resolves by lane, so a very

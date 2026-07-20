@@ -35,7 +35,7 @@ import { createSignal, createMemo, onMount, onCleanup, For, Show, type Accessor 
 import {
   beatToX, xToBeat, gridLines, handlesFor, hitTest, pendingTimelineRows,
   resolveHandle, dragModeFor, snapDelta, dragUpdate, withPreview,
-  valuesDiffer, exceedsDragThreshold, laneCountFor, coverageBands,
+  valuesDiffer, exceedsDragThreshold, laneCountFor, coverageBands, meaningfulSummary,
   type StripGeometry, type Handle, type HitPart, type DragOptions, type SnapMode,
 } from '../timeline-strip.js'
 import { buildTimeline } from '../timeline.js'
@@ -43,7 +43,7 @@ import { formatEditableCell } from '../table-panel.js'
 import { listenGlobal } from './dom.js'
 import type { PlaybackViewState } from '../playback.js'
 import type { Row } from '../lineage.js'
-import type { EditableTableStore } from '../editable-tables.js'
+import type { EditableTableStore, EditableColumn } from '../editable-tables.js'
 import type { PeerPresence } from '../table-panel.js'
 
 // The strip's height grows per lane band up to this many — a timeline with
@@ -208,51 +208,62 @@ export function TimelineStrip(props: {
     return rings.length ? rings.join(', ') : undefined
   }
 
-  // The floating readout's text — beat/end (or dur) plus identifying context,
-  // read off the same Handle (post-preview, display-space) the handle itself
-  // renders from, so the numbers track live while dragging; `row` only
-  // supplies context Handle doesn't carry (event name, from/to), none of
-  // which a beat/end drag ever touches.
-  function readoutText(row: Row, tableName: string, h: Handle): string {
-    const num = (v: unknown): string => (typeof v === 'number' ? formatEditableCell('number', v) : '')
+  // The floating readout's text: the row's meaningful columns — what it IS
+  // (event kind, a code cell's first line, names/values) — never its
+  // position, which the strip shows visually and the handle's own unlabeled
+  // tag states precisely. Handle-state annotations ride along at the end.
+  function readoutText(row: Row, columns: EditableColumn[], h: Handle): string {
     const parts: string[] = []
-    if (tableName === 'timeline') {
-      if (typeof row.event === 'string' && row.event) parts.push(row.event)
-      parts.push(`beat ${num(h.beat)}`)
-      if (h.end != null) parts.push(`end ${num(h.end)}`)
-      if (typeof row.from === 'number') parts.push(`from ${num(row.from)}`)
-      if (typeof row.to === 'number') parts.push(`to ${num(row.to)}`)
-    } else {
-      parts.push(`beat ${num(h.beat)}`)
-      if (h.end != null) parts.push(`dur ${num(h.endField === 'dur' ? h.end - h.beat : h.end)}`)
-    }
+    const summary = meaningfulSummary(row, columns)
+    if (summary) parts.push(summary)
     if (h.disabled) parts.push('disabled')
     if (h.ghost) parts.push('ghost placement')
     if (h.pass) parts.push(`pass ${h.pass + 1}`)
     return parts.join(' · ')
   }
 
-  // The floating readout's screen position and text — live during a drag (the
-  // preview picks the handle, so the numbers track the pointer) and on a
-  // plain hover over a handle (the resting store values). `ghost` picks the
-  // same placement out of handles() a multi-placement row re-derives on every
-  // move — the row's primary handle otherwise, which covers the
-  // overwhelmingly common case of a row with no loop-event ghosts.
-  const readout = createMemo<{ left: number; text: string } | null>(() => {
+  // The hovered or dragged placement — the one handle the readout and the
+  // unlabeled position tag describe. `ghost` picks the same placement out of
+  // handles() a multi-placement row re-derives on every move — the row's
+  // primary handle otherwise, which covers the overwhelmingly common case of
+  // a row with no loop-event ghosts.
+  const activeHandle = createMemo<Handle | null>(() => {
     const cur = currentData()
     if (!cur) return null
     const p = preview()
     const target = p && cur.name === p.table ? p : hover()
     if (!target) return null
     const hs = handles()
-    const h = hs.find((hh) => hh.row === target.row && hh.ghost === target.ghost) ?? hs.find((hh) => hh.row === target.row)
-    const row = cur.rows[target.row]
-    if (!h || !row) return null
+    return hs.find((hh) => hh.row === target.row && hh.ghost === target.ghost) ?? hs.find((hh) => hh.row === target.row) ?? null
+  })
+
+  // Floating readout position and text — live for exactly as long as a
+  // handle is hovered or dragged, and hidden entirely for a row with nothing
+  // meaningful beyond its position (the tag on the handle covers that).
+  const readout = createMemo<{ left: number; text: string } | null>(() => {
+    const cur = currentData()
+    const h = activeHandle()
+    const row = h ? cur?.rows[h.row] : undefined
+    if (!cur || !h || !row) return null
+    const text = readoutText(row, cur.columns, h)
+    if (!text) return null
     const geo = geometry()
     const x = beatToX(geo, h.beat)
     const left = Math.max(READOUT_MARGIN, Math.min(geo.width - READOUT_MARGIN, x))
-    return { left, text: readoutText(row, cur.name, h) }
+    return { left, text }
   })
+
+  // The unlabeled position tag on the active handle itself: `beat` or
+  // `beat–end` — over the strip, where position is already the visual story,
+  // so no labels. Post-preview, so the numbers track a drag live.
+  function posTag(h: Handle): string {
+    const num = (v: number): string => formatEditableCell('number', v)
+    return h.end != null ? `${num(h.beat)}–${num(h.end)}` : num(h.beat)
+  }
+  const isActiveHandle = (h: Handle): boolean => {
+    const a = activeHandle()
+    return !!a && a.row === h.row && a.ghost === h.ghost
+  }
 
   // Which lane a pointer's client-y falls in — the inverse of handleBox's
   // top/height split, both dividing the strip's full height evenly.
@@ -516,6 +527,9 @@ export function TimelineStrip(props: {
                   </Show>
                   <Show when={h.pass}>
                     <span class="timeline-strip-handle-pass">{`pass ${(h.pass ?? 0) + 1}`}</span>
+                  </Show>
+                  <Show when={isActiveHandle(h)}>
+                    <span class="timeline-strip-handle-postag">{posTag(h)}</span>
                   </Show>
                 </div>
               )}
