@@ -3,8 +3,8 @@
 // literal's own precision, vertical distance shifts magnitude — up = coarser
 // ×10 per zone, down = finer ÷10 — the DAW convention.
 
-const PX_PER_STEP = 8
-const PX_PER_ZONE = 56
+export const PX_PER_STEP = 8
+export const PX_PER_ZONE = 56
 const MAX_ZONE = 3
 const MAX_DECIMALS = 6
 
