@@ -237,7 +237,10 @@ export function createPostVisualizer(postAPI: PostAPI): Visualizer {
         const vars = ctx ? resolveBindings(frame.vars, ctx) : frame.vars
         const sliders = ctx?.sliders?.()
         const clock = { time: frameF / FPS, beat: frameToBeat(frameF), bpm: bpm ?? 60 / DEFAULT_BEAT_SECONDS }
-        postAPI.setFrame(frame, { ...(sliders ? { sliders } : {}), ...vars, ...clock })
+        // $midi lets expr.midi() live args sample the playhead's MIDI ($-prefix
+        // reserved, like $expr — a user var can't collide).
+        const midi = ctx?.midi ? { $midi: ctx.midi } : {}
+        postAPI.setFrame(frame, { ...(sliders ? { sliders } : {}), ...midi, ...vars, ...clock })
       } else {
         postAPI.setFrame(null, {})
       }

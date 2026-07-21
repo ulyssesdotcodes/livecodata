@@ -1509,10 +1509,10 @@ export interface ExprNamespace {
   readonly e: Expr
 }
 
-// The one ExprNamespace builder — createDSL's `expr` and the "=" cell scope
-// (expr-cell.ts) share it, so cells and code see the same surface; only
-// slider() differs by ctx (a null ctx reads without declaring).
-export function makeExprNamespace(ctx: DSLContext | null): ExprNamespace {
+// The one ExprNamespace builder — createDSL's `expr`, the "=" cell scope, and
+// the post cell scope (expr-cell.ts) share it, so cells and code see the same
+// surface; only slider() differs by ctx (a null ctx reads without declaring).
+export function makeExprNamespace(ctx: Pick<DSLContext, 'defineSlider'> | null): ExprNamespace {
   return {
     field, lit, idx, midi, time, progress,
     slider: (id: string, min?: number, max?: number): Expr => {

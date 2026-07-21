@@ -184,6 +184,7 @@ function makeCall(op: string, kind: OpKind, spec: ArgSpec[], raw: unknown[], cha
       return { cls: 'structural', value: typeof r === 'number' && Number.isFinite(r) ? r : s.default }
     }
     if (typeof r === 'function') return { cls: 'live', value: r as (p: Record<string, unknown>) => number }
+    if (exprArgs?.isExpr(r)) return { cls: 'live', value: exprArgs.toLiveFn(r) }
     if (typeof r === 'number' && Number.isFinite(r)) return { cls: 'live', value: r }
     if (typeof r === 'string' && r.trim() !== '') {
       const n = Number(r)
@@ -245,6 +246,20 @@ export function postVarDecls(code: string): PostVarDecl[] {
     out.push({ name: m[2], value: m[3] !== undefined ? Number(m[3]) : 0 })
   }
   return out
+}
+
+// Expr values as live args — bloom(expr.midi("c4")) — and the `expr`
+// namespace in the cell scope. The adapter is injected (expr-cell.ts
+// registers it) so this module stays off the DSL import graph, which
+// editable-tables depends on.
+export interface ExprArgSupport {
+  isExpr(v: unknown): boolean
+  toLiveFn(v: unknown): (p: Record<string, unknown>) => number
+  makeScope(defineSlider: (id: string, min?: number, max?: number) => void): unknown
+}
+let exprArgs: ExprArgSupport | null = null
+export function registerExprArgSupport(s: ExprArgSupport): void {
+  exprArgs = s
 }
 
 // Collector active while sliderDeclsInCode scans a cell; frame-time evals run
@@ -317,6 +332,10 @@ function headScope(): Record<string, unknown> {
       return typeof v === 'number' ? v : lo ?? 0
     }
   }
+  // The expr namespace — expr.midi("c4"), expr.slider("r", 0, 8).mul(2), … —
+  // usable anywhere a live arg is; expr.slider declares through the same
+  // collector as the bare slider().
+  if (exprArgs) scope.expr = exprArgs.makeScope((id, min, max) => sliderDefiner?.(id, min, max))
   // A transition is the head of the output chain the fold produces: it wipes
   // `before` → `after` by `pos` (0→1), optionally through a black-and-white
   // `mask` chain (null = crossfade). The pos function reads the playback clock.

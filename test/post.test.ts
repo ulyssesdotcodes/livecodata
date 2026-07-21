@@ -11,6 +11,8 @@ import {
   type PostFrame,
 } from '../src/post.js'
 import { evalPostCode, chainSignature, collectLiveValues, sliderDeclsInCode, postVarDecls } from '../src/post-lang.js'
+// Registers the Expr live-arg adapter post-lang consults (expr in post cells).
+import '../src/expr-cell.js'
 import { slider, progress, field, isBinding, evalExpr, type Binding } from '../src/dsl.js'
 import { frameToBeat } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
@@ -273,4 +275,12 @@ test('val("name", initial) is a live arg reading the folded variable, with the i
     [{ name: 'glow', value: 0.5 }, { name: 'rad', value: 0 }],
     'declarations scan textually; no value → 0',
   )
+})
+
+test('an Expr as a live arg resolves per frame and declares its slider', () => {
+  const chain = evalPostCode('bloom(expr.slider("r", 2, 8).mul(2))')
+  assert.equal(collectLiveValues(chain, { sliders: { r: 3 } })[0], 6)
+  assert.ok(sliderDeclsInCode('bloom(expr.slider("r", 2, 8))').some((d) => d.id === 'r' && d.min === 2 && d.max === 8))
+  const viaMidi = evalPostCode('blur(expr.midi("c4"))')
+  assert.equal(collectLiveValues(viaMidi, { $midi: () => 0.5 })[0], 0.5)
 })
