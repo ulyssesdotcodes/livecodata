@@ -205,3 +205,20 @@ test('curatedDocFor picks the doc table from the chain context', () => {
   assert.equal(curatedDocFor('expr', 0, 'expr'), DSL_BUILTIN_DOCS.expr)
   assert.equal(curatedDocFor('const x = 1', 6, 'x'), null)
 })
+
+test('expr cells: the "=" surface completes bare sources and chain methods', () => {
+  const exprSvc = createLangService(env, 'expr')
+  const bare = exprSvc.completionsAt('sl', 2)
+  assert.ok(bare)
+  const bareNames = bare.entries.map((e) => e.name)
+  for (const m of ['slider', 'sin', 'progress', 'clamp', 'tau', 'field']) {
+    assert.ok(bareNames.includes(m), `expected bare ${m} in the expr surface`)
+  }
+  assert.ok(!bareNames.includes('table'), 'DSL surface must not leak into expr cells')
+  const chain = exprSvc.completionsAt('slider("h").', 'slider("h").'.length)
+  assert.ok(chain)
+  const chainNames = chain.entries.map((e) => e.name)
+  for (const m of ['mul', 'sin', 'clamp', 'lerp']) {
+    assert.ok(chainNames.includes(m), `expected Expr member ${m} on a bare slider() chain`)
+  }
+})

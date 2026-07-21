@@ -5,6 +5,7 @@
 // GPU rendering lives in hydra-scene.ts.
 
 import { beatToFrame, beatsToFrames, FPS } from './constants.js'
+import { isBinding, isStreamingNode, evalExpr, substituteExpr } from './dsl.js'
 import type { Row } from './lineage.js'
 
 export interface HydraFrame {
@@ -113,6 +114,16 @@ export function transitionWindow(t: Transition): { start: number; end: number; p
   }
 }
 
+// A setVariable value with its own row substituted in for field() reads —
+// resolveBindings later sees the vars map as the row, which would read a
+// sibling variable instead. A still-streaming value stays a binding.
+function rowScopedValue(row: Row): unknown {
+  const v = row.value
+  if (!isBinding(v)) return v
+  const node = substituteExpr(v.$expr, { fields: row })
+  return isStreamingNode(node) ? { $expr: node } : evalExpr(node, row, 0)
+}
+
 // Fold one output's events (already sorted, filtered to this output) into its
 // running code string; setVariable folds into the shared `vars`. Returns null
 // until a setCode establishes some code.
@@ -129,7 +140,7 @@ function foldOutput(
         if (typeof row.code === 'string') code = row.code
         break
       case 'setVariable':
-        if (typeof row.name === 'string') vars[row.name] = row.value
+        if (typeof row.name === 'string') vars[row.name] = rowScopedValue(row)
         break
       case 'setSource':
         // Swap the head generator, keeping every effect (and .out()) after it.

@@ -7,6 +7,7 @@ import {
   createDSL, Table, materialize, fnv1a,
   type ViewFn, type DSLContext, type GraphSpec, type PhysicsEngine, type Memo, type MatCtx,
 } from './dsl.js'
+import { evalRowExprCells } from './expr-cell.js'
 import { getLineage, withLineage, type Row } from './lineage.js'
 import type { ColumnType } from './editable-tables.js'
 
@@ -180,8 +181,12 @@ export function createRuntime({ physics, tapRows, editableRows, logRows, defineS
     physics: () => (physics ? physics() : null),
     tapRows: () => (tapRows ? tapRows() : null),
     getData: (url: string) => dataCache.get(url) ?? '',
+    // "=" cells in number columns evaluate here, per row, inside the cook —
+    // so a cell's expr.slider() declaration flows through ctx.defineSlider
+    // like any code declaration. Lives on this wrapper (not dsl.editable) to
+    // keep dsl.ts ↔ expr-cell.ts acyclic.
     editableRows: (name: string, schema: Record<string, ColumnType>, seedRows?: Row[]) =>
-      (editableRows ? editableRows(name, schema, seedRows) : []),
+      evalRowExprCells(editableRows ? editableRows(name, schema, seedRows) : [], schema, api.expr),
     defineSlider: (id: string, min?: number, max?: number) => defineSlider?.(id, min, max),
   }
 

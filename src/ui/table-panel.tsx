@@ -21,7 +21,9 @@ import { isBaubleRow, baubleCodeUpToRow } from '../bauble.js'
 import { isPostRow, postCodeUpToRow } from '../post.js'
 import { Icon } from './icon.js'
 import type { Table } from '../dsl.js'
-import { DISABLED_COL, cellValid, invalidColumns, type EditableTableStore, type ColumnType, type EditableColumn } from '../editable-tables.js'
+import { DISABLED_COL, cellValid, invalidColumns, isExprCellText, type EditableTableStore, type ColumnType, type EditableColumn } from '../editable-tables.js'
+// Registers the "=" cell checker cellValid consults (see editable-tables.ts).
+import '../expr-cell.js'
 
 export { EVENTS_SUFFIX }
 export type { TablePanel, TablePanelOptions, PeerPresence }
@@ -203,9 +205,9 @@ function TablePanelView(props: PanelProps) {
       nextIdx = dir > 0 ? 0 : cols.length - 1
     }
     const target = cols[nextIdx]
-    if (target.type === 'code') {
-      const v = data.rows[nextRow]?.[target.name]
-      props.onEditCell?.(table, nextRow, target.name, v == null ? '' : String(v))
+    const tv = data.rows[nextRow]?.[target.name]
+    if (target.type === 'code' || isExprCellText(tv)) {
+      props.onEditCell?.(table, nextRow, target.name, tv == null ? '' : String(tv))
       return
     }
     const nextKey = `${nextRow}::${target.name}`
@@ -243,16 +245,17 @@ function TablePanelView(props: PanelProps) {
     props.reportFocusedRow(fc && cur ? { table: cur, row: fc.row } : null)
   })
 
-  // Enter on the focused cell: code cells open in the main editor, enums focus
-  // their live dropdown, everything else opens its inline editor.
+  // Enter on the focused cell: code cells (and "=" expression cells) open in
+  // the main editor, enums focus their live dropdown, everything else opens
+  // its inline editor.
   function beginEditFocused(): void {
     const fc = focusedCell()
     const ed = editableData()
     if (!fc || !ed) return
     const col = ed.data.columns.find((c) => c.name === fc.col)
     if (!col) return
-    if (col.type === 'code') {
-      const v = ed.data.rows[fc.row]?.[col.name]
+    const v = ed.data.rows[fc.row]?.[col.name]
+    if (col.type === 'code' || (col.type !== 'enum' && isExprCellText(v))) {
       props.onEditCell?.(ed.name, fc.row, col.name, v == null ? '' : String(v))
       return
     }
@@ -598,7 +601,9 @@ function TablePanelView(props: PanelProps) {
         onClick={() => {
           setFocusedCell({ row: rowIndex, col: col.name })
           if (editing() || col.type === 'enum') return
-          if (col.type === 'code') {
+          // "=" expression cells edit like code cells — cell-target mode in
+          // the main editor — never the coercing primitive editors.
+          if (col.type === 'code' || isExprCellText(raw())) {
             const v = raw()
             props.onEditCell?.(table, rowIndex, col.name, v == null ? '' : String(v))
           } else {
@@ -666,13 +671,23 @@ function TablePanelView(props: PanelProps) {
                 const v = Number(num.value)
                 commit(Number.isFinite(v) && num.value.trim() !== '' ? v : cur, viaBlur)
               }
+              // type="text" (default inputmode — a decimal keypad has no "="
+              // key) so a leading "=" is typable: it hands the cell straight
+              // to expression editing (cell-target mode), spreadsheet muscle
+              // memory.
               return (
                 <input
-                  type="number"
+                  type="text"
                   class="cell-number"
                   value={String(cur)}
-                  step="any"
                   ref={(el) => { num = el; focusInput(el) }}
+                  onInput={(e) => {
+                    const t = e.currentTarget.value
+                    if (t.startsWith('=')) {
+                      setEditingCell(null)
+                      props.onEditCell?.(table, rowIndex, col.name, t)
+                    }
+                  }}
                   onKeyDown={(e) => keyHandler(e, commitNum)}
                   onBlur={() => commitNum(true)}
                 />

@@ -11,6 +11,7 @@ import {
   type PostFrame,
 } from '../src/post.js'
 import { evalPostCode, chainSignature, collectLiveValues, sliderDeclsInCode, postVarDecls } from '../src/post-lang.js'
+import { slider, progress, field, isBinding, evalExpr, type Binding } from '../src/dsl.js'
 import { frameToBeat } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
 
@@ -133,6 +134,63 @@ test('pulse adds a decaying (default easeOut) contribution that stacks and expir
   close(vars(rows, 60).g, 1.8)   // onset: 0.3 + (1 + 0.5)·env(0)=1
   close(vars(rows, 75).g, 0.675) // midpoint easeOut env=0.25: 0.3 + 1.5·0.25
   close(vars(rows, 90).g, 0.3)   // expired: inert
+})
+
+// ── expression values in set/pulse rows ──────────────────────────────────────
+
+const resolveAt = (v: unknown, sliderValue: number): unknown =>
+  evalExpr((v as Binding).$expr, {}, 0, { slider: () => sliderValue })
+
+test('a set with dur shaping itself with progress() sweeps 0→1 and rests at 1', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'set', name: 'v', value: progress().toJSON(), dur: 2 }, // frames 0..60
+  ]
+  assert.equal(typeof vars(rows, 30).v, 'number', 'progress-only exprs bake to plain numbers')
+  close(vars(rows, 0).v, 0)
+  close(vars(rows, 30).v, 0.5)
+  close(vars(rows, 60).v, 1)
+  close(vars(rows, 300).v, 1)
+})
+
+test('a tween to an expression target emits a per-frame-resolving lerp composite', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'set', name: 'v', value: 1 },
+    { beat: 5, event: 'set', name: 'v', value: slider('x').toJSON(), dur: 2, ease: 'linear' }, // frames 120..180
+  ]
+  assert.equal(typeof vars(rows, 60).v, 'number', 'numeric-only prefix stays on the arithmetic path')
+  close(vars(rows, 60).v, 1)
+  const mid = vars(rows, 150).v // u = 0.5
+  assert.ok(isBinding(mid), 'the tween resolves per frame, not at fold')
+  close(resolveAt(mid, 5), 3) // 1 + (5 - 1) · 0.5
+  // settled: eased u = 1 leaves the target expression alone
+  close(resolveAt(vars(rows, 180).v, 5), 5)
+})
+
+test('a pulse stacks over an expression base instead of being dropped', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'set', name: 'g', value: slider('x').toJSON() },
+    { beat: 3, event: 'pulse', name: 'g', value: 1, dur: 1 }, // frames 60..90
+  ]
+  close(resolveAt(vars(rows, 60).g, 2), 3) // base 2 + 1·env(0)
+  close(resolveAt(vars(rows, 90).g, 2), 2) // expired pulse leaves the bare base
+})
+
+test('field() in a value cell reads its own row, not sibling vars', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'set', name: 'beat', value: 99 }, // a sibling var named like a column
+    { beat: 3, event: 'set', name: 'v', value: field('beat').toJSON() },
+  ]
+  assert.equal(vars(rows, 60).v, 3, "the row's own beat column, substituted at fold time")
+})
+
+test('substitution never mutates the source nodes (cook memo safety)', () => {
+  const value = progress().mul(2).toJSON()
+  const snapshot = JSON.parse(JSON.stringify(value))
+  const rows: Row[] = [{ beat: 1, event: 'set', name: 'v', value, dur: 2 }]
+  vars(rows, 15)
+  vars(rows, 45)
+  vars(rows, 90)
+  assert.deepEqual(value, snapshot)
 })
 
 test('postCodeUpToRow shows the running chain after the given row', () => {

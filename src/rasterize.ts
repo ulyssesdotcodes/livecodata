@@ -9,6 +9,19 @@
 import { withLineage, unionLineage, type Row } from './lineage.js'
 import { mixColor } from './color.js'
 import { beatToFrame, beatsToFrames } from './constants.js'
+// dsl.ts imports rasterizeRows back; the cycle is benign — each side only
+// calls the other at runtime, never during module evaluation.
+import { EASINGS, isBinding, isStreamingNode, evalExpr, substituteExpr } from './dsl.js'
+
+const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x)
+
+// An `ease` cell holds a function from code or an easing NAME from a table
+// cell — resolve both, so editable keyframes stop silently playing linear.
+function easeFnOf(e: unknown): ((t: number) => number) | null {
+  if (typeof e === 'function') return e as (t: number) => number
+  if (typeof e === 'string' && e in EASINGS) return EASINGS[e as keyof typeof EASINGS]
+  return null
+}
 
 interface SampledState {
   fields: Row
@@ -75,17 +88,22 @@ function sampleColor(events: Row[], createEv: Row, i: number): { color: number |
   const base = colorEv.to != null
     ? (colorEv.to as number | null)
     : ((createEv.color as number | null | undefined) ?? (colorEv.color as number | null))
+  // The decay bit-mixes its endpoints, which an expression value can't ride —
+  // a binding endpoint makes the event a plain step instead.
+  if (typeof colorEv.color !== 'number' || (base != null && typeof base !== 'number')) {
+    return { color: colorEv.color as number | null, source: colorEv }
+  }
   const p = Math.min(1, Math.max(0, (i - (colorEv.frame as number)) / dur))
-  const easeFn = colorEv.ease as ((t: number) => number) | undefined
-  const eased = typeof easeFn === 'function' ? easeFn(p) : p
-  return { color: mixColor(colorEv.color as number | null, base, eased), source: colorEv }
+  const ease = easeFnOf(colorEv.ease)
+  const eased = ease ? ease(p) : p
+  return { color: mixColor(colorEv.color, base, eased), source: colorEv }
 }
 
 // Numeric fields that must NOT interpolate as tracks: timing bookkeeping,
 // identity, and color (which has its own pulse semantics).
 const NO_TRACK = new Set(['frame', 'beat', 'loop', 'dur', 'id', 'color'])
 
-function sampleObject(events: Row[], i: number): SampledState | null {
+function sampleObject(events: Row[], i: number, extent: number): SampledState | null {
   const createEv = events.find((e) => e.type === 'create')
   if (!createEv || i < (createEv.frame as number)) return null
   if (events.some((e) => e.type === 'destroy' && (e.frame as number) <= i)) return null
@@ -98,11 +116,16 @@ function sampleObject(events: Row[], i: number): SampledState | null {
   // Numeric fields are per-field TRACKS: each eases between the previous and
   // next keyframe that actually carry it, so keyframes omitting a field don't
   // interrupt its glide. An `ease` on the destination keyframe shapes that
-  // segment.
+  // segment. Expression ({ $expr }) values are first-class keyframe values on
+  // every track: they hold streaming over their span (with per-frame
+  // progress() substituted) and terminate numeric segments — numeric↔expr
+  // transitions step, never lerp through the expression.
   const names = new Set<string>()
   for (const kf of keyframes) {
     for (const k in kf) {
-      if (!NO_TRACK.has(k) && typeof kf[k] === 'number') names.add(k)
+      if (NO_TRACK.has(k)) continue
+      const v = kf[k]
+      if (typeof v === 'number' || isBinding(v)) names.add(k)
     }
   }
   const sources = new Set<Row>([createEv])
@@ -110,7 +133,8 @@ function sampleObject(events: Row[], i: number): SampledState | null {
     let prev: Row | null = null
     let next: Row | null = null
     for (const kf of keyframes) {
-      if (typeof kf[name] !== 'number') continue
+      const v = kf[name]
+      if (typeof v !== 'number' && !isBinding(v)) continue
       if ((kf.frame as number) <= i) prev = kf
       else {
         next = kf
@@ -119,14 +143,28 @@ function sampleObject(events: Row[], i: number): SampledState | null {
     }
     if (!prev) continue
     sources.add(prev)
-    if (next) {
+    const pv = prev[name]
+    if (isBinding(pv)) {
+      // progress() spans the keyframe's own `dur` (frames here) if set, else
+      // its per-field segment to the next keyframe carrying this field, else
+      // the object's remaining life (destroy frame or bake extent).
+      const start = prev.frame as number
+      const dur = typeof prev.dur === 'number' && prev.dur > 0 ? prev.dur : 0
+      const destroy = events.find((e) => e.type === 'destroy')
+      const end = dur > 0 ? start + dur
+        : next ? (next.frame as number)
+          : destroy ? (destroy.frame as number) : extent
+      const u = end > start ? clamp01((i - start) / (end - start)) : 1
+      const node = substituteExpr(pv.$expr, { progress: u })
+      fields[name] = isStreamingNode(node) ? { $expr: node } : evalExpr(node, fields, i)
+    } else if (next && typeof next[name] === 'number') {
       const raw = (i - (prev.frame as number)) / ((next.frame as number) - (prev.frame as number))
-      const easeFn = next.ease as ((t: number) => number) | undefined
-      const t = typeof easeFn === 'function' ? easeFn(raw) : raw
-      fields[name] = lerp(prev[name] as number, next[name] as number, t)
+      const ease = easeFnOf(next.ease)
+      const t = ease ? ease(raw) : raw
+      fields[name] = lerp(pv as number, next[name] as number, t)
       sources.add(next)
     } else {
-      fields[name] = prev[name]
+      fields[name] = pv
     }
   }
 
@@ -152,7 +190,7 @@ export function rasterizeRows(eventRows: Row[] | null | undefined, maxBeats?: nu
   const out: Row[] = []
   for (let frame = 0; frame <= max; frame++) {
     for (const evs of timelines.values()) {
-      const s = sampleObject(evs, frame)
+      const s = sampleObject(evs, frame, max)
       if (!s) continue
       // Drop the sparse `beat` keyframe field (and any legacy `loop`); the
       // dense cache is keyed by `frame`.
