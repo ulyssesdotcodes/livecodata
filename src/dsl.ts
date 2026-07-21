@@ -1188,6 +1188,35 @@ export const SCHEMAS = deepFreeze({
     disabled: 'boolean',
   },
   /**
+   * The 3D scene's event table (the "three" view): sparse object events keyed
+   * by `id`, expanded by rasterize() into per-frame rows. `beat` places the
+   * event (1-indexed; a beat past the loop's end lands it in a later pass).
+   * `type` picks what it does — "create" (the object appears: set `shape` and
+   * any transform fields), "update" (a keyframe: each field it carries is a
+   * per-field track easing from the previous keyframe carrying that field),
+   * "destroy" (the object leaves). px/py/pz position, rx/ry/rz rotation in
+   * radians, sx/sy/sz scale, `color` a 0xRRGGBB number. `ease` names the
+   * easing of the segment INTO this keyframe. Number cells accept "="
+   * expressions (e.g. "=slider('h')" or "=progress().mul(6.283).sin()"),
+   * which hold streaming over their span instead of interpolating; `dur`
+   * (beats) sets the window a value's progress() sweeps — without it, an
+   * expression runs to the next keyframe carrying the same field. Check
+   * `disabled` to mute a row without deleting it.
+   */
+  scene: {
+    beat: 'number',
+    id: 'string',
+    type: ['create', 'update', 'destroy'],
+    shape: ['box', 'sphere', 'cylinder', 'cone', 'torus', 'text', 'light', 'camera'],
+    px: 'number', py: 'number', pz: 'number',
+    rx: 'number', ry: 'number', rz: 'number',
+    sx: 'number', sy: 'number', sz: 'number',
+    color: 'number',
+    dur: 'number',
+    ease: ['linear', 'easeIn', 'easeOut', 'easeInOut'],
+    disabled: 'boolean',
+  },
+  /**
    * The GPU particle view: a table that opts the curl-noise particle sim in
    * and drives its parameters. A "spawn" row turns the sim on — without one
    * it never runs (WebGPU browsers only; the WebGL2 fallback has no compute

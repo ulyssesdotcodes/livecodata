@@ -7,7 +7,10 @@
 // `three`; the node graph is built and rendered by post-scene.ts.
 
 import { beatToFrame, beatsToFrames, FPS } from './constants.js'
-import { EASINGS, type Easings } from './dsl.js'
+import {
+  EASINGS, isBinding, isStreamingNode, evalExpr, substituteExpr,
+  type Easings, type ExprNode,
+} from './dsl.js'
 import { evalPostCode, chainSignature, type OpChain } from './post-lang.js'
 import type { Row } from './lineage.js'
 
@@ -162,8 +165,8 @@ const easingOf = (name: unknown, fallback: keyof Easings): ((t: number) => numbe
 // The base (step-or-tween) value of one variable at `frame`, from its `set`
 // rows in index order (all at/before frame). The last row is the active one:
 // with a `dur` it interpolates from the previous row's value via EASINGS[ease]
-// over dur beats; otherwise it steps. A non-numeric value (or a missing
-// previous value) degenerates to a step, so `$expr` bindings pass through.
+// over dur beats; otherwise it steps. Numeric-only rows come here (foldVars'
+// fast path); rows carrying `$expr` bindings go through baseComposite.
 function baseValue(sets: Row[], frame: number): unknown {
   if (sets.length === 0) return undefined
   let prev: unknown = undefined
@@ -197,8 +200,71 @@ function pulseSum(pulses: Row[], frame: number): number {
   return sum
 }
 
+// A set/pulse row's value with the row's own context substituted in: field()
+// reads the row's columns (resolveBindings later sees the vars map as its
+// row, which would read sibling variables instead), progress() the row's own
+// dur window at `frame`. A still-streaming result stays a binding; otherwise
+// the expression collapses to its value right here.
+function resolvedValue(r: Row, frame: number): unknown {
+  const v = r.value
+  if (!isBinding(v)) return v
+  const dur = typeof r.dur === 'number' && r.dur > 0 ? r.dur : 0
+  const u = dur > 0 ? clamp01((frame - (r.index as number)) / Math.max(1, beatsToFrames(dur))) : 1
+  const node = substituteExpr(v.$expr, { progress: u, fields: r })
+  return isStreamingNode(node) ? { $expr: node } : evalExpr(node, r, 0)
+}
+
+const litNode = (v: number): ExprNode => ({ k: 'lit', v })
+const addNode = (a: ExprNode, b: ExprNode): ExprNode => ({ k: 'bin', op: 'add', a, b })
+const nodeOf = (v: unknown): ExprNode | null =>
+  typeof v === 'number' && Number.isFinite(v) ? litNode(v) : isBinding(v) ? v.$expr : null
+
+// baseValue's sibling for names whose rows carry expressions: a tween with an
+// expression endpoint emits a per-frame lerp composite — u and the ease are
+// known here, the endpoints resolve at the visualizer's resolveBindings —
+// instead of degrading to a step.
+function baseComposite(sets: Row[], frame: number): unknown {
+  if (sets.length === 0) return undefined
+  let prev: unknown = undefined
+  for (let i = 0; i < sets.length - 1; i++) prev = resolvedValue(sets[i], frame)
+  const r = sets[sets.length - 1]
+  const target = resolvedValue(r, frame)
+  const dur = typeof r.dur === 'number' && r.dur > 0 ? r.dur : 0
+  if (dur > 0) {
+    const durFrames = Math.max(1, beatsToFrames(dur))
+    const u = clamp01((frame - (r.index as number)) / durFrames)
+    const eased = easingOf(r.ease, 'linear')(u)
+    if (typeof target === 'number' && typeof prev === 'number') return prev + (target - prev) * eased
+    const a = nodeOf(prev)
+    const b = nodeOf(target)
+    if (a && b) return { $expr: { k: 'call', fn: 'lerp', args: [a, b, litNode(eased)] } satisfies ExprNode }
+  }
+  return target
+}
+
+// pulseSum's sibling for expression rows: each active expression pulse
+// contributes a mul(pulseNode, lit(env)) term that stacks over any base.
+function pulseParts(pulses: Row[], frame: number): { num: number; nodes: ExprNode[] } {
+  let num = 0
+  const nodes: ExprNode[] = []
+  for (const r of pulses) {
+    const dur = typeof r.dur === 'number' && r.dur > 0 ? r.dur : 0
+    if (dur <= 0) continue
+    const start = r.index as number
+    const durFrames = Math.max(1, beatsToFrames(dur))
+    if (frame < start || frame >= start + durFrames) continue
+    const u = clamp01((frame - start) / durFrames)
+    const env = 1 - easingOf(r.ease, 'easeOut')(u)
+    const v = resolvedValue(r, frame)
+    if (typeof v === 'number') num += v * env
+    else if (isBinding(v)) nodes.push({ k: 'bin', op: 'mul', a: v.$expr, b: litNode(env) })
+  }
+  return { num, nodes }
+}
+
 // Fold every set/pulse row into the variable map at `frame`: each name's base
-// value plus its active pulses.
+// value plus its active pulses. Total when called ctx-free (cook/replay run
+// it too): composites are constructed, never evaluated, here.
 export function foldVars(index: Row[], frame: number): Record<string, unknown> {
   const sets = new Map<string, Row[]>()
   const pulses = new Map<string, Row[]>()
@@ -210,11 +276,39 @@ export function foldVars(index: Row[], frame: number): Record<string, unknown> {
   }
   const vars: Record<string, unknown> = {}
   for (const name of new Set([...sets.keys(), ...pulses.keys()])) {
-    const base = sets.has(name) ? baseValue(sets.get(name)!, frame) : undefined
-    const pulse = pulses.has(name) ? pulseSum(pulses.get(name)!, frame) : 0
-    if (typeof base === 'number' && Number.isFinite(base)) vars[name] = base + pulse
-    else if (base === undefined && pulses.has(name)) vars[name] = pulse
-    else vars[name] = base
+    const setRows = sets.get(name)
+    const pulseRows = pulses.get(name)
+    // Numeric-only names take the original arithmetic path untouched; only a
+    // row carrying a binding pays for the composite machinery.
+    const hasExpr = (setRows?.some((r) => isBinding(r.value)) ?? false)
+      || (pulseRows?.some((r) => isBinding(r.value)) ?? false)
+    if (!hasExpr) {
+      const base = setRows ? baseValue(setRows, frame) : undefined
+      const pulse = pulseRows ? pulseSum(pulseRows, frame) : 0
+      if (typeof base === 'number' && Number.isFinite(base)) vars[name] = base + pulse
+      else if (base === undefined && pulseRows) vars[name] = pulse
+      else vars[name] = base
+      continue
+    }
+    const base = setRows ? baseComposite(setRows, frame) : undefined
+    const { num, nodes } = pulseRows ? pulseParts(pulseRows, frame) : { num: 0, nodes: [] }
+    if (typeof base === 'number' && Number.isFinite(base)) {
+      vars[name] = nodes.length ? { $expr: nodes.reduce(addNode, litNode(base + num)) } : base + num
+    } else if (isBinding(base)) {
+      let n = nodes.reduce(addNode, base.$expr)
+      if (num !== 0) n = addNode(n, litNode(num))
+      vars[name] = { $expr: n }
+    } else if (base === undefined && pulseRows) {
+      if (!nodes.length) {
+        vars[name] = num
+      } else {
+        const head = num !== 0 ? addNode(litNode(num), nodes[0]) : nodes[0]
+        vars[name] = { $expr: nodes.slice(1).reduce(addNode, head) }
+      }
+    } else {
+      // A non-numeric, non-expression base steps as-is; pulses can't ride it.
+      vars[name] = base
+    }
   }
   return vars
 }

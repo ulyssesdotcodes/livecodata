@@ -124,14 +124,16 @@ function makeTextGeometry(params: TextParams): THREE.BufferGeometry {
 // Object3D.scale on top of the geometry's own dimensions, so a scale animation
 // never rebuilds geometry.
 function applyScale(obj: THREE.Object3D, row: Record<string, unknown>): void {
-  obj.scale.set((row.sx as number) ?? 1, (row.sy as number) ?? 1, (row.sz as number) ?? 1)
+  obj.scale.set(num(row.sx, 1), num(row.sy, 1), num(row.sz, 1))
 }
 
-function applyTextTransform(mesh: THREE.Mesh, row: Record<string, unknown>): void {
-  const { px, py, pz, rx, ry, rz } = row
-  mesh.position.set((px as number) ?? 0, (py as number) ?? 0, (pz as number) ?? 0)
-  mesh.rotation.set((rx as number) ?? 0, (ry as number) ?? 0, (rz as number) ?? 0)
-  applyScale(mesh, row)
+// Position/rotation/scale from a row, guarded: an unresolved binding or NaN
+// degrades to the default instead of vanishing the mesh — the error surface
+// is the table's invalid-cell flag, not a missing object.
+function applyTransform(obj: THREE.Object3D, row: Record<string, unknown>): void {
+  obj.position.set(num(row.px, 0), num(row.py, 0), num(row.pz, 0))
+  obj.rotation.set(num(row.rx, 0), num(row.ry, 0), num(row.rz, 0))
+  applyScale(obj, row)
 }
 
 function makeText(row: Record<string, unknown>): TextObject {
@@ -140,7 +142,7 @@ function makeText(row: Record<string, unknown>): TextObject {
   const material = new THREE.MeshStandardMaterial({ color: params.color, metalness: 0.3, roughness: 0.4 })
   const mesh = new THREE.Mesh(geometry, material)
   mesh.name = String(row.id)
-  applyTextTransform(mesh, row)
+  applyTransform(mesh, row)
   return { mesh, geometry, material, params }
 }
 
@@ -167,7 +169,7 @@ export interface CameraPose { px: number; py: number; pz: number; tx: number; ty
 
 export const CAMERA_DEFAULT: CameraPose = { px: 0, py: 0, pz: 5, tx: 0, ty: 0, tz: 0, fov: 60 }
 
-const num = (v: unknown, d: number): number => (typeof v === 'number' ? v : d)
+const num = (v: unknown, d: number): number => (typeof v === 'number' && Number.isFinite(v) ? v : d)
 
 // `fov` is null when the row doesn't set it, so the current fov is left
 // untouched.
@@ -435,12 +437,9 @@ function makeOrigami(row: Record<string, unknown>): OrigamiObject {
 }
 
 function applyOrigamiRow(obj: OrigamiObject, row: Record<string, unknown>): void {
-  const { px, py, pz, rx, ry, rz, color } = row
-  obj.root.position.set((px as number) ?? 0, (py as number) ?? 0, (pz as number) ?? 0)
-  obj.root.rotation.set((rx as number) ?? 0, (ry as number) ?? 0, (rz as number) ?? 0)
-  applyScale(obj.root, row)
-  if (color != null) obj.front.color.set(color as number)
-  if (typeof row.fold === 'number') obj.fold = row.fold
+  applyTransform(obj.root, row)
+  if (row.color != null) obj.front.color.set(row.color as number)
+  if (typeof row.fold === 'number' && Number.isFinite(row.fold)) obj.fold = row.fold
 }
 
 function disposeOrigami(obj: OrigamiObject): void {
@@ -614,7 +613,7 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
       particleTime = time
     },
     createObject(row: Record<string, unknown>): void {
-      const { id, shape, px, py, pz, rx, ry, rz, color } = row
+      const { id, shape, color } = row
       if (objects.has(id) || origamis.has(id) || texts.has(id) || lights.has(id) || cameras.has(id)) return
       if (shape === 'camera') {
         applyCamera(row)
@@ -646,9 +645,7 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
       colorIdx++
       const mesh = new THREE.Mesh(geo, mat)
       mesh.name = String(id)
-      mesh.position.set(px as number, py as number, pz as number)
-      mesh.rotation.set(rx as number ?? 0, ry as number ?? 0, rz as number ?? 0)
-      applyScale(mesh, row)
+      applyTransform(mesh, row)
       mesh.userData.shape = shape
       mesh.userData.dims = geometryDims(shape as string, row)
       scene.add(mesh)
@@ -656,7 +653,7 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
     },
 
     updateObject(row: Record<string, unknown>): void {
-      const { id, px, py, pz, rx, ry, rz, color } = row
+      const { id, color } = row
       if (cameras.has(id)) {
         applyCamera(row)
         return
@@ -668,7 +665,7 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
       }
       const text = texts.get(id)
       if (text) {
-        applyTextTransform(text.mesh, row)
+        applyTransform(text.mesh, row)
         if (color != null) text.material.color.set(color as number)
         if (textGeometryChanged(text.params, row)) rebuildTextGeometry(text, row)
         return
@@ -688,9 +685,7 @@ export function initThree(canvas: HTMLCanvasElement, sizeFrom: HTMLElement): Sce
       }
       const mesh = objects.get(id)
       if (!mesh) return
-      mesh.position.set(px as number, py as number, pz as number)
-      mesh.rotation.set(rx as number ?? 0, ry as number ?? 0, rz as number ?? 0)
-      applyScale(mesh, row)
+      applyTransform(mesh, row)
       if (color != null) (mesh.material as THREE.MeshStandardMaterial).color.set(color as number)
       const prevShape = mesh.userData.shape as string
       if (geometryChanged(prevShape, mesh.userData.dims, row)) {

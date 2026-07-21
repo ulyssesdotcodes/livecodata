@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { rasterizeRows, buildFrameIndex, stateAtFrame, sampleFrame } from '../src/rasterize.js'
+import { slider, progress, isBinding, evalExpr, type Binding } from '../src/dsl.js'
 import { frameToBeat, framesToBeats } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
 
@@ -175,6 +176,65 @@ test('numeric tracks glide across keyframes that omit them', () => {
   assert.equal(at5.wings, 1, 'wings holds after its own last keyframe')
   const at2 = rows.find((r) => r.frame === 2)!
   assert.equal(at2.wings, 0.5, 'wings ramp unaffected by the later ry keyframe')
+})
+
+// --- expression keyframes join the per-field track scan ----------------------
+
+test('a numeric/expr/numeric sandwich samples the expr in its span — no lerp-through', () => {
+  const rows = rasterizeRows([
+    create({ py: 0 }),
+    { id: 's', type: 'update', beat: b(4), py: slider('h').toJSON() },
+    { id: 's', type: 'update', beat: b(8), py: 8 },
+  ], mb(10))
+  const pyAt = (fr: number): unknown => rows.find((r) => r.frame === fr)!.py
+  assert.equal(pyAt(2), 0, 'the numeric segment holds — no lerp toward the expr keyframe')
+  assert.ok(isBinding(pyAt(5)), 'the expr keyframe streams through its span')
+  assert.equal(evalExpr((pyAt(5) as Binding).$expr, {}, 0, { slider: () => 2 }), 2)
+  assert.equal(pyAt(8), 8, 'the next numeric keyframe steps in — never a blend through the expr')
+  assert.equal(pyAt(9), 8)
+})
+
+test('non-reserved numerics get the same expr treatment (light intensity)', () => {
+  const rows = rasterizeRows([
+    { id: 'l', type: 'create', beat: 1, shape: 'light', intensity: 1 },
+    { id: 'l', type: 'update', beat: b(3), intensity: slider('bright').toJSON() },
+  ], mb(6))
+  const at = (fr: number): unknown => rows.find((r) => r.frame === fr)!.intensity
+  assert.equal(at(1), 1)
+  assert.ok(isBinding(at(4)), 'the numeric track no longer clobbers the expr update')
+})
+
+test('a keyframe expression sees per-field segment progress and bakes to numbers', () => {
+  const value = progress().mul(10).toJSON()
+  const snapshot = JSON.parse(JSON.stringify(value))
+  const rows = rasterizeRows([
+    create({ py: 0 }),
+    { id: 's', type: 'update', beat: b(3), py: value },
+    { id: 's', type: 'update', beat: b(7), py: 10 }, // the py segment's end
+  ], mb(8))
+  const pyAt = (fr: number): unknown => rows.find((r) => r.frame === fr)!.py
+  assert.equal(pyAt(3), 0, 'progress-only exprs land as plain numbers')
+  assert.equal(pyAt(5), 5, 'u is the elapsed fraction of the per-field segment')
+  assert.equal(pyAt(7), 10)
+  assert.deepEqual(value, snapshot, 'per-frame substitution clones — the source node is untouched')
+})
+
+test("a keyframe's own dur overrides the progress window", () => {
+  const rows = rasterizeRows([
+    create({ py: 0 }),
+    { id: 's', type: 'update', beat: b(3), dur: mb(2), py: progress().toJSON() },
+  ], mb(9))
+  const pyAt = (fr: number): unknown => rows.find((r) => r.frame === fr)!.py
+  assert.equal(pyAt(4), 0.5)
+  assert.equal(pyAt(6), 1, 'clamped once the dur window closes')
+})
+
+test('a string ease from a table cell resolves via EASINGS', () => {
+  const rows = rasterizeRows([
+    create({ px: 0 }),
+    { id: 's', type: 'update', beat: b(10), px: 10, ease: 'easeIn' },
+  ], mb(10))
+  assert.equal(rows.find((r) => r.frame === 5)!.px, 2.5, 't² at the midpoint')
 })
 
 // --- the absolute beat axis: events past maxBeats form later passes ----------
