@@ -671,13 +671,13 @@ function TablePanelView(props: PanelProps) {
                 const v = Number(num.value)
                 commit(Number.isFinite(v) && num.value.trim() !== '' ? v : cur, viaBlur)
               }
-              // type="text" + inputmode so a leading "=" is typable: it hands
-              // the cell straight to expression editing (cell-target mode),
-              // spreadsheet muscle memory.
+              // type="text" (default inputmode — a decimal keypad has no "="
+              // key) so a leading "=" is typable: it hands the cell straight
+              // to expression editing (cell-target mode), spreadsheet muscle
+              // memory.
               return (
                 <input
                   type="text"
-                  inputmode="decimal"
                   class="cell-number"
                   value={String(cur)}
                   ref={(el) => { num = el; focusInput(el) }}
