@@ -99,6 +99,16 @@ export const EXPR_NAMESPACE_DOCS: Record<string, DocEntry> = {
   midi:   { sig: 'expr.midi(note, channel?)', detail: 'live MIDI',    info: 'A live value from the streaming MIDI table — the most recent event for `note` (e.g. "c4", "c#4", or "cc1" for control change) at-or-before the playhead. Normalized 0–1 (note velocity / CC value). Chainable like any Expr: expr.midi("c4").mul(2). Resolves each frame, so notes you play while looping replay at the loop position they were heard. Optional 1-based `channel` filters to one channel.' },
   slider: { sig: 'expr.slider(id, min?, max?)', detail: 'live slider',  info: 'A live on-screen slider value. Calling it also declares the slider — the "sliders" table keeps one row per name, the latest declaration winning min/max (default 0–1) — so the labelled control appears over the visual with no other setup, recording its automation the way MIDI does. Resolves each frame: derive({ py: expr.slider("height") }) follows the slider as the loop replays.' },
   time:   { sig: 'expr.time()',               detail: 'playback clock', info: 'The playback clock in seconds at the playhead — the same clock hydra/post chains see as props.time, so pausing or scrubbing freezes or scrubs it. Live (resolves each frame): derive({ ry: expr.time().mul(0.5) }) spins an object continuously.' },
+  progress: { sig: 'expr.progress()',         detail: 'event percent-done', info: 'Percent-done of the enclosing event, 0→1. A post set/pulse value reads its own dur window (a set without dur reads 1); a scene keyframe value reads its dur, else its per-field segment to the next keyframe. Works in "=" cells and code exprs alike — "=progress().mul(tau).sin()" shapes a set\'s own sweep.' },
+  min:    { sig: 'expr.min(a, b)',            detail: 'smaller value',  info: 'The smaller of a and b (each an Expr or number). Also chainable: a.min(b).' },
+  max:    { sig: 'expr.max(a, b)',            detail: 'larger value',   info: 'The larger of a and b. Also chainable: a.max(b).' },
+  clamp:  { sig: 'expr.clamp(x, lo, hi)',     detail: 'limit range',    info: 'Limit x into [lo, hi]. Also chainable: x.clamp(lo, hi).' },
+  lerp:   { sig: 'expr.lerp(a, b, t)',        detail: 'blend a→b',      info: 'Blend from a toward b by t (0–1) — expr.lerp(0, 10, expr.progress()) glides over the event. Also chainable: a.lerp(b, t).' },
+  pow:    { sig: 'expr.pow(x, e)',            detail: 'power',          info: 'x raised to e. Also chainable: x.pow(e).' },
+  wrap:   { sig: 'expr.wrap(x, lo, hi)',      detail: 'wrap range',     info: 'Wrap x into [lo, hi) — expr.wrap(expr.time(), 0, expr.tau) keeps an angle in range. Also chainable: x.wrap(lo, hi).' },
+  atan2:  { sig: 'expr.atan2(y, x)',          detail: 'vector angle',   info: 'Angle of the vector (y, x) in radians. Also chainable: y.atan2(x).' },
+  pi:     { sig: 'expr.pi',                   detail: 'π',              info: 'π as an expression constant — expr.pi.div(2).' },
+  tau:    { sig: 'expr.tau',                  detail: '2π',             info: '2π, a full turn in radians — progress().mul(expr.tau).sin() completes one cycle over the event.' },
 }
 
 export const EXPR_METHOD_DOCS: Record<string, DocEntry> = {
@@ -117,6 +127,18 @@ export const EXPR_METHOD_DOCS: Record<string, DocEntry> = {
   or:   { sig: '.or(expr)',         detail: 'expr  ||',  info: 'Logical OR of two boolean Exprs.' },
   not:  { sig: '.not()',            detail: 'expr  !',   info: 'Logical negation of a boolean Expr.' },
   cond: { sig: '.cond(then, else)', detail: 'ternary',   info: 'If this Expr is truthy yield `then`, else `else` (each an Expr or literal).' },
+  sin:  { sig: '.sin()',            detail: 'sine',      info: 'Sine of this value (radians) — a live input oscillates: expr.time().sin().' },
+  cos:  { sig: '.cos()',            detail: 'cosine',    info: 'Cosine of this value (radians).' },
+  abs:  { sig: '.abs()',            detail: 'absolute',  info: 'Absolute value.' },
+  floor:{ sig: '.floor()',          detail: 'round down', info: 'Round down to the nearest integer.' },
+  round:{ sig: '.round()',          detail: 'round',     info: 'Round to the nearest integer.' },
+  fract:{ sig: '.fract()',          detail: 'sawtooth',  info: 'Fractional part (x − floor(x)) — a 0→1 sawtooth over a growing input like expr.time().' },
+  pow:  { sig: '.pow(e)',           detail: 'power',     info: 'This value raised to the power e.' },
+  min:  { sig: '.min(o)',           detail: 'smaller',   info: 'The smaller of this and o.' },
+  max:  { sig: '.max(o)',           detail: 'larger',    info: 'The larger of this and o.' },
+  clamp:{ sig: '.clamp(lo, hi)',    detail: 'limit range', info: 'Limit this value into [lo, hi] — expr.slider("v").clamp(0, 1).' },
+  lerp: { sig: '.lerp(b, t)',       detail: 'blend',     info: 'Blend from this value toward b by t (0–1) — a.lerp(b, expr.progress()) glides over the event.' },
+  wrap: { sig: '.wrap(lo, hi)',     detail: 'wrap range', info: 'Wrap this value into [lo, hi) — expr.time().wrap(0, 6.283) keeps an angle in range.' },
 }
 
 export const DSL_BUILTINS = Object.keys(DSL_BUILTIN_DOCS)

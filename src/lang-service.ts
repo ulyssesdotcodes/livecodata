@@ -9,7 +9,7 @@ import ts from 'typescript'
 
 // Each language gets its own service program — the ambient surfaces must never
 // see each other.
-export type EditorLang = 'dsl' | 'hydra' | 'post'
+export type EditorLang = 'dsl' | 'hydra' | 'post' | 'expr'
 
 export interface LangEnv {
   files: Record<string, string>
@@ -74,7 +74,9 @@ const docsOf = (doc: ts.SymbolDisplayPart[] | undefined, tags: ts.JSDocTagInfo[]
 }
 
 export function createLangService(env: LangEnv, lang: EditorLang = 'dsl'): LangService {
-  const { userFile, roots } = env.langs[lang]
+  // A stale service-worker-cached env may predate a language — serve DSL
+  // rather than crash the worker.
+  const { userFile, roots } = env.langs[lang] ?? env.langs.dsl
   let userText = ''
   let version = 0
 

@@ -178,6 +178,68 @@ function buildPostGlobals(root) {
   ].join('\n')
 }
 
+// The "=" expression-cell surface: every EXPR_FNS math function as a bare
+// global (read from the src/dsl.ts AST, like POST_OPS), plus the ExprNamespace
+// sources/constants as consts typed by indexed access so their JSDoc rides
+// into hovers. Mirrors the scope expr-cell.ts actually evaluates against.
+/** @param {string} root @param {{ name: string, doc: string }[]} nsProps */
+function buildExprGlobals(root, nsProps) {
+  const src = readFileSync(path.join(root, 'src/dsl.ts'), 'utf8')
+  const sf = ts.createSourceFile('dsl.ts', src, ts.ScriptTarget.ES2022, true)
+  const unquote = (/** @type {string} */ s) => s.replace(/^['"`]|['"`]$/g, '')
+  /** @type {{ name: string, arity: number, doc: string }[]} */
+  const fns = []
+  sf.forEachChild((node) => {
+    if (!ts.isVariableStatement(node)) return
+    for (const decl of node.declarationList.declarations) {
+      if (!ts.isIdentifier(decl.name) || decl.name.text !== 'EXPR_FNS') continue
+      if (!decl.initializer || !ts.isObjectLiteralExpression(decl.initializer)) continue
+      for (const p of decl.initializer.properties) {
+        if (!ts.isPropertyAssignment(p) || !ts.isObjectLiteralExpression(p.initializer)) continue
+        const get = (/** @type {string} */ key) =>
+          p.initializer.properties.find((q) => ts.isPropertyAssignment(q) && unquote(q.name.getText(sf)) === key)
+        const arityNode = get('arity')
+        const docNode = get('doc')
+        fns.push({
+          name: unquote(p.name.getText(sf)),
+          arity: arityNode && ts.isPropertyAssignment(arityNode) ? Number(arityNode.initializer.getText(sf)) : 1,
+          doc: docNode && ts.isPropertyAssignment(docNode) ? unquote(docNode.initializer.getText(sf)) : '',
+        })
+      }
+    }
+  })
+  if (!fns.length) throw new Error('gen-lang-env: EXPR_FNS not found in src/dsl.ts')
+
+  const PARAM_NAMES = ['x', 'a', 'b', 'c']
+  /** @param {number} arity */
+  const params = (arity) =>
+    (arity === 1 ? ['x'] : PARAM_NAMES.slice(1, arity + 1)).map((n) => `${n}: Expr | number`).join(', ')
+  // The bare sources/constants the cell scope provides; min/max/etc. come from
+  // EXPR_FNS above, `expr` itself is added last.
+  const SOURCES = ['field', 'lit', 'idx', 'midi', 'slider', 'time', 'progress', 'pi', 'tau', 'e']
+  const docOf = (/** @type {string} */ name) => nsProps.find((p) => p.name === name)?.doc ?? ''
+  /** @param {string} doc @param {string} indent */
+  const docComment = (doc) => (doc ? [`  /** ${doc.replace(/\*\//g, '*\\/').split('\n').join('\n   * ')} */`] : [])
+  return [
+    '// Generated — the "=" expression-cell surface, from src/dsl.ts\'s EXPR_FNS',
+    '// registry and ExprNamespace (see scripts/gen-lang-env.js).',
+    'import type { Expr, ExprNamespace } from "./dts/dsl.js";',
+    'declare global {',
+    ...fns.flatMap((f) => [
+      ...docComment(f.doc),
+      `  function ${f.name}(${params(f.arity)}): Expr;`,
+    ]),
+    ...SOURCES.flatMap((name) => [
+      ...docComment(docOf(name)),
+      `  const ${name}: ExprNamespace[${JSON.stringify(name)}];`,
+    ]),
+    '  /** The Expr namespace itself — the same sources and math fns under one name, e.g. expr.slider("h"). */',
+    '  const expr: ExprNamespace;',
+    '}',
+    'export {};',
+  ].join('\n')
+}
+
 export function buildLangEnv() {
   const dslEntry = path.join(root, 'src/dsl.ts')
   const program = ts.createProgram([dslEntry], {
@@ -209,9 +271,17 @@ export function buildLangEnv() {
   const sf = program.getSourceFile(dslEntry)
   /** @type {{ name: string, doc: string }[]} */
   let surface = []
+  /** @type {{ name: string, doc: string }[]} */
+  let exprNs = []
   sf.forEachChild((node) => {
     if (ts.isTypeAliasDeclaration(node) && node.name.text === 'DSLSurface') {
       surface = checker.getTypeAtLocation(node.name).getProperties().map((p) => ({
+        name: p.getName(),
+        doc: ts.displayPartsToString(p.getDocumentationComment(checker)),
+      }))
+    }
+    if (ts.isInterfaceDeclaration(node) && node.name.text === 'ExprNamespace') {
+      exprNs = checker.getTypeAtLocation(node.name).getProperties().map((p) => ({
         name: p.getName(),
         doc: ts.displayPartsToString(p.getDocumentationComment(checker)),
       }))
@@ -243,6 +313,7 @@ export function buildLangEnv() {
 
   files['/hydra-globals.d.ts'] = buildHydraGlobals().replace('declare global {', `declare global {\n${consoleDecl}`)
   files['/post-globals.d.ts'] = buildPostGlobals(root).replace('declare global {', `declare global {\n${consoleDecl}`)
+  files['/expr-globals.d.ts'] = buildExprGlobals(root, exprNs)
 
   // Standard-library closure: lib.es2022.d.ts plus everything it /// references.
   /** @param {string} name */
@@ -264,6 +335,7 @@ export function buildLangEnv() {
       dsl: { userFile: '/main.js', roots: ['/globals.d.ts'] },
       hydra: { userFile: '/hydra-sketch.js', roots: ['/hydra-globals.d.ts'] },
       post: { userFile: '/post-sketch.js', roots: ['/post-globals.d.ts'] },
+      expr: { userFile: '/expr-value.js', roots: ['/expr-globals.d.ts'] },
     },
     surfaceProps,
   }

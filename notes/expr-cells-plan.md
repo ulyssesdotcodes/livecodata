@@ -179,58 +179,30 @@ Old clients meeting a cell that uses a newer function get a `ReferenceError`
 at eval → invalid-red cell + column default at cook. No NaN, no crash, no
 persisted-AST versioning: text is the format, and bindings remain cook-local.
 
-### 2.5 Cell editing: cell-target mode first, inline mini-editor for quick edits
+### 2.5 Cell editing: plain inputs for numbers, the code editor for `=`
 
-`EditableCell` gets one small dispatch: an `=`-string value routes to the
-code-cell path instead of the primitive inline editors. Display needs one
-branch: `formatEditableCell`'s number arm shows `=`-strings as-is (covers
-cells, timeline-strip readouts, events tabs). To *create* an expr from a
-number cell, typing `=` as the first character switches the cell into
-expression editing (spreadsheet muscle memory; the inline input becomes
-`type="text" inputmode="decimal"` so `=` is typable). This also closes the
-v1 clobber hazard — an `=` cell never opens the coercing number editor.
+Two modalities, split by what the cell holds — no new editor component
+(an inline mini CodeMirror was considered and rejected: a small
+contenteditable inside a scrollable touch grid is awkward on mobile, and the
+reparenting/focus machinery it needs isn't worth it for one expression):
 
-**Phase 2 (zero new UI)**: the dispatch targets `props.onEditCell` —
-`main.ts:117-144` already expands the collapsed mobile editor, opens
-cell-target mode with a language, and its commit **already** does
-`setCell` + `evaluate(liveCode, { seed: liveSeed })` (a commit is a full
-Apply of all pending edits at the last-applied program, same as code cells
-today).
+- **Plain numbers** stay in the existing inline `<input>` — untouched except
+  becoming `type="text"` (default inputmode — a decimal keypad has no `=`
+  key, or often a minus sign) so `=` is typable. Tap, type, Enter/Tab; never
+  leaves the grid.
+- **`=` cells** route to `props.onEditCell` — the existing code-cell path:
+  `main.ts` expands the collapsed mobile editor, opens cell-target mode with
+  the `'expr'` language (the `=` marker is stripped for the buffer and
+  re-added on commit, so the language service sees plain JS), and its commit
+  **already** does `setCell` + `evaluate(liveCode, { seed: liveSeed })` (a
+  commit is a full Apply of all pending edits at the last-applied program,
+  same as code cells today). Committing plain numeric or blank text converts
+  the cell back to a number/blank. Typing `=` as the first character of a
+  number cell hands off mid-edit — spreadsheet muscle memory. This also
+  closes the v1 clobber hazard: an `=` cell never opens a coercing editor.
 
-**Phase 4: an inline mini CodeMirror in the cell.** The app's single
-EditorView is a choice, not a constraint — CM6 is multi-view by design, and
-every language-service source is a stateless factory over the shared
-`LangClient` with a `getLang` closure (`editor-support.ts:169-343`), so a
-second minimal view gets completions/hover/signature by calling the same
-factories with a cell-scoped closure. Shape:
-
-- **One lazily-created instance**, owned outside the render tree and
-  reparented into the editing cell's `td` (keeps identity across the panel's
-  tick-driven rebuilds — the slider panel's documented invariant); language
-  swapped per edit via a `Compartment`. Extensions: bare `javascriptLanguage`
-  + the completion/hover factories + `oneDark` + the §4 scrubber/token-bar —
-  no basicSetup chrome, no vim, no remote cursors (those stay main-editor
-  concerns).
-- **Grid semantics preserved**: a `Prec.highest` keymap maps Enter →
-  commit + refocus grid, Tab → commit + advance, Escape → cancel — the same
-  contract as the primitive inline editors, wired to the existing
-  `commit()`/`advanceEdit` machinery; `guardFocus`'s selector grows
-  `.cm-content`. Autogrow to a few lines, overlaying the row at a usable
-  min-width (the measured-popover pattern) rather than squeezing into the
-  column.
-- **Expand affordance**: a corner button hands the buffer to full
-  cell-target mode for long edits — the main editor stays the home of docs,
-  vim, and multi-line work; inline is the quick path (especially on mobile,
-  where it avoids the collapse/expand pane jump entirely).
-- Commit stays the explicit gesture (Enter/Apply); outside-click cancels,
-  like every inline editor today.
-
-Editor language: start with `'dsl'` (the TS service already completes
-`expr.*` and Expr-method chains — test-pinned); add an `'expr'` lang-env
-entry later for bare-name completions (`slider(`, `sin(`) via the documented
-`CodeLanguage`/`EditorLang`/`env.langs` recipe (§5). The inline editor also
-serves plain `code` columns for quick tweaks — same dispatch, same expand
-hatch — so post/hydra cells gain it too.
+Display needs one branch: `formatEditableCell`'s number arm shows
+`=`-strings as-is (covers cells, timeline-strip readouts, events tabs).
 
 ---
 
@@ -377,11 +349,9 @@ creation are number tweaks, which the scrubber owns).
 3. **Consumers** — post foldVars composites + substitutions, rasterize
    binding keyframes in the track scan + progress substitution + string
    ease, `schemas.scene`, three-scene NaN guards.
-4. **Editor affordances** — inline mini CodeMirror in cells (§2.5),
-   number-literal scrubber extension, mobile token bar, `'expr'` lang-env
-   entry; sample + tutorial text. The scrubber and token bar are extension
-   arrays shared by both views, so they land in cells and the main editor
-   together.
+4. **Editor affordances** — number-literal scrubber extension, mobile token
+   bar, `'expr'` lang-env entry; sample + tutorial text. All editor-level, so
+   they serve `=` cells, post/hydra cells, and the main program alike.
 5. **Polish** — inline evaluated-value annotations (playback ctx accessor),
    graph markers for expr rows, bauble/`layer` revisit, resolve-then-lerp
    keyframe glides.

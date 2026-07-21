@@ -786,6 +786,43 @@ html, body {
   overflow: auto;
 }
 
+/* "=" cell token bar — thumb-sized inserts above the editor on touch. */
+.editor-token-bar {
+  flex-shrink: 0;
+  display: flex;
+  gap: 4px;
+  padding: 4px 6px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  background: #141428;
+  border-bottom: 1px solid #2a2a4a;
+}
+
+.token-btn {
+  flex-shrink: 0;
+  min-height: 32px;
+  padding: 2px 10px;
+  background: #1f1f3a;
+  color: #b8c5ff;
+  border: 1px solid #2a2a4a;
+  border-radius: 4px;
+  font-family: monospace;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.token-btn:active {
+  background: #2a2a4a;
+}
+
+/* Scrub-able numeric literals: drag horizontally to change in place. pan-y
+   keeps vertical touch swipes scrolling the editor. */
+.cm-scrub-num {
+  cursor: ew-resize;
+  touch-action: pan-y;
+}
+
 .editor-error {
   flex-shrink: 0;
   background: #3a1620;

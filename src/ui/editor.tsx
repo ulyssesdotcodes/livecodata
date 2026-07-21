@@ -21,6 +21,7 @@ import {
 import { createLangClient, type LangClient } from '../lang-client.js'
 import type { LangSignatureHelp } from '../lang-service.js'
 import type { CodeLanguage } from '../editable-tables.js'
+import { numberScrub } from './num-scrub.js'
 import { buildTablePreview } from './table-preview.js'
 import { DocsPopover } from './docs-popover.js'
 import type { Table } from '../dsl.js'
@@ -163,6 +164,11 @@ export interface EditorController extends EditorAPI {
   back(): void
   // CodeMirror's DOM, adopted by the view's editor-host div.
   cmDom: HTMLElement
+  // The open cell's language (null = the program) — the token bar keys on it.
+  activeCellLang: Accessor<CodeLanguage | null>
+  // Insert text at the cursor, placing the caret `cursorBack` chars from its
+  // end — the token bar's insert path.
+  insertSnippet(text: string, cursorBack?: number): void
 }
 
 export function createEditor(
@@ -174,6 +180,8 @@ export function createEditor(
   const [backVisible, setBackVisible] = createSignal(false)
   const [error, setErrorSig] = createSignal<string | null>(null)
   const [expandTick, setExpandTick] = createSignal(0)
+  // The open cell's language, null for the program — the token bar keys on it.
+  const [activeCellLang, setActiveCellLang] = createSignal<CodeLanguage | null>(null)
 
   const setError = (msg: string | null): void => { setErrorSig(msg) }
 
@@ -230,6 +238,7 @@ export function createEditor(
   function exitCell(restoreProgram: boolean): void {
     if (!cellTarget) return
     cellTarget = null
+    setActiveCellLang(null)
     setTitle('DSL')
     setRunLabel('Run')
     setBackVisible(false)
@@ -250,6 +259,7 @@ export function createEditor(
   function editCell(label: string, code: string, onCommit: (text: string) => void, { lang = 'dsl' }: { lang?: CodeLanguage } = {}): void {
     if (!cellTarget) stashedProgram = view.state.doc.toString()
     cellTarget = { label, lang, onCommit }
+    setActiveCellLang(lang)
     cellBaseline = code
     setTitle(label)
     setRunLabel('Apply')
@@ -291,6 +301,7 @@ export function createEditor(
       }),
       remoteCursorField,
       dslHover(getViews, getPlayIndex, buildTablePreview),
+      numberScrub(),
       oneDark,
       Prec.highest(keymap.of([
         { key: 'Mod-Enter', run: () => { run(); return true } },
@@ -347,14 +358,51 @@ export function createEditor(
     setRemoteCursors(cursors: RemoteCursor[]): void {
       view.dispatch({ effects: setRemoteCursorsEffect.of(cursors) })
     },
+    activeCellLang,
+    insertSnippet(text: string, cursorBack = 0): void {
+      const head = view.state.selection.main.head
+      view.dispatch({
+        changes: { from: head, insert: text },
+        selection: { anchor: head + text.length - cursorBack },
+        userEvent: 'input',
+      })
+      view.focus()
+    },
   }
 }
+
+// Insert targets for the "=" cell token bar; `back` places the caret that
+// many characters from the end (inside quotes/parens).
+const EXPR_TOKENS: { label: string; insert: string; back: number }[] = [
+  { label: 'slider', insert: 'slider("")', back: 2 },
+  { label: 'midi', insert: 'midi("")', back: 2 },
+  { label: 'time', insert: 'time()', back: 0 },
+  { label: 'progress', insert: 'progress()', back: 0 },
+  { label: 'field', insert: 'field("")', back: 2 },
+  { label: '.add', insert: '.add()', back: 1 },
+  { label: '.sub', insert: '.sub()', back: 1 },
+  { label: '.mul', insert: '.mul()', back: 1 },
+  { label: '.div', insert: '.div()', back: 1 },
+  { label: '.mod', insert: '.mod()', back: 1 },
+  { label: 'sin', insert: 'sin()', back: 1 },
+  { label: 'cos', insert: 'cos()', back: 1 },
+  { label: 'abs', insert: 'abs()', back: 1 },
+  { label: 'floor', insert: 'floor()', back: 1 },
+  { label: 'fract', insert: 'fract()', back: 1 },
+  { label: 'min', insert: 'min()', back: 1 },
+  { label: 'max', insert: 'max()', back: 1 },
+  { label: 'clamp', insert: 'clamp()', back: 1 },
+  { label: 'lerp', insert: 'lerp()', back: 1 },
+  { label: 'tau', insert: 'tau', back: 0 },
+]
 
 // `children` slots between the header and the CodeMirror host (app.tsx puts
 // the session selector/bar there).
 export function EditorPane(props: { ctl: EditorController; currentTable?: Accessor<string | null>; children?: JSX.Element }) {
   const { ctl } = props
   const [collapsed, setCollapsed] = createSignal(window.matchMedia('(max-width: 767px)').matches)
+  // The token bar targets thumbs; fine-pointer users type with completions.
+  const coarsePointer = window.matchMedia('(pointer: coarse)').matches
   // A code cell click (ctl.expand()) opens the panel if collapsed.
   createEffect(on(ctl.expandTick, () => setCollapsed(false), { defer: true }))
   // The settings menu is positioned fixed (not absolute) so it isn't clipped
@@ -439,6 +487,21 @@ export function EditorPane(props: { ctl: EditorController; currentTable?: Access
         </div>
       </div>
       {props.children}
+      <Show when={coarsePointer && ctl.activeCellLang() === 'expr'}>
+        <div class="editor-token-bar">
+          {EXPR_TOKENS.map((t) => (
+            <button
+              class="token-btn"
+              // Keep the editor focused — a focus loss would close the cell's
+              // soft keyboard between taps.
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => ctl.insertSnippet(t.insert, t.back)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </Show>
       <div class="editor-host" ref={(el) => el.appendChild(ctl.cmDom)} />
       <Show when={ctl.error()}>
         <div class="editor-error" style={{ display: 'block' }}>{ctl.error()}</div>

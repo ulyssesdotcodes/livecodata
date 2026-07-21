@@ -24,7 +24,7 @@ import { createCookClient } from './cook-client.js'
 import { randomSeed, localSource } from './event-log.js'
 import { createPresenceChannel, userColor, lastCellEdits } from './presence.js'
 import { Table } from './dsl.js'
-import { createEditableTableStore, DISABLED_COL, CLEAR_RUNS_KIND, ACTIVITY_TABLE, type ColumnType, type SessionRun } from './editable-tables.js'
+import { createEditableTableStore, DISABLED_COL, CLEAR_RUNS_KIND, ACTIVITY_TABLE, isExprCellText, type ColumnType, type SessionRun } from './editable-tables.js'
 import type { ApplyNode } from './branches.js'
 import { createMidiInput, subscribeWebMidi, type MidiInput, type MidiStore } from './midi.js'
 import { createSliderInput, sliderDefs, sameSliderDefs, type SliderDef, type SliderInput, type SliderStore } from './sliders.js'
@@ -134,17 +134,24 @@ const tablePanel = createTablePanel(editableStore, {
     const colSpec = data?.columns.find((c) => c.name === col)
     const declaredLang = colSpec?.type === 'code' ? colSpec.language : undefined
     const lang = declaredLang
+      ?? (colSpec?.type === 'number' && isExprCellText(value) ? 'expr' as const : undefined)
       ?? (col === 'code' && table === 'bauble' && isBaubleRow(data?.rows[rowIndex]) ? 'bauble' as const : undefined)
       ?? (col === 'code' && table === 'post' && isPostRow(data?.rows[rowIndex]) ? 'post' as const : undefined)
       ?? (col === 'code' && isHydraRow(data?.rows[rowIndex]) ? 'hydra' as const : 'dsl' as const)
-    editor.editCell(`${table}[${rowIndex}].${col}`, value, (text) => {
-      // A number column reached via cell-target mode (an "=" expression cell):
-      // plain numeric text goes back to a number, so deleting the "=" doesn't
-      // strand a string in a number column.
+    // "=" cells edit without the marker — the buffer must be a plain JS
+    // expression for the 'expr' language service — and commit re-adds it.
+    const isExpr = lang === 'expr'
+    editor.editCell(`${table}[${rowIndex}].${col}`, isExpr ? value.slice(1) : value, (text) => {
+      // A number column reached via cell-target mode: plain numeric (or
+      // blank) text goes back to a number/blank, so deleting the formula
+      // doesn't strand a string in a number column; anything else keeps (or
+      // regains) the "=" marker.
       const trimmed = text.trim()
-      const asNumber = colSpec?.type === 'number' && !trimmed.startsWith('=')
-        && trimmed !== '' && Number.isFinite(Number(trimmed))
-      editableStore.setCell(table, rowIndex, col, asNumber ? Number(trimmed) : text)
+      const stored = colSpec?.type !== 'number' ? text
+        : trimmed === '' ? ''
+          : Number.isFinite(Number(trimmed)) ? Number(trimmed)
+            : trimmed.startsWith('=') ? trimmed : `=${trimmed}`
+      editableStore.setCell(table, rowIndex, col, stored)
       if (liveCode != null) void evaluate(liveCode, { setError: editor.setError, seed: liveSeed })
     }, { lang })
   },

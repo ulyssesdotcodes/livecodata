@@ -70,11 +70,20 @@ define("scene", (rand, table) => table("three").rasterize(8))
 //    edit the chain cell or the values on the right and Run to restyle the
 //    whole scene. See the "Post" example for the full tour.
 editable("post", schemas.post)
+
+// 5. Any number cell can hold a live EXPRESSION instead of a literal: start
+//    it with "=" — spreadsheet style — and write a chain over the expr
+//    sources, e.g. "=slider('sway')" (an on-screen slider appears) or
+//    "=time().sin().mul(0.5)". The path's middle keyframe is seeded with one:
+//    open the "path" tab and tap the py cell to edit it in this editor with
+//    completions; type a plain number to turn it back into one. Expressions
+//    resolve every frame at the playhead, so the value follows sliders, MIDI,
+//    the clock — and progress(), the row's own percent-done.
 `,
     tables: {
       path: [
         { beat: 1, px: -1, py: 0,   pz: 0 },
-        { beat: 3, px: 1,  py: 1,   pz: 0 },
+        { beat: 3, px: 1,  py: "=slider('sway').mul(2)", pz: 0 },
         { beat: 5, px: 0,  py: 0.3, pz: -1 },
       ],
       post: [
