@@ -3,7 +3,7 @@
 // behavior, driven directly — cook-worker.ts is only a postMessage shell).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { packRows, unpackRows, packCooked, unpackCooked, rowsSig } from '../src/cook-transfer.js'
+import { packRows, unpackRows, packCooked, unpackCooked } from '../src/cook-transfer.js'
 import { createCookService, type CookResponse } from '../src/cook-service.js'
 import { createCookClient, type WorkerLike } from '../src/cook-client.js'
 import { getLineage, withLineage, type Row } from '../src/lineage.js'
@@ -52,19 +52,6 @@ test('a shared object crosses the boundary once, not once per row', () => {
   assert.deepEqual(out[0].program, program, 'and it round-trips intact')
 })
 
-test('the cooked signature is linear in unique objects, not row count', () => {
-  // the same shared program that used to blow postMessage also overflowed
-  // V8's max string length when the change-detection signature re-expanded
-  // it into JSON once per frame row
-  const program = { kind: 'fold-table', frames: Array.from({ length: 200 }, (_, i) => [i, i, i]) }
-  const rows: Row[] = Array.from({ length: 300 }, (_, i) => ({ frame: i, program }))
-  const sig = rowsSig(rows)
-  assert.ok(sig.length < JSON.stringify(program).length + 40 * rows.length,
-    'the shared program serializes once, then by back-reference')
-  assert.equal(rowsSig(structuredClone(rows) as Row[]), sig, 'a re-cook with equal content signs identically')
-  rows[1] = { ...rows[1], frame: -1 }
-  assert.notEqual(rowsSig(rows), sig, 'content changes still change the signature')
-})
 
 
 const req = (code: string, extra: Partial<Parameters<ReturnType<typeof createCookService>['handle']>[0]> = {}) => ({
@@ -92,6 +79,7 @@ define("scene", () => table("three").rasterize(4/30))
   assert.equal(cooked.views.get('base')!.length, 4)
   assert.ok(cooked.sceneRows.length > 0, 'rasterized scene rows came through')
   assert.ok(getLineage(cooked.views.get('scene')!.rows[0]).length > 0, 'lineage survives the boundary')
+  assert.ok(cooked.sigs.scene.length > 0, 'the change-detection signature rides along')
 })
 
 test('editable() serves the snapshot when present, else conformed seeds, and reports declarations', () => {

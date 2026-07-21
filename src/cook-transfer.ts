@@ -13,7 +13,7 @@
 
 import { Table } from './dsl.js'
 import { getLineage, withLineage, type Row } from './lineage.js'
-import type { CookedResult } from './replay.js'
+import type { CookedResult, CookedSigs } from './replay.js'
 
 const FN_KEY = '$fn'
 const LINEAGE_KEY = '$lineage'
@@ -84,24 +84,6 @@ export function unpackRows(rows: Row[], memo: Memo = new Map()): Row[] {
   })
 }
 
-// Signature of one cooked output, for change detection. Functions hash by
-// their source text (every cook builds fresh closures, so identity would
-// always differ), and a shared object — the compiled origami program on every
-// dense frame row — serializes once, then by back-reference: a naive
-// JSON.stringify re-expands it per row and overflows V8's max string length.
-export function rowsSig(rows: Row[]): string {
-  const seen = new Map<object, number>()
-  return JSON.stringify(rows, (_k, v: unknown) => {
-    if (typeof v === 'function') return String(v)
-    if (v !== null && typeof v === 'object') {
-      const id = seen.get(v)
-      if (id !== undefined) return { $ref: id }
-      seen.set(v, seen.size)
-    }
-    return v
-  })
-}
-
 export interface PackedCook {
   views: Array<{ name: string; rows: Row[] }>
   // rows: null points at a packed view by name; an anonymous .graph(table)
@@ -112,6 +94,7 @@ export interface PackedCook {
   hydraRows: Row[]
   baubleRows: Row[]
   postRows: Row[]
+  sigs: CookedSigs
 }
 
 export function packCooked(cooked: CookedResult): PackedCook {
@@ -132,6 +115,7 @@ export function packCooked(cooked: CookedResult): PackedCook {
     hydraRows: packRows(cooked.hydraRows, memo),
     baubleRows: packRows(cooked.baubleRows, memo),
     postRows: packRows(cooked.postRows, memo),
+    sigs: cooked.sigs,
   }
 }
 
@@ -153,8 +137,9 @@ export function unpackCooked(packed: PackedCook): CookedResult {
     sceneRows: unpackRows(packed.sceneRows, memo),
     timelineRows: unpackRows(packed.timelineRows, memo),
     hydraRows: unpackRows(packed.hydraRows, memo),
-    // ?? [] tolerates a stale worker bundle from before bauble/post existed.
+    // ?? tolerates a stale worker bundle from before bauble/post/sigs existed.
     baubleRows: unpackRows(packed.baubleRows ?? [], memo),
     postRows: unpackRows(packed.postRows ?? [], memo),
+    sigs: packed.sigs ?? { scene: '', timeline: '', hydra: '', bauble: '', post: '' },
   }
 }
