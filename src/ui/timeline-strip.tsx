@@ -65,7 +65,7 @@ export function TimelineStrip(props: {
   timelineRows: Accessor<Row[]>
   store: EditableTableStore
   currentTable: Accessor<string | null>
-  onSelectRow?: (table: string, row: number) => void
+  onSelectRow?: (table: string, row: number | null) => void
   presence: Accessor<PeerPresence[]>
   focusedRow: Accessor<number | null>
   // The row the strip is pointing at — fired with the row when a hover lands
@@ -220,16 +220,22 @@ export function TimelineStrip(props: {
     return lines
   }
 
-  // The hovered or dragged placement — the one handle the readout and the
-  // unlabeled position tag describe. `ghost` picks the same placement out of
-  // handles() a multi-placement row re-derives on every move — the row's
-  // primary handle otherwise, which covers the overwhelmingly common case of
-  // a row with no loop-event ghosts.
+  // The hovered, dragged, or selected placement — the one handle the readout
+  // and the unlabeled position tag describe. A live gesture (preview/hover)
+  // wins over the resting selection, so the readout tracks the pointer but
+  // falls back to the selected row when idle — that selection is the shared
+  // `focusedRow` (set by a handle click here *or* a table-panel row click), so
+  // selecting a row either way pins its info here. `ghost` picks the same
+  // placement out of handles() a multi-placement row re-derives on every move —
+  // the row's primary handle otherwise, which covers the overwhelmingly common
+  // case of a row with no loop-event ghosts.
   const activeHandle = createMemo<Handle | null>(() => {
     const cur = currentData()
     if (!cur) return null
     const p = preview()
-    const target = p && cur.name === p.table ? p : hover()
+    const fr = props.focusedRow()
+    const target = p && cur.name === p.table ? p
+      : hover() ?? (fr != null ? { row: fr, ghost: false } : null)
     if (!target) return null
     const hs = handles()
     return hs.find((hh) => hh.row === target.row && hh.ghost === target.ghost) ?? hs.find((hh) => hh.row === target.row) ?? null
@@ -400,7 +406,9 @@ export function TimelineStrip(props: {
     const x = e.clientX - rect.left
     const lane = laneAt(e.clientY)
     const hit = hitTest(handles(), geometry(), x, lane)
-    if (!hit) return
+    // A background press (missing every handle) deselects — clearing the shared
+    // row selection hides the pinned info readout (and the row's highlight).
+    if (!hit) { props.onSelectRow?.(cur.name, null); return }
     const handle = resolveHandle(handles(), geometry(), hit, x, lane)
     if (!handle) return
     // A finger can't reliably land on a few-px edge, so touch drags always
