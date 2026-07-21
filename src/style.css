@@ -2075,14 +2075,6 @@ html, body {
   outline-offset: 1px;
 }
 
-/* The clicked (selected) handle — its info readout is pinned open. Outline,
-   not box-shadow, so it never collides with the focused/peer rings (those
-   stack as box-shadow); the accent matches the playhead/focus ring. */
-.timeline-strip-handle-selected {
-  outline: 1.5px solid #e94560;
-  outline-offset: 1px;
-}
-
 /* The handle currently under a drag gesture (phase 4) — elevated above its
    neighbors and brightened, matching every other "this one's live" signal on
    the strip. */

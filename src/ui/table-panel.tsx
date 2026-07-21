@@ -61,8 +61,9 @@ interface PanelProps extends TablePanelOptions {
   registerGridFocus: (fn: () => void) => void
   // Same registration pattern, for the timeline strip's handle clicks
   // (ui/timeline-strip.tsx): the view hands back a function that focuses a
-  // row's first cell when that row's table is the open tab.
-  registerFocusRow: (fn: (table: string, row: number) => void) => void
+  // row's first cell when that row's table is the open tab, or clears the
+  // focus (row === null) when a background click deselects.
+  registerFocusRow: (fn: (table: string, row: number | null) => void) => void
   // Mirrors the view's focused cell out to the controller (table-scoped),
   // so the strip can ring the matching handle.
   reportFocusedRow: (focus: { table: string; row: number } | null) => void
@@ -230,6 +231,7 @@ function TablePanelView(props: PanelProps) {
   // not the common path).
   props.registerFocusRow((table, row) => {
     if (table !== current()) return
+    if (row === null) { setFocusedCell(null); return }
     const firstCol = editableData()?.data.columns[0]?.name
     if (!firstCol) return
     const fc = { row, col: firstCol }
@@ -1109,9 +1111,10 @@ function TablePanelView(props: PanelProps) {
 export interface TablePanelController extends TablePanel, PanelProps {
   // Return keyboard focus to the table grid (see registerGridFocus).
   focusGrid(): void
-  // Focus `row`'s first cell in the panel when `table` is the open tab —
-  // wired from the timeline strip's handle clicks.
-  focusRow(table: string, row: number): void
+  // Focus `row`'s first cell in the panel when `table` is the open tab, or
+  // clear the focus (row === null) — wired from the timeline strip's handle
+  // clicks and its background-click deselect.
+  focusRow(table: string, row: number | null): void
   // The panel's current focus, table-scoped; null once focus leaves that
   // table (tab switch, or no focus yet). Consumed by the strip to ring the
   // matching handle.
@@ -1137,7 +1140,7 @@ export function createTablePanel(
   // Set by the view once mounted; lets focusGrid pull focus back to the grid.
   let gridFocus: (() => void) | null = null
   // Set by the view once mounted; lets focusRow drive the panel's focused cell.
-  let focusRowImpl: ((table: string, row: number) => void) | null = null
+  let focusRowImpl: ((table: string, row: number | null) => void) | null = null
   const [focusedRow, setFocusedRow] = createSignal<{ table: string; row: number } | null>(null)
   const [stripRow, setStripRowSignal] = createSignal<{ table: string; row: number } | null>(null)
 
@@ -1163,13 +1166,13 @@ export function createTablePanel(
     focusGrid(): void {
       gridFocus?.()
     },
-    registerFocusRow(fn: (table: string, row: number) => void): void {
+    registerFocusRow(fn: (table: string, row: number | null) => void): void {
       focusRowImpl = fn
     },
     reportFocusedRow(focus: { table: string; row: number } | null): void {
       setFocusedRow(focus)
     },
-    focusRow(table: string, row: number): void {
+    focusRow(table: string, row: number | null): void {
       focusRowImpl?.(table, row)
     },
     focusedRow,

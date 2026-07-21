@@ -21,7 +21,7 @@ export function PlaybackControls(props: {
   timelineRows?: Accessor<Row[]>
   store: EditableTableStore
   currentTable: Accessor<string | null>
-  onSelectRow?: (table: string, row: number) => void
+  onSelectRow?: (table: string, row: number | null) => void
   presence: Accessor<PeerPresence[]>
   focusedRow: Accessor<number | null>
   onStripRowChange?: (row: { table: string; row: number } | null) => void
