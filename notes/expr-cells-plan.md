@@ -265,11 +265,12 @@ cells, **and the main program** (exprs created in code get the same tools):
   detects numeric literals and lets you drag them — pointer capture +
   movement threshold (the timeline-strip pattern), horizontal to scrub,
   vertical distance for coarse/fine, `touch-action: none` on the handle.
-  Preview updates the document text locally; release commits once via the
-  existing cell-target `onCommit` (or Run for the program). One extension
-  delivers the sheet's marquee interaction to every literal in every
-  language: `bloom(0.6)` in a post cell, `value: 0.35` in the program, the
-  `2` in `=slider("h").mul(2)`.
+  Scrubbing edits the document text and nothing else — release just leaves
+  the new literal in the buffer, exactly like typing it; Apply/Ctrl-Enter
+  (or Run for the program) remains the one sync point, and the canvas never
+  follows an unapplied buffer. One extension delivers the sheet's marquee
+  interaction to every literal in every language: `bloom(0.6)` in a post
+  cell, `value: 0.35` in the program, the `2` in `=slider("h").mul(2)`.
 - **Mobile token bar**: a small insert-toolbar above the editor (a Solid
   sibling of the editor chrome, inserting at the cursor) — `slider("")`,
   `midi("")`, `time()`, `progress()`, `field("")`, `.mul()` `.add()`,
