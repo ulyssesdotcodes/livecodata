@@ -1,10 +1,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  createEditableTableStore, schemaColumns, cellValid,
+  createEditableTableStore, schemaColumns, cellValid, invalidColumns,
   CLEAR_RUNS_KIND, ACTIVITY_TABLE,
   type EditableColumn,
 } from '../src/editable-tables.js'
+// Registers the "=" cell checker cellValid consults.
+import '../src/expr-cell.js'
 
 test('addRow / setCell / removeRow', () => {
   const store = createEditableTableStore()
@@ -364,6 +366,37 @@ test('cellValid: blanks pass; a non-blank value must fit its type; enum must be 
   assert.equal(cellValid('a', en), true)
   assert.equal(cellValid('c', en), false)
   assert.equal(cellValid('anything', { name: 's', type: 'string' }), true)
+})
+
+test('"=" cells: valid in number columns; streaming results barred from timing columns', () => {
+  const num: EditableColumn = { name: 'value', type: 'number' }
+  assert.equal(cellValid("=slider('h').mul(2)", num), true)
+  assert.equal(cellValid('=2 * 3', num), true)
+  assert.equal(cellValid('=broken(', num), false)
+  assert.equal(cellValid('=notAFn(1)', num), false)
+
+  for (const name of ['beat', 'dur', 'end', 'loop']) {
+    const col: EditableColumn = { name, type: 'number' }
+    assert.equal(cellValid("=slider('h')", col), false, `a binding in ${name} would NaN the frame math`)
+    assert.equal(cellValid('=lit(4).mul(2)', col), true, 'a constant expression is a plain number by cook time')
+  }
+})
+
+test('row rules: replace events and color pulses reject "=" values', () => {
+  const cols: EditableColumn[] = [
+    { name: 'event', type: 'enum', options: ['replace', 'setCode'] },
+    { name: 'find', type: 'string' },
+    { name: 'value', type: 'number' },
+  ]
+  assert.deepEqual(invalidColumns({ event: 'replace', find: 'a', value: '=lit(1)' }, cols), ['value'])
+  assert.deepEqual(invalidColumns({ event: 'setCode', find: 'a', value: '=lit(1)' }, cols), [])
+
+  const sceneCols: EditableColumn[] = [
+    { name: 'color', type: 'number' },
+    { name: 'dur', type: 'number' },
+  ]
+  assert.deepEqual(invalidColumns({ color: "=slider('c')", dur: 2 }, sceneCols), ['color'])
+  assert.deepEqual(invalidColumns({ color: "=slider('c')" }, sceneCols), [])
 })
 
 test('setReplayView restores every table to its state at a past run', () => {

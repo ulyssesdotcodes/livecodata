@@ -89,6 +89,8 @@ export function formatEditableCell(type: ColumnType, value: unknown): string {
   if (value == null) return ''
   if (type === 'boolean') return value ? 'true' : 'false'
   if (type === 'number') {
+    // An "=" expression cell is self-describing formula text.
+    if (typeof value === 'string' && value.startsWith('=')) return value
     const n = Number(value)
     if (!Number.isFinite(n)) return ''
     return Number.isInteger(n) ? String(n) : n.toFixed(3)

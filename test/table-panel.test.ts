@@ -4,7 +4,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  formatCell, allNames, nextTableName, fallbackTab, chartFor,
+  formatCell, formatEditableCell, allNames, nextTableName, fallbackTab, chartFor,
   displayOrder, activeRowIndex, viewersOf, tabRingStyle, lastEditors, moveFocus,
   EVENTS_SUFFIX, type PeerPresence,
 } from '../src/table-panel.js'
@@ -23,6 +23,11 @@ test('formatCell: empty for null, hex only in the color column', () => {
   assert.equal(formatCell('x', undefined), '')
   assert.equal(formatCell('color', 0x0000ab), '0x0000ab', 'hex colors keep leading zeros')
   assert.equal(formatCell('other', 255), '255', 'hex formatting only applies to the color column')
+})
+
+test('formatEditableCell: "=" cells in number columns display as themselves', () => {
+  assert.equal(formatEditableCell('number', "=slider('h').mul(2)"), "=slider('h').mul(2)")
+  assert.equal(formatEditableCell('number', 2.5), '2.500', 'plain numbers keep their formatting')
 })
 
 // --- presence helpers ---------------------------------------------------------

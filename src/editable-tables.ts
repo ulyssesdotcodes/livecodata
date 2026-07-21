@@ -89,15 +89,45 @@ function defaultFor(type: ColumnType, options?: string[]): unknown {
   }
 }
 
+/** A cell holding expression text — "=slider('h').mul(2)" — evaluated by the cook (see expr-cell.ts). */
+export const isExprCellText = (v: unknown): v is string => typeof v === 'string' && v.startsWith('=')
+
+// The "=" cell checker is injected, not imported: this module deliberately
+// stays off the DSL's import graph (see SLIDERS_COLUMNS), and expr-cell.ts
+// registers on load. Unregistered, an "=" string stays what it always was — a
+// wrong-typed value in a number column.
+export interface ExprCellCheck {
+  valid: boolean
+  streaming: boolean
+}
+let exprCellCheck: ((text: string) => ExprCellCheck) | null = null
+export function registerExprCellCheck(fn: (text: string) => ExprCellCheck): void {
+  exprCellCheck = fn
+}
+
+// Streaming results are invalid here: a { $expr } binding in these columns
+// would NaN rasterize's frame math and silently drop rows from the timeline
+// strip. A constant expression is a plain number by cook time, so it passes.
+const TIMING_COLUMNS = new Set(['beat', 'dur', 'end', 'loop'])
+
 /**
  * Blank/unset cells always pass: event tables are deliberately sparse, so only
  * a non-blank wrong-typed value (or an enum value outside its options) is
- * worth flagging.
+ * worth flagging. In number columns an "=" expression cell is valid when it
+ * compiles and evaluates to an Expr or a number — except streaming results in
+ * timing columns (see TIMING_COLUMNS).
  */
 export function cellValid(value: unknown, col: EditableColumn): boolean {
   if (value === '' || value == null) return true
   switch (col.type) {
-    case 'number': return typeof value === 'number' && Number.isFinite(value)
+    case 'number': {
+      if (isExprCellText(value)) {
+        const check = exprCellCheck?.(value)
+        if (!check?.valid) return false
+        return !(check.streaming && TIMING_COLUMNS.has(col.name))
+      }
+      return typeof value === 'number' && Number.isFinite(value)
+    }
     case 'boolean': return typeof value === 'boolean'
     case 'enum': return typeof value === 'string' && !!col.options?.includes(value)
     default: return true
@@ -105,7 +135,16 @@ export function cellValid(value: unknown, col: EditableColumn): boolean {
 }
 
 export function invalidColumns(row: Row, columns: EditableColumn[]): string[] {
-  return columns.filter((c) => !cellValid(row[c.name], c)).map((c) => c.name)
+  const bad = columns.filter((c) => !cellValid(row[c.name], c)).map((c) => c.name)
+  const flag = (name: string): void => {
+    if (columns.some((c) => c.name === name) && !bad.includes(name)) bad.push(name)
+  }
+  // Row-level rules single cells can't express: replace events splice
+  // String(row.value) into sketch code (hydra.ts/bauble.ts), and a color
+  // pulse (dur set) bit-mixes its value — neither can hold an expression.
+  if (row.event === 'replace' && isExprCellText(row.value)) flag('value')
+  if (isExprCellText(row.color) && ((typeof row.dur === 'number' && row.dur > 0) || isExprCellText(row.dur))) flag('color')
+  return bad
 }
 
 // Per-row provenance, parallel to `rows`. code: originated from a program seed;

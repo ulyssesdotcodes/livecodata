@@ -138,7 +138,13 @@ const tablePanel = createTablePanel(editableStore, {
       ?? (col === 'code' && table === 'post' && isPostRow(data?.rows[rowIndex]) ? 'post' as const : undefined)
       ?? (col === 'code' && isHydraRow(data?.rows[rowIndex]) ? 'hydra' as const : 'dsl' as const)
     editor.editCell(`${table}[${rowIndex}].${col}`, value, (text) => {
-      editableStore.setCell(table, rowIndex, col, text)
+      // A number column reached via cell-target mode (an "=" expression cell):
+      // plain numeric text goes back to a number, so deleting the "=" doesn't
+      // strand a string in a number column.
+      const trimmed = text.trim()
+      const asNumber = colSpec?.type === 'number' && !trimmed.startsWith('=')
+        && trimmed !== '' && Number.isFinite(Number(trimmed))
+      editableStore.setCell(table, rowIndex, col, asNumber ? Number(trimmed) : text)
       if (liveCode != null) void evaluate(liveCode, { setError: editor.setError, seed: liveSeed })
     }, { lang })
   },
