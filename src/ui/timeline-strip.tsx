@@ -149,6 +149,11 @@ export function TimelineStrip(props: {
   // itself is never touched mid-gesture.
   const [preview, setPreview] = createSignal<{ table: string; row: number; part: HitPart; values: Record<string, unknown>; ghost: boolean } | null>(null)
 
+  // The clicked (selected) handle — pins its info readout open until the
+  // pointer selects another event or clicks empty strip. Distinct from
+  // `hover`/`preview` (both transient to a live gesture); this outlives them.
+  const [selected, setSelected] = createSignal<{ table: string; row: number; ghost: boolean } | null>(null)
+
   const handles = createMemo(() => {
     const cur = currentData()
     if (!cur) return []
@@ -220,16 +225,20 @@ export function TimelineStrip(props: {
     return lines
   }
 
-  // The hovered or dragged placement — the one handle the readout and the
-  // unlabeled position tag describe. `ghost` picks the same placement out of
-  // handles() a multi-placement row re-derives on every move — the row's
-  // primary handle otherwise, which covers the overwhelmingly common case of
-  // a row with no loop-event ghosts.
+  // The hovered, dragged, or selected placement — the one handle the readout
+  // and the unlabeled position tag describe. A live gesture (preview/hover)
+  // wins over the resting selection, so the readout tracks the pointer but
+  // falls back to the pinned selected event when idle. `ghost` picks the same
+  // placement out of handles() a multi-placement row re-derives on every move —
+  // the row's primary handle otherwise, which covers the overwhelmingly common
+  // case of a row with no loop-event ghosts.
   const activeHandle = createMemo<Handle | null>(() => {
     const cur = currentData()
     if (!cur) return null
     const p = preview()
-    const target = p && cur.name === p.table ? p : hover()
+    const s = selected()
+    const target = p && cur.name === p.table ? p
+      : hover() ?? (s && s.table === cur.name ? s : null)
     if (!target) return null
     const hs = handles()
     return hs.find((hh) => hh.row === target.row && hh.ghost === target.ghost) ?? hs.find((hh) => hh.row === target.row) ?? null
@@ -261,6 +270,10 @@ export function TimelineStrip(props: {
   const isActiveHandle = (h: Handle): boolean => {
     const a = activeHandle()
     return !!a && a.row === h.row && a.ghost === h.ghost
+  }
+  const isSelectedHandle = (table: string, h: Handle): boolean => {
+    const s = selected()
+    return !!s && s.table === table && s.row === h.row && s.ghost === h.ghost
   }
 
   // Which lane a pointer's client-y falls in — the inverse of handleBox's
@@ -345,6 +358,7 @@ export function TimelineStrip(props: {
       }
     }
     props.onSelectRow?.(g.table, g.handle.row)
+    setSelected({ table: g.table, row: g.handle.row, ghost: g.handle.ghost })
     reportStripRow(null)
     setPreview(null)
     // The pointer may have been dragged (or released) off the strip — a stale
@@ -400,7 +414,9 @@ export function TimelineStrip(props: {
     const x = e.clientX - rect.left
     const lane = laneAt(e.clientY)
     const hit = hitTest(handles(), geometry(), x, lane)
-    if (!hit) return
+    // A background press (missing every handle) deselects — clicking empty
+    // strip hides the pinned info readout.
+    if (!hit) { setSelected(null); return }
     const handle = resolveHandle(handles(), geometry(), hit, x, lane)
     if (!handle) return
     // A finger can't reliably land on a few-px edge, so touch drags always
@@ -519,6 +535,7 @@ export function TimelineStrip(props: {
                     'timeline-strip-handle-ghost': h.ghost,
                     'timeline-strip-handle-disabled': h.disabled,
                     'timeline-strip-handle-pending': pendingRows().has(h.row),
+                    'timeline-strip-handle-selected': isSelectedHandle(cur().name, h),
                     'timeline-strip-handle-dragging': preview()?.table === cur().name && preview()?.row === h.row,
                   }}
                   style={{ ...handleBox(h), 'box-shadow': ringStyle(cur().name, h) }}
