@@ -38,6 +38,21 @@ test('streaming bindings ({ $expr }) pass through untouched', () => {
   assert.deepEqual(out[0].value, binding)
 })
 
+test('a shared object crosses the boundary once, not once per row', () => {
+  // rasterize stamps the SAME compiled program (megabytes of baked origami
+  // keyframes) onto every dense frame row; naive per-row deep copies blew
+  // postMessage out of memory. Structured clone dedups shared references, so
+  // pack/unpack must preserve the sharing.
+  const program = { kind: 'fold-table', frames: [[0, 0, 0], [1, 1, 1]] }
+  const rows: Row[] = Array.from({ length: 4 }, (_, i) => ({ frame: i, program }))
+  const packed = packRows(rows)
+  assert.equal(packed[0].program, packed[1].program, 'packed rows share one program object')
+  const out = unpackRows(structuredClone(packed) as Row[])
+  assert.equal(out[0].program, out[3].program, 'unpacked rows share one program object')
+  assert.deepEqual(out[0].program, program, 'and it round-trips intact')
+})
+
+
 const req = (code: string, extra: Partial<Parameters<ReturnType<typeof createCookService>['handle']>[0]> = {}) => ({
   id: 1,
   code,
