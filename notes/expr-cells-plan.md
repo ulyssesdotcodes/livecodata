@@ -204,12 +204,16 @@ Two layers:
   formulas instead of `''` / `[object Object]` / raw JSON. (Its inverse,
   `parseExpr`, ships with the GUI's text mode in phase 4 — it has no earlier
   consumer.)
-- **Cell editor safety gate (correctness, not polish)**: `EditableCell`
-  dispatches on value shape *before* the per-type editors — there is no undo,
-  and today one tap on an expr cell in a number column opens
-  `Number(raw()) || 0` and permanently commits `0` to every peer on blur
-  (`ui/table-panel.tsx:662-667`). An `isBinding` value renders as a formula
-  chip. Until the sheet ships (phase 4) the chip is inert **plus a
+- **Cell editor safety gate**: `EditableCell` dispatches on value shape
+  *before* the per-type editors. Today one tap on an expr cell in a number
+  column opens `Number(raw()) || 0` and commits `0` on blur
+  (`ui/table-panel.tsx:662-667`) — and it does so *silently*: the expr renders
+  as a blank cell before and `0` after, so nothing signals an expression was
+  overwritten. Session branching does recover it (scrub to a prior apply and
+  fork), but that's run-granularity rollback of the whole working state, and
+  only if the clobber is noticed — the gate keeps the editor from being
+  destructive-by-default rather than leaning on that. An `isBinding` value
+  renders as a formula chip. Until the sheet ships (phase 4) the chip is inert **plus a
   "revert to number" affordance** (commit the expr's last-known/0 literal) so
   a seeded or peer-synced expr is never a dead end; Tab/advanceEdit skip expr
   cells in that interim.
@@ -348,7 +352,7 @@ errors, no invalid intermediate states, fat-finger friendly.
   sheet. A number cell's editor gains a small `ƒx` affordance converting the
   literal into an expression (seeding the sheet with `lit(current)`); the
   button must `preventDefault` on pointerdown/mousedown — the number editor
-  commits on blur, so an unguarded button first fires a permanent synced
+  commits on blur, so an unguarded button first fires a stray synced
   set-cell of the literal and unmounts the editor before its click lands
   (the text editor documents this exact hazard at `ui/table-panel.tsx:685`).
 - **Geometry**: the sheet occupies the **side-panels region** (its top edge
