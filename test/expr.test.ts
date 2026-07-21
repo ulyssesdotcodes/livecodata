@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { Table, createDSL, field, hashOf } from '../src/dsl.js'
+import { Table, createDSL, field, lit, slider, progress, hashOf, isStreamingNode, evalExpr } from '../src/dsl.js'
 import { getLineage, withLineage, type Row } from '../src/lineage.js'
 import { buildTimeline } from '../src/timeline.js'
 
@@ -34,6 +34,36 @@ test('cond picks a value declaratively', () => {
 test('emit fans each row out to one or many rows from templates', () => {
   const out = t([{ i: 0 }, { i: 1 }]).emit([{ x: field('i') }, { x: field('i').add(10) }])
   assert.deepEqual(out.rows, [{ x: 0 }, { x: 10 }, { x: 1 }, { x: 11 }])
+})
+
+test('call nodes evaluate through the registry: sin, clamp, lerp', () => {
+  const out = t([{ a: 0.5 }]).map({
+    s: lit(Math.PI / 2).sin(),
+    c: field('a').clamp(0, 0.2),
+    l: lit(0).lerp(10, field('a')),
+  })
+  assert.deepEqual(out.rows, [{ s: 1, c: 0.2, l: 5 }])
+})
+
+test('streaming-ness propagates through call args', () => {
+  assert.equal(isStreamingNode(lit(1).sin().node), false)
+  assert.equal(isStreamingNode(slider('x').sin().node), true)
+  assert.equal(isStreamingNode(lit(0).lerp(slider('x'), 0.5).node), true)
+})
+
+test('unsubstituted progress() is streaming and reads 1 — the graceful degrade', () => {
+  assert.equal(isStreamingNode(progress().node), true)
+  assert.equal(evalExpr(progress().node, {}, 0), 1)
+})
+
+test('call-node specs hash stably: identical equal, different fn or args differ', () => {
+  const a = t([{ v: 1 }]).map({ v: field('v').clamp(0, 1) })
+  const b = t([{ v: 1 }]).map({ v: field('v').clamp(0, 1) })
+  const c = t([{ v: 1 }]).map({ v: field('v').clamp(0, 2) })
+  const d = t([{ v: 1 }]).map({ v: field('v').abs() })
+  assert.equal(hashOf(a), hashOf(b))
+  assert.notEqual(hashOf(a), hashOf(c))
+  assert.notEqual(hashOf(a), hashOf(d))
 })
 
 test('Expr verbs carry lineage forward', () => {

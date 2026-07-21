@@ -41,6 +41,46 @@ export type ExprNode =
   | { k: 'midi'; note: string; channel: number | null }
   | { k: 'slider'; id: string }
   | { k: 'time' }
+  | { k: 'call'; fn: string; args: ExprNode[] }
+  // Percent-done of the enclosing event: substituted with a literal where the
+  // row's timing is known (substituteExpr); unsubstituted it reads as 1.
+  | { k: 'progress' }
+
+// The math functions a { k: 'call' } node can name — the single source of
+// truth feeding evalExpr, the "=" cell scope (expr-cell.ts), and the editor
+// docs. All pure and deterministic (no Math.random, no wall clock), which is
+// what keeps replay/scrub exact.
+export const EXPR_FNS: Record<string, { arity: number; apply: (...ns: number[]) => number; doc: string }> = {
+  sin: { arity: 1, apply: Math.sin, doc: 'sine (radians)' },
+  cos: { arity: 1, apply: Math.cos, doc: 'cosine (radians)' },
+  tan: { arity: 1, apply: Math.tan, doc: 'tangent (radians)' },
+  asin: { arity: 1, apply: Math.asin, doc: 'arcsine, in radians' },
+  acos: { arity: 1, apply: Math.acos, doc: 'arccosine, in radians' },
+  atan: { arity: 1, apply: Math.atan, doc: 'arctangent, in radians' },
+  atan2: { arity: 2, apply: Math.atan2, doc: 'angle of the vector (y, x), in radians' },
+  abs: { arity: 1, apply: Math.abs, doc: 'absolute value' },
+  floor: { arity: 1, apply: Math.floor, doc: 'round down' },
+  ceil: { arity: 1, apply: Math.ceil, doc: 'round up' },
+  round: { arity: 1, apply: Math.round, doc: 'round to nearest' },
+  sqrt: { arity: 1, apply: Math.sqrt, doc: 'square root' },
+  exp: { arity: 1, apply: Math.exp, doc: 'e raised to x' },
+  log: { arity: 1, apply: Math.log, doc: 'natural logarithm' },
+  sign: { arity: 1, apply: Math.sign, doc: '-1, 0, or 1' },
+  pow: { arity: 2, apply: (x, e) => Math.pow(x, e), doc: 'x raised to e' },
+  min: { arity: 2, apply: (a, b) => Math.min(a, b), doc: 'smaller of two values' },
+  max: { arity: 2, apply: (a, b) => Math.max(a, b), doc: 'larger of two values' },
+  clamp: { arity: 3, apply: (x, lo, hi) => Math.min(Math.max(x, lo), hi), doc: 'limit x into [lo, hi]' },
+  lerp: { arity: 3, apply: (a, b, t) => a + (b - a) * t, doc: 'blend a toward b by t (0–1)' },
+  fract: { arity: 1, apply: (x) => x - Math.floor(x), doc: 'fractional part (0→1 sawtooth)' },
+  wrap: {
+    arity: 3,
+    apply: (x, lo, hi) => {
+      const span = hi - lo
+      return span === 0 ? lo : lo + (((x - lo) % span) + span) % span
+    },
+    doc: 'wrap x into [lo, hi)',
+  },
+}
 
 type ExprInput = Expr | number | string | boolean | null
 
@@ -81,6 +121,54 @@ export class Expr {
     return new Expr({ k: 'cond', t: this.node, a: toNode(then), b: toNode(otherwise) })
   }
 
+  private callFn(fn: string, args: ExprInput[]): Expr {
+    return new Expr({ k: 'call', fn, args: [this.node, ...args.map(toNode)] })
+  }
+  /** Sine of this value (radians) — a live input oscillates: expr.time().sin(). */
+  sin(): Expr { return this.callFn('sin', []) }
+  /** Cosine of this value (radians). */
+  cos(): Expr { return this.callFn('cos', []) }
+  /** Tangent of this value (radians). */
+  tan(): Expr { return this.callFn('tan', []) }
+  /** Arcsine, in radians. */
+  asin(): Expr { return this.callFn('asin', []) }
+  /** Arccosine, in radians. */
+  acos(): Expr { return this.callFn('acos', []) }
+  /** Arctangent, in radians. */
+  atan(): Expr { return this.callFn('atan', []) }
+  /** Angle of the vector (this, x) in radians — this value is the y component. */
+  atan2(x: ExprInput): Expr { return this.callFn('atan2', [x]) }
+  /** Absolute value. */
+  abs(): Expr { return this.callFn('abs', []) }
+  /** Round down to the nearest integer. */
+  floor(): Expr { return this.callFn('floor', []) }
+  /** Round up to the nearest integer. */
+  ceil(): Expr { return this.callFn('ceil', []) }
+  /** Round to the nearest integer. */
+  round(): Expr { return this.callFn('round', []) }
+  /** Square root. */
+  sqrt(): Expr { return this.callFn('sqrt', []) }
+  /** e raised to this value. */
+  exp(): Expr { return this.callFn('exp', []) }
+  /** Natural logarithm. */
+  log(): Expr { return this.callFn('log', []) }
+  /** The sign of this value: -1, 0, or 1. */
+  sign(): Expr { return this.callFn('sign', []) }
+  /** Fractional part (x - floor(x)) — a 0→1 sawtooth over a growing input like expr.time(). */
+  fract(): Expr { return this.callFn('fract', []) }
+  /** This value raised to the power `e` — field("v").pow(2). */
+  pow(e: ExprInput): Expr { return this.callFn('pow', [e]) }
+  /** The smaller of this and `o`. */
+  min(o: ExprInput): Expr { return this.callFn('min', [o]) }
+  /** The larger of this and `o`. */
+  max(o: ExprInput): Expr { return this.callFn('max', [o]) }
+  /** Limit this value into [lo, hi] — expr.slider("v").clamp(0, 1). */
+  clamp(lo: ExprInput, hi: ExprInput): Expr { return this.callFn('clamp', [lo, hi]) }
+  /** Blend from this value toward `b` by `t` (0–1) — a.lerp(b, expr.progress()) glides over the event. */
+  lerp(b: ExprInput, t: ExprInput): Expr { return this.callFn('lerp', [b, t]) }
+  /** Wrap this value into [lo, hi) — expr.time().wrap(0, 6.283) keeps an angle in range. */
+  wrap(lo: ExprInput, hi: ExprInput): Expr { return this.callFn('wrap', [lo, hi]) }
+
   // Stable JSON form (used by the canonical serializer for hashing).
   toJSON(): { $expr: ExprNode } {
     return { $expr: this.node }
@@ -98,6 +186,11 @@ export const slider = (id: string): Expr =>
 
 export const time = (): Expr => new Expr({ k: 'time' })
 
+export const progress = (): Expr => new Expr({ k: 'progress' })
+
+export const callExpr = (fn: string, args: ExprInput[]): Expr =>
+  new Expr({ k: 'call', fn, args: args.map(toNode) })
+
 // Per-frame evaluation context, supplied by playback at apply time; samplers
 // read the streaming tables at the playhead's current source frame.
 export interface EvalCtx {
@@ -113,11 +206,20 @@ export interface EvalCtx {
 // binding and evaluated per frame rather than at bake time.
 export function isStreamingNode(n: ExprNode): boolean {
   switch (n.k) {
-    case 'midi': case 'slider': case 'time': return true
+    case 'midi': case 'slider': case 'time': case 'progress': return true
     case 'field': case 'lit': case 'idx': return false
     case 'not': return isStreamingNode(n.a)
     case 'bin': case 'cmp': case 'logic': return isStreamingNode(n.a) || isStreamingNode(n.b)
     case 'cond': return isStreamingNode(n.t) || isStreamingNode(n.a) || isStreamingNode(n.b)
+    case 'call': return n.args.some(isStreamingNode)
+    // Bindings cross the cook-transfer boundary, so an out-of-type node (an
+    // older client meeting a newer wire shape) degrades to not-streaming at
+    // runtime while the never-assert keeps the closed union a compile check.
+    default: {
+      const _exhaustive: never = n
+      void _exhaustive
+      return false
+    }
   }
 }
 
@@ -160,6 +262,57 @@ export function evalExpr(n: ExprNode, row: Row, i: number, ctx?: EvalCtx): unkno
     }
     case 'not': return !evalExpr(n.a, row, i, ctx)
     case 'cond': return evalExpr(n.t, row, i, ctx) ? evalExpr(n.a, row, i, ctx) : evalExpr(n.b, row, i, ctx)
+    case 'call': {
+      const f = EXPR_FNS[n.fn]
+      if (!f) return 0
+      return f.apply(...n.args.map((a) => Number(evalExpr(a, row, i, ctx))))
+    }
+    // An unsubstituted progress (no enclosing event window) reads as done.
+    case 'progress': return 1
+    // Unknown wire nodes evaluate to 0 rather than NaN — see isStreamingNode.
+    default: {
+      const _exhaustive: never = n
+      void _exhaustive
+      return 0
+    }
+  }
+}
+
+// Fold/bake-time substitution: progress → lit(u), field → lit(row[name]).
+// Clones only the path down to each substituted node and returns the input
+// unchanged when nothing below it matched — source nodes live inside memoized
+// rows, so an in-place rewrite would freeze the first frame's values into the
+// cook memo.
+export function substituteExpr(n: ExprNode, sub: { progress?: number; fields?: Row }): ExprNode {
+  switch (n.k) {
+    case 'progress':
+      return sub.progress !== undefined ? { k: 'lit', v: sub.progress } : n
+    case 'field': {
+      if (!sub.fields) return n
+      const v = sub.fields[n.name]
+      return { k: 'lit', v: typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean' ? v : null }
+    }
+    case 'not': {
+      const a = substituteExpr(n.a, sub)
+      return a === n.a ? n : { k: 'not', a }
+    }
+    case 'bin': case 'cmp': case 'logic': {
+      const a = substituteExpr(n.a, sub)
+      const b = substituteExpr(n.b, sub)
+      return a === n.a && b === n.b ? n : { ...n, a, b }
+    }
+    case 'cond': {
+      const t = substituteExpr(n.t, sub)
+      const a = substituteExpr(n.a, sub)
+      const b = substituteExpr(n.b, sub)
+      return t === n.t && a === n.a && b === n.b ? n : { k: 'cond', t, a, b }
+    }
+    case 'call': {
+      const args = n.args.map((a) => substituteExpr(a, sub))
+      return args.every((a, k) => a === n.args[k]) ? n : { k: 'call', fn: n.fn, args }
+    }
+    default:
+      return n
   }
 }
 
@@ -175,7 +328,8 @@ export interface Binding {
 export const isBinding = (v: unknown): v is Binding =>
   v !== null && typeof v === 'object' && '$expr' in (v as Record<string, unknown>)
 
-function bakeExpr(node: ExprNode, row: Row, i: number): unknown {
+// Exported for expr-cell.ts: "=" cells bake with exactly derive()'s semantics.
+export function bakeExpr(node: ExprNode, row: Row, i: number): unknown {
   return isStreamingNode(node) ? { $expr: node } : evalExpr(node, row, i)
 }
 
@@ -1267,8 +1421,10 @@ export interface ThreeNamespace {
  * chainable expressions over a row. expr.field/lit/idx read the row itself;
  * expr.midi/slider/time are LIVE — they read a streaming source at the
  * playhead each frame, so a field derived from one follows the note, slider,
- * or clock as the loop replays. The JSDoc on each member IS the editor hover
- * doc — write it for the livecoder.
+ * or clock as the loop replays. Math chains onto any Expr (.sin(), .abs(),
+ * .clamp(lo, hi), .pow(e), …) and the multi-argument forms live here
+ * (expr.min/max/lerp/clamp/…), with pi/tau/e as constants. The JSDoc on each
+ * member IS the editor hover doc — write it for the livecoder.
  */
 export interface ExprNamespace {
   /** A chainable expression reading row[name] — expr.field("v").add(1).gt(2). Use in filter(expr), map(template), emit(template), derive: these are diffable (no opaque closures). */
@@ -1291,6 +1447,60 @@ export interface ExprNamespace {
   slider(id: string, min?: number, max?: number): Expr
   /** The playback clock in seconds at the playhead — the same clock hydra/post chains see as props.time, so pausing or scrubbing the timeline freezes or scrubs it. Live: resolves each frame, e.g. derive({ ry: expr.time().mul(0.5) }). */
   time(): Expr
+  /**
+   * Percent-done of the enclosing event, 0→1. A post `set`/`pulse` value
+   * reads its own `dur` window (a `set` without `dur` reads 1); a scene
+   * keyframe value reads its own `dur` if set, else its per-field segment —
+   * from this keyframe to the next one carrying the same field. Resolved
+   * where the row's timing is known, so it works in "=" cells and in
+   * code-created exprs (derive({ py: expr.progress() }) on a keyframe)
+   * alike; outside any event window it reads 1.
+   * e.g. "=progress().mul(expr.tau).sin()" shapes a set's own sweep.
+   */
+  progress(): Expr
+  /** The smaller of `a` and `b` — expr.min(expr.slider("a"), 1). Also chainable: a.min(b). */
+  min(a: Expr | number, b: Expr | number): Expr
+  /** The larger of `a` and `b`. Also chainable: a.max(b). */
+  max(a: Expr | number, b: Expr | number): Expr
+  /** `x` raised to the power `e` — expr.pow(field("v"), 2). Also chainable: x.pow(e). */
+  pow(x: Expr | number, e: Expr | number): Expr
+  /** Angle of the vector (y, x) in radians. Also chainable: y.atan2(x). */
+  atan2(y: Expr | number, x: Expr | number): Expr
+  /** Limit `x` into [lo, hi]. Also chainable: x.clamp(lo, hi). */
+  clamp(x: Expr | number, lo: Expr | number, hi: Expr | number): Expr
+  /** Blend from `a` toward `b` by `t` (0–1) — expr.lerp(0, 10, expr.progress()). Also chainable: a.lerp(b, t). */
+  lerp(a: Expr | number, b: Expr | number, t: Expr | number): Expr
+  /** Wrap `x` into [lo, hi) — expr.wrap(expr.time(), 0, expr.tau). Also chainable: x.wrap(lo, hi). */
+  wrap(x: Expr | number, lo: Expr | number, hi: Expr | number): Expr
+  /** π as an expression constant — expr.pi.div(2). */
+  readonly pi: Expr
+  /** 2π, a full turn in radians — progress().mul(expr.tau).sin() completes one cycle over the event. */
+  readonly tau: Expr
+  /** Euler's number as an expression constant. */
+  readonly e: Expr
+}
+
+// The one ExprNamespace builder — createDSL's `expr` and the "=" cell scope
+// (expr-cell.ts) share it, so cells and code see the same surface; only
+// slider() differs by ctx (a null ctx reads without declaring).
+export function makeExprNamespace(ctx: DSLContext | null): ExprNamespace {
+  return {
+    field, lit, idx, midi, time, progress,
+    slider: (id: string, min?: number, max?: number): Expr => {
+      ctx?.defineSlider?.(String(id), min, max)
+      return slider(id)
+    },
+    min: (a, b) => callExpr('min', [a, b]),
+    max: (a, b) => callExpr('max', [a, b]),
+    pow: (x, e) => callExpr('pow', [x, e]),
+    atan2: (y, x) => callExpr('atan2', [y, x]),
+    clamp: (x, lo, hi) => callExpr('clamp', [x, lo, hi]),
+    lerp: (a, b, t) => callExpr('lerp', [a, b, t]),
+    wrap: (x, lo, hi) => callExpr('wrap', [x, lo, hi]),
+    pi: lit(Math.PI),
+    tau: lit(Math.PI * 2),
+    e: lit(Math.E),
+  }
 }
 
 // The globals a user program sees. JSDoc on these members IS the editor's
@@ -1342,10 +1552,11 @@ export type DSLSurface = Easings & {
   editable(name: string, schema: Schema, seedRows?: Row[]): Table
   /**
    * The Expr helpers, grouped: expr.field/lit/idx build diffable expressions
-   * over a row (chain .add/.mul/.gt/.cond/…); expr.midi/slider/time are live
-   * per-frame sources — a field derived from one follows the note, slider, or
-   * playback clock as the loop replays. e.g. filter(expr.field("v").gt(3)),
-   * derive({ py: expr.slider("height") }).
+   * over a row (chain .add/.mul/.gt/.cond/… and math like .sin()/.clamp());
+   * expr.midi/slider/time are live per-frame sources — a field derived from
+   * one follows the note, slider, or playback clock as the loop replays —
+   * and expr.progress() reads the enclosing event's percent-done. e.g.
+   * filter(expr.field("v").gt(3)), derive({ py: expr.slider("height") }).
    */
   expr: ExprNamespace
   /** The tap-beat table: one row per wall-time button press ({ beat, time }) — the source of truth for tempo. */
@@ -1463,13 +1674,7 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       const rows = (ctx?.editableRows?.(name, schema, seedRows) ?? []).map((r) => ({ ...r }))
       return new Table(rows, ctx).save(name)
     },
-    expr: {
-      field, lit, idx, midi, time,
-      slider: (id: string, min?: number, max?: number): Expr => {
-        ctx?.defineSlider?.(String(id), min, max)
-        return slider(id)
-      },
-    },
+    expr: makeExprNamespace(ctx),
     taps: () => new Table((ctx?.tapRows?.() ?? []).map((r) => ({ ...r })), ctx),
     tempo: (fallback = DEFAULT_BEAT_SECONDS): number => beatSecondsFromTaps(ctx?.tapRows?.()) ?? fallback,
     beats: (count: number, { fit }: { fit?: number } = {}): Table => {
