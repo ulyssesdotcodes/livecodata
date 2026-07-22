@@ -63,7 +63,7 @@ const TABLE_DOCS: TableDoc[] = [
   {
     name: 'Views',
     detail: 'computed tables',
-    info: 'Named tables you register with define("name", (rand, table) => …) or .save("name"). Cooked lazily and only when something changed, each becomes a tab in the table panel. Reference another view with table("name") to build a dependency.',
+    info: 'Named tables you register with define("name", (rand, table) => …), table("name", rows), or .save("name"). Cooked lazily and only when something changed, each becomes a tab in the table panel. Reference another view with table("name") to build a dependency. Tables routed to a consumer with .outHydra()/.outThree()/… need no name at all — they combine into that consumer\'s "(system)" view.',
   },
   {
     name: 'Editable tables',

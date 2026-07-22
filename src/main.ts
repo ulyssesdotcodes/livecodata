@@ -24,7 +24,7 @@ import { createCookClient } from './cook-client.js'
 import type { CookedSigs } from './replay.js'
 import { randomSeed, localSource } from './event-log.js'
 import { createPresenceChannel, userColor, lastCellEdits } from './presence.js'
-import { Table } from './dsl.js'
+import { Table, outViewName } from './dsl.js'
 import { createEditableTableStore, DISABLED_COL, CLEAR_RUNS_KIND, ACTIVITY_TABLE, isExprCellText, type ColumnType, type SessionRun } from './editable-tables.js'
 import type { ApplyNode } from './branches.js'
 import { createMidiInput, subscribeWebMidi, type MidiInput, type MidiStore } from './midi.js'
@@ -520,7 +520,7 @@ function applyCooked(cooked: CookedData): void {
   updateSliderDefs(cooked.views)
   // GPU particles are opt-in per program: a "particles" view with a `spawn`
   // row turns the sim on; its `set` rows are folded from onTick.
-  particleTableRows = particleRows(cooked.views.get('particles')?.rows)
+  particleTableRows = particleRows((cooked.views.get(outViewName('particles')) ?? cooked.views.get('particles'))?.rows)
   sceneAPI.setParticlesEnabled(hasSpawner(particleTableRows))
   tablePanel.setTables(tablesForDisplay(cooked.views))
   tablePanel.setGraphs(cooked.graphs)

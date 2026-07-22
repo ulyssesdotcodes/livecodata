@@ -4,7 +4,7 @@
 // content hash is unchanged, so untouched subgraphs aren't re-baked.
 
 import {
-  createDSL, Table, materialize, fnv1a,
+  createDSL, Table, materialize, fnv1a, outViewName,
   type ViewFn, type DSLContext, type GraphSpec, type PhysicsEngine, type Memo, type MatCtx,
 } from './dsl.js'
 import { evalRowExprCells } from './expr-cell.js'
@@ -65,6 +65,7 @@ export function createRuntime({ physics, tapRows, editableRows, logRows, defineS
   let seedVal: number
   let prngs: Map<string, () => number>
   let groups: Map<string, string[]>
+  let outs: Map<string, Table[]>
   let currentCookingView: string | null = null
   let dataCache = new Map<string, string>()
 
@@ -175,6 +176,11 @@ export function createRuntime({ physics, tapRows, editableRows, logRows, defineS
     addGraph(spec: GraphSpec): void {
       graphs.push({ ...spec, viewName: currentCookingView })
     },
+    addOut(kind: string, table: Table): void {
+      if (!outs.has(kind)) outs.set(kind, [])
+      const list = outs.get(kind)!
+      if (!list.includes(table)) list.push(table)
+    },
     resolve(name: string): Table {
       return cook(name, null, [])
     },
@@ -200,6 +206,7 @@ export function createRuntime({ physics, tapRows, editableRows, logRows, defineS
     graphs = []
     prngs = new Map()
     groups = new Map()
+    outs = new Map()
     seedVal = seed >>> 0
     ctx.seed = seedVal
     dataCache = dc ?? new Map()
@@ -215,6 +222,37 @@ export function createRuntime({ physics, tapRows, editableRows, logRows, defineS
     }
 
     for (const name of defs.keys()) cook(name, null, [])
+
+    // Combined per-consumer output views: every table routed with .outX(),
+    // plus the like-named view when one exists, concatenated beat-sorted (as
+    // groups are) under a "(system)" name (see outViewName) — visible in the
+    // panel; replay prefers it over the bare name. Built after the def cook so
+    // routes made inside lazy view fns are collected too.
+    for (const [kind, members] of outs) {
+      const def = defs.get(kind)
+      const named = def ? cook(kind, null, []) : null
+      const inputs = [
+        ...(named ? [named] : []),
+        // A table both save()d under the consumer's name and routed to it
+        // (e.g. editable("hydra", …).outHydra()) counts once.
+        ...members.filter((m) => !(def?.kind === 'const' && def.table === m)),
+      ]
+      const name = outViewName(kind)
+      const combined = Table._fromNode(ctx, {
+        op: 'out',
+        spec: { kind },
+        inputs,
+        seedSensitive: false,
+        compute: (ins) => {
+          const rows: Row[] = ins.flat()
+          rows.sort((a, b) => ((a.beat as number) ?? 1) - ((b.beat as number) ?? 1))
+          return rows
+        },
+      })
+      deps.set(name, named ? [kind] : [])
+      cache.set(name, stampNode(name, combined))
+    }
+
     for (const t of cache.values()) materialize(t, matCtx, memo)
 
     const resolvedGraphs = graphs

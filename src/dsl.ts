@@ -507,6 +507,9 @@ export interface DSLContext {
   defineConst(name: string, table: Table): void
   addGraph(spec: GraphSpec): void
   resolve(name: string): Table
+  // .outHydra()/.outThree()/… routing — collects tables per consumer; the
+  // runtime combines them into the "(system)" output view (see outViewName).
+  addOut?(kind: string, table: Table): void
   physics?: () => PhysicsEngine | null
   // The tap-beat rows — the tempo source for tempo()/beats().
   tapRows?: () => Row[] | null
@@ -522,6 +525,11 @@ export interface DSLContext {
 }
 
 export type ViewFn = (rand: () => number, table: (name: string) => Table) => Table | Row[]
+
+// Display name of a combined per-consumer output view: every table routed
+// with .outHydra()/.outThree()/… (plus a same-named view, if one exists),
+// concatenated beat-sorted. Consumers prefer it over the bare name.
+export const outViewName = (kind: string): string => `${kind} (system)`
 
 interface TNode {
   op: string
@@ -956,6 +964,33 @@ export class Table {
     this._ctx?.defineConst(name, this)
     return this
   }
+
+  private _out(kind: string): this {
+    this._ctx?.addOut?.(kind, this)
+    return this
+  }
+
+  /**
+   * Route this table to the 3D scene: its rows join every other .outThree()
+   * table (and a table named "three", if one exists) in one combined,
+   * beat-sorted "three (system)" table — shown in the table panel and
+   * rasterized for playback. No define() or name needed:
+   * t.box().three.rotate().outThree(). Without any outThree(), the scene
+   * reads the table named "three" as before.
+   */
+  outThree(): this { return this._out('three') }
+  /** Route this table of PRE-RASTERIZED per-frame rows to the scene cache, combined with every other .outScene() table (and a "scene" view, if any) — use when you rasterize() yourself; otherwise outThree() and let playback rasterize. */
+  outScene(): this { return this._out('scene') }
+  /** Route this table of hydra event rows (schemas.hydra) to the hydra view: combined with every other .outHydra() table (and a "hydra" view, if any) into "hydra (system)", which playback reads. Without any outHydra(), the table named "hydra" is read as before. */
+  outHydra(): this { return this._out('hydra') }
+  /** Route this table of bauble event rows (schemas.bauble) to the bauble view, combined with every other .outBauble() table (and a "bauble" view, if any). */
+  outBauble(): this { return this._out('bauble') }
+  /** Route this table of post event rows (schemas.post) to the post-processing chain, combined with every other .outPost() table (and a "post" view, if any). */
+  outPost(): this { return this._out('post') }
+  /** Route this table of timeline event rows (schemas.timeline) to the playback timeline, combined with every other .outTimeline() table (and a "timeline" view, if any) — e.g. beats(16).outTimeline(). */
+  outTimeline(): this { return this._out('timeline') }
+  /** Route this table of particle event rows (schemas.particles) to the GPU particle sim, combined with every other .outParticles() table (and a "particles" view, if any). */
+  outParticles(): this { return this._out('particles') }
 }
 
 class PhysicsBuilder {
@@ -1541,7 +1576,18 @@ export function makeExprNamespace(ctx: Pick<DSLContext, 'defineSlider'> | null):
 export type DSLSurface = Easings & {
   define(name: string, fn: ViewFn): void
   define(name: string, group: string, fn: ViewFn): void
+  /**
+   * table("name") reads a named table (inside a view fn, prefer the fn's own
+   * `table` argument so the dependency is tracked). table("name", rows|Table)
+   * NAMES a table — the define-free way to register one: table("melody",
+   * [{ beat: 1, note: 60 }]); table("name", (rand, table) => …) is define()
+   * by another spelling. table() — or table([rows]) — is an ephemeral,
+   * unnamed table: chain it and route it with .outHydra()/.outThree()/….
+   */
   table(name: string): Table
+  table(name: string, source: Table | Row[]): Table
+  table(name: string, fn: ViewFn): void
+  table(rows?: Row[]): Table
   math(fn: (t: number) => number): MathBuilder
   rows(arr: Row[] | null | undefined): Table
   /**
@@ -1668,7 +1714,12 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       fn === undefined
         ? ctx!.defineLazy(name, group as ViewFn)
         : ctx!.defineLazy(name, fn, group as string),
-    table: (name: string) => ctx!.resolve(name),
+    table: ((name?: string | Row[], source?: ViewFn | Table | Row[]) => {
+      if (typeof name !== 'string') return new Table((name ?? []).map((r) => ({ ...r })), ctx)
+      if (source === undefined) return ctx!.resolve(name)
+      if (typeof source === 'function') return void ctx!.defineLazy(name, source)
+      return (source instanceof Table ? source : new Table((source ?? []).map((r) => ({ ...r })), ctx)).save(name)
+    }) as DSLSurface['table'],
     math: (fn: (t: number) => number) => new MathBuilder(fn, ctx!),
     rows: (arr: Row[] | null | undefined) => new Table((arr ?? []).map((r) => ({ ...r })), ctx),
     rotate: (rows: Row[] | null | undefined, values: Row[] | null | undefined): Table => {
