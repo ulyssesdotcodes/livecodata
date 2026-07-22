@@ -21,6 +21,7 @@ import { SAMPLES, sampleIndexForSlug, slugify } from './samples.js'
 import { defaultSessionStore } from './sessions.js'
 import { getVimMode, setVimMode, getMidiEnabled, setMidiEnabled, getUsername, setUsername } from './settings.js'
 import { createCookClient } from './cook-client.js'
+import type { CookedSigs } from './replay.js'
 import { randomSeed, localSource } from './event-log.js'
 import { createPresenceChannel, userColor, lastCellEdits } from './presence.js'
 import { Table } from './dsl.js'
@@ -441,6 +442,7 @@ interface CookedData {
   hydraRows: Row[]
   baubleRows: Row[]
   postRows: Row[]
+  sigs: CookedSigs
 }
 
 // The streaming log tables, under the names their panel tabs wear: the
@@ -490,18 +492,13 @@ function tablesForDisplay(views: Map<string, Table>): Map<string, Table> {
   return display
 }
 
-// Signature of one cooked output. Functions on rows hash by their source text
-// — every cook builds fresh closures, so identity would always differ.
-function cookedSig(rows: Row[]): string {
-  return JSON.stringify(rows, (_k, v: unknown) => (typeof v === 'function' ? String(v) : v))
-}
-
 const lastCookedSigs = { scene: '', timeline: '', hydra: '', bauble: '', post: '' }
 
 // Which cooked outputs changed (re-baselining for the next diff) — stamped
 // onto the apply pulse so the whole room resets the same multi-loop sequences.
-function diffCooked({ sceneRows, timelineRows, hydraRows, baubleRows, postRows }: CookedData): { scene: boolean; timeline: boolean; hydra: boolean; bauble: boolean; post: boolean } {
-  const sigs = { scene: cookedSig(sceneRows), timeline: cookedSig(timelineRows), hydra: cookedSig(hydraRows), bauble: cookedSig(baubleRows), post: cookedSig(postRows) }
+// The worker stamps a graph-hash signature per output (see CookedSigs), so
+// this never serializes the dense rows.
+function diffCooked({ sigs }: CookedData): { scene: boolean; timeline: boolean; hydra: boolean; bauble: boolean; post: boolean } {
   const changed = {
     scene: sigs.scene !== lastCookedSigs.scene,
     timeline: sigs.timeline !== lastCookedSigs.timeline,

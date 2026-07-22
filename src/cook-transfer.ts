@@ -13,7 +13,7 @@
 
 import { Table } from './dsl.js'
 import { getLineage, withLineage, type Row } from './lineage.js'
-import type { CookedResult } from './replay.js'
+import type { CookedResult, CookedSigs } from './replay.js'
 
 const FN_KEY = '$fn'
 const LINEAGE_KEY = '$lineage'
@@ -94,6 +94,7 @@ export interface PackedCook {
   hydraRows: Row[]
   baubleRows: Row[]
   postRows: Row[]
+  sigs: CookedSigs
 }
 
 export function packCooked(cooked: CookedResult): PackedCook {
@@ -114,6 +115,7 @@ export function packCooked(cooked: CookedResult): PackedCook {
     hydraRows: packRows(cooked.hydraRows, memo),
     baubleRows: packRows(cooked.baubleRows, memo),
     postRows: packRows(cooked.postRows, memo),
+    sigs: cooked.sigs,
   }
 }
 
@@ -135,8 +137,9 @@ export function unpackCooked(packed: PackedCook): CookedResult {
     sceneRows: unpackRows(packed.sceneRows, memo),
     timelineRows: unpackRows(packed.timelineRows, memo),
     hydraRows: unpackRows(packed.hydraRows, memo),
-    // ?? [] tolerates a stale worker bundle from before bauble/post existed.
+    // ?? tolerates a stale worker bundle from before bauble/post/sigs existed.
     baubleRows: unpackRows(packed.baubleRows ?? [], memo),
     postRows: unpackRows(packed.postRows ?? [], memo),
+    sigs: packed.sigs ?? { scene: '', timeline: '', hydra: '', bauble: '', post: '' },
   }
 }

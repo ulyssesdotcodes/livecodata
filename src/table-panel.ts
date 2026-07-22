@@ -81,8 +81,28 @@ export function formatCell(col: string, value: unknown): string {
   if (typeof value === 'number') {
     return Number.isInteger(value) ? String(value) : value.toFixed(3)
   }
-  if (typeof value === 'object') return JSON.stringify(value)
+  if (typeof value === 'object') return previewJSON(value, 120)
   return String(value)
+}
+
+// A size-capped JSON preview: cells can carry megabyte objects (the compiled
+// fold program rides every scene row), and a full stringify per rendered cell
+// would freeze the panel.
+function previewJSON(v: unknown, budget: number): string {
+  if (typeof v === 'function') return 'ƒ'
+  if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? String(v)
+  const arr = Array.isArray(v)
+  const parts: string[] = []
+  for (const [k, x] of arr ? (v as unknown[]).entries() : Object.entries(v)) {
+    if (budget <= 0) {
+      parts.push('…')
+      break
+    }
+    const piece = (arr ? '' : `${k}:`) + previewJSON(x, budget - 8)
+    budget -= piece.length
+    parts.push(piece)
+  }
+  return arr ? `[${parts.join(',')}]` : `{${parts.join(',')}}`
 }
 
 export function formatEditableCell(type: ColumnType, value: unknown): string {

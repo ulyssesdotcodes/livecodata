@@ -25,6 +25,15 @@ test('formatCell: empty for null, hex only in the color column', () => {
   assert.equal(formatCell('other', 255), '255', 'hex formatting only applies to the color column')
 })
 
+test('formatCell: object cells render a bounded preview, never a full stringify', () => {
+  // scene rows carry the compiled fold program (megabytes of baked keyframes);
+  // a cell must cost a preview, not a serialization
+  const huge = { kind: 'fold-table', frames: Array.from({ length: 5000 }, (_, i) => [i, i, i]) }
+  const out = formatCell('program', huge)
+  assert.ok(out.length < 500, `preview stays bounded (${out.length} chars)`)
+  assert.ok(out.includes('fold-table'), 'and still shows the leading content')
+})
+
 test('formatEditableCell: "=" cells in number columns display as themselves', () => {
   assert.equal(formatEditableCell('number', "=slider('h').mul(2)"), "=slider('h').mul(2)")
   assert.equal(formatEditableCell('number', 2.5), '2.500', 'plain numbers keep their formatting')

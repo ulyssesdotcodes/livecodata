@@ -53,6 +53,7 @@ test('a shared object crosses the boundary once, not once per row', () => {
 })
 
 
+
 const req = (code: string, extra: Partial<Parameters<ReturnType<typeof createCookService>['handle']>[0]> = {}) => ({
   id: 1,
   code,
@@ -78,6 +79,7 @@ define("scene", () => table("three").rasterize(4/30))
   assert.equal(cooked.views.get('base')!.length, 4)
   assert.ok(cooked.sceneRows.length > 0, 'rasterized scene rows came through')
   assert.ok(getLineage(cooked.views.get('scene')!.rows[0]).length > 0, 'lineage survives the boundary')
+  assert.ok(cooked.sigs.scene.length > 0, 'the change-detection signature rides along')
 })
 
 test('editable() serves the snapshot when present, else conformed seeds, and reports declarations', () => {
