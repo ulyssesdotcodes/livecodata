@@ -109,7 +109,7 @@ export function registerExprCellCheck(fn: (text: string) => ExprCellCheck): void
 // Streaming results are invalid here: a { $expr } binding in these columns
 // would NaN rasterize's frame math and silently drop rows from the timeline
 // strip. A constant expression is a plain number by cook time, so it passes.
-const TIMING_COLUMNS = new Set(['beat', 'dur', 'end', 'loop'])
+const TIMING_COLUMNS = new Set(['beat', 'dur', 'end', 'loop', 'at'])
 
 /**
  * Blank/unset cells always pass: event tables are deliberately sparse, so only

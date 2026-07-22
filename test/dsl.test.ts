@@ -323,7 +323,7 @@ test('schemas: canonical table schemas ride the DSL surface, typed and frozen', 
   assert.deepEqual(cols.find((c) => c.name === 'event')?.options,
     ['setCode', 'setSource', 'append', 'replace', 'layer', 'transition', 'setVariable'])
   assert.deepEqual(cols.find((c) => c.name === 'out')?.options, ['o0', 'o1', 'o2', 'o3'])
-  for (const name of ['sliders', 'path', 'steps']) assert.ok(name in schemas, `expected schemas.${name}`)
+  for (const name of ['sliders', 'path', 'origami']) assert.ok(name in schemas, `expected schemas.${name}`)
   // Frozen: an untyped program can't reshape a shared schema for later runs.
   assert.ok(Object.isFrozen(schemas.hydra) && Object.isFrozen(schemas.hydra.event))
   assert.throws(() => { (schemas.hydra as Record<string, unknown>).beat = 'string' })

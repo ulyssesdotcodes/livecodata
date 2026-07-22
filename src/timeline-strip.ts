@@ -74,6 +74,10 @@ export interface Handle {
   // `timeline` table) move both edges together on a move; 'dur' rows (a
   // length, not a second position) only get touched by an edge drag.
   endField?: 'end' | 'dur'
+  // Which stored column `beat`/`end` round-trip through on a drag — 'beat'
+  // for every table but the origami fold table, whose own name for it is
+  // `at` (see positionField). Omitted (not just 'beat') for the common case.
+  posField?: 'beat' | 'at'
   lane: number
   // A later placement of the same row (a loop event playing it more than
   // once) — draggable, but not the "primary" one a click should focus.
@@ -103,7 +107,16 @@ function wrapPass(beat: number, unit: number, maxPass?: number): { local: number
 // Positional/bookkeeping columns the hover/drag readout skips: position is
 // what the strip already shows visually (and as the unlabeled tag on the
 // handle itself), so the readout is reserved for what identifies the row.
-const POSITIONAL_COLS = new Set(['beat', 'end', 'dur', 'loop', 'disabled'])
+// `at` is the origami fold table's own name for its beat column (see
+// positionField below).
+const POSITIONAL_COLS = new Set(['beat', 'end', 'dur', 'loop', 'disabled', 'at'])
+
+// Which column holds a content table's source beat: `beat` for every table
+// but the origami fold table, whose `at` column plays the same role (the
+// fold solver's own name for it — see fold-engine.ts).
+function positionField(colNames: Set<string>): 'beat' | 'at' {
+  return colNames.has('beat') ? 'beat' : 'at'
+}
 
 // First non-blank line of a code cell, whitespace-collapsed and capped — a
 // sketch identifies its row at a glance without flooding the readout.
@@ -186,9 +199,10 @@ export function handlesFor(name: string, rows: Row[], columns: EditableColumn[],
   const timeline = segments.length ? buildTimeline(timelineRows) : null
   const wrapUnit = timeline ? timeline.beats : loopBeats
   const maxPass = timeline ? Math.max(0, timeline.loops - 1) : undefined
+  const posField = positionField(colNames)
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
-    const beat = num(row.beat)
+    const beat = num(row[posField])
     if (beat === undefined) continue
     const dur = colNames.has('dur') ? num(row.dur) : undefined
     const disabled = row.disabled === true
@@ -201,6 +215,7 @@ export function handlesFor(name: string, rows: Row[], columns: EditableColumn[],
         beat: w.local,
         end: dur !== undefined ? w.local + dur * p.stretch : undefined,
         endField: dur !== undefined ? 'dur' : undefined,
+        ...(posField === 'at' ? { posField: 'at' as const } : {}),
         lane: timeline ? w.pass : 0,
         ghost: idx > 0,
         disabled,
@@ -381,7 +396,7 @@ const DEFAULT_MIN_SPAN = 0.25
 
 export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts: DragOptions = {}): DragResult {
   const minSpan = opts.minSpan ?? DEFAULT_MIN_SPAN
-  const { row, beat, end, endField, pass } = handle
+  const { row, beat, end, endField, pass, posField = 'beat' } = handle
   // A wrapped placement's `beat`/`end` are local to its own pass (wrapPass) —
   // sourceBeatAt needs that pass back to re-derive the right extended-axis
   // point, the same `loop` argument buildTimeline's own multi-pass playback
@@ -390,7 +405,7 @@ export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts:
 
   if (mode === 'move') {
     const nextBeat = Math.max(1, beat + dBeats)
-    const values: Record<string, unknown> = { beat: toSource(nextBeat) }
+    const values: Record<string, unknown> = { [posField]: toSource(nextBeat) }
     // A 'dur' span's length is stored in source beats, untouched by a pure
     // move; an 'end' span (the timeline table) shifts its far edge too, so
     // its window keeps the same playback duration.
@@ -402,9 +417,9 @@ export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts:
     const fixedEnd = end ?? beat
     const nextBeat = Math.max(1, Math.min(beat + dBeats, fixedEnd - minSpan))
     if (endField === 'dur') {
-      return { row, values: { beat: toSource(nextBeat), dur: toSource(fixedEnd) - toSource(nextBeat) } }
+      return { row, values: { [posField]: toSource(nextBeat), dur: toSource(fixedEnd) - toSource(nextBeat) } }
     }
-    return { row, values: { beat: toSource(nextBeat) } }
+    return { row, values: { [posField]: toSource(nextBeat) } }
   }
 
   // mode === 'end'

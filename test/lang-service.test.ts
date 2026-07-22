@@ -118,7 +118,7 @@ test('schemas namespace completes its members, each documented on hover', () => 
   const res = svc.completionsAt(text, text.length)
   assert.ok(res && res.isMemberCompletion)
   const names = res.entries.map((e) => e.name)
-  for (const s of ['hydra', 'sliders', 'path', 'steps']) assert.ok(names.includes(s), `expected schemas.${s}`)
+  for (const s of ['hydra', 'sliders', 'path', 'origami']) assert.ok(names.includes(s), `expected schemas.${s}`)
 
   const text2 = 'editable("hydra", schemas.hydra)'
   const qi = svc.quickInfoAt(text2, text2.indexOf('.hydra') + 2)
@@ -131,7 +131,7 @@ test('schemas namespace completes its members, each documented on hover', () => 
   // wouldn't), and every schema member has a docstring.
   const onGlobal = svc.quickInfoAt(text2, text2.indexOf('schemas') + 1)
   assert.ok(onGlobal && onGlobal.docs.length > 0, 'the bare global carries docs')
-  for (const s of ['sliders', 'path', 'steps'] as const) {
+  for (const s of ['sliders', 'path', 'origami'] as const) {
     const t = `schemas.${s}`
     const d = svc.quickInfoAt(t, t.length - 1)
     assert.ok(d && d.docs.length > 0, `expected a docstring on schemas.${s}`)

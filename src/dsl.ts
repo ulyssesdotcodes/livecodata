@@ -1021,7 +1021,7 @@ class PhysicsBuilder {
 }
 
 // ── Origami ───────────────────────────────────────────────────────────────────
-// A sheet of paper folded by a table of fold steps (row fields: schemas.steps).
+// A sheet of paper folded by a table of fold steps (row fields: schemas.origami).
 // Each row is solved exactly — a row that cannot fold flat is an error naming
 // the step, not a silently dead fold. Playback drives one numeric field,
 // `fold`: k means the first k folds have landed; fractional values swing the
@@ -1039,7 +1039,7 @@ export class OrigamiBuilder {
     this._ctx = ctx
   }
 
-  /** Fold the sheet: one row per fold (see schemas.steps for the columns), applied in order. */
+  /** Fold the sheet: one row per fold (see schemas.origami for the columns), applied in order. */
   steps(steps: Table | Row[]): OrigamiBuilder {
     const next = new OrigamiBuilder(this._size, this._ctx)
     next._id = this._id
@@ -1362,7 +1362,7 @@ export const SCHEMAS = deepFreeze({
    * beat timing, `to` how far it lands (1 = flat). Check `disabled` to skip
    * a fold.
    */
-  steps: {
+  origami: {
     step: 'string', p1: 'string', p2: 'string', move: 'string',
     kind: 'string', pick: 'number', at: 'number', dur: 'number', to: 'number',
     disabled: 'boolean',
@@ -1613,7 +1613,7 @@ export type DSLSurface = Easings & {
   physics(source: Table | Row[]): PhysicsBuilder
   /**
    * Folding paper: origami() is a bare sheet. Chain .steps(table) to fold it
-   * by instructions (one fold per row — see schemas.steps), then
+   * by instructions (one fold per row — see schemas.origami), then
    * .spawn({ id, color, … }) for the create row and .sequence() for beat-timed
    * fold keyframes.
    */
