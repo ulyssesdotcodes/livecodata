@@ -99,7 +99,7 @@ editable("post", schemas.post)
 // The scene is the Editable Table example: a sphere following a hand-entered
 // path. New here is "warp" — an editable table of timeline EVENTS (its own
 // tab on the right) that retimes JUST the sphere, by chaining
-// .remap(table("warp")) on its way to the scene. Edit a warp row, press Run:
+// .retime(table("warp")) on its way to the scene. Edit a warp row, press Run:
 // same path, different time.
 // Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 
@@ -118,19 +118,19 @@ editable("post", schemas.post)
 editable("warp", schemas.timeline)
 
 // 2. The sphere's keyframes, warped on their way to the scene:
-//    .remap(table("warp")) places each row at every playback beat its source
+//    .retime(table("warp")) places each row at every playback beat its source
 //    beat is shown — the loop event duplicates rows once per cycle,
 //    stretches rescale \`dur\` columns, rows no event plays are dropped —
 //    and .outThree() routes the result on to the 3D scene ("three (system)"
-//    in the panel shows the remapped rows). Only THIS table is retimed.
+//    in the panel shows the retimed rows). Only THIS table is retimed.
 editable("path", schemas.path)
 table("path").orderBy("beat").map((r, i) => ({
   id: "ball", type: i === 0 ? "create" : "update", beat: r.beat,
   shape: "sphere", color: 0x4a9eff, px: r.px, py: r.py, pz: r.pz, rx: 0, ry: 0, rz: 0,
-})).remap(table("warp")).outThree()
+})).retime(table("warp")).outThree()
 
 // 3. The proof the MAIN timeline is untouched: this post table is NOT
-//    remapped, so its bloom pulse still lands on the real beat 9 — halfway
+//    retimed, so its bloom pulse still lands on the real beat 9 — halfway
 //    through the 16-beat loop — while the warped sphere runs on its own
 //    time. Retime the sphere however you like; the pulse keeps its place.
 editable("post", schemas.post)

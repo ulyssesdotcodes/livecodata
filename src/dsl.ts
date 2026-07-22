@@ -855,31 +855,12 @@ export class Table {
     return this._xf('rasterize', { maxBeats }, (ins) => rasterizeRows(ins[0], maxBeats), false)
   }
 
-  /**
-   * Move a table along the beat axis: retime({ offset, scale }) shifts every
-   * row's `beat` and stretches spacing about the loop start (durations scale
-   * too); retime(beat => newBeat) remaps arbitrarily. Rows without a `beat`
-   * are untouched. shift(beats) is sugar for retime({ offset }).
-   */
-  retime(spec: { offset?: number; scale?: number } | ((beat: number) => number)): Table {
-    if (typeof spec === 'function') {
-      const fn = spec
-      return this._xf('retimeFn', { fn }, (ins) => ins[0].map((r) => {
-        if (typeof r.beat !== 'number') return recarry(r)
-        return withLineage({ ...r, beat: fn(r.beat as number) }, carry(r))
-      }), true)
-    }
-    const { offset = 0, scale = 1 } = spec
-    return this._xf('retime', { offset, scale }, (ins) => ins[0].map((r) => {
-      if (typeof r.beat !== 'number') return recarry(r)
-      const next: Row = { ...r, beat: 1 + ((r.beat as number) - 1) * scale + offset }
-      if (typeof r.dur === 'number') next.dur = (r.dur as number) * scale
-      return withLineage(next, carry(r))
-    }), false)
-  }
-
+  /** Shift every row `beats` later on the beat axis (negative = earlier). Rows without a `beat` are untouched. */
   shift(beats: number): Table {
-    return this.retime({ offset: beats })
+    return this._xf('shift', { beats }, (ins) => ins[0].map((r) => {
+      if (typeof r.beat !== 'number') return recarry(r)
+      return withLineage({ ...r, beat: (r.beat as number) + beats }, carry(r))
+    }), false)
   }
 
   /**
@@ -889,14 +870,14 @@ export class Table {
    * once per cycle, a "retime" stretch rescales `dur` along with the
    * spacing, and rows no event plays are dropped. Rows without a numeric
    * `beat` — and every row when the timeline has no events — pass through
-   * unchanged. e.g. table("melody").remap(table("warp")).rasterize().
+   * unchanged. e.g. table("melody").retime(table("warp")).rasterize().
    * An origami folding retimes the same way: warp the beat-keyed fold
    * keyframes of paper.sequence() (keep the spawn row unmapped) to loop or
    * stretch subsections of the folding —
-   * paper.spawn().concat(paper.sequence().remap(table("warp"))).
+   * paper.spawn().concat(paper.sequence().retime(table("warp"))).
    */
-  remap(timeline: Table | Row[] | null | undefined): Table {
-    return this._xf('remap', {}, (ins) => {
+  retime(timeline: Table | Row[] | null | undefined): Table {
+    return this._xf('retime', {}, (ins) => {
       const segments = timelineSegments(ins[1])
       if (!segments.length) return ins[0].map(recarry)
       return ins[0].flatMap((r) => {
@@ -1331,7 +1312,7 @@ export const SCHEMAS = deepFreeze({
    * Playback beats no event covers play unmapped, and the loop length
    * becomes the events' full extent. An optional 0-indexed `loop` column
    * places an event in a later pass of the loop. The same table warps any
-   * beat table via .remap(table("timeline")); check `disabled` to mute a
+   * beat table via .retime(table("timeline")); check `disabled` to mute a
    * row.
    */
   timeline: {

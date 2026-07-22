@@ -124,7 +124,7 @@ function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: numb
   return { segments, span, loops }
 }
 
-// The compiled segments alone — what Table.remap warps content through.
+// The compiled segments alone — what Table.retime warps content through.
 export function timelineSegments(timelineRows: Row[]): TimelineSegment[] {
   return compile(timelineRows).segments
 }
