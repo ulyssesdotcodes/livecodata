@@ -58,6 +58,29 @@ test('the legacy "events" table name still cooks into the scene cache', () => {
   assert.ok(cooked.sceneRows.length > 0, 'saved sessions using "events" still render')
 })
 
+test('outX() routing feeds the consumers with no define() and no names', () => {
+  const rt = createRuntime()
+  const code = `
+    t.box({ color: 1 }).outThree()
+    table([{ beat: 1, event: "setCode", code: "osc().out()" }]).outHydra()
+  `
+  const cooked = cookProgram(rt, code, 1)
+  assert.ok(cooked.sceneRows.length > 0, 'routed three table rasterized into the scene cache')
+  assert.equal(cooked.sceneRows[0].shape, 'box')
+  assert.equal(cooked.hydraRows.length, 1)
+  assert.equal(cooked.hydraRows[0].code, 'osc().out()')
+})
+
+test('outX() combines with a name-defined consumer table', () => {
+  const rt = createRuntime()
+  const code = `
+    define("hydra", () => rows([{ beat: 1, event: "setCode", code: "osc().out()" }]))
+    rows([{ beat: 2, event: "setVariable", name: "amount", value: 3 }]).outHydra()
+  `
+  const cooked = cookProgram(rt, code, 1)
+  assert.deepEqual(cooked.hydraRows.map((r) => r.event), ['setCode', 'setVariable'])
+})
+
 test('cookProgram surfaces a broken post chain (e.g. a trailing comment) as an error', () => {
   const rt = createRuntime()
   const code = `

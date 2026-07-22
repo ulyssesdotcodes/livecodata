@@ -6,7 +6,7 @@
 // through the plain read-only path under their bare name.
 
 import { chartDataFor, numericColumns, resolveSpec, type GraphSpec, type ChartData } from './graph-panel.js'
-import type { Table } from './dsl.js'
+import { outViewName, type Table } from './dsl.js'
 import type { Row } from './lineage.js'
 import type { EditableTableStore, ColumnType, EditableColumn } from './editable-tables.js'
 
@@ -148,7 +148,8 @@ export function nextTableName(views: Map<string, Table>, editableStore: Editable
 export function fallbackTab(names: string[], current: string | null): string | null {
   if (!names.length) return null
   if (current != null && names.includes(current)) return current
-  return names.includes('three') ? 'three' : names.includes('events') ? 'events' : names[names.length - 1]
+  for (const n of [outViewName('three'), 'three', 'events']) if (names.includes(n)) return n
+  return names[names.length - 1]
 }
 
 // An explicit .graph() spec wins; otherwise data views auto-chart their numeric

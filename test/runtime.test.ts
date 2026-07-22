@@ -77,6 +77,48 @@ test('save() registers a constant view, still resolvable by table()', () => {
   assert.equal(views.get('d')!.rows[0].d, 2)
 })
 
+test('table(name, source) registers a view without define()', () => {
+  const rt = createRuntime()
+  const code = `
+    table("k", [{ v: 1 }])
+    table("lazy", (rand, table) => table("k").map(r => ({ v: r.v + 1 })))
+  `
+  const { views } = rt.run(code, { seed: 1 })
+  assert.equal(views.get('k')!.rows[0].v, 1)
+  assert.equal(views.get('lazy')!.rows[0].v, 2)
+})
+
+test('table() without a name is ephemeral — usable but not a view', () => {
+  const rt = createRuntime()
+  const code = `table([{ beat: 2, v: 1 }]).map(r => ({ ...r })).outHydra()`
+  const { views } = rt.run(code, { seed: 1 })
+  assert.equal([...views.keys()].filter((n) => !n.includes('(system)')).length, 0, 'no named view registered')
+  assert.equal(views.get('hydra (system)')!.rows[0].v, 1, 'routed rows still reach the consumer')
+})
+
+test('multiple outX() tables combine, beat-sorted, into one visible "(system)" view', () => {
+  const rt = createRuntime()
+  const code = `
+    rows([{ beat: 5, tag: "a" }]).outHydra()
+    table([{ beat: 1, tag: "b" }]).outHydra()
+  `
+  const { views } = rt.run(code, { seed: 1 })
+  assert.deepEqual(views.get('hydra (system)')!.rows.map((r) => r.tag), ['b', 'a'])
+})
+
+test('a view named like the consumer joins the combined output, without double-counting a routed save', () => {
+  const rt = createRuntime()
+  const code = `
+    define("hydra", () => rows([{ beat: 1, tag: "named" }]))
+    rows([{ beat: 2, tag: "routed" }]).save("extra").outHydra()
+  `
+  const { views } = rt.run(code, { seed: 1 })
+  assert.deepEqual(views.get('hydra (system)')!.rows.map((r) => r.tag), ['named', 'routed'])
+
+  const dedup = rt.run(`rows([{ beat: 1 }]).save("hydra").outHydra()`, { seed: 1 })
+  assert.equal(dedup.views.get('hydra (system)')!.rows.length, 1, 'save("hydra").outHydra() counts once')
+})
+
 test('graph specs are resolved to their cooked tables', () => {
   const rt = createRuntime()
   const code = `define("g", () => math(t => t).range(3/30).graph("value"))`
