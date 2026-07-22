@@ -13,16 +13,10 @@ test('map / filter / slice return new tables', () => {
   assert.deepEqual(base.rows, [{ v: 1 }, { v: 2 }, { v: 3 }])
 })
 
-test('retime shifts and scales the beat axis; shift is offset sugar', () => {
+test('shift moves rows along the beat axis, leaving beat-less rows alone', () => {
   const base = t([{ beat: 1, dur: 2, v: 'a' }, { beat: 3, v: 'b' }, { note: 'no beat' }])
-
-  assert.deepEqual(base.retime({ offset: 4 }).rows,
+  assert.deepEqual(base.shift(4).rows,
     [{ beat: 5, dur: 2, v: 'a' }, { beat: 7, v: 'b' }, { note: 'no beat' }])
-
-  // scale stretches spacing about the loop start (beat 1); durations scale too.
-  assert.deepEqual(base.retime({ scale: 2 }).rows,
-    [{ beat: 1, dur: 4, v: 'a' }, { beat: 5, v: 'b' }, { note: 'no beat' }])
-
   assert.deepEqual(base.shift(-1).rows.map((r) => r.beat), [0, 2, undefined])
 })
 

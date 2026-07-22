@@ -3,9 +3,10 @@
 // playback window `dur` beats long starting at `beat` (1-indexed) onto source
 // beats of the baked content — "retime" stretches input `from`..`to` into the
 // output block `outFrom`..`outTo` (default the window; from > to runs
-// backwards) and repeats the block across the window, "loop" cycles
-// `from`..`to` at natural speed, "hold" freezes at `from`, "speed" runs from
-// `from` at `rate`. Playback
+// backwards) and repeats the block across the window, "pingpong" is a retime
+// whose block plays `from`..`to` there and back, "loop" cycles `from`..`to`
+// at natural speed, "hold" freezes at `from`, "speed" runs from `from` at
+// `rate`. Playback
 // beats no event covers play unmapped (identity); no timeline means identity
 // everywhere. An optional 0-indexed `loop` column places an event in a later
 // pass of the loop; every pass spans beat 1 to the last event's end.
@@ -39,7 +40,7 @@ export interface TimelineSegment {
   // The event row that produced this segment — undefined for the legacy
   // sparse-keyframe segments, which have no event kind of their own. Purely
   // descriptive (coverage-shading tint); playback never reads it.
-  kind?: 'retime' | 'loop' | 'hold' | 'speed'
+  kind?: 'retime' | 'pingpong' | 'loop' | 'hold' | 'speed'
 }
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined)
@@ -82,10 +83,12 @@ function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: numb
     const from = opt(r.from) ?? (r.beat as number)
     const to = opt(r.to) ?? endOf(r)
     const kind = r.event as TimelineSegment['kind']
-    // Tile the block [o0, o1) → source [from, to] across the window [p0, p1],
-    // clipping partial blocks at both edges; o0 anchors the cycle phase, so a
-    // window starting mid-block starts mid-source.
-    const tile = (o0: number, o1: number): void => {
+    // Tile a block across the window [p0, p1], clipping partial blocks at
+    // both edges; o0 anchors the cycle phase, so a window starting mid-block
+    // starts mid-source. `legs` splits the block into linear pieces as
+    // fractions of the cycle — one 0..1 leg for retime/loop, a there-and-back
+    // pair for pingpong.
+    const tile = (o0: number, o1: number, legs: [number, number, number, number][]): void => {
       const cycle = o1 - o0
       if (!(cycle > 0)) {
         segments.push({ p0, p1, s0: from, s1: from, kind })
@@ -93,19 +96,27 @@ function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: numb
       }
       for (let k = Math.floor((p0 - o0) / cycle); o0 + k * cycle < p1; k++) {
         const b0 = o0 + k * cycle
-        const q0 = Math.max(b0, p0), q1 = Math.min(b0 + cycle, p1)
-        if (!(q1 > q0)) continue
-        segments.push({
-          p0: q0, p1: q1,
-          s0: from + ((q0 - b0) / cycle) * (to - from),
-          s1: from + ((q1 - b0) / cycle) * (to - from),
-          kind,
-        })
+        for (const [f0, f1, sA, sB] of legs) {
+          const h0 = b0 + f0 * cycle, h1 = b0 + f1 * cycle
+          const q0 = Math.max(h0, p0), q1 = Math.min(h1, p1)
+          if (!(q1 > q0)) continue
+          segments.push({
+            p0: q0, p1: q1,
+            s0: sA + ((q0 - h0) / (h1 - h0)) * (sB - sA),
+            s1: sA + ((q1 - h0) / (h1 - h0)) * (sB - sA),
+            kind,
+          })
+        }
       }
     }
+    const outBlock = (): [number, number] =>
+      [(opt(r.outFrom) ?? (r.beat as number)) + off, (opt(r.outTo) ?? endOf(r)) + off]
     switch (r.event) {
       case 'retime':
-        tile((opt(r.outFrom) ?? (r.beat as number)) + off, (opt(r.outTo) ?? endOf(r)) + off)
+        tile(...outBlock(), [[0, 1, from, to]])
+        break
+      case 'pingpong':
+        tile(...outBlock(), [[0, 0.5, from, to], [0.5, 1, to, from]])
         break
       case 'hold':
         segments.push({ p0, p1, s0: from, s1: from, kind })
@@ -116,7 +127,7 @@ function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: numb
         break
       }
       case 'loop':
-        tile(p0, p0 + Math.max(0, to - from))
+        tile(p0, p0 + Math.max(0, to - from), [[0, 1, from, to]])
         break
     }
   }
@@ -124,7 +135,7 @@ function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: numb
   return { segments, span, loops }
 }
 
-// The compiled segments alone — what Table.remap warps content through.
+// The compiled segments alone — what Table.retime warps content through.
 export function timelineSegments(timelineRows: Row[]): TimelineSegment[] {
   return compile(timelineRows).segments
 }

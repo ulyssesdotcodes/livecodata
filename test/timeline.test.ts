@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildTimeline } from '../src/timeline.js'
-import { Table } from '../src/dsl.js'
+import { Table, createDSL } from '../src/dsl.js'
+import { FRAMES_PER_BEAT } from '../src/constants.js'
 import { withLineage, getLineage } from '../src/lineage.js'
 import { createRuntime } from '../src/runtime.js'
 import { cookProgram } from '../src/replay.js'
@@ -60,6 +61,27 @@ test('retime output block anchors phase: a window starting mid-block starts mid-
   const tl = buildTimeline([{ event: 'retime', beat: 5, dur: 8, from: 1, to: 5, outFrom: 1, outTo: 9 }])
   assert.equal(tl.sourceBeatAt(6), 3.5, 'beat 6 sits in the block that began (unheard) at beat 1')
   assert.equal(tl.sourceBeatAt(10), 1.5)
+})
+
+test('pingpong plays the source range forward then backward across its block', () => {
+  // from..to 1..4 stretched into out block 5..9: forward over 5..7, backward
+  // over 7..9 — each leg at twice the source's own pace.
+  const tl = buildTimeline([{ event: 'pingpong', beat: 5, dur: 4, from: 1, to: 4, outFrom: 5, outTo: 9 }])
+  assert.equal(tl.sourceBeatAt(5), 1)
+  assert.equal(tl.sourceBeatAt(6), 2.5)
+  assert.equal(tl.sourceBeatAt(7), 4, 'the turn-around')
+  assert.equal(tl.sourceBeatAt(8), 2.5)
+  assert.equal(tl.sourceBeatAt(9), 1)
+})
+
+test('pingpong blocks repeat across the window, and .retime places rows on both legs', () => {
+  const tl = buildTimeline([{ event: 'pingpong', beat: 1, dur: 8, from: 1, to: 3, outFrom: 1, outTo: 5 }])
+  assert.equal(tl.sourceBeatAt(2), 2, 'forward leg')
+  assert.equal(tl.sourceBeatAt(4), 2, 'backward leg')
+  assert.equal(tl.sourceBeatAt(6), 2, 'second block')
+  const out = new Table([{ id: 'a', beat: 2 }])
+    .retime([{ event: 'pingpong', beat: 1, dur: 4, from: 1, to: 3 }]).rows
+  assert.deepEqual(out.map((r) => r.beat), [2, 4], 'once on the way out, once on the way back')
 })
 
 test('speed event advances from `from` at `rate` source beats per playback beat', () => {
@@ -182,54 +204,79 @@ test('rows without a loop column keep single-loop behavior (loops = 1, loop arg 
   assert.equal(tl.sourceBeatAt(9), tl.sourceBeatAt(9, 3))
 })
 
-// --- .remap(timeline): warp any beat table through a timeline table ----------
+// --- .retime(timeline): warp any beat table through a timeline table ----------
 
-test('remap through a loop event duplicates rows once per cycle', () => {
+test('retime through a loop event duplicates rows once per cycle', () => {
   const content = new Table([
     { id: 'a', beat: 1 },
     { id: 'b', beat: 3 },
   ])
-  const out = content.remap([{ event: 'loop', beat: 1, dur: 8, from: 1, to: 5 }]).rows
+  const out = content.retime([{ event: 'loop', beat: 1, dur: 8, from: 1, to: 5 }]).rows
   assert.deepEqual(
     out.map((r) => [r.id, r.beat]),
     [['a', 1], ['a', 5], ['b', 3], ['b', 7]],
   )
 })
 
-test('remap through a retime stretch rescales beat spacing and dur', () => {
+test('retime through a retime stretch rescales beat spacing and dur', () => {
   const content = new Table([{ id: 'a', beat: 3, dur: 2 }])
   // Half speed: source 1..5 across playback 1..9.
-  const out = content.remap([{ event: 'retime', beat: 1, dur: 8, from: 1, to: 5 }]).rows
+  const out = content.retime([{ event: 'retime', beat: 1, dur: 8, from: 1, to: 5 }]).rows
   assert.deepEqual(out.map((r) => [r.beat, r.dur]), [[5, 4]])
 })
 
-test('remap drops rows no event plays; non-beat rows pass through', () => {
+test('retime drops rows no event plays; non-beat rows pass through', () => {
   const content = new Table([
     { id: 'late', beat: 10 },
     { id: 'meta' },
   ])
-  const out = content.remap([{ event: 'loop', beat: 1, dur: 8, from: 1, to: 5 }]).rows
+  const out = content.retime([{ event: 'loop', beat: 1, dur: 8, from: 1, to: 5 }]).rows
   assert.deepEqual(out.map((r) => r.id), ['meta'])
 })
 
-test('remap through a repeating retime block places rows once per repeat, dur stretched', () => {
+test('retime through a repeating retime block places rows once per repeat, dur stretched', () => {
   const content = new Table([{ id: 'a', beat: 3, dur: 2 }])
-  const out = content.remap([
+  const out = content.retime([
     { event: 'retime', beat: 1, dur: 16, from: 1, to: 5, outFrom: 1, outTo: 9 },
   ]).rows
   assert.deepEqual(out.map((r) => [r.beat, r.dur]), [[5, 4], [13, 4]])
 })
 
-test('remap carries each source row\'s lineage onto every placed copy', () => {
+test('retime carries each source row\'s lineage onto every placed copy', () => {
   const src = withLineage({ id: 'a', beat: 1 }, [{ table: 'melody', index: 0 }])
-  const out = new Table([src]).remap([{ event: 'loop', beat: 1, dur: 8, from: 1, to: 5 }]).rows
+  const out = new Table([src]).retime([{ event: 'loop', beat: 1, dur: 8, from: 1, to: 5 }]).rows
   assert.equal(out.length, 2)
   for (const r of out) assert.deepEqual(getLineage(r), [{ table: 'melody', index: 0 }])
 })
 
-test('remap with an empty timeline is a no-op', () => {
+test('retime loops a subsection of an origami fold sequence', () => {
+  const dsl = createDSL(null)
+  const paper = dsl.origami().steps([
+    { step: 'diag', p1: '0,0', p2: '1,1', move: '0.667,0.333', at: 1, dur: 2 },
+    { step: 'collapse', p1: '0,0.5', p2: '1,0.5', move: '0.333,0.167', kind: 'reverse', at: 4, dur: 2 },
+  ])
+  const spawn = paper.spawn({ id: 'sheet' })
+  // First fold plays straight; the second fold's window (source 4..7) loops
+  // three times — the sheet folds shut, eases back open, folds shut again.
+  const warp = [
+    { event: 'retime', beat: 1, dur: 3 },
+    { event: 'loop', beat: 4, dur: 9, from: 4, to: 7 },
+  ]
+  const scene = spawn.concat(paper.sequence().retime(warp)).rasterize(13)
+  const foldAt = (b: number): number => {
+    const row = scene.rows.find((r) => r.frame === Math.round((b - 1) * FRAMES_PER_BEAT) && r.id === 'sheet')!
+    return row.fold as number
+  }
+  assert.equal(foldAt(3), 1, 'the first fold lands on the straight clock')
+  assert.equal(foldAt(6), 2, 'the second fold lands in the first cycle')
+  assert.equal(foldAt(8), 1.5, 'mid-swing inside a repeat')
+  assert.equal(foldAt(9), 2, 'landed again in the second cycle')
+  assert.equal(foldAt(12), 2, 'and in the third')
+})
+
+test('retime with an empty timeline is a no-op', () => {
   const content = new Table([{ id: 'a', beat: 2 }])
-  assert.deepEqual(content.remap([]).rows, [{ id: 'a', beat: 2 }])
+  assert.deepEqual(content.retime([]).rows, [{ id: 'a', beat: 2 }])
 })
 
 test('a user timeline table (editable, schemas.timeline) remaps other tables in a program', () => {
@@ -238,7 +285,7 @@ test('a user timeline table (editable, schemas.timeline) remaps other tables in 
     define("warp", () => editable("warp", schemas.timeline, [
       { event: "loop", beat: 1, dur: 8, from: 1, to: 5 },
     ]))
-    define("hits", () => rows([{ id: "x", beat: 2 }]).remap(table("warp")))
+    define("hits", () => rows([{ id: "x", beat: 2 }]).retime(table("warp")))
   `
   const result = rt.run(code, { seed: 1 })
   const hits = result.views.get('hits')!
