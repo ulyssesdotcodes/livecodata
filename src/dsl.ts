@@ -887,9 +887,13 @@ export class Table {
    * each row lands at every playback beat its source beat is shown, so a
    * "loop" event (or a repeating "retime" block) duplicates the looped rows
    * once per cycle, a "retime" stretch rescales `dur` along with the
-   * spacing, and rows no event plays are dropped. Rows without a numeric `beat` — and every row when the
-   * timeline has no events — pass through unchanged.
-   * e.g. table("melody").remap(table("warp")).rasterize().
+   * spacing, and rows no event plays are dropped. Rows without a numeric
+   * `beat` — and every row when the timeline has no events — pass through
+   * unchanged. e.g. table("melody").remap(table("warp")).rasterize().
+   * An origami folding retimes the same way: warp the beat-keyed fold
+   * keyframes of paper.sequence() (keep the spawn row unmapped) to loop or
+   * stretch subsections of the folding —
+   * paper.spawn().concat(paper.sequence().remap(table("warp"))).
    */
   remap(timeline: Table | Row[] | null | undefined): Table {
     return this._xf('remap', {}, (ins) => {

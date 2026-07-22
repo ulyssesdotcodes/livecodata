@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { buildTimeline } from '../src/timeline.js'
-import { Table } from '../src/dsl.js'
+import { Table, createDSL } from '../src/dsl.js'
+import { FRAMES_PER_BEAT } from '../src/constants.js'
 import { withLineage, getLineage } from '../src/lineage.js'
 import { createRuntime } from '../src/runtime.js'
 import { cookProgram } from '../src/replay.js'
@@ -225,6 +226,31 @@ test('remap carries each source row\'s lineage onto every placed copy', () => {
   const out = new Table([src]).remap([{ event: 'loop', beat: 1, dur: 8, from: 1, to: 5 }]).rows
   assert.equal(out.length, 2)
   for (const r of out) assert.deepEqual(getLineage(r), [{ table: 'melody', index: 0 }])
+})
+
+test('remap loops a subsection of an origami fold sequence', () => {
+  const dsl = createDSL(null)
+  const paper = dsl.origami().steps([
+    { step: 'diag', p1: '0,0', p2: '1,1', move: '0.667,0.333', at: 1, dur: 2 },
+    { step: 'collapse', p1: '0,0.5', p2: '1,0.5', move: '0.333,0.167', kind: 'reverse', at: 4, dur: 2 },
+  ])
+  const spawn = paper.spawn({ id: 'sheet' })
+  // First fold plays straight; the second fold's window (source 4..7) loops
+  // three times — the sheet folds shut, eases back open, folds shut again.
+  const warp = [
+    { event: 'retime', beat: 1, dur: 3 },
+    { event: 'loop', beat: 4, dur: 9, from: 4, to: 7 },
+  ]
+  const scene = spawn.concat(paper.sequence().remap(warp)).rasterize(13)
+  const foldAt = (b: number): number => {
+    const row = scene.rows.find((r) => r.frame === Math.round((b - 1) * FRAMES_PER_BEAT) && r.id === 'sheet')!
+    return row.fold as number
+  }
+  assert.equal(foldAt(3), 1, 'the first fold lands on the straight clock')
+  assert.equal(foldAt(6), 2, 'the second fold lands in the first cycle')
+  assert.equal(foldAt(8), 1.5, 'mid-swing inside a repeat')
+  assert.equal(foldAt(9), 2, 'landed again in the second cycle')
+  assert.equal(foldAt(12), 2, 'and in the third')
 })
 
 test('remap with an empty timeline is a no-op', () => {
