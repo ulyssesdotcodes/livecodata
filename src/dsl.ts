@@ -527,8 +527,9 @@ export interface DSLContext {
 export type ViewFn = (rand: () => number, table: (name: string) => Table) => Table | Row[]
 
 // Display name of a combined per-consumer output view: every table routed
-// with .outHydra()/.outThree()/… (plus a same-named view, if one exists),
-// concatenated beat-sorted. Consumers prefer it over the bare name.
+// with .outHydra()/.outThree()/…, concatenated beat-sorted. When it exists,
+// consumers read it INSTEAD of the same-named view — the bare-name lookup is
+// only the no-routes backwards-compatibility fallback.
 export const outViewName = (kind: string): string => `${kind} (system)`
 
 interface TNode {
@@ -972,24 +973,25 @@ export class Table {
 
   /**
    * Route this table to the 3D scene: its rows join every other .outThree()
-   * table (and a table named "three", if one exists) in one combined,
-   * beat-sorted "three (system)" table — shown in the table panel and
-   * rasterized for playback. No define() or name needed:
-   * t.box().three.rotate().outThree(). Without any outThree(), the scene
-   * reads the table named "three" as before.
+   * table in one combined, beat-sorted "three (system)" table — shown in the
+   * table panel and rasterized for playback. No define() or name needed:
+   * t.box().three.rotate().outThree(). Routing takes precedence: once
+   * anything calls outThree(), ONLY routed tables play — a table named
+   * "three" is read only when nothing routes (the backwards-compatibility
+   * fallback), so route it too if it should stay in the mix.
    */
   outThree(): this { return this._out('three') }
-  /** Route this table of PRE-RASTERIZED per-frame rows to the scene cache, combined with every other .outScene() table (and a "scene" view, if any) — use when you rasterize() yourself; otherwise outThree() and let playback rasterize. */
+  /** Route this table of PRE-RASTERIZED per-frame rows to the scene cache, combined with every other .outScene() table — use when you rasterize() yourself; otherwise outThree() and let playback rasterize. Takes precedence over a table named "scene", which is read only when nothing routes. */
   outScene(): this { return this._out('scene') }
-  /** Route this table of hydra event rows (schemas.hydra) to the hydra view: combined with every other .outHydra() table (and a "hydra" view, if any) into "hydra (system)", which playback reads. Without any outHydra(), the table named "hydra" is read as before. */
+  /** Route this table of hydra event rows (schemas.hydra) to the hydra view: combined with every other .outHydra() table into "hydra (system)", which playback reads. Takes precedence: a table named "hydra" is read only when nothing routes — route it too if it should stay in the mix. */
   outHydra(): this { return this._out('hydra') }
-  /** Route this table of bauble event rows (schemas.bauble) to the bauble view, combined with every other .outBauble() table (and a "bauble" view, if any). */
+  /** Route this table of bauble event rows (schemas.bauble) to the bauble view, combined with every other .outBauble() table. Takes precedence over a table named "bauble", which is read only when nothing routes. */
   outBauble(): this { return this._out('bauble') }
-  /** Route this table of post event rows (schemas.post) to the post-processing chain, combined with every other .outPost() table (and a "post" view, if any). */
+  /** Route this table of post event rows (schemas.post) to the post-processing chain, combined with every other .outPost() table. Takes precedence over a table named "post", which is read only when nothing routes. */
   outPost(): this { return this._out('post') }
-  /** Route this table of timeline event rows (schemas.timeline) to the playback timeline, combined with every other .outTimeline() table (and a "timeline" view, if any) — e.g. beats(16).outTimeline(). */
+  /** Route this table of timeline event rows (schemas.timeline) to the playback timeline, combined with every other .outTimeline() table — e.g. beats(16).outTimeline(). Takes precedence over a table named "timeline", which is read only when nothing routes. */
   outTimeline(): this { return this._out('timeline') }
-  /** Route this table of particle event rows (schemas.particles) to the GPU particle sim, combined with every other .outParticles() table (and a "particles" view, if any). */
+  /** Route this table of particle event rows (schemas.particles) to the GPU particle sim, combined with every other .outParticles() table. Takes precedence over a table named "particles", which is read only when nothing routes. */
   outParticles(): this { return this._out('particles') }
 }
 

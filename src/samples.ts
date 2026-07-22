@@ -510,8 +510,10 @@ paper.spawn({ id: "cicada", color: 0xf4efe2, backColor: 0x79b356, pz: 1.2, rz: -
 // "+ column" survives the next Run too. (Every edit is an event too — see
 // the "hydra·events" tab.) A second, code-generated table only becomes
 // useful once you need to LAYER computed events on top of these — build it
-// in code and route it with .outHydra() (see "Hydra Sketch Swap"): every
-// routed table, plus this named one, merges into one combined stream.
+// in code and route it with .outHydra() (see "Hydra Sketch Swap"). Routing
+// takes precedence over this by-name lookup, so the moment anything routes,
+// route every table that should still play: table("hydra").outHydra()
+// would keep this one in the mix.
 //
 // "disabled" is just an ordinary boolean column: check a row's box to mute
 // that event — the sketch skips it, as if the row weren't there — without

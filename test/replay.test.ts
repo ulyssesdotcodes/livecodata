@@ -71,14 +71,15 @@ test('outX() routing feeds the consumers with no define() and no names', () => {
   assert.equal(cooked.hydraRows[0].code, 'osc().out()')
 })
 
-test('outX() combines with a name-defined consumer table', () => {
+test('outX() takes precedence over a name-defined consumer table', () => {
   const rt = createRuntime()
   const code = `
     define("hydra", () => rows([{ beat: 1, event: "setCode", code: "osc().out()" }]))
     rows([{ beat: 2, event: "setVariable", name: "amount", value: 3 }]).outHydra()
   `
   const cooked = cookProgram(rt, code, 1)
-  assert.deepEqual(cooked.hydraRows.map((r) => r.event), ['setCode', 'setVariable'])
+  assert.deepEqual(cooked.hydraRows.map((r) => r.event), ['setVariable'],
+    'once anything routes, only routed tables play — by-name is the no-routes fallback')
 })
 
 test('cookProgram surfaces a broken post chain (e.g. a trailing comment) as an error', () => {
