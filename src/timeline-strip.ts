@@ -285,7 +285,10 @@ export interface HitResult {
   part: HitPart
 }
 
-const EDGE_TOLERANCE_PX = 6
+// Wide enough that a fingertip can land on a span's edge to resize it, not
+// just a mouse cursor — the edge shows a resize cursor on hover, so the
+// larger zone is self-correcting for the mouse.
+const EDGE_TOLERANCE_PX = 12
 
 // Which handle (and which part of it) sits under a pointer at `(x, lane)`.
 // Edges win over body within EDGE_TOLERANCE_PX; among body hits a point

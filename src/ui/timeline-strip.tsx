@@ -411,13 +411,10 @@ export function TimelineStrip(props: {
     if (!hit) { props.onSelectRow?.(cur.name, null); return }
     const handle = resolveHandle(handles(), geometry(), hit, x, lane)
     if (!handle) return
-    // A finger can't reliably land on a few-px edge, so touch drags always
-    // move the whole row — duration edits stay in the table on mobile.
-    const part = e.pointerType === 'touch' ? 'body' : hit.part
     gesture = {
       table: cur.name,
       handle,
-      part,
+      part: hit.part,
       pointerId: e.pointerId,
       startClientX: e.clientX,
       startClientY: e.clientY,
