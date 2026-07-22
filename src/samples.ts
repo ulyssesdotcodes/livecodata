@@ -246,10 +246,10 @@ rows([
   },
   {
     name: "Origami Crane",
-    table: "steps",
+    table: "origami",
     code: `// livecodata — Origami Crane: a table of fold steps, solved exactly
 // A square of paper folds itself into the traditional crane. Every row of
-// the "steps" table is ONE FOLD, and each is solved exactly when the code
+// the "origami" table is ONE FOLD, and each is solved exactly when the code
 // runs: the paper is cut along the fold line, the chosen flaps swing over,
 // and a layer solver works out how the paper stacks (seeded from the step
 // before, so the folding stays coherent). Playback shows those exact
@@ -263,7 +263,7 @@ rows([
 // never tear.
 // Press "Run" (or Cmd/Ctrl-Enter), then hit Play.
 //
-// The 17 fold steps are seeded into the "steps" table on the right — the code
+// The 17 fold steps are seeded into the "origami" table on the right — the code
 // here declares only their column schema; edit the steps live in the panel.
 // Each column:
 //   step   a name for the fold (errors point at it)
@@ -289,10 +289,10 @@ rows([
 // off the paper, a kind the geometry does not allow — fails with an error
 // naming the step. Nothing folds wrong silently.
 
-// \`schemas.steps\` is the canonical fold-table schema (the columns above) —
+// \`schemas.origami\` is the canonical fold-table schema (the columns above) —
 // hover it in the editor to see them typed out. editable() registers the
 // table under its name, so this one call is the whole declaration.
-editable("steps", schemas.steps)
+editable("origami", schemas.origami)
 
 // Feed the fold table to a sheet of paper, colored side DOWN (backColor)
 // the way a crane is folded so the finished bird comes out colored. ry
@@ -306,7 +306,7 @@ editable("steps", schemas.steps)
 // about 52 beats — four passes of the 16-beat loop: the paper folds itself
 // across the first three and a bit, holds the finished crane, then opens
 // flat and folds itself all over again.
-const paper = origami().steps(table("steps"))
+const paper = origami().steps(table("origami"))
 paper.spawn({ id: "crane", color: 0xf4efe2, backColor: 0xd94f2a, pz: 1.2, ry: Math.PI, rz: 2.356 })
   .concat(paper.sequence())
   .outThree()
@@ -319,7 +319,7 @@ rows([
     code: "src(s0).blend(src(o0).scale(1.003), 0.18).out(o0)" },
 ]).outHydra()
 
-// Things to try, live in the "steps" tab:
+// Things to try, live in the "origami" tab:
 //   - Set the wings row's \`to\` to 1: the wings press flat, the classic
 //     pressed crane; 0.35 barely lifts them.
 //   - Delete the "head" row: everything else still folds — steps only
@@ -333,7 +333,7 @@ rows([
 //     swing through.
 `,
     tables: {
-      steps: [
+      origami: [
         // in half along the diagonal
         { step: "diag", p1: "0,0", p2: "1,1", move: "0.667,0.333", at: 1, dur: 2 },
         // collapse into the square base: four inside reverse folds
@@ -363,7 +363,7 @@ rows([
   },
   {
     name: "Origami Cicada",
-    table: "steps",
+    table: "origami",
     code: `// livecodata — Origami Cicada: the traditional model, nine simple folds
 // The classic cicada (semi), folded for nearly two centuries: halve the
 // square, fold both corners up, sweep the tips back out past the edges
@@ -372,27 +372,27 @@ rows([
 // runs — same fold-table dialect as the Origami Crane sample (see its
 // header for the column notes). Press "Run", then hit Play.
 
-// \`schemas.steps\` is the canonical fold-table schema — the rows are seeded
+// \`schemas.origami\` is the canonical fold-table schema — the rows are seeded
 // in the table panel on the right, one fold each.
-editable("steps", schemas.steps)
+editable("origami", schemas.origami)
 
 // Colored side down, like the crane — the finished bug comes out green.
 // .outThree() routes the paper to the 3D scene; the fold keyframes span two
 // passes of the 16-beat loop: fold across the first and a half, hold the
 // finished bug, then open flat and fold again.
-const paper = origami().steps(table("steps"))
+const paper = origami().steps(table("origami"))
 paper.spawn({ id: "cicada", color: 0xf4efe2, backColor: 0x79b356, pz: 1.2, rz: -0.785 })
   .concat(paper.sequence())
   .outThree()
 
-// Things to try, live in the "steps" tab:
+// Things to try, live in the "origami" tab:
 //   - Nudge wingL/wingR's p1/p2: the wings splay wider or tighter.
 //   - Swap the head rows' move markers ("0.97,0.03" <-> "0.03,0.97") and
 //     the stripe folds in the other order.
 //   - Delete both tuck rows for the wide-bodied cicada variant.
 `,
     tables: {
-      steps: [
+      origami: [
         // in half along the diagonal: the triangle, point down
         { step: "half", p1: "0,0", p2: "1,1", move: "0.667,0.333", at: 1, dur: 2 },
         // both corners up to the top point
