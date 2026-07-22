@@ -7,6 +7,7 @@
 
 import { Hydra } from 'hydra-ts'
 import createREGL from 'regl'
+import { makeHydraExprScope } from './expr-cell.js'
 import type { HydraFrame } from './hydra.js'
 
 export interface HydraAPI {
@@ -47,6 +48,9 @@ export function initHydra(canvas: HTMLCanvasElement, source: HTMLCanvasElement, 
   const scope: Record<string, unknown> = { ...hydra.generators }
   hydra.sources.forEach((s, i) => { scope['s' + i] = s })
   hydra.outputs.forEach((o, i) => { scope['o' + i] = o })
+  // expr sources as dynamic args — osc(expr.midi("c4").mul(20)); callable
+  // Exprs, since hydra-ts only accepts functions of the per-frame props.
+  scope.expr = makeHydraExprScope()
   const scopeKeys = Object.keys(scope)
   const scopeValues = scopeKeys.map((k) => scope[k])
 

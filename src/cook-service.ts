@@ -8,6 +8,7 @@
 import { createRuntime } from './runtime.js'
 import { cookProgram } from './replay.js'
 import { sliderDeclsInCode } from './post-lang.js'
+import { exprSliderDecls } from './expr-cell.js'
 import { conformRow, schemaColumns, EVENTS_SUFFIX, type Schema } from './editable-tables.js'
 import { packCooked, type PackedCook } from './cook-transfer.js'
 import type { PhysicsEngine } from './dsl.js'
@@ -106,6 +107,13 @@ export function createCookService({ physics }: { physics?: () => PhysicsEngine |
         for (const row of cooked.postRows) {
           if (typeof row.code !== 'string' || row.code.trim() === '') continue
           for (const d of sliderDeclsInCode(row.code)) sliders.set(d.id, d)
+        }
+        // Hydra cells can't be evaluated here (sketches compile in the browser
+        // against hydra's generators), so expr.slider declarations are matched
+        // textually.
+        for (const row of cooked.hydraRows) {
+          if (typeof row.code !== 'string' || row.code.trim() === '') continue
+          for (const d of exprSliderDecls(row.code)) sliders.set(d.id, d)
         }
         return { id: req.id, ok: true, cooked: packCooked(cooked), declared, sliders: [...sliders.values()] }
       } catch (err) {

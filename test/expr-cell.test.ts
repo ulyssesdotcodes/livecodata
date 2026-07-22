@@ -3,7 +3,7 @@
 // the cook per row, with slider declarations flowing through the runtime.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { evalExprCell, checkExprCell, evalRowExprCells } from '../src/expr-cell.js'
+import { evalExprCell, checkExprCell, evalRowExprCells, makeHydraExprScope } from '../src/expr-cell.js'
 import { createCookService, type CookResponse } from '../src/cook-service.js'
 import { isBinding, evalExpr, type Binding } from '../src/dsl.js'
 import type { Row } from '../src/lineage.js'
@@ -59,4 +59,12 @@ test('a slider() call in a cell declares through the worker runtime', () => {
   const fx = resp.cooked.views.find((v) => v.name === 'fx')!
   assert.ok(isBinding(fx.rows[0].value), 'the cell cooked to a streaming binding in the served rows')
   assert.equal(resolve(fx.rows[0].value, 1.5), 1.5)
+})
+
+test('the hydra expr scope returns callable exprs that chain and read props', () => {
+  const ex = makeHydraExprScope() as Record<string, (...a: unknown[]) => unknown>
+  const arg = (ex.midi('c4') as unknown as { mul(n: number): (p: object) => number }).mul(2)
+  assert.equal(typeof arg, 'function', 'a chained expr must still be a hydra dynamic arg')
+  assert.equal(arg({ $midi: () => 0.4 }), 0.8)
+  assert.equal((ex.slider('r') as (p: object) => number)({ sliders: { r: 3 } }), 3)
 })

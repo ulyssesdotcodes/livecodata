@@ -184,3 +184,15 @@ define("post", () => rows([{ beat: 1, event: "setCode", code: 'blur(slider("glow
     'one per name (last declaration wins); omitted min/max stay unset; post cells scanned too',
   )
 })
+
+test('expr.slider in a hydra code cell declares through the cook', () => {
+  const service = createCookService()
+  const resp = service.handle(req('editable("hydra", schemas.hydra)', {
+    editables: [{
+      name: 'hydra',
+      rows: [{ beat: 1, event: 'setCode', code: 'osc(expr.slider("h", 0, 2)).out(o0)', out: 'o0' }],
+    }],
+  }))
+  assert.ok(resp.ok)
+  assert.ok(resp.sliders.some((s) => s.id === 'h' && s.min === 0 && s.max === 2))
+})

@@ -145,15 +145,14 @@ test('no answers inside an unparseable mess still return gracefully', () => {
 
 const hydraSvc = createLangService(env, 'hydra')
 
-test('hydra: generators, sources, and outputs are globals; the DSL is not', () => {
+test('hydra: generators, sources, outputs, and expr are globals; the DSL is not', () => {
   const res = hydraSvc.completionsAt('os', 2)
   assert.ok(res)
   const names = res.entries.map((e) => e.name)
-  for (const g of ['osc', 'noise', 'src', 'shape', 'voronoi', 's0', 'o0']) {
+  for (const g of ['osc', 'noise', 'src', 'shape', 'voronoi', 's0', 'o0', 'expr']) {
     assert.ok(names.includes(g), `expected hydra global ${g}`)
   }
   assert.ok(!names.includes('table'), 'DSL surface must not leak into hydra sketches')
-  assert.ok(!names.includes('expr'), 'DSL surface must not leak into hydra sketches')
 })
 
 test('hydra: chains complete the modifier methods', () => {

@@ -113,29 +113,103 @@ export function checkExprCell(text: string): ExprCellCheck {
 
 registerExprCellCheck(checkExprCell)
 
-// Post live args: an Expr resolves per frame against the props object — the
-// folded vars are the row (so field() reads sibling variables), sliders and
-// the clock map to their EvalCtx sources, and midi rides the $midi sampler
-// the visualizer injects.
+// Props-object evaluation: what post live args and hydra dynamic args see —
+// the folded vars are the row (so field() reads sibling variables), sliders
+// and the clock map to their EvalCtx sources, and midi rides the $midi
+// sampler the visualizer injects.
+function propsEvalCtx(p: Record<string, unknown>): EvalCtx {
+  return {
+    slider: (id) => {
+      const s = (p.sliders as Record<string, number> | undefined)?.[id]
+      return typeof s === 'number' ? s : 0
+    },
+    time: () => (typeof p.time === 'number' ? p.time : 0),
+    ...(typeof p.$midi === 'function' ? { midi: p.$midi as EvalCtx['midi'] } : {}),
+  }
+}
+
+function evalPropsNumber(node: Expr['node'], p: Record<string, unknown>): number {
+  const n = Number(evalExpr(node, p as Row, 0, propsEvalCtx(p)))
+  return Number.isFinite(n) ? n : 0
+}
+
 registerExprArgSupport({
   isExpr: (v) => v instanceof Expr,
   toLiveFn: (v) => {
     const node = (v as Expr).node
-    return (p) => {
-      const ctx: EvalCtx = {
-        slider: (id) => {
-          const s = (p.sliders as Record<string, number> | undefined)?.[id]
-          return typeof s === 'number' ? s : 0
-        },
-        time: () => (typeof p.time === 'number' ? p.time : 0),
-        ...(typeof p.$midi === 'function' ? { midi: p.$midi as EvalCtx['midi'] } : {}),
-      }
-      const n = Number(evalExpr(node, p as Row, 0, ctx))
-      return Number.isFinite(n) ? n : 0
-    }
+    return (p) => evalPropsNumber(node, p)
   },
   makeScope: (defineSlider) => makeExprNamespace({ defineSlider }),
 })
+
+// ── expr in hydra sketches ───────────────────────────────────────────────────
+// hydra-ts's dynamic args must be plain functions of the per-frame props, so
+// the hydra scope's expr returns CALLABLE Exprs: a function hydra-ts accepts
+// as an argument, proxied so the chain methods still work —
+// osc(expr.midi("c4").mul(20)).out(o0).
+
+const UNWRAP = Symbol('expr')
+
+const unwrapArg = (a: unknown): unknown => {
+  const e = a !== null && (typeof a === 'function' || typeof a === 'object')
+    ? (a as Record<PropertyKey, unknown>)[UNWRAP]
+    : undefined
+  return e instanceof Expr ? e : a
+}
+
+function wrapCallable(v: unknown): unknown {
+  if (!(v instanceof Expr)) return v
+  const e = v
+  const fn = (p: Record<string, unknown>): number => evalPropsNumber(e.node, p)
+  return new Proxy(fn, {
+    get(target, prop, recv) {
+      if (prop === UNWRAP) return e
+      const member = (e as unknown as Record<PropertyKey, unknown>)[prop]
+      if (typeof member === 'function') {
+        return (...args: unknown[]) =>
+          wrapCallable((member as (...a: unknown[]) => unknown).apply(e, args.map(unwrapArg)))
+      }
+      return member !== undefined ? member : Reflect.get(target, prop, recv)
+    },
+  })
+}
+
+/**
+ * The hydra sketch scope's `expr` — the same surface as everywhere else, every
+ * Expr callable so it drops straight into a generator argument. slider() reads
+ * without declaring; hydra cells declare via exprSliderDecls, since sketches
+ * compile only in the browser.
+ */
+export function makeHydraExprScope(): Record<string, unknown> {
+  const ns = makeExprNamespace(null) as unknown as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const k of Object.keys(ns)) {
+    const v = ns[k]
+    out[k] = typeof v === 'function'
+      ? (...args: unknown[]) => wrapCallable((v as (...a: unknown[]) => unknown)(...args.map(unwrapArg)))
+      : wrapCallable(v)
+  }
+  return out
+}
+
+// expr.slider declarations in hydra code cells, matched textually (literal
+// id, optional numeric min/max) — the VAR_DECL precedent in post-lang.ts.
+const EXPR_SLIDER = /\bexpr\s*\.\s*slider\s*\(\s*(['"`])(.*?)\1\s*(?:,\s*(-?(?:\d+(?:\.\d+)?|\.\d+))\s*(?:,\s*(-?(?:\d+(?:\.\d+)?|\.\d+)))?)?/g
+
+export function exprSliderDecls(code: string): { id: string; min?: number; max?: number }[] {
+  const out: { id: string; min?: number; max?: number }[] = []
+  const seen = new Set<string>()
+  for (const m of code.matchAll(EXPR_SLIDER)) {
+    if (!m[2] || seen.has(m[2])) continue
+    seen.add(m[2])
+    out.push({
+      id: m[2],
+      ...(m[3] !== undefined ? { min: Number(m[3]) } : {}),
+      ...(m[4] !== undefined ? { max: Number(m[4]) } : {}),
+    })
+  }
+  return out
+}
 
 /**
  * Evaluate every "=" cell in the rows' schema-declared number columns (the
