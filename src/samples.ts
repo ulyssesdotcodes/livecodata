@@ -105,13 +105,15 @@ editable("post", schemas.post)
 
 // 1. The warp: one timeline EVENT per row (\`schemas.timeline\` — hover it),
 //    each covering the playback window \`dur\` beats long starting at \`beat\`.
-//    Seeded on the right:
-//      retime  beats 1..9   plays source 1..5 at half speed (stretched)
-//      loop    beats 9..15  cycles source 1..3 at natural speed (3×)
-//      hold    beats 15..17 freezes on source beat 5 (the path's end)
+//    Seeded on the right, one of each kind:
+//      retime    beats 1..7   plays source 1..5 stretched across 6 beats
+//      loop      beats 7..11  cycles source 1..3 at natural speed (2×)
+//      pingpong  beats 11..15 swings source 1..5 there and back
+//      hold      beats 15..17 freezes on source beat 5 (the path's end)
 //    retime is the general one: \`from\`..\`to\` is the source range (from > to
 //    runs it backwards), and an optional output block \`outFrom\`..\`outTo\`
-//    repeats across the window. A numeric cell left 0 means "unset". The
+//    repeats across the window — pingpong is a retime whose block plays the
+//    range forward then backward. A numeric cell left 0 means "unset". The
 //    name is ours to pick — "timeline" is the one reserved name: a table
 //    saved under it (or routed with .outTimeline()) warps GLOBAL playback,
 //    every table at once, instead of being applied by hand like this one.
@@ -142,9 +144,10 @@ editable("post", schemas.post)
         { beat: 5, px: 0,  py: 0.3, pz: -1 },
       ],
       warp: [
-        { event: 'retime', beat: 1,  dur: 8, from: 1, to: 5 },
-        { event: 'loop',   beat: 9,  dur: 6, from: 1, to: 3 },
-        { event: 'hold',   beat: 15, dur: 2, from: 5 },
+        { event: 'retime',   beat: 1,  dur: 6, from: 1, to: 5 },
+        { event: 'loop',     beat: 7,  dur: 4, from: 1, to: 3 },
+        { event: 'pingpong', beat: 11, dur: 4, from: 1, to: 5 },
+        { event: 'hold',     beat: 15, dur: 2, from: 5 },
       ],
       post: [
         { beat: 1, event: "setCode", code: "bloom((p) => p.glow, 0.4, 0.6)" },
