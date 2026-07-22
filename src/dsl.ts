@@ -1303,8 +1303,10 @@ export const SCHEMAS = deepFreeze({
    * picks the warp: "retime" (the general one — beats(count, { fit }) emits
    * a single retime) stretches input source beats `from`..`to` into the
    * output block `outFrom`..`outTo` (from > to runs backwards) and repeats
-   * the block until the window closes; "loop" cycles source `from`..`to` at
-   * natural speed (a retime whose output block is as long as its input);
+   * the block until the window closes; "pingpong" is a retime whose block
+   * plays `from`..`to` there and back (out 5..9 from 1..4 swings forward
+   * then backward, each leg double-time); "loop" cycles source `from`..`to`
+   * at natural speed (a retime whose output block is as long as its input);
    * "hold" freezes the frame at `from`; "speed" runs from `from` at `rate`
    * source beats per playback beat. `from`/`to` and `outFrom`/`outTo`
    * default to the window's own start/end, so a bare retime plays straight
@@ -1318,7 +1320,7 @@ export const SCHEMAS = deepFreeze({
   timeline: {
     beat: 'number',
     dur: 'number',
-    event: ['retime', 'loop', 'hold', 'speed'],
+    event: ['retime', 'pingpong', 'loop', 'hold', 'speed'],
     from: 'number',
     to: 'number',
     outFrom: 'number',

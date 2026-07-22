@@ -63,6 +63,27 @@ test('retime output block anchors phase: a window starting mid-block starts mid-
   assert.equal(tl.sourceBeatAt(10), 1.5)
 })
 
+test('pingpong plays the source range forward then backward across its block', () => {
+  // from..to 1..4 stretched into out block 5..9: forward over 5..7, backward
+  // over 7..9 — each leg at twice the source's own pace.
+  const tl = buildTimeline([{ event: 'pingpong', beat: 5, dur: 4, from: 1, to: 4, outFrom: 5, outTo: 9 }])
+  assert.equal(tl.sourceBeatAt(5), 1)
+  assert.equal(tl.sourceBeatAt(6), 2.5)
+  assert.equal(tl.sourceBeatAt(7), 4, 'the turn-around')
+  assert.equal(tl.sourceBeatAt(8), 2.5)
+  assert.equal(tl.sourceBeatAt(9), 1)
+})
+
+test('pingpong blocks repeat across the window, and .retime places rows on both legs', () => {
+  const tl = buildTimeline([{ event: 'pingpong', beat: 1, dur: 8, from: 1, to: 3, outFrom: 1, outTo: 5 }])
+  assert.equal(tl.sourceBeatAt(2), 2, 'forward leg')
+  assert.equal(tl.sourceBeatAt(4), 2, 'backward leg')
+  assert.equal(tl.sourceBeatAt(6), 2, 'second block')
+  const out = new Table([{ id: 'a', beat: 2 }])
+    .retime([{ event: 'pingpong', beat: 1, dur: 4, from: 1, to: 3 }]).rows
+  assert.deepEqual(out.map((r) => r.beat), [2, 4], 'once on the way out, once on the way back')
+})
+
 test('speed event advances from `from` at `rate` source beats per playback beat', () => {
   const tl = buildTimeline([{ event: 'speed', beat: 1, dur: 8, from: 1, rate: 0.5 }])
   assert.equal(tl.sourceBeatAt(9), 5, 'half speed: 8 playback beats cover 4 source beats')

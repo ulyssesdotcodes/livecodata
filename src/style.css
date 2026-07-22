@@ -1956,6 +1956,10 @@ html, body {
   background: rgba(74, 158, 255, 0.18);
 }
 
+.timeline-strip-coverage-pingpong {
+  background: rgba(77, 208, 225, 0.18);
+}
+
 .timeline-strip-coverage-loop {
   background: rgba(160, 111, 214, 0.22);
 }
