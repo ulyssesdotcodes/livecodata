@@ -35,43 +35,42 @@ export const SAMPLES: Sample[] = [
 
 // 1. editable(name, schema) declares a user-editable table: rows are
 //    entered/edited in the table panel (its own "path" tab), not computed —
-//    edits persist across runs, unlike a normal view. This table starts with
-//    the keyframes seeded on the right; the schema is all the code carries,
-//    and \`schemas.path\` is the canonical one for beat-timed positions —
-//    hover it to see the columns ({ beat, px, py, pz, disabled }). Each
-//    keyframe sits on a beat (1-indexed: beat 1 is the top of the loop). Try
-//    it: open the "path" tab, click a cell to change a coordinate, or hit "+
-//    row" to add a keyframe, then press Run again to see the sphere follow the
-//    new path. (Every edit is recorded as an event too — see the "path·events" tab.)
-//    "disabled" is just an ordinary boolean column, not a special mechanism —
-//    check a row's box to mute that keyframe (the sphere skips it) without
-//    deleting the row; uncheck to bring it back.
-define("path", () => editable("path", schemas.path))
+//    edits persist across runs, unlike a normal view. It registers itself
+//    under its name, so this one call is the whole declaration. The table
+//    starts with the keyframes seeded on the right; the schema is all the
+//    code carries, and \`schemas.path\` is the canonical one for beat-timed
+//    positions — hover it to see the columns ({ beat, px, py, pz, disabled }).
+//    Each keyframe sits on a beat (1-indexed: beat 1 is the top of the loop).
+//    Try it: open the "path" tab, click a cell to change a coordinate, or hit
+//    "+ row" to add a keyframe, then press Run again to see the sphere follow
+//    the new path. (Every edit is recorded as an event too — see the
+//    "path·events" tab.) "disabled" is just an ordinary boolean column, not a
+//    special mechanism — check a row's box to mute that keyframe (the sphere
+//    skips it) without deleting the row; uncheck to bring it back.
+editable("path", schemas.path)
 
-// 2. Turn the path's keyframes into a moving sphere: the first row (sorted by
-//    beat, in case rows were added out of order) creates it; every later row
-//    is an update, and playback interpolates position between consecutive
-//    rows by their \`beat\`.
-define("three", (rand, table) =>
-  table("path").orderBy("beat").map((r, i) => ({
-    id: "ball", type: i === 0 ? "create" : "update", beat: r.beat,
-    shape: "sphere", color: 0x4a9eff, px: r.px, py: r.py, pz: r.pz, rx: 0, ry: 0, rz: 0,
-  }))
-)
-
-// 3. Bake the sparse keyframes into a dense per-frame cache for playback —
-//    at least 8 beats of it. The loop itself is the "beats" control under the
+// 2. Turn the path's keyframes into a moving sphere and route it to the 3D
+//    scene with .outThree(): the first row (sorted by beat, in case rows were
+//    added out of order) creates it; every later row is an update, and
+//    playback interpolates position between consecutive rows by their \`beat\`.
+//    A routed table needs no name — everything that calls .outThree(), from
+//    any number of tables, is combined beat-sorted into the "three (system)"
+//    table (see its tab on the right), and playback bakes that into per-frame
+//    motion automatically. The loop itself is the "beats" control under the
 //    scene (16 by default), so the sphere holds its last pose until it wraps.
-define("scene", (rand, table) => table("three").rasterize(8))
+table("path").orderBy("beat").map((r, i) => ({
+  id: "ball", type: i === 0 ? "create" : "update", beat: r.beat,
+  shape: "sphere", color: 0x4a9eff, px: r.px, py: r.py, pz: r.pz, rx: 0, ry: 0, rz: 0,
+})).outThree()
 
-// 4. Post-processing is an editable table too (the "post" tab): beat-placed
+// 3. Post-processing is an editable table too (the "post" tab): beat-placed
 //    events build a shader chain run over the rendered scene. Seeded here: a
 //    soft bloom whose \`glow\` is a live variable, pulsed brighter at beat 9 —
 //    edit the chain cell or the values on the right and Run to restyle the
 //    whole scene. See the "Post" example for the full tour.
 editable("post", schemas.post)
 
-// 5. Any number cell can hold a live EXPRESSION instead of a literal: start
+// 4. Any number cell can hold a live EXPRESSION instead of a literal: start
 //    it with "=" — spreadsheet style — and write a chain over the expr
 //    sources, e.g. "=slider('sway')" (an on-screen slider appears) or
 //    "=time().sin().mul(0.5)". The path's middle keyframe is seeded with one:
@@ -95,7 +94,6 @@ editable("post", schemas.post)
   },
   {
     name: "Text",
-    table: "three",
     code: `// livecodata — text in the 3D scene
 // A \`shape: "text"\` object is real extruded 3D text (three.js TextGeometry): it
 // has depth, catches the scene's lights, and moves, spins and scales like any
@@ -107,10 +105,14 @@ editable("post", schemas.post)
 //   size   the cap height per line, in world units (default 0.5)
 //   color  material color (default white) — recolors live, like any mesh
 //
-// \`text\` is just a normal column: it rides through rasterize untouched and
-// steps to the newest value, so a later "update" row can swap the string
-// mid-loop the way a color pulse does.
-define("three", () => rows([
+// \`text\` is just a normal column: it steps to the newest value as the loop
+// plays, so a later "update" row can swap the string mid-loop the way a color
+// pulse does. .outThree() routes the table to the 3D scene — no name, no
+// boilerplate; playback bakes the keyframes into per-frame motion for you
+// (the routed rows show up in the "three (system)" tab). The subtitle's ry
+// keyframes ease back and forth, landing back on the start pose just before
+// the loop wraps so it repeats without a jump.
+rows([
   { id: "title", type: "create", beat: 1, shape: "text", text: "livecodata",
     color: 0x4a9eff, size: 0.7, px: 0, py: 0.4, pz: 0, rx: 0, ry: 0, rz: 0 },
   // A second line that gently swings side to side while turning about y.
@@ -118,11 +120,7 @@ define("three", () => rows([
     color: 0xffd43b, size: 0.32, px: 0, py: -0.5, pz: 0, rx: 0, ry: -0.6, rz: 0 },
   { id: "sub", type: "update", beat: 9, ry: 0.6 },
   { id: "sub", type: "update", beat: 16, ry: -0.6 },
-]))
-
-// The subtitle's ry keyframes ease back and forth, landing back on the start
-// pose just before the loop wraps so it repeats without a jump.
-define("scene", (rand, table) => table("three").rasterize(16))
+]).outThree()
 `,
   },
   {
@@ -139,28 +137,29 @@ define("scene", (rand, table) => table("three").rasterize(16))
 //    shape name, so give distinct ids when you have more than one of a kind.
 //    Sizes follow the shared schema: box → hx/hy/hz (half-extents),
 //    sphere/torus → r, cylinder/cone → r + h (half-height); leave a size out
-//    and the renderer's default for that shape is used.
-define("things", () =>
+//    and the renderer's default for that shape is used. table(name, table)
+//    names the result — its own "things" tab in the panel — and .outThree()
+//    routes it to the 3D scene.
+table("things",
   t.box({ id: "b", px: -2.4, color: 0x4a9eff })
     .concat(t.sphere({ id: "s", px: -1.2, r: 0.4, color: 0xff6b6b }))
     .concat(t.cylinder({ id: "y", px: 0, r: 0.3, h: 0.5, color: 0x51cf66 }))
     .concat(t.cone({ id: "c", px: 1.2, r: 0.35, h: 0.5, color: 0xffd43b }))
     .concat(t.torus({ id: "r", px: 2.4, r: 0.35, color: 0xcc5de8 }))
-)
+).outThree()
 
 // 2. t.object(shape, props) is the generic behind the named helpers — handy for
-//    a label. Here a line of 3D text floats above the row of shapes. Nudge the
-//    whole scene with t.translate/scale/rotate(table, x, y, z).
-define("label", () =>
-  t.text({ id: "caption", py: 1.4, size: 0.4, text: "primitives", color: 0xffffff })
-)
+//    a label. Here a line of 3D text floats above the row of shapes, routed
+//    straight to the scene with no name at all. Nudge the whole scene with
+//    t.translate/scale/rotate(table, x, y, z).
+t.text({ id: "caption", py: 1.4, size: 0.4, text: "primitives", color: 0xffffff })
+  .outThree()
 
-// 3. Concat everything and bake an 8-beat cache. The scene is static here —
-//    add "update" rows (or animate ry) to make it move, exactly like the
-//    Text and Camera Move samples do.
-define("scene", (rand, table) =>
-  table("things").concat(table("label")).rasterize(8)
-)
+// 3. Everything routed with .outThree() combines beat-sorted into the one
+//    "three (system)" table — no manual concat — and playback bakes it into a
+//    per-frame cache automatically. The scene is static here — add "update"
+//    rows (or animate ry) to make it move, exactly like the Text and Camera
+//    Move samples do.
 `,
   },
   {
@@ -173,32 +172,30 @@ define("scene", (rand, table) =>
 // Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 
 // 1. A little scene to look at: a 3×3 lattice of cubes on the floor. grid()
-//    gives px/py/pz; each cell becomes a create row for a small box.
-define("cubes", () =>
+//    gives px/py/pz; each cell becomes a create row for a small box. Named
+//    "cubes" for its own tab, routed to the scene with .outThree().
+table("cubes",
   grid(3, 3, { spacing: 0.8 }).map((c, i) => ({
     id: "c" + i, type: "create", beat: 1, shape: "box",
     color: 0x4a9eff, hx: 0.2, hy: 0.2, hz: 0.2,
     px: c.px, py: c.py, pz: c.pz, rx: 0, ry: 0, rz: 0,
   }))
-)
+).outThree()
 
 // 2. t.camera([...]) — one row per keyframe. px/py/pz are the eye, tx/ty/tz the
 //    look-at target (here always the origin), fov the vertical field of view.
 //    Over the 16-beat loop the eye swings around the lattice and cranes up,
 //    while the fov eases from wide to tight (a subtle dolly-zoom), then lands
 //    back on the start pose at beat 16 so the loop repeats without a jump.
-define("cam", () => t.camera([
+//    Its .outThree() merges the keyframes with the cubes above into the one
+//    "three (system)" scene table — no manual concat.
+t.camera([
   { beat: 1,  px: 0,    py: 0.5, pz: 5, tx: 0, ty: 0, tz: 0, fov: 60 },
   { beat: 5,  px: 4,    py: 1.5, pz: 3, fov: 55 },
   { beat: 9,  px: 0,    py: 3,   pz: -5, fov: 45 },
   { beat: 13, px: -4,   py: 1.5, pz: 3, fov: 55 },
   { beat: 16, px: 0,    py: 0.5, pz: 5, fov: 60 },
-]))
-
-// 3. Merge the camera keyframes with the cubes and bake the 16-beat cache.
-define("scene", (rand, table) =>
-  table("cam").concat(table("cubes")).rasterize(16)
-)
+]).outThree()
 `,
   },
   {
@@ -211,45 +208,40 @@ define("scene", (rand, table) =>
 // intensity and position animate on the beat timeline like anything else.
 // Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 
-// 1. Something to light: a row of pale spheres to catch the colored lights.
-define("balls", () =>
-  grid(5, 1, { spacing: 0.9 }).map((c, i) => ({
-    id: "b" + i, type: "create", beat: 1, shape: "sphere",
-    color: 0xdddddd, r: 0.35, px: c.px, py: 0, pz: 0, rx: 0, ry: 0, rz: 0,
-  }))
-)
+// 1. Something to light: a row of pale spheres to catch the colored lights,
+//    routed to the scene with .outThree() — no name needed.
+grid(5, 1, { spacing: 0.9 }).map((c, i) => ({
+  id: "b" + i, type: "create", beat: 1, shape: "sphere",
+  color: 0xdddddd, r: 0.35, px: c.px, py: 0, pz: 0, rx: 0, ry: 0, rz: 0,
+})).outThree()
 
 // 2. The static lights. \`kind\` picks the type:
 //    - a dim "ambient" fill so nothing is pure black,
 //    - a cool "directional" key from the upper left for shape,
 //    plus a camera pulled back to frame the row. color is a hex number; give
-//    each light a distinct id.
-define("lights", () =>
+//    each light a distinct id. Named "lights" for its own tab in the panel.
+table("lights",
   t.light({ id: "fill", kind: "ambient", color: 0x222233, intensity: 1 })
     .concat(t.light({ id: "key", kind: "directional", color: 0x88aaff, intensity: 1.5, px: -3, py: 4, pz: 2 }))
     .concat(t.camera([
       { beat: 1, px: 0, py: 1.5, pz: 6, tx: 0, ty: 0, tz: 0 },
     ]))
-)
+).outThree()
 
 // 3. A moving colored point light: one create row plus update keyframes for
 //    px/pz (a circle) and intensity (brightest at the front of the loop). It's
-//    a plain "light" row, so it rides rasterize and interpolates like any object.
-define("bulb", () =>
-  rows([
-    { id: "bulb", type: "create", beat: 1, shape: "light", kind: "point",
-      color: 0xff6b6b, intensity: 5, distance: 12, px: 0, py: 1.5, pz: 2 },
-    { id: "bulb", type: "update", beat: 3, px: 3,  pz: 0, intensity: 2 },
-    { id: "bulb", type: "update", beat: 5, px: 0,  pz: -2, intensity: 5 },
-    { id: "bulb", type: "update", beat: 7, px: -3, pz: 0, intensity: 2 },
-    { id: "bulb", type: "update", beat: 9, px: 0,  pz: 2, intensity: 5 },
-  ])
-)
-
-// 4. Merge lights + moving bulb + spheres and bake the 8-beat cache.
-define("scene", (rand, table) =>
-  table("lights").concat(table("bulb")).concat(table("balls")).rasterize(8)
-)
+//    a plain "light" row, so it interpolates like any object. Everything
+//    routed with .outThree() — spheres, lights, bulb — combines beat-sorted
+//    into the one "three (system)" scene table, and playback bakes the
+//    per-frame cache automatically.
+rows([
+  { id: "bulb", type: "create", beat: 1, shape: "light", kind: "point",
+    color: 0xff6b6b, intensity: 5, distance: 12, px: 0, py: 1.5, pz: 2 },
+  { id: "bulb", type: "update", beat: 3, px: 3,  pz: 0, intensity: 2 },
+  { id: "bulb", type: "update", beat: 5, px: 0,  pz: -2, intensity: 5 },
+  { id: "bulb", type: "update", beat: 7, px: -3, pz: 0, intensity: 2 },
+  { id: "bulb", type: "update", beat: 9, px: 0,  pz: 2, intensity: 5 },
+]).outThree()
 `,
   },
   {
@@ -298,8 +290,9 @@ define("scene", (rand, table) =>
 // naming the step. Nothing folds wrong silently.
 
 // \`schemas.steps\` is the canonical fold-table schema (the columns above) —
-// hover it in the editor to see them typed out.
-define("steps", () => editable("steps", schemas.steps))
+// hover it in the editor to see them typed out. editable() registers the
+// table under its name, so this one call is the whole declaration.
+editable("steps", schemas.steps)
 
 // Feed the fold table to a sheet of paper, colored side DOWN (backColor)
 // the way a crane is folded so the finished bird comes out colored. ry
@@ -307,24 +300,24 @@ define("steps", () => editable("steps", schemas.steps))
 // as if watching the fold from under a glass table — so every fold swings
 // toward the camera instead of away. The fold value is one number: how
 // many folds have landed (fractions = the next flap mid-swing), so
-// scrubbing the timeline scrubs the folding.
-define("three", (rand, table) => {
-  const paper = origami().steps(table("steps"))
-  return paper.spawn({ id: "crane", color: 0xf4efe2, backColor: 0xd94f2a, pz: 1.2, ry: Math.PI, rz: 2.356 })
-    .concat(paper.sequence())
-})
-
-// Bake a 64-beat cache — four passes of the 16-beat loop: the paper folds
-// itself across the first three and a bit, holds the finished crane, then
-// opens flat and folds itself all over again.
-define("scene", (rand, table) => table("three").rasterize(64))
+// scrubbing the timeline scrubs the folding. .outThree() routes the create
+// row + fold keyframes to the 3D scene (the "three (system)" tab), and
+// playback bakes the per-frame cache automatically. The keyframes span
+// about 52 beats — four passes of the 16-beat loop: the paper folds itself
+// across the first three and a bit, holds the finished crane, then opens
+// flat and folds itself all over again.
+const paper = origami().steps(table("steps"))
+paper.spawn({ id: "crane", color: 0xf4efe2, backColor: 0xd94f2a, pz: 1.2, ry: Math.PI, rz: 2.356 })
+  .concat(paper.sequence())
+  .outThree()
 
 // A whisper of video feedback (the rendered scene is hydra's s0) so the
-// paper leaves faint trails as it moves. Delete this view for a clean look.
-define("hydra", () => rows([
+// paper leaves faint trails as it moves — routed with .outHydra(); delete
+// these two lines for a clean look.
+rows([
   { beat: 1, event: "setCode",
     code: "src(s0).blend(src(o0).scale(1.003), 0.18).out(o0)" },
-]))
+]).outHydra()
 
 // Things to try, live in the "steps" tab:
 //   - Set the wings row's \`to\` to 1: the wings press flat, the classic
@@ -381,18 +374,16 @@ define("hydra", () => rows([
 
 // \`schemas.steps\` is the canonical fold-table schema — the rows are seeded
 // in the table panel on the right, one fold each.
-define("steps", () => editable("steps", schemas.steps))
+editable("steps", schemas.steps)
 
 // Colored side down, like the crane — the finished bug comes out green.
-define("three", (rand, table) => {
-  const paper = origami().steps(table("steps"))
-  return paper.spawn({ id: "cicada", color: 0xf4efe2, backColor: 0x79b356, pz: 1.2, rz: -0.785 })
-    .concat(paper.sequence())
-})
-
-// Bake a 32-beat cache — two passes of the 16-beat loop: fold across the
-// first and a half, hold the finished bug, then open flat and fold again.
-define("scene", (rand, table) => table("three").rasterize(32))
+// .outThree() routes the paper to the 3D scene; the fold keyframes span two
+// passes of the 16-beat loop: fold across the first and a half, hold the
+// finished bug, then open flat and fold again.
+const paper = origami().steps(table("steps"))
+paper.spawn({ id: "cicada", color: 0xf4efe2, backColor: 0x79b356, pz: 1.2, rz: -0.785 })
+  .concat(paper.sequence())
+  .outThree()
 
 // Things to try, live in the "steps" tab:
 //   - Nudge wingL/wingR's p1/p2: the wings splay wider or tighter.
@@ -462,8 +453,9 @@ define("scene", (rand, table) => table("three").rasterize(32))
 // right in the table — no code change needed, and any column you add via
 // "+ column" survives the next Run too. (Every edit is an event too — see
 // the "hydra·events" tab.) A second, code-generated table only becomes
-// useful once you need to LAYER computed events on top of these — see
-// "House of Cards" for that.
+// useful once you need to LAYER computed events on top of these — build it
+// in code and route it with .outHydra() (see "Hydra Sketch Swap"): every
+// routed table, plus this named one, merges into one combined stream.
 //
 // "disabled" is just an ordinary boolean column: check a row's box to mute
 // that event — the sketch skips it, as if the row weren't there — without
@@ -495,13 +487,12 @@ editable("hydra", schemas.hydra)
 //    beat 17 — and those beats land on a SECOND pass: the scene only resets
 //    once every two loops.) A small fixed tilt (rx) keeps the face in view as
 //    it turns edge-on to the camera, rather than vanishing to a line.
-define("three", () => rows([
+//    .outThree() routes it to the 3D scene — no define, no name.
+rows([
   { id: "square", type: "create", beat: 1, shape: "box", color: 0x4a9eff,
     px: 0, py: 0, pz: 0, hx: 0.6, hy: 0.6, hz: 0.05, rx: 0.3, ry: 0, rz: 0 },
   { id: "square", type: "update", beat: 16, ry: Math.PI * 2 },
-]))
-
-define("scene", (rand, table) => table("three").rasterize(16))
+]).outThree()
 
 // 2. A two-part hydra sketch, on the same 16-beat grid as the square's spin
 //    above: the first half echoes the rendered scene (src(s0)) with a feedback
@@ -531,13 +522,13 @@ editable("hydra", schemas.hydra)
 // a spinning square is turned to glowing edges, then wiped to a mosaic halfway
 // through. Press "Run" (or Cmd/Ctrl-Enter), then Play.
 
-// 1. A square spinning one full turn per 16-beat loop — the thing to process.
-define("three", () => rows([
+// 1. A square spinning one full turn per 16-beat loop — the thing to process —
+//    routed to the 3D scene with .outThree().
+rows([
   { id: "square", type: "create", beat: 1, shape: "box", color: 0x4a9eff,
     px: 0, py: 0, pz: 0, hx: 0.7, hy: 0.7, hz: 0.06, rx: 0.3, ry: 0, rz: 0 },
   { id: "square", type: "update", beat: 16, ry: Math.PI * 2 },
-]))
-define("scene", (rand, table) => table("three").rasterize(16))
+]).outThree()
 
 // 2. The post chain. The scene is the IMPLICIT source, so a cell reads like
 //    hydra — \`edges(0.2).bloom(1.2)\` IS the effect stack applied to the scene.
@@ -596,9 +587,9 @@ editable("post", schemas.post)
 //    declared here (\`schemas.sliders\`, the canonical slider-table schema —
 //    hover it to see the columns) — so open the "sliders" tab in the panel
 //    and add a row, rename an id, or change a min/max, then Run to apply.
-//    (It could just as well be a computed view: define("sliders", () =>
-//    rows([...])).) Check a row's \`disabled\` box to pull that control off
-//    the screen without losing its settings — uncheck to bring it back.
+//    (It could just as well be computed: table("sliders", rows([...])).)
+//    Check a row's \`disabled\` box to pull that control off the screen
+//    without losing its settings — uncheck to bring it back.
 editable("sliders", schemas.sliders)
 
 // 2. expr.slider(id) is the sibling of expr.midi(note): a live per-frame value
@@ -607,22 +598,21 @@ editable("sliders", schemas.sliders)
 //    time and replays every loop (watch the thumb retrace your move). derive
 //    leaves a binding resolved each frame, exactly like
 //    derive({ amount: expr.midi("c4") }) — or derive({ ry: expr.time() }) to
-//    ride the playback clock itself.
-define("scene", () =>
-  rows([{ id: "orb", type: "create", beat: 1, shape: "sphere", color: 0xffd43b,
-          px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
-    .derive({ py: expr.slider("height") })
-    .rasterize(16))
+//    ride the playback clock itself. .outThree() routes the orb to the scene.
+rows([{ id: "orb", type: "create", beat: 1, shape: "sphere", color: 0xffd43b,
+        px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
+  .derive({ py: expr.slider("height") })
+  .outThree()
 
 // 3. In a hydra sketch every slider is also on props.sliders, keyed by id — no
 //    setVariable rows needed. Reference it as a FUNCTION so hydra reads it fresh
 //    each frame: (props) => props.sliders.warp. Here "warp" drives the modulate
-//    amount and "brightness" the output level.
-define("hydra", () => rows([
+//    amount and "brightness" the output level; .outHydra() routes the sketch.
+rows([
   { beat: 1, event: "setCode", code:
     "src(s0).modulate(osc(30), (props) => props.sliders.warp)" +
     ".brightness((props) => props.sliders.brightness - 0.5).out(o0)" },
-]))
+]).outHydra()
 
 // Recording & sync: while you're not touching a slider, its recorded automation
 // drives the thumb as the loop plays. Grabbing one opens a one-cycle recording
@@ -667,12 +657,11 @@ editable("particles", schemas.particles)
 
 // 2. A dark core for the particles to swirl around — and content for playback to
 //    run, since the particle clock only advances while the timeline plays. A
-//    sphere at the origin turning once across the 16-beat loop; the additive
-//    particles read brightest against it.
-define("scene", () =>
-  t.sphere({ id: "core", r: 0.6, color: 0x140f28, px: 0, py: 0, pz: 0 })
-    .three.rotate({ axis: "y", amount: 6.283, dur: 16 })
-    .rasterize(16))
+//    sphere at the origin turning once across the 16-beat loop, routed to the
+//    scene with .outThree(); the additive particles read brightest against it.
+t.sphere({ id: "core", r: 0.6, color: 0x140f28, px: 0, py: 0, pz: 0 })
+  .three.rotate({ axis: "y", amount: 6.283, dur: 16 })
+  .outThree()
 
 // Tip: define a slider named "particles" (see the Sliders example) and it rides
 // on top as a live speed override — play the flow by hand over the table's base.
@@ -701,11 +690,12 @@ define("scene", () =>
 // 1. The base sketch: two scenes, swapping with a bare setCode at beat 9. This
 //    is the SAME editable table as "Hydra Sketch", just named "hydra sketch"
 //    (not "hydra") because we're layering a code-generated transform on top —
-//    see \`hydra\`, below, for why the transform, not this table, is what
-//    playback actually reads. Its two setCode rows are seeded into the "hydra
-//    sketch" tab on the right; the schema is the canonical \`schemas.hydra\`
-//    even though the table wears a different name — the schema describes the
-//    columns, not the table it's attached to.
+//    the transform below routes ITSELF to playback with .outHydra(), so this
+//    base table needs its name only so the code (and its tab) can read it.
+//    Its two setCode rows are seeded into the "hydra sketch" tab on the
+//    right; the schema is the canonical \`schemas.hydra\` even though the
+//    table wears a different name — the schema describes the columns, not
+//    the table it's attached to.
 editable("hydra sketch", schemas.hydra)
 
 // 2. \`.pairBy({ field: value }, fn)\` finds the rows matching that pattern and
@@ -728,9 +718,10 @@ const flicker = (n, step) => (first, second) =>
     Array.from({ length: 2 * n - 1 }, (_, i) => ({ beat: second.beat + i * step })),
   ).rows
 
-define("hydra", (rand, table) =>
-  table("hydra sketch").pairBy({ event: "setCode" }, flicker(3, 0.1))
-)
+// 4. The transform playback actually plays: the editable table run through
+//    pairBy, routed with .outHydra() — an unnamed table, combined into the
+//    "hydra (system)" tab. The base "hydra sketch" table stays untouched.
+table("hydra sketch").pairBy({ event: "setCode" }, flicker(3, 0.1)).outHydra()
 `,
     tables: {
       "hydra sketch": [
@@ -902,31 +893,32 @@ editable("bauble", schemas.bauble)
 //    outputs it altered. A cook always sees the session as it was the instant
 //    BEFORE its own Run (the apply is recorded once the cook succeeds), so the
 //    count ticks the moment the next result lands. Watch this view's tab grow.
-define("runs", (rand, table) => table("activity").filter({ kind: "apply" }))
+//    table(name, fn) registers a named view — define() by another spelling;
+//    the fn's own \`table\` argument tracks the dependency on "activity".
+table("runs", (rand, table) => table("activity").filter({ kind: "apply" }))
 
-// 2. Fold the log into the knobs of a hydra sketch:
+// 2. Fold the log into the knobs of a hydra sketch — plain top-level code,
+//    routed to playback with .outHydra(), no name needed:
 //    - every Run adds a kaleidoscope facet (wrapping around at nine),
 //    - every Run retunes the oscillator — the setVariable row's value below
 //      is different each time the code runs, with no edit to the code,
 //    - and your PACE plays too: \`heat\` is how hard this Run followed the one
 //      before. Mash Run twice inside ten seconds and the sketch runs hot
 //      (bright, fast spin); let it breathe a minute and it cools back down.
-define("hydra", (rand, table) => {
-  const runs = table("runs").rows
-  const n = runs.length
-  const last = runs[n - 1], prev = runs[n - 2]
-  const gap = prev && typeof last.at === "number" && typeof prev.at === "number"
-    ? (last.at - prev.at) / 1000 : 60            // seconds between the last two Runs
-  const heat = Math.max(0, 1 - gap / 10)         // 1 = frantic, 0 = calm
-  return rows([
-    { beat: 1, event: "setCode",
-      code: "osc((props) => props.freq, 0.06, " + (0.4 + heat).toFixed(2) + ")" +
-            ".kaleid(" + (3 + (n % 7)) + ")" +
-            ".rotate((props) => props.time * " + (0.03 + 0.4 * heat).toFixed(3) + ")" +
-            ".out(o0)" },
-    { beat: 1, event: "setVariable", name: "freq", value: 4 + (n % 24) },
-  ])
-})
+const runs = table("runs").rows
+const n = runs.length
+const last = runs[n - 1], prev = runs[n - 2]
+const gap = prev && typeof last.at === "number" && typeof prev.at === "number"
+  ? (last.at - prev.at) / 1000 : 60            // seconds between the last two Runs
+const heat = Math.max(0, 1 - gap / 10)         // 1 = frantic, 0 = calm
+rows([
+  { beat: 1, event: "setCode",
+    code: "osc((props) => props.freq, 0.06, " + (0.4 + heat).toFixed(2) + ")" +
+          ".kaleid(" + (3 + (n % 7)) + ")" +
+          ".rotate((props) => props.time * " + (0.03 + 0.4 * heat).toFixed(3) + ")" +
+          ".out(o0)" },
+  { beat: 1, event: "setVariable", name: "freq", value: 4 + (n % 24) },
+]).outHydra()
 
 // Things to try:
 //   - Scrub the session bar backward: every step re-cooks against the SHORTER
@@ -949,71 +941,62 @@ define("hydra", (rand, table) => {
 // slowly turns. The tower only ever grows — keep working and the session
 // piles up. Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 
-define("applies", (rand, table) => table("activity").filter({ kind: "apply" }))
+table("applies", (rand, table) => table("activity").filter({ kind: "apply" }))
 
 // 1. One brick per apply, coiling upward a golden angle at a time (so bricks
 //    never stack into a straight seam), sized by the apply's edit batch and
-//    colored by the gap to the Run before it.
-define("tower", (rand, table) => {
-  const applies = table("applies").orderBy("seq").rows
-  const bricks = applies.map((a, i) => {
-    const prev = applies[i - 1]
-    const gap = prev && typeof a.at === "number" && typeof prev.at === "number"
-      ? (a.at - prev.at) / 1000 : 600
-    const hot = Math.max(0, 1 - Math.min(gap, 60) / 60)   // 1 = instant, 0 = a minute+
-    const edits = Array.isArray(a.edits) ? a.edits.length : 0
-    const s = 0.09 + Math.min(edits, 20) * 0.012          // committed more → bigger brick
-    const angle = i * 2.39996                             // the golden angle
-    return {
-      id: "b" + i, type: "create", beat: 1, shape: "box",
-      color: (Math.round(70 + 185 * hot) << 16) | (70 << 8) | Math.round(255 - 185 * hot),
-      hx: s, hy: s, hz: s,
-      px: Math.cos(angle) * 0.9, py: -0.8 + i * 0.17, pz: Math.sin(angle) * 0.9,
-      rx: 0, ry: -angle, rz: 0,
-    }
-  })
-  // The newest brick turns one full revolution per loop (2π lands it back on
-  // its start angle at beat 16, so the wrap is seamless — same trick as
-  // Square + Hydra).
-  if (bricks.length) {
-    const top = bricks[bricks.length - 1]
-    bricks.push({ id: top.id, type: "update", beat: 16, ry: top.ry + Math.PI * 2 })
+//    colored by the gap to the Run before it. Plain top-level code — the
+//    bricks are routed to the scene with .outThree() at the end.
+const applies = table("applies").orderBy("seq").rows
+const bricks = applies.map((a, i) => {
+  const prev = applies[i - 1]
+  const gap = prev && typeof a.at === "number" && typeof prev.at === "number"
+    ? (a.at - prev.at) / 1000 : 600
+  const hot = Math.max(0, 1 - Math.min(gap, 60) / 60)   // 1 = instant, 0 = a minute+
+  const edits = Array.isArray(a.edits) ? a.edits.length : 0
+  const s = 0.09 + Math.min(edits, 20) * 0.012          // committed more → bigger brick
+  const angle = i * 2.39996                             // the golden angle
+  return {
+    id: "b" + i, type: "create", beat: 1, shape: "box",
+    color: (Math.round(70 + 185 * hot) << 16) | (70 << 8) | Math.round(255 - 185 * hot),
+    hx: s, hy: s, hz: s,
+    px: Math.cos(angle) * 0.9, py: -0.8 + i * 0.17, pz: Math.sin(angle) * 0.9,
+    rx: 0, ry: -angle, rz: 0,
   }
-  return rows(bricks)
 })
+// The newest brick turns one full revolution per loop (2π lands it back on
+// its start angle at beat 16, so the wrap is seamless — same trick as
+// Square + Hydra).
+if (bricks.length) {
+  const top = bricks[bricks.length - 1]
+  bricks.push({ id: top.id, type: "update", beat: 16, ry: top.ry + Math.PI * 2 })
+}
+rows(bricks).outThree()
 
 // 2. A caption that keeps count, floating just above the tower's top brick.
-define("label", (rand, table) => {
-  const n = table("applies").length
-  return t.text({ id: "count", text: n + (n === 1 ? " run" : " runs"),
-    size: 0.22, color: 0xf4efe2, py: -0.8 + n * 0.17 + 0.45 })
-})
+const n = applies.length
+t.text({ id: "count", text: n + (n === 1 ? " run" : " runs"),
+  size: 0.22, color: 0xf4efe2, py: -0.8 + n * 0.17 + 0.45 }).outThree()
 
 // 3. The camera orbits once per 16-beat loop, craning up and backing off as
-//    the tower grows — a sculpture deserves a walk-around.
-define("cam", (rand, table) => {
-  const n = table("applies").length
-  const ty = Math.max(0, (-0.8 + n * 0.17) / 2)
-  const eye = 2.6 + n * 0.05
-  return t.camera([0, 0.5, 1, 1.5, 2].map((turns, i) => ({
-    beat: Math.min(1 + i * 4, 16), // the return leg lands inside the loop
-    px: Math.cos(turns * Math.PI) * eye, py: ty + 1.2, pz: Math.sin(turns * Math.PI) * eye,
-    tx: 0, ty, tz: 0,
-  })))
-})
-
-define("scene", (rand, table) =>
-  table("tower").concat(table("label")).concat(table("cam")).rasterize(16))
+//    the tower grows — a sculpture deserves a walk-around. Bricks, caption
+//    and camera each call .outThree(), so they combine beat-sorted into the
+//    one "three (system)" scene table — no manual concat anywhere.
+const ty = Math.max(0, (-0.8 + n * 0.17) / 2)
+const eye = 2.6 + n * 0.05
+t.camera([0, 0.5, 1, 1.5, 2].map((turns, i) => ({
+  beat: Math.min(1 + i * 4, 16), // the return leg lands inside the loop
+  px: Math.cos(turns * Math.PI) * eye, py: ty + 1.2, pz: Math.sin(turns * Math.PI) * eye,
+  tx: 0, ty, tz: 0,
+}))).outThree()
 
 // 4. Your working rhythm, graphed: seconds between consecutive Runs. Spikes
 //    are the long thinks; the flats near zero are a jam in full flow.
-define("pace", (rand, table) => {
-  const applies = table("applies").orderBy("seq").rows
-  return rows(applies.map((a, i) => ({
-    run: i + 1,
-    gap_s: i ? Math.round((a.at - applies[i - 1].at) / 100) / 10 : 0,
-  }))).graph("gap_s")
-})
+//    .save() names the table (its own "pace" tab) so the chart has a home.
+rows(applies.map((a, i) => ({
+  run: i + 1,
+  gap_s: i ? Math.round((a.at - applies[i - 1].at) / 100) / 10 : 0,
+}))).save("pace").graph("gap_s")
 
 // Things to try:
 //   - Edit any editable table a few times before a Run: that Run's brick
@@ -1039,7 +1022,7 @@ define("pace", (rand, table) => {
 // on Run. The window keeps the last 16 presses; a 2-second pause starts a
 // fresh window — see the "taps" tab for the raw rows.)
 
-define("stars", () => {
+table("stars", () => {
   const tp = taps().rows
   const n = tp.length
   if (n < 3) return t.text({ text: "tap the Tap button\\na few times, then Run",
@@ -1074,22 +1057,21 @@ define("stars", () => {
   stars.push({ id: newest.id, type: "update", beat: 9, color: newest.color })
   return rows(stars)
 })
+table("stars").outThree()
 
 // The perfect circle those stars are judged against, plus the tempo the same
-// log folds to (tempo() is seconds per beat), spelled out underneath.
-define("guide", () => {
-  const bpm = Math.round(60 / tempo())
-  return t.torus({ id: "ring", r: 1, color: 0x2a3646 })
-    .concat(t.text({ id: "bpm", text: bpm + " bpm", size: 0.2, color: 0x8899aa, py: -1.45 }))
-})
-
-define("scene", (rand, table) => table("stars").concat(table("guide")).rasterize(8))
+// log folds to (tempo() is seconds per beat), spelled out underneath — routed
+// straight to the scene, where it merges with the stars above.
+const bpm = Math.round(60 / tempo())
+t.torus({ id: "ring", r: 1, color: 0x2a3646 })
+  .concat(t.text({ id: "bpm", text: bpm + " bpm", size: 0.2, color: 0x8899aa, py: -1.45 }))
+  .outThree()
 
 // A whisper of feedback so the constellation twinkles.
-define("hydra", () => rows([
+rows([
   { beat: 1, event: "setCode",
     code: "src(s0).blend(src(o0).scale(1.004), 0.2).out(o0)" },
-]))
+]).outHydra()
 
 // Things to try:
 //   - Tap deliberately BEHIND the beat (a lazy backbeat): the ring spirals
@@ -1115,68 +1097,66 @@ define("hydra", () => rows([
 //    surface — the pyramid starts at rest, no settling wobble. The ball's
 //    \`dropAt: 2\` holds it motionless in the air for the first 2 seconds of
 //    sim time, then releases it into ordinary free fall.
-define("base", () => {
-  const lean = 0.25                    // radians from vertical (~14°)
-  const H = 0.35, W = 0.22, T = 0.005  // card half-height, half-width, half-thickness
-  const sl = Math.sin(lean), cl = Math.cos(lean)
-  const dx    = H * sl                 // card-center x offset from tent apex
-  const cyOff = T * sl + H * cl       // support-surface to card-center (no corner overlap)
-  const S     = 0.50                   // spacing between adjacent tent apices
-  const n     = 3                      // tents on the ground floor (try 4 for ~27 cards)
+const lean = 0.25                    // radians from vertical (~14°)
+const H = 0.35, W = 0.22, T = 0.005  // card half-height, half-width, half-thickness
+const sl = Math.sin(lean), cl = Math.cos(lean)
+const dx    = H * sl                 // card-center x offset from tent apex
+const cyOff = T * sl + H * cl       // support-surface to card-center (no corner overlap)
+const S     = 0.50                   // spacing between adjacent tent apices
+const n     = 3                      // tents on the ground floor (try 4 for ~27 cards)
 
-  const cards = []
-  let supportY = -1.0                  // current support surface y (floor to start)
+const cards = []
+let supportY = -1.0                  // current support surface y (floor to start)
 
-  for (let k = 0; k < n; k++) {
-    const numTents = n - k
-    const cardCY   = supportY + cyOff
-    const topY     = supportY + T * sl + 2 * H * cl  // tent apex y
-    const bHx      = S / 2 + 0.03                    // bridge half-span
+for (let k = 0; k < n; k++) {
+  const numTents = n - k
+  const cardCY   = supportY + cyOff
+  const topY     = supportY + T * sl + 2 * H * cl  // tent apex y
+  const bHx      = S / 2 + 0.03                    // bridge half-span
 
-    // Leaning card pairs — two cards per tent, tops meeting at the apex
-    for (let i = 0; i < numTents; i++) {
-      const tx = -(numTents - 1) * S / 2 + i * S     // apex x
-      cards.push(
-        { id: "s" + k + "t" + i + "a", type: "create", shape: "box", color: 0xfdf6e3,
-          motion: "dynamic", friction: 0.3, restitution: 0,
-          px: tx - dx, py: cardCY, pz: 0, hx: T, hy: H, hz: W, rz: -lean },
-        { id: "s" + k + "t" + i + "b", type: "create", shape: "box", color: 0xfdf6e3,
-          motion: "dynamic", friction: 0.3, restitution: 0,
-          px: tx + dx, py: cardCY, pz: 0, hx: T, hy: H, hz: W, rz:  lean },
-      )
-    }
-
-    // Horizontal bridge cards spanning adjacent tent apices
-    for (let i = 0; i < numTents - 1; i++) {
-      const bx = -(numTents - 1) * S / 2 + (i + 0.5) * S
-      cards.push(
-        { id: "s" + k + "b" + i, type: "create", shape: "box", color: 0xe74c3c,
-          motion: "dynamic", friction: 0.3, restitution: 0,
-          px: bx, py: topY + T, pz: 0, hx: bHx, hy: T, hz: W },
-      )
-    }
-
-    // Crown on the top-story apex (replaces bridges on the final story)
-    if (k === n - 1) {
-      cards.push(
-        { id: "crown", type: "create", shape: "box", color: 0xe74c3c,
-          motion: "dynamic", friction: 0.3, restitution: 0,
-          px: 0, py: topY + T, pz: 0, hx: bHx, hy: T, hz: W },
-      )
-    }
-
-    supportY = topY + 2 * T  // bridge top surface becomes next story's floor
+  // Leaning card pairs — two cards per tent, tops meeting at the apex
+  for (let i = 0; i < numTents; i++) {
+    const tx = -(numTents - 1) * S / 2 + i * S     // apex x
+    cards.push(
+      { id: "s" + k + "t" + i + "a", type: "create", shape: "box", color: 0xfdf6e3,
+        motion: "dynamic", friction: 0.3, restitution: 0,
+        px: tx - dx, py: cardCY, pz: 0, hx: T, hy: H, hz: W, rz: -lean },
+      { id: "s" + k + "t" + i + "b", type: "create", shape: "box", color: 0xfdf6e3,
+        motion: "dynamic", friction: 0.3, restitution: 0,
+        px: tx + dx, py: cardCY, pz: 0, hx: T, hy: H, hz: W, rz:  lean },
+    )
   }
 
-  return rows([
-    { id: "floor", type: "create", shape: "box", color: 0x1a2e1a,
-      motion: "static", px: 0, py: -1.2, pz: 0, hx: 4, hy: 0.2, hz: 4 },
-    { id: "ball",  type: "create", shape: "sphere", color: 0xf39c12,
-      motion: "dynamic", restitution: 0.2, r: 0.12, dropAt: 2,
-      px: 0.05, py: 2.0, pz: 0 },
-    ...cards,
-  ])
-})
+  // Horizontal bridge cards spanning adjacent tent apices
+  for (let i = 0; i < numTents - 1; i++) {
+    const bx = -(numTents - 1) * S / 2 + (i + 0.5) * S
+    cards.push(
+      { id: "s" + k + "b" + i, type: "create", shape: "box", color: 0xe74c3c,
+        motion: "dynamic", friction: 0.3, restitution: 0,
+        px: bx, py: topY + T, pz: 0, hx: bHx, hy: T, hz: W },
+    )
+  }
+
+  // Crown on the top-story apex (replaces bridges on the final story)
+  if (k === n - 1) {
+    cards.push(
+      { id: "crown", type: "create", shape: "box", color: 0xe74c3c,
+        motion: "dynamic", friction: 0.3, restitution: 0,
+        px: 0, py: topY + T, pz: 0, hx: bHx, hy: T, hz: W },
+    )
+  }
+
+  supportY = topY + 2 * T  // bridge top surface becomes next story's floor
+}
+
+const base = rows([
+  { id: "floor", type: "create", shape: "box", color: 0x1a2e1a,
+    motion: "static", px: 0, py: -1.2, pz: 0, hx: 4, hy: 0.2, hz: 4 },
+  { id: "ball",  type: "create", shape: "sphere", color: 0xf39c12,
+    motion: "dynamic", restitution: 0.2, r: 0.12, dropAt: 2,
+    px: 0.05, py: 2.0, pz: 0 },
+  ...cards,
+])
 
 // 2. Bake a JoltPhysics simulation in the background: step the world for 360
 //    frames (12 beats at the fixed 30-frames-per-beat grid). simulate() ADDS to
@@ -1184,39 +1164,30 @@ define("base", () => {
 //    beats; the cache interpolates between them) plus a "collision" row whenever
 //    two bodies first touch. Physics runs in real seconds internally and lands
 //    its output on the beat grid, so a collision at beat 4 always sits at beat 4.
-//    The 3rd arg tags this view into the "three" group: the engine auto-builds
-//    a view named "three" that concats every group member (beat-sorted), so
-//    multiple simulation views would merge into one "three" table — no manual
-//    .concat. "three" is the single sparse stream of object motion + collisions.
-define("sim", "three", (rand, table) =>
-  physics(table("base")).simulate({ steps: 360, gravity: -9.81 })
-)
+//    .outThree() routes the result to the 3D scene: everything routed this way
+//    combines beat-sorted into the "three (system)" table — several simulations
+//    would merge into the one sparse stream of object motion + collisions, no
+//    manual .concat — and playback bakes the per-frame cache automatically.
+const sim = physics(base).simulate({ steps: 360, gravity: -9.81 })
+sim.outThree()
 
-// 3. Bake the sparse "three" stream into a dense per-frame cache for playback
-//    (12 beats of cache — the full simulation; the loop length itself is the
-//    "beats" control under the scene).
-define("scene", (rand, table) => table("three").rasterize(12))
+// 3. Collisions are just rows — pull them into their own named view (.save
+//    gives them a tab) to inspect, and graph the ball's height over time as
+//    it bounces and settles.
+sim.filter({ type: "collision" }).save("collisions")
 
-// 4. Collisions are just rows — pull them into their own view to inspect, and
-//    graph the ball's height over time as it bounces and settles.
-define("collisions", (rand, table) =>
-  table("three").filter({ type: "collision" })
-)
+sim.filter({ id: "ball", type: "update" })
+  .map(r => ({ beat: r.beat, height: r.py }))
+  .save("ball_height")
+  .graph("height")
 
-define("ball_height", (rand, table) =>
-  table("three")
-    .filter({ id: "ball", type: "update" })
-    .map(r => ({ beat: r.beat, height: r.py }))
-    .graph("height")
-)
-
-// 5. Beat-synced looping (optional). Tap the Tap button under the scene a few
+// 4. Beat-synced looping (optional). Tap the Tap button under the scene a few
 //    times to set the tempo; the timeline's wall-clock length then follows it —
 //    tap faster and the whole loop plays faster. "Loop" (next to Play) is on by
 //    default. beats(16) loops every 16 beats; { fit: 12 } stretches this 12-beat
 //    sim across the window so it plays once per loop:
 //
-// define("timeline", () => beats(16, { fit: 12 }))
+// beats(16, { fit: 12 }).outTimeline()
 `,
   },
   {
@@ -1227,13 +1198,13 @@ define("ball_height", (rand, table) =>
 // the long-run rise tracks fossil-fuel emissions.
 // Source: github.com/datasets/co2-ppm (NOAA GML)
 
-define("co2", () => data("/data/co2.csv"))
+table("co2", () => data("/data/co2.csv"))
 
 // Monthly readings — the seasonal sawtooth is clearly visible
-define("co2_monthly", (rand, table) => table("co2").graph("co2_ppm"))
+table("co2_monthly", (rand, table) => table("co2").graph("co2_ppm"))
 
 // Annual mean: group monthly rows by year, average the ppm readings
-define("co2_annual", (rand, table) =>
+table("co2_annual", (rand, table) =>
   table("co2")
     .derive({ year: r => +r.date.slice(0, 4) })
     .groupBy("year")
@@ -1249,18 +1220,19 @@ define("co2_annual", (rand, table) =>
 // The sharp uptick from ~1980 is the clearest signal of anthropogenic warming.
 // Source: github.com/datasets/global-temp (GCAG / NOAA)
 
-define("temp", () => data("/data/global-temp.csv"))
+table("temp", () => data("/data/global-temp.csv"))
 
 // Temperature anomaly over time — negative = cooler than baseline, positive = warmer
-define("temp_chart", (rand, table) => table("temp").graph("mean"))
+table("temp_chart", (rand, table) => table("temp").graph("mean"))
 
-// Running 10-year mean to smooth inter-annual variability
-define("temp_smooth", (rand, table) =>
+// Running 10-year mean to smooth inter-annual variability: scan threads a
+// window of the last 10 readings row-to-row and emits one smoothed row each.
+table("temp_smooth", (rand, table) =>
   table("temp")
-    .scan([], (window, r) => {
-      window = [...window.slice(-9), r.mean]
-      return { year: r.year, mean: r.mean, avg10: +(window.reduce((s, v) => s + v, 0) / window.length).toFixed(4) }
-    })
+    .scan((window, r) => {
+      const next = [...window.slice(-9), r.mean]
+      return { state: next, emit: { year: r.year, mean: r.mean, avg10: +(next.reduce((s, v) => s + v, 0) / next.length).toFixed(4) } }
+    }, [])
     .graph("mean", "avg10")
 )`,
   },
@@ -1272,17 +1244,17 @@ define("temp_smooth", (rand, table) =>
 // Run \`npm run fetch-data\` once to download src/data/hadcrut5-monthly.csv.
 // Source: Met Office HadOBS (HadCRUT.5.1.0.0)
 
-define("hadcrut5", () => data("/data/hadcrut5-monthly.csv"))
+table("hadcrut5", () => data("/data/hadcrut5-monthly.csv"))
 
 // Monthly anomaly with confidence ribbon
-define("anomaly_monthly", (rand, table) =>
+table("anomaly_monthly", (rand, table) =>
   table("hadcrut5")
     .map(r => ({ ...r, anomaly_c: +r.anomaly_c, lower_ci: +r.lower_ci, upper_ci: +r.upper_ci }))
     .graph("anomaly_c", "lower_ci", "upper_ci")
 )
 
 // Annual mean anomaly
-define("anomaly_annual", (rand, table) =>
+table("anomaly_annual", (rand, table) =>
   table("hadcrut5")
     .derive({ year: r => r.year_month.slice(0, 4), anomaly_c: r => +r.anomaly_c })
     .groupBy("year")
