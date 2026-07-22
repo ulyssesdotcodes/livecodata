@@ -174,7 +174,7 @@ define("v", () => rows([{ beat: 1 }]).derive({
   pz: expr.slider("depth"),
   pw: expr.slider("height", 0, 4),
 }))
-define("post", () => rows([{ beat: 1, event: "chain", code: 'blur(slider("glow", 1, 5))' }]))
+define("post", () => rows([{ beat: 1, event: "setCode", code: 'blur(slider("glow", 1, 5))' }]))
 `))
   assert.equal(resp.ok, true)
   if (!resp.ok) return

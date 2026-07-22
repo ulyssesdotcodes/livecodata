@@ -229,8 +229,8 @@ function chainOps(value: unknown): OpChain {
 }
 
 // val("name", value) declarations in a cell, matched textually (literal name,
-// optional numeric literal) so the editable-table fold can derive its "set"
-// rows without evaluating the chain — and regardless of whether the rest of
+// optional numeric literal) so the editable-table fold can derive its
+// "setVariable" rows without evaluating the chain — and regardless of whether the rest of
 // the cell parses. First mention of a name in a cell wins.
 const VAR_DECL = /\bval\b\s*\(\s*(['"`])(.*?)\1\s*(?:,\s*(-?(?:\d+(?:\.\d+)?|\.\d+)))?\s*\)/g
 export interface PostVarDecl {
@@ -310,7 +310,7 @@ function headScope(): Record<string, unknown> {
   }
   // A live post variable — val("glow", 0.5) — reading the folded variable
   // each frame with the initial as the fallback. The editable-table fold
-  // materializes a "set" row for each val() right after the cell it appears in.
+  // materializes a "setVariable" row for each val() right after the cell it appears in.
   scope.val = (name: unknown, value?: unknown): ((p: Record<string, unknown>) => number) => {
     const key = String(name)
     const fallback = typeof value === 'number' && Number.isFinite(value) ? value : 0

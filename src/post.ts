@@ -22,7 +22,7 @@ export interface PostFrame {
   vars: Record<string, unknown>
 }
 
-const POST_EVENTS = new Set(['chain', 'add', 'remove', 'layer', 'transition', 'set', 'pulse'])
+const POST_EVENTS = new Set(['setCode', 'add', 'remove', 'layer', 'transition', 'setVariable', 'pulse'])
 
 export function isPostRow(row: Row | null | undefined): boolean {
   return row != null && typeof row.event === 'string' && POST_EVENTS.has(row.event)
@@ -113,7 +113,7 @@ function foldChain(index: Row[], frame: number): string | null {
     if ((row.index as number) > frame) break
     const c = typeof row.code === 'string' ? row.code.trim() : ''
     switch (row.event) {
-      case 'chain':
+      case 'setCode':
         code = c
         break
       case 'add':
@@ -162,8 +162,8 @@ const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x)
 const easingOf = (name: unknown, fallback: keyof Easings): ((t: number) => number) =>
   EASINGS[(typeof name === 'string' && name in EASINGS ? name : fallback) as keyof Easings]
 
-// The base (step-or-tween) value of one variable at `frame`, from its `set`
-// rows in index order (all at/before frame). The last row is the active one:
+// The base (step-or-tween) value of one variable at `frame`, from its
+// `setVariable` rows in index order (all at/before frame). The last row is the active one:
 // with a `dur` it interpolates from the previous row's value via EASINGS[ease]
 // over dur beats; otherwise it steps. Numeric-only rows come here (foldVars'
 // fast path); rows carrying `$expr` bindings go through baseComposite.
@@ -200,7 +200,7 @@ function pulseSum(pulses: Row[], frame: number): number {
   return sum
 }
 
-// A set/pulse row's value with the row's own context substituted in: field()
+// A setVariable/pulse row's value with the row's own context substituted in: field()
 // reads the row's columns (resolveBindings later sees the vars map as its
 // row, which would read sibling variables instead), progress() the row's own
 // dur window at `frame`. A still-streaming result stays a binding; otherwise
@@ -262,7 +262,7 @@ function pulseParts(pulses: Row[], frame: number): { num: number; nodes: ExprNod
   return { num, nodes }
 }
 
-// Fold every set/pulse row into the variable map at `frame`: each name's base
+// Fold every setVariable/pulse row into the variable map at `frame`: each name's base
 // value plus its active pulses. Total when called ctx-free (cook/replay run
 // it too): composites are constructed, never evaluated, here.
 export function foldVars(index: Row[], frame: number): Record<string, unknown> {
@@ -271,7 +271,7 @@ export function foldVars(index: Row[], frame: number): Record<string, unknown> {
   for (const row of index) {
     if ((row.index as number) > frame) break
     if (typeof row.name !== 'string') continue
-    const bucket = row.event === 'set' ? sets : row.event === 'pulse' ? pulses : null
+    const bucket = row.event === 'setVariable' ? sets : row.event === 'pulse' ? pulses : null
     if (bucket) (bucket.get(row.name) ?? bucket.set(row.name, []).get(row.name)!).push(row)
   }
   const vars: Record<string, unknown> = {}

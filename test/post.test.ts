@@ -26,9 +26,9 @@ const vars = (rows: Row[], frame: number): Record<string, unknown> => foldVars(b
 
 test('isPostRow/postRows keep only post events', () => {
   const rows: Row[] = [
-    { event: 'chain', code: 'edges(0.2)' },
+    { event: 'setCode', code: 'edges(0.2)' },
     { event: 'pulse', name: 'g', value: 1 },
-    { event: 'setCode' }, // an old hydra name — not a post event
+    { event: 'setSource' }, // a hydra-only name — not a post event
     { code: 'x' },
   ]
   assert.equal(postRows(rows).length, 2)
@@ -38,24 +38,24 @@ test('isPostRow/postRows keep only post events', () => {
 
 test('the scene is implicit: a top-level op starts a chain, and set folds into vars', () => {
   const frame = frameAt([
-    { beat: 1, event: 'chain', code: 'edges((p) => p.th, 1)' },
-    { beat: 1, event: 'set', name: 'th', value: 0.3 },
+    { beat: 1, event: 'setCode', code: 'edges((p) => p.th, 1)' },
+    { beat: 1, event: 'setVariable', name: 'th', value: 0.3 },
   ], 0)!
   // `edges(0.2)` compiles to the same op list as `scene().edges(0.2)`.
   assert.deepEqual(ops(frame), ['scene', 'edges'])
-  assert.equal(frame.stateId, frameAt([{ beat: 1, event: 'chain', code: 'scene().edges((p) => p.th, 1)' }], 0)!.stateId)
+  assert.equal(frame.stateId, frameAt([{ beat: 1, event: 'setCode', code: 'scene().edges((p) => p.th, 1)' }], 0)!.stateId)
   assert.deepEqual(frame.vars, { th: 0.3 })
 })
 
 test('an empty chain is passthrough (post inactive); a set-only table stays inactive', () => {
-  assert.equal(frameAt([{ beat: 1, event: 'chain', code: '' }], 0), null)
-  assert.equal(frameAt([{ beat: 1, event: 'set', name: 'x', value: 1 }], 0), null)
+  assert.equal(frameAt([{ beat: 1, event: 'setCode', code: '' }], 0), null)
+  assert.equal(frameAt([{ beat: 1, event: 'setVariable', name: 'x', value: 1 }], 0), null)
 })
 
 test('the latest chain wins and persists', () => {
   const rows: Row[] = [
-    { beat: 1, event: 'chain', code: 'blur(2)' },
-    { beat: b(4), event: 'chain', code: 'bloom(0.4)' },
+    { beat: 1, event: 'setCode', code: 'blur(2)' },
+    { beat: b(4), event: 'setCode', code: 'bloom(0.4)' },
   ]
   assert.deepEqual(ops(frameAt(rows, 3)), ['scene', 'blur'])
   assert.deepEqual(ops(frameAt(rows, 4)), ['scene', 'bloom'])
@@ -63,7 +63,7 @@ test('the latest chain wins and persists', () => {
 
 test('add appends effects (leading dot optional), including from passthrough', () => {
   assert.deepEqual(ops(frameAt([
-    { beat: 1, event: 'chain', code: 'blur(4)' },
+    { beat: 1, event: 'setCode', code: 'blur(4)' },
     { beat: b(4), event: 'add', code: 'pixelate(6)' },
     { beat: b(6), event: 'add', code: '.invert()' },
   ], 6)), ['scene', 'blur', 'pixelate', 'invert'])
@@ -73,18 +73,18 @@ test('add appends effects (leading dot optional), including from passthrough', (
 
 test('remove drops every op with the given name, even the first (next op goes top-level)', () => {
   assert.deepEqual(ops(frameAt([
-    { beat: 1, event: 'chain', code: 'blur(4).bloom(1).pixelate(6)' },
+    { beat: 1, event: 'setCode', code: 'blur(4).bloom(1).pixelate(6)' },
     { beat: b(4), event: 'remove', name: 'bloom' },
   ], 4)), ['scene', 'blur', 'pixelate'])
   assert.deepEqual(ops(frameAt([
-    { beat: 1, event: 'chain', code: 'blur(4).bloom(1)' },
+    { beat: 1, event: 'setCode', code: 'blur(4).bloom(1)' },
     { beat: b(4), event: 'remove', name: 'blur' },
   ], 4)), ['scene', 'bloom'])
 })
 
 test('layer composites another chain via the chosen mode', () => {
   const chain = frameAt([
-    { beat: 1, event: 'chain', code: 'edges(0.2, 0)' },
+    { beat: 1, event: 'setCode', code: 'edges(0.2, 0)' },
     { beat: b(4), event: 'layer', mode: 'blend', value: 0.5, code: 'strobe(2)' },
   ], 4)!.chain
   assert.deepEqual(chain.map((o) => o.op), ['scene', 'edges', 'blend'])
@@ -93,9 +93,9 @@ test('layer composites another chain via the chosen mode', () => {
 
 test('a transition wraps before→after during its window, then expires to the after program', () => {
   const rows: Row[] = [
-    { beat: 1, event: 'chain', code: 'blur(4)' },
+    { beat: 1, event: 'setCode', code: 'blur(4)' },
     { beat: 5, event: 'transition', dur: 2 }, // frame 120, window [120,180)
-    { beat: 5, event: 'chain', code: 'edges(0.2, 0)' },
+    { beat: 5, event: 'setCode', code: 'edges(0.2, 0)' },
   ]
   const idx = buildPostIndex(rows)
   assert.deepEqual(ops(postFrameAt(idx, 120)), ['transition'], 'inside the window: the wipe')
@@ -104,23 +104,23 @@ test('a transition wraps before→after during its window, then expires to the a
 })
 
 test('prev() is an explicit feedback head usable as a branch arg', () => {
-  const chain = frameAt([{ beat: 1, event: 'chain', code: 'blend(prev().mosaic(4), 0.4)' }], 0)!.chain
+  const chain = frameAt([{ beat: 1, event: 'setCode', code: 'blend(prev().mosaic(4), 0.4)' }], 0)!.chain
   assert.deepEqual(chain.map((o) => o.op), ['scene', 'blend'])
   assert.deepEqual(chain[1].chainArgs![0].map((o) => o.op), ['prev', 'mosaic'])
 })
 
 test('a structural arg change selects a different state; a live change does not', () => {
-  const s1 = frameAt([{ beat: 1, event: 'chain', code: 'edges(0.9, 1)' }], 0)!
-  const live = frameAt([{ beat: 1, event: 'chain', code: 'edges(0.1, 1)' }], 0)!
-  const struct = frameAt([{ beat: 1, event: 'chain', code: 'edges(0.1, 2)' }], 0)!
+  const s1 = frameAt([{ beat: 1, event: 'setCode', code: 'edges(0.9, 1)' }], 0)!
+  const live = frameAt([{ beat: 1, event: 'setCode', code: 'edges(0.1, 1)' }], 0)!
+  const struct = frameAt([{ beat: 1, event: 'setCode', code: 'edges(0.1, 2)' }], 0)!
   assert.equal(s1.stateId, live.stateId)
   assert.notEqual(live.stateId, struct.stateId)
 })
 
 test('set with dur tweens from the previous value using the eased curve', () => {
   const rows: Row[] = [
-    { beat: 1, event: 'set', name: 'th', value: 0.2 },
-    { beat: 5, event: 'set', name: 'th', value: 0.5, dur: 2, ease: 'linear' }, // frame 120..180
+    { beat: 1, event: 'setVariable', name: 'th', value: 0.2 },
+    { beat: 5, event: 'setVariable', name: 'th', value: 0.5, dur: 2, ease: 'linear' }, // frame 120..180
   ]
   close(vars(rows, 60).th, 0.2)   // before the tween: the step value
   close(vars(rows, 150).th, 0.35) // midpoint (linear)
@@ -129,7 +129,7 @@ test('set with dur tweens from the previous value using the eased curve', () => 
 
 test('pulse adds a decaying (default easeOut) contribution that stacks and expires', () => {
   const rows: Row[] = [
-    { beat: 1, event: 'set', name: 'g', value: 0.3 },
+    { beat: 1, event: 'setVariable', name: 'g', value: 0.3 },
     { beat: 3, event: 'pulse', name: 'g', value: 1, dur: 1 }, // frame 60..90, default easeOut
     { beat: 3, event: 'pulse', name: 'g', value: 0.5, dur: 1 },
   ]
@@ -145,7 +145,7 @@ const resolveAt = (v: unknown, sliderValue: number): unknown =>
 
 test('a set with dur shaping itself with progress() sweeps 0→1 and rests at 1', () => {
   const rows: Row[] = [
-    { beat: 1, event: 'set', name: 'v', value: progress().toJSON(), dur: 2 }, // frames 0..60
+    { beat: 1, event: 'setVariable', name: 'v', value: progress().toJSON(), dur: 2 }, // frames 0..60
   ]
   assert.equal(typeof vars(rows, 30).v, 'number', 'progress-only exprs bake to plain numbers')
   close(vars(rows, 0).v, 0)
@@ -156,8 +156,8 @@ test('a set with dur shaping itself with progress() sweeps 0→1 and rests at 1'
 
 test('a tween to an expression target emits a per-frame-resolving lerp composite', () => {
   const rows: Row[] = [
-    { beat: 1, event: 'set', name: 'v', value: 1 },
-    { beat: 5, event: 'set', name: 'v', value: slider('x').toJSON(), dur: 2, ease: 'linear' }, // frames 120..180
+    { beat: 1, event: 'setVariable', name: 'v', value: 1 },
+    { beat: 5, event: 'setVariable', name: 'v', value: slider('x').toJSON(), dur: 2, ease: 'linear' }, // frames 120..180
   ]
   assert.equal(typeof vars(rows, 60).v, 'number', 'numeric-only prefix stays on the arithmetic path')
   close(vars(rows, 60).v, 1)
@@ -170,7 +170,7 @@ test('a tween to an expression target emits a per-frame-resolving lerp composite
 
 test('a pulse stacks over an expression base instead of being dropped', () => {
   const rows: Row[] = [
-    { beat: 1, event: 'set', name: 'g', value: slider('x').toJSON() },
+    { beat: 1, event: 'setVariable', name: 'g', value: slider('x').toJSON() },
     { beat: 3, event: 'pulse', name: 'g', value: 1, dur: 1 }, // frames 60..90
   ]
   close(resolveAt(vars(rows, 60).g, 2), 3) // base 2 + 1·env(0)
@@ -179,8 +179,8 @@ test('a pulse stacks over an expression base instead of being dropped', () => {
 
 test('field() in a value cell reads its own row, not sibling vars', () => {
   const rows: Row[] = [
-    { beat: 1, event: 'set', name: 'beat', value: 99 }, // a sibling var named like a column
-    { beat: 3, event: 'set', name: 'v', value: field('beat').toJSON() },
+    { beat: 1, event: 'setVariable', name: 'beat', value: 99 }, // a sibling var named like a column
+    { beat: 3, event: 'setVariable', name: 'v', value: field('beat').toJSON() },
   ]
   assert.equal(vars(rows, 60).v, 3, "the row's own beat column, substituted at fold time")
 })
@@ -188,7 +188,7 @@ test('field() in a value cell reads its own row, not sibling vars', () => {
 test('substitution never mutates the source nodes (cook memo safety)', () => {
   const value = progress().mul(2).toJSON()
   const snapshot = JSON.parse(JSON.stringify(value))
-  const rows: Row[] = [{ beat: 1, event: 'set', name: 'v', value, dur: 2 }]
+  const rows: Row[] = [{ beat: 1, event: 'setVariable', name: 'v', value, dur: 2 }]
   vars(rows, 15)
   vars(rows, 45)
   vars(rows, 90)
@@ -197,7 +197,7 @@ test('substitution never mutates the source nodes (cook memo safety)', () => {
 
 test('postCodeUpToRow shows the running chain after the given row', () => {
   const rows: Row[] = [
-    { beat: 1, event: 'chain', code: 'blur(3)' },
+    { beat: 1, event: 'setCode', code: 'blur(3)' },
     { beat: b(4), event: 'add', code: 'pixelate(6)' },
   ]
   assert.equal(postCodeUpToRow(rows, 0), 'blur(3)')
@@ -206,12 +206,12 @@ test('postCodeUpToRow shows the running chain after the given row', () => {
 
 test('warm-compile audit: no frame of a loop introduces an unenumerated state', () => {
   const rows: Row[] = [
-    { beat: 1, event: 'chain', code: 'edges((p) => p.th, 1)' },
-    { beat: 1, event: 'set', name: 'th', value: 0.2 },
+    { beat: 1, event: 'setCode', code: 'edges((p) => p.th, 1)' },
+    { beat: 1, event: 'setVariable', name: 'th', value: 0.2 },
     { beat: 9, event: 'add', code: 'bloom((p) => p.glow)' },
     { beat: 11, event: 'remove', name: 'bloom' },
     { beat: 13, event: 'transition', dur: 2 },
-    { beat: 13, event: 'chain', code: 'blend(prev().mosaic(4), 0.5)' },
+    { beat: 13, event: 'setCode', code: 'blend(prev().mosaic(4), 0.5)' },
   ]
   const idx = buildPostIndex(rows)
   const enumerated = new Set<string>()
@@ -248,8 +248,8 @@ test('a broken chain (unknown op, or a last-line comment) surfaces its error', (
   // being swallowed. A trailing `//` comment is the classic case: the wrapping
   // `return (...)` can't close past it.
   assert.throws(() => evalPostCode('noSuchOp()'))
-  assert.throws(() => frameAt([{ beat: 1, event: 'chain', code: 'noSuchOp()' }], 0))
-  assert.throws(() => frameAt([{ beat: 1, event: 'chain', code: 'edges(0.2)\n// glow' }], 0))
+  assert.throws(() => frameAt([{ beat: 1, event: 'setCode', code: 'noSuchOp()' }], 0))
+  assert.throws(() => frameAt([{ beat: 1, event: 'setCode', code: 'edges(0.2)\n// glow' }], 0))
 })
 
 test('slider() is a live arg reading props.sliders; sliderDeclsInCode scans a cell for declarations', () => {
@@ -266,8 +266,8 @@ test('val("name", initial) is a live arg reading the folded variable, with the i
   assert.deepEqual(collectLiveValues(chain, { rad: 9 }), [9], 'reads the folded variable per frame')
   assert.deepEqual(collectLiveValues(chain, {}), [4], 'the initial is the fallback')
   const frame = frameAt([
-    { beat: 1, event: 'chain', code: 'blur(val("rad", 4))' },
-    { beat: 1, event: 'set', name: 'rad', value: 2 },
+    { beat: 1, event: 'setCode', code: 'blur(val("rad", 4))' },
+    { beat: 1, event: 'setVariable', name: 'rad', value: 2 },
   ], 0)!
   assert.deepEqual(collectLiveValues(frame.chain, frame.vars), [2], 'a set row (the fold materializes one) drives it')
   assert.deepEqual(

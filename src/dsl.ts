@@ -1162,14 +1162,15 @@ export const SCHEMAS = deepFreeze({
    * which selects a shader path). `slider("name", min?, max?)` is a live arg
    * that reads an on-screen slider each frame — and declares it (one row in
    * the "sliders" table per name) so the control just appears. `val("name",
-   * value)` likewise reads a live variable — and materializes its "set" row
-   * right after the cell, so the value becomes editable, tweenable table data
-   * (deleting the val() call deletes the row). `event` picks what a row does — "chain"
+   * value)` likewise reads a live variable — and materializes its "setVariable"
+   * row right after the cell, so the value becomes editable, tweenable table
+   * data (deleting the val() call deletes the row). `event` picks what a row
+   * does — "setCode"
    * (`code` = the whole chain; empty = passthrough), "add" (append effects,
    * `pixelate(6)`, leading `.` optional), "remove" (`name` = op name; drop every
-   * op with that name — the beat-time bypass), "set" (`name`/`value` = a live
-   * input the chain reads through a props function; add `dur`/`ease` to TWEEN it
-   * from its current value), "pulse" (add `value·env` over `dur` beats, `ease`
+   * op with that name — the beat-time bypass), "setVariable" (`name`/`value` = a
+   * live input the chain reads through a props function; add `dur`/`ease` to
+   * TWEEN it from its current value), "pulse" (add `value·env` over `dur` beats, `ease`
    * shaping the envelope; pulses stack), "layer" (composite another chain via
    * `mode`, amount `value`), and "transition" (wipe to the program after it over
    * `dur` beats; `code` = an optional black-and-white mask chain, blank =
@@ -1178,7 +1179,7 @@ export const SCHEMAS = deepFreeze({
    */
   post: {
     beat: 'number',
-    event: ['chain', 'add', 'remove', 'layer', 'transition', 'set', 'pulse'],
+    event: ['setCode', 'add', 'remove', 'layer', 'transition', 'setVariable', 'pulse'],
     code: { type: 'code', language: 'post' },
     name: 'string',
     value: 'number',
@@ -1477,14 +1478,15 @@ export interface ExprNamespace {
   /** The playback clock in seconds at the playhead — the same clock hydra/post chains see as props.time, so pausing or scrubbing the timeline freezes or scrubs it. Live: resolves each frame, e.g. derive({ ry: expr.time().mul(0.5) }). */
   time(): Expr
   /**
-   * Percent-done of the enclosing event, 0→1. A post `set`/`pulse` value
-   * reads its own `dur` window (a `set` without `dur` reads 1); a scene
+   * Percent-done of the enclosing event, 0→1. A post `setVariable`/`pulse`
+   * value reads its own `dur` window (a `setVariable` without `dur` reads 1);
+   * a scene
    * keyframe value reads its own `dur` if set, else its per-field segment —
    * from this keyframe to the next one carrying the same field. Resolved
    * where the row's timing is known, so it works in "=" cells and in
    * code-created exprs (derive({ py: expr.progress() }) on a keyframe)
    * alike; outside any event window it reads 1.
-   * e.g. "=progress().mul(expr.tau).sin()" shapes a set's own sweep.
+   * e.g. "=progress().mul(expr.tau).sin()" shapes a setVariable's own sweep.
    */
   progress(): Expr
   /** The smaller of `a` and `b` — expr.min(expr.slider("a"), 1). Also chainable: a.min(b). */

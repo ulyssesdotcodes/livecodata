@@ -283,7 +283,59 @@ function migrateColumnsToArray(events: StampedEvent[]): StampedEvent[] {
   })
 }
 
-const EDITABLE_MIGRATIONS: EventMigration[] = [migrateColumnsToArray]
+// v2 → v3: the post view's event names changed — 'chain' → 'setCode', 'set' →
+// 'setVariable'. Post tables are recognized by an `event` enum whose options
+// include 'chain' (unique to the post schema) and followed through renames,
+// so particles tables (whose enum also has 'set') are left alone. Rewrites
+// the enum options plus every persisted place a row's `event` value lives.
+function migratePostEventNames(events: StampedEvent[]): StampedEvent[] {
+  const rename = (v: unknown): unknown => (v === 'chain' ? 'setCode' : v === 'set' ? 'setVariable' : v)
+  const renameRows = (raw: unknown): unknown =>
+    Array.isArray(raw) ? raw.map((r) => (r && typeof r === 'object' ? { ...r, event: rename((r as Row).event) } : r)) : raw
+  const isPostEventCol = (c: unknown): c is EditableColumn =>
+    !!c && (c as EditableColumn).name === 'event' && ((c as EditableColumn).options?.includes('chain') ?? false)
+  const post = new Set<string>()
+  return events.map((e) => {
+    const table = typeof e.table === 'string' ? e.table : ''
+    if (e.kind === 'create' || e.kind === 'declare-schema') {
+      const cols = e.columns
+      if (!Array.isArray(cols) || !cols.some(isPostEventCol)) {
+        if (e.kind === 'declare-schema') post.delete(table)
+        return e
+      }
+      post.add(table)
+      return {
+        ...e,
+        columns: cols.map((c) => (isPostEventCol(c) ? { ...c, options: c.options!.map((o) => rename(o) as string) } : c)),
+        ...(Array.isArray(e.rows) ? { rows: renameRows(e.rows) } : {}),
+      }
+    }
+    if (!post.has(table)) return e
+    switch (e.kind) {
+      case 'rename-table':
+        post.delete(table)
+        if (typeof e.to === 'string') post.add(e.to)
+        return e
+      case 'remove-table':
+        post.delete(table)
+        return e
+      case 'seed-rows':
+        return { ...e, rows: renameRows(e.rows) }
+      case 'set-cell':
+        return e.col === 'event' ? { ...e, value: rename(e.value) } : e
+      case 'set-row': {
+        const values = e.values
+        return values && typeof values === 'object' && 'event' in values
+          ? { ...e, values: { ...(values as Row), event: rename((values as Row).event) } }
+          : e
+      }
+      default:
+        return e
+    }
+  })
+}
+
+const EDITABLE_MIGRATIONS: EventMigration[] = [migrateColumnsToArray, migratePostEventNames]
 
 // Re-drive a code-created table's rows from a fresh seed: a pristine code row
 // (code && !dirty) takes the new seed value at its slot; a dirty row stays as-is.
@@ -322,7 +374,7 @@ function reseedRows(t: TableState, seed: Row[]): void {
 }
 
 // ── val() rows: post code cells materialize their variables ──────────────────
-// A post-language code cell's val("name", value) calls own the "set" rows
+// A post-language code cell's val("name", value) calls own the "setVariable" rows
 // immediately after it: created with the declared value (at the cell's beat),
 // value-tracked while pristine, kept through user edits, and deleted — edited
 // or not — when the call is deleted. Pure fold logic keyed on the events that
@@ -349,7 +401,7 @@ function reconcileVarRows(t: TableState, i: number): void {
       nextMeta.push(t.rowMeta[at])
     } else {
       const beat = typeof row.beat === 'number' ? row.beat : 1
-      nextRows.push(conformRow({ beat, event: 'set', name: d.name, value: d.value }, cols))
+      nextRows.push(conformRow({ beat, event: 'setVariable', name: d.name, value: d.value }, cols))
       nextMeta.push({ code: false, dirty: false, slot: -1, varName: d.name })
     }
   }
