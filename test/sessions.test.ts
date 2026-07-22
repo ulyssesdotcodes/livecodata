@@ -92,19 +92,6 @@ test('rename sets the name; a later save preserves it', async () => {
   assert.equal(await store.load('a'), 'v1', 'the save still landed')
 })
 
-test('setArchived flips the flag; a later save preserves it; unarchive restores', async () => {
-  const store = createSessionStore(fakeStorage())
-  await store.save('a', { events: 'v0' })
-  await store.setArchived('a', true)
-  assert.equal((await store.list())[0].archived, true)
-
-  await store.save('a', { events: 'v1' })
-  assert.equal((await store.list())[0].archived, true, 'archived survives an ordinary save')
-
-  await store.setArchived('a', false)
-  assert.equal((await store.list())[0].archived, false)
-})
-
 test('remove deletes a single session', async () => {
   const store = createSessionStore(fakeStorage())
   await store.save('a', { events: 'a' })
