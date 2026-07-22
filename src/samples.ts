@@ -94,46 +94,46 @@ editable("post", schemas.post)
   },
   {
     name: "Retime Table",
-    table: "timeline",
-    code: `// livecodata — warping playback with an editable retime table
+    table: "warp",
+    code: `// livecodata — retiming ONE table with an editable table of time warps
 // The scene is the Editable Table example: a sphere following a hand-entered
-// path. New here is the "timeline" table — also editable, in its own tab on
-// the right — whose EVENT rows warp how playback time maps onto that content.
-// Edit a row in the "timeline" tab, press Run: same path, different time.
+// path. New here is "warp" — an editable table of timeline EVENTS (its own
+// tab on the right) that retimes JUST the sphere, by chaining
+// .remap(table("warp")) on its way to the scene. Edit a warp row, press Run:
+// same path, different time.
 // Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 
-// 1. The moving sphere, as in the Editable Table example: beat-keyed
-//    keyframes you edit in the "path" tab become one create + updates,
-//    routed to the 3D scene with .outThree(). The path spans source beats
-//    1..5; the table is named "events" so the warped view below can read it.
-editable("path", schemas.path)
-table("events", table("path").orderBy("beat").map((r, i) => ({
-  id: "ball", type: i === 0 ? "create" : "update", beat: r.beat,
-  shape: "sphere", color: 0x4a9eff, px: r.px, py: r.py, pz: r.pz, rx: 0, ry: 0, rz: 0,
-}))).outThree()
-
-// 2. The timeline: one EVENT per row (\`schemas.timeline\` — hover it), each
-//    covering the playback window \`dur\` beats long starting at \`beat\`, just
-//    like any other beat-timed table. Seeded on the right:
+// 1. The warp: one timeline EVENT per row (\`schemas.timeline\` — hover it),
+//    each covering the playback window \`dur\` beats long starting at \`beat\`.
+//    Seeded on the right:
 //      retime  beats 1..9   plays source 1..5 at half speed (stretched)
 //      loop    beats 9..15  cycles source 1..3 at natural speed (3×)
 //      hold    beats 15..17 freezes on source beat 5 (the path's end)
-//    The loop length follows the events — 16 beats here — and beats no event
-//    covers play unmapped. retime is the general one: \`from\`..\`to\` is the
-//    source range (from > to runs it backwards), and an optional output
-//    block \`outFrom\`..\`outTo\` repeats across the window. A numeric cell
-//    left 0 means "unset". Try it: retype the hold row as a stutter
-//    ({ event: "loop", from: 1, to: 2 }), or flip the first row's from/to
-//    to 5 and 1 to open with the path running backwards — or drag the event
-//    spans on the timeline strip to move and resize the windows.
-editable("timeline", schemas.timeline)
+//    retime is the general one: \`from\`..\`to\` is the source range (from > to
+//    runs it backwards), and an optional output block \`outFrom\`..\`outTo\`
+//    repeats across the window. A numeric cell left 0 means "unset". The
+//    name is ours to pick — "timeline" is the one reserved name: a table
+//    saved under it (or routed with .outTimeline()) warps GLOBAL playback,
+//    every table at once, instead of being applied by hand like this one.
+editable("warp", schemas.timeline)
 
-// 3. The same table warps DATA, not just playback: .remap(table("timeline"))
-//    places each row of a beat table at every playback beat it is shown —
-//    the loop event duplicates its rows once per cycle, stretches rescale
-//    \`dur\` columns too. Open the "warped" tab to see the sphere's events
-//    remapped through the timeline above.
-table("warped", (rand, table) => table("events").remap(table("timeline")))
+// 2. The sphere's keyframes, warped on their way to the scene:
+//    .remap(table("warp")) places each row at every playback beat its source
+//    beat is shown — the loop event duplicates rows once per cycle,
+//    stretches rescale \`dur\` columns, rows no event plays are dropped —
+//    and .outThree() routes the result on to the 3D scene ("three (system)"
+//    in the panel shows the remapped rows). Only THIS table is retimed.
+editable("path", schemas.path)
+table("path").orderBy("beat").map((r, i) => ({
+  id: "ball", type: i === 0 ? "create" : "update", beat: r.beat,
+  shape: "sphere", color: 0x4a9eff, px: r.px, py: r.py, pz: r.pz, rx: 0, ry: 0, rz: 0,
+})).remap(table("warp")).outThree()
+
+// 3. The proof the MAIN timeline is untouched: this post table is NOT
+//    remapped, so its bloom pulse still lands on the real beat 9 — halfway
+//    through the 16-beat loop — while the warped sphere runs on its own
+//    time. Retime the sphere however you like; the pulse keeps its place.
+editable("post", schemas.post)
 `,
     tables: {
       path: [
@@ -141,10 +141,15 @@ table("warped", (rand, table) => table("events").remap(table("timeline")))
         { beat: 3, px: 1,  py: 1,   pz: 0 },
         { beat: 5, px: 0,  py: 0.3, pz: -1 },
       ],
-      timeline: [
+      warp: [
         { event: 'retime', beat: 1,  dur: 8, from: 1, to: 5 },
         { event: 'loop',   beat: 9,  dur: 6, from: 1, to: 3 },
         { event: 'hold',   beat: 15, dur: 2, from: 5 },
+      ],
+      post: [
+        { beat: 1, event: "setCode", code: "bloom((p) => p.glow, 0.4, 0.6)" },
+        { beat: 1, event: "setVariable", name: "glow", value: 0.35 },
+        { beat: 9, event: "pulse", name: "glow", value: 0.8, dur: 2, ease: "easeOut" },
       ],
     },
   },
