@@ -302,12 +302,15 @@ define("scene", (rand, table) =>
 define("steps", () => editable("steps", schemas.steps))
 
 // Feed the fold table to a sheet of paper, colored side DOWN (backColor)
-// the way a crane is folded so the finished bird comes out colored. The
-// fold value is one number: how many folds have landed (fractions = the
-// next flap mid-swing), so scrubbing the timeline scrubs the folding.
+// the way a crane is folded so the finished bird comes out colored. ry
+// turns the sheet over to face you — half a turn about the up/down axis,
+// as if watching the fold from under a glass table — so every fold swings
+// toward the camera instead of away. The fold value is one number: how
+// many folds have landed (fractions = the next flap mid-swing), so
+// scrubbing the timeline scrubs the folding.
 define("three", (rand, table) => {
   const paper = origami().steps(table("steps"))
-  return paper.spawn({ id: "crane", color: 0xf4efe2, backColor: 0xd94f2a, pz: 1.2, rz: 2.356 })
+  return paper.spawn({ id: "crane", color: 0xf4efe2, backColor: 0xd94f2a, pz: 1.2, ry: Math.PI, rz: 2.356 })
     .concat(paper.sequence())
 })
 
