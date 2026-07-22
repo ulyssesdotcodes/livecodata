@@ -10,13 +10,14 @@
 // its declaration set per run).
 
 import {
-  Expr, EXPR_FNS, bakeExpr, callExpr, isStreamingNode, makeExprNamespace,
-  type ExprNamespace,
+  Expr, EXPR_FNS, bakeExpr, callExpr, evalExpr, isStreamingNode, makeExprNamespace,
+  type EvalCtx, type ExprNamespace,
 } from './dsl.js'
 import {
   isExprCellText, registerExprCellCheck, schemaColumns,
   type ExprCellCheck, type Schema,
 } from './editable-tables.js'
+import { registerExprArgSupport } from './post-lang.js'
 import type { Row } from './lineage.js'
 
 export { isExprCellText }
@@ -111,6 +112,30 @@ export function checkExprCell(text: string): ExprCellCheck {
 }
 
 registerExprCellCheck(checkExprCell)
+
+// Post live args: an Expr resolves per frame against the props object — the
+// folded vars are the row (so field() reads sibling variables), sliders and
+// the clock map to their EvalCtx sources, and midi rides the $midi sampler
+// the visualizer injects.
+registerExprArgSupport({
+  isExpr: (v) => v instanceof Expr,
+  toLiveFn: (v) => {
+    const node = (v as Expr).node
+    return (p) => {
+      const ctx: EvalCtx = {
+        slider: (id) => {
+          const s = (p.sliders as Record<string, number> | undefined)?.[id]
+          return typeof s === 'number' ? s : 0
+        },
+        time: () => (typeof p.time === 'number' ? p.time : 0),
+        ...(typeof p.$midi === 'function' ? { midi: p.$midi as EvalCtx['midi'] } : {}),
+      }
+      const n = Number(evalExpr(node, p as Row, 0, ctx))
+      return Number.isFinite(n) ? n : 0
+    }
+  },
+  makeScope: (defineSlider) => makeExprNamespace({ defineSlider }),
+})
 
 /**
  * Evaluate every "=" cell in the rows' schema-declared number columns (the
