@@ -221,10 +221,12 @@ test('remap with an empty timeline is a no-op', () => {
   assert.deepEqual(content.remap([]).rows, [{ id: 'a', beat: 2 }])
 })
 
-test('remap works on tables inside a program, via the runtime', () => {
-  const rt = createRuntime()
+test('a user timeline table (editable, schemas.timeline) remaps other tables in a program', () => {
+  const rt = createRuntime({ editableRows: (_name, _schema, seedRows) => seedRows ?? [] })
   const code = `
-    define("warp", () => rows([{ event: "loop", beat: 1, end: 9, from: 1, to: 5 }]))
+    define("warp", () => editable("warp", schemas.timeline, [
+      { event: "loop", beat: 1, end: 9, from: 1, to: 5 },
+    ]))
     define("hits", () => rows([{ id: "x", beat: 2 }]).remap(table("warp")))
   `
   const result = rt.run(code, { seed: 1 })
