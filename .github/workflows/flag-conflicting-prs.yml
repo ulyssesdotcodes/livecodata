@@ -1,0 +1,70 @@
+name: Flag PRs conflicting with main
+
+# Runs after a merge to main and posts a failing `conflicts-with-main` check on
+# every open PR that no longer merges cleanly. GitHub emits no webhook when a
+# PR's mergeability flips, so this manufactures that signal as a check run — the
+# one surface a Claude Code session subscribed to the PR (subscribe_pr_activity)
+# actually receives, without polling. The check is created only on the PR head
+# that first conflicts, so a PR that stays conflicting across several merges
+# wakes its session once, not once per merge. workflow_dispatch is a manual
+# escape hatch for re-scanning without a new commit.
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: read
+
+jobs:
+  flag-conflicts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const CHECK = 'conflicts-with-main';
+            const prs = await github.paginate(github.rest.pulls.list, {
+              owner, repo, base: 'main', state: 'open',
+            });
+            for (const pr of prs) {
+              // mergeable is computed asynchronously; it is null while GitHub
+              // recomputes after the push, so poll until it settles to a boolean.
+              let mergeable = null;
+              for (let i = 0; i < 6 && mergeable === null; i++) {
+                const { data } = await github.rest.pulls.get(
+                  { owner, repo, pull_number: pr.number });
+                mergeable = data.mergeable;
+                if (mergeable === null) await new Promise(r => setTimeout(r, 4000));
+              }
+              if (mergeable === null) {
+                core.warning(`#${pr.number}: mergeability undetermined, skipping`);
+                continue;
+              }
+              if (mergeable !== false) continue; // only flag PRs that now conflict
+
+              // Idempotent per head SHA: if this exact commit already carries the
+              // flag, the session was already woken — don't re-fire on later merges.
+              const { data: existing } = await github.rest.checks.listForRef({
+                owner, repo, ref: pr.head.sha, check_name: CHECK,
+              });
+              if (existing.total_count > 0) continue;
+
+              await github.rest.checks.create({
+                owner, repo,
+                name: CHECK,
+                head_sha: pr.head.sha,
+                status: 'completed',
+                conclusion: 'failure',
+                output: {
+                  title: 'Conflicts with main',
+                  summary: '`main` moved and this branch no longer merges cleanly. '
+                    + 'Rebase onto `main` to resolve the conflicts.',
+                },
+              });
+              core.info(`#${pr.number}: flagged conflicts-with-main on ${pr.head.sha}`);
+            }
