@@ -261,6 +261,19 @@ html, body {
   overflow: hidden;
 }
 
+@media (max-width: 767px) {
+  .docs-popover {
+    top: 0 !important;
+    right: 0 !important;
+    left: 0;
+    bottom: 0;
+    width: 100%;
+    max-height: none;
+    border-radius: 0;
+    border: none;
+  }
+}
+
 .docs-popover-head {
   display: flex;
   align-items: center;
