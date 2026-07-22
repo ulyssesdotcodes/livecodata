@@ -1,9 +1,10 @@
 // Past-session selector: a dropdown over the persisted session store —
-// picking a session reopens it, "+ New" starts fresh, a static "Examples"
-// optgroup loads built-in programs, and archived sessions sink into an
-// "Archived" optgroup below. The controller holds list/active-id state and
-// the decisions; <SessionSelector> renders it. `children` is a slot for
-// extra chrome on the same row (the room chip).
+// picking a session reopens it, "+ New" starts fresh. Sessions the user has
+// manually renamed list first, then a static "Examples" optgroup of
+// built-in programs, then every other (unnamed) session below. The
+// controller holds list/active-id state and the decisions; <SessionSelector>
+// renders it. `children` is a slot for extra chrome on the same row (the
+// room chip).
 
 import { createSignal, For, Show, type Accessor, type JSX } from 'solid-js'
 import type { SessionSummary } from '../sessions.js'
@@ -19,10 +20,9 @@ interface SessionSelectorOptions {
   onOpen?: (id: string) => void
   onNew?: () => void
   onExample?: (index: number) => void
-  // Rename/archive act on the stored record only; the caller re-lists on
-  // completion, which is what updates this dropdown.
+  // Rename acts on the stored record only; the caller re-lists on completion,
+  // which is what updates this dropdown.
   onRename?: (id: string, name: string) => void
-  onArchive?: (id: string, archived: boolean) => void
   examples?: ExampleEntry[]
 }
 
@@ -33,9 +33,8 @@ export interface SessionSelectorController {
   open(id: string): void
   startNew(): void
   openExample(index: number): void
-  // Rename/archive act on the *active* session; no-ops until it's persisted.
+  // Rename acts on the *active* session; a no-op until it's persisted.
   rename(name: string): void
-  setArchived(archived: boolean): void
   setSessions(sessions: SessionSummary[], activeId: string | null): void
 }
 
@@ -54,7 +53,7 @@ function labelFor(s: SessionSummary): string {
   return when ? `${base} · ${when}` : base
 }
 
-export function createSessionSelector({ onOpen, onNew, onExample, onRename, onArchive, examples = [] }: SessionSelectorOptions = {}): SessionSelectorController {
+export function createSessionSelector({ onOpen, onNew, onExample, onRename, examples = [] }: SessionSelectorOptions = {}): SessionSelectorController {
   const [sessions, setSessions] = createSignal<SessionSummary[]>([])
   const [activeId, setActiveId] = createSignal<string | null>(null)
 
@@ -75,10 +74,6 @@ export function createSessionSelector({ onOpen, onNew, onExample, onRename, onAr
       const id = activeId()
       if (id) onRename?.(id, name.trim())
     },
-    setArchived(archived: boolean): void {
-      const id = activeId()
-      if (id) onArchive?.(id, archived)
-    },
     setSessions(list: SessionSummary[], id: string | null): void {
       setSessions(list)
       setActiveId(id)
@@ -91,8 +86,8 @@ export function SessionSelector(props: { ctl: SessionSelectorController; childre
   const [renaming, setRenaming] = createSignal(false)
 
   const activeSummary = (): SessionSummary | undefined => ctl.sessions().find((s) => s.id === ctl.activeId())
-  const liveSessions = (): SessionSummary[] => ctl.sessions().filter((s) => !s.archived)
-  const archivedSessions = (): SessionSummary[] => ctl.sessions().filter((s) => s.archived)
+  const namedSessions = (): SessionSummary[] => ctl.sessions().filter((s) => s.name.trim())
+  const otherSessions = (): SessionSummary[] => ctl.sessions().filter((s) => !s.name.trim())
 
   const commitRename = (value: string): void => {
     setRenaming(false)
@@ -136,7 +131,7 @@ export function SessionSelector(props: { ctl: SessionSelectorController; childre
           <Show when={!ctl.sessions().some((s) => s.id === ctl.activeId())}>
             <option value={ctl.activeId() ?? ''} selected>current session (new)</option>
           </Show>
-          <For each={liveSessions()}>
+          <For each={namedSessions()}>
             {(s) => <option value={s.id} selected={s.id === ctl.activeId()}>{labelFor(s)}</option>}
           </For>
           <Show when={ctl.examples.length}>
@@ -146,9 +141,9 @@ export function SessionSelector(props: { ctl: SessionSelectorController; childre
               </For>
             </optgroup>
           </Show>
-          <Show when={archivedSessions().length}>
-            <optgroup label="Archived">
-              <For each={archivedSessions()}>
+          <Show when={otherSessions().length}>
+            <optgroup label="Other sessions">
+              <For each={otherSessions()}>
                 {(s) => <option value={s.id} selected={s.id === ctl.activeId()}>{labelFor(s)}</option>}
               </For>
             </optgroup>
@@ -158,14 +153,6 @@ export function SessionSelector(props: { ctl: SessionSelectorController; childre
       <Show when={activeSummary()}>
         <button class="session-rename" title="rename session" aria-label="rename session" onClick={() => setRenaming(true)}>
           <Icon name="edit-2" />
-        </button>
-        <button
-          class="session-archive"
-          title={activeSummary()?.archived ? 'unarchive session' : 'archive session'}
-          aria-label={activeSummary()?.archived ? 'unarchive session' : 'archive session'}
-          onClick={() => { const s = activeSummary(); if (s) ctl.setArchived(!s.archived) }}
-        >
-          <Icon name={activeSummary()?.archived ? 'inbox' : 'archive'} />
         </button>
       </Show>
       <button class="session-new" title="new session" aria-label="new session" onClick={() => ctl.startNew()}>

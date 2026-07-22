@@ -20,7 +20,6 @@ export interface SessionRecord {
   createdAt: number
   updatedAt: number
   name: string
-  archived: boolean
   tables: string[]
   events: string
   runs: SessionRun[]
@@ -39,7 +38,6 @@ export interface SessionSummary {
   createdAt: number | null
   updatedAt: number | null
   name: string
-  archived: boolean
   tables: string[]
 }
 
@@ -54,7 +52,7 @@ export interface SessionSaveData {
 export interface SessionStore {
   newId(): string
   list(): Promise<SessionSummary[]>
-  // Upsert; preserves createdAt/name/archived across updates.
+  // Upsert; preserves createdAt/name across updates.
   save(id: string, data: SessionSaveData): Promise<SessionRecord>
   load(id: string): Promise<string | null>
   runs(id: string): Promise<SessionRun[]>
@@ -63,8 +61,6 @@ export interface SessionStore {
   table(id: string): Promise<string | null>
   // No-op for an id that was never saved.
   rename(id: string, name: string): Promise<void>
-  // No-op for an id that was never saved.
-  setArchived(id: string, archived: boolean): Promise<void>
   remove(id: string): Promise<void>
 }
 
@@ -79,7 +75,6 @@ function normalizeRecord(s: Partial<SessionRecord> & { id: string }): SessionRec
     createdAt: s.createdAt ?? Date.now(),
     updatedAt: s.updatedAt ?? s.createdAt ?? Date.now(),
     name: typeof s.name === 'string' ? s.name : '',
-    archived: s.archived === true,
     tables: Array.isArray(s.tables) ? s.tables : [],
     events: typeof s.events === 'string' ? s.events : '',
     runs: Array.isArray(s.runs) ? s.runs : [],
@@ -95,7 +90,6 @@ function upsertRecord(existing: SessionRecord | null, id: string, { events, tabl
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     name: existing?.name ?? '',
-    archived: existing?.archived ?? false,
     tables,
     events,
     runs,
@@ -110,7 +104,6 @@ function toSummary(s: SessionRecord): SessionSummary {
     createdAt: s.createdAt ?? null,
     updatedAt: s.updatedAt ?? s.createdAt ?? null,
     name: s.name,
-    archived: s.archived,
     tables: s.tables,
   }
 }
@@ -203,10 +196,6 @@ export function createSessionStore(storage: MinimalStorage = defaultStorage()): 
 
     async rename(id: string, name: string): Promise<void> {
       update(id, (s) => ({ ...s, name }))
-    },
-
-    async setArchived(id: string, archived: boolean): Promise<void> {
-      update(id, (s) => ({ ...s, archived }))
     },
 
     async remove(id: string): Promise<void> {
@@ -339,10 +328,6 @@ export function createIdbSessionStore(storage: MinimalStorage | undefined = defa
 
     async rename(id: string, name: string): Promise<void> {
       await update(id, (s) => ({ ...s, name }))
-    },
-
-    async setArchived(id: string, archived: boolean): Promise<void> {
-      await update(id, (s) => ({ ...s, archived }))
     },
 
     async remove(id: string): Promise<void> {

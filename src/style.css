@@ -486,8 +486,7 @@ html, body {
 }
 
 .session-new,
-.session-rename,
-.session-archive {
+.session-rename {
   background: transparent;
   border: 1px solid #1a5090;
   color: #8ca0b8;
@@ -506,8 +505,7 @@ html, body {
 }
 
 .session-new:hover,
-.session-rename:hover,
-.session-archive:hover {
+.session-rename:hover {
   background: #1a5090;
   color: #fff;
   border-color: #1a5090;

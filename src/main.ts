@@ -1049,10 +1049,9 @@ const sessionSelector = createSessionSelector({
   onNew: newSession,
   onExample: openExample,
   examples: SAMPLES.map((s) => ({ label: s.name })),
-  // Naming/archiving act on the stored record only — no re-cook needed, just
-  // a re-listed dropdown.
+  // Renaming acts on the stored record only — no re-cook needed, just a
+  // re-listed dropdown.
   onRename: (id, name) => void sessionStore.rename(id, name).then(refreshSelector).catch(() => {}),
-  onArchive: (id, archived) => void sessionStore.setArchived(id, archived).then(refreshSelector).catch(() => {}),
 })
 
 const roomChip = createRoomChip({
