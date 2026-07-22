@@ -87,8 +87,8 @@ editable("post", schemas.post)
         { beat: 5, px: 0,  py: 0.3, pz: -1 },
       ],
       post: [
-        { beat: 1, event: "chain", code: "bloom((p) => p.glow, 0.4, 0.6)" },
-        { beat: 1, event: "set", name: "glow", value: 0.35 },
+        { beat: 1, event: "setCode", code: "bloom((p) => p.glow, 0.4, 0.6)" },
+        { beat: 1, event: "setVariable", name: "glow", value: 0.35 },
         { beat: 9, event: "pulse", name: "glow", value: 0.8, dur: 2, ease: "easeOut" },
       ],
     },
@@ -550,18 +550,18 @@ define("scene", (rand, table) => table("three").rasterize(16))
 //      - STRUCTURAL: an arg that picks a shader path (e.g. edges' colorMode)
 //        and so bakes into the compiled shader.
 //    The seeded "post" tab on the right holds these events:
-//      - beat 1  chain: edges((p) => p.th, 1).bloom((p) => p.glow)
+//      - beat 1  setCode: edges((p) => p.th, 1).bloom((p) => p.glow)
 //                       (colorMode 1 = edges drawn over the source).
-//      - beat 1  set:   th = 0.15, glow = 0.2 — the chain's live inputs.
-//      - beat 5  set:   th → 0.4 with dur:2 — a TWEEN (interpolates from the
-//                       current value over 2 beats via \`ease\`), not a step.
+//      - beat 1  setVariable: th = 0.15, glow = 0.2 — the chain's live inputs.
+//      - beat 5  setVariable: th → 0.4 with dur:2 — a TWEEN (interpolates from
+//                       the current value over 2 beats via \`ease\`), not a step.
 //      - beat 7  pulse: glow += 1.2 over dur:1, easeOut — an additive decaying
 //                       burst (pulses stack); the bloom flares.
 //      - beat 9  add:   pixelate(6) — append an effect mid-loop.
 //      - beat 11 remove: pixelate — drop it again by op name (the beat-time
 //                       bypass, the un-add). No chain rewrite.
 //      - beat 13 transition: wipe over dur:2 beats (blank code = crossfade) to...
-//      - beat 13 chain: blend(prev().mosaic(4), 0.5) — the destination feeds
+//      - beat 13 setCode: blend(prev().mosaic(4), 0.5) — the destination feeds
 //                       back the PREVIOUS output frame (prev()) blended with a
 //                       mosaic of it, for a trailing kaleidoscope.
 //    editable() makes the table live: click a code cell to edit the chain here,
@@ -571,15 +571,15 @@ editable("post", schemas.post)
 `,
     tables: {
       post: [
-        { beat: 1, event: "chain", code: "edges((p) => p.th, 1)\n  .bloom((p) => p.glow)" },
-        { beat: 1, event: "set", name: "th", value: 0.15 },
-        { beat: 1, event: "set", name: "glow", value: 0.2 },
-        { beat: 5, event: "set", name: "th", value: 0.4, dur: 2, ease: "easeInOut" },
+        { beat: 1, event: "setCode", code: "edges((p) => p.th, 1)\n  .bloom((p) => p.glow)" },
+        { beat: 1, event: "setVariable", name: "th", value: 0.15 },
+        { beat: 1, event: "setVariable", name: "glow", value: 0.2 },
+        { beat: 5, event: "setVariable", name: "th", value: 0.4, dur: 2, ease: "easeInOut" },
         { beat: 7, event: "pulse", name: "glow", value: 1.2, dur: 1, ease: "easeOut" },
         { beat: 9, event: "add", code: "pixelate(6)" },
         { beat: 11, event: "remove", name: "pixelate" },
         { beat: 13, event: "transition", dur: 2 },
-        { beat: 13, event: "chain", code: "blend(prev().mosaic(4), 0.5)" },
+        { beat: 13, event: "setCode", code: "blend(prev().mosaic(4), 0.5)" },
       ],
     },
   },

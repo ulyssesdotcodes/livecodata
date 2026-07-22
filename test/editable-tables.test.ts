@@ -255,8 +255,49 @@ test('migrates a v1 session whose create event stored the editable() schema obje
   ], 'the table data is intact')
 
   const reSaved = JSON.parse(store.serialize())
-  assert.equal(reSaved.version, 2)
+  assert.equal(reSaved.version, 3)
   assert.ok(Array.isArray(reSaved.events[0].columns))
+})
+
+test('migrates a v2 session: post chain/set events become setCode/setVariable, particles keep set', () => {
+  const legacyV2 = JSON.stringify({
+    version: 2, start: 1,
+    events: [
+      {
+        kind: 'create', table: 'post', declared: true,
+        columns: [
+          { name: 'beat', type: 'number' },
+          { name: 'event', type: 'enum', options: ['chain', 'add', 'remove', 'layer', 'transition', 'set', 'pulse'] },
+          { name: 'code', type: 'code', language: 'post' },
+          { name: 'name', type: 'string' },
+          { name: 'value', type: 'number' },
+        ],
+        rows: [{ beat: 1, event: 'chain', code: 'blur(2)' }, { beat: 1, event: 'pulse', name: 'g', value: 0.2 }],
+        seq: 0, t: 0, src: 'a',
+      },
+      { kind: 'rename-table', table: 'post', to: 'fx', seq: 1, t: 0, src: 'a' },
+      { kind: 'set-cell', table: 'fx', row: 1, col: 'event', value: 'set', seq: 2, t: 0, src: 'a' },
+      {
+        kind: 'create', table: 'particles', declared: true,
+        columns: [
+          { name: 'beat', type: 'number' },
+          { name: 'event', type: 'enum', options: ['spawn', 'set'] },
+          { name: 'name', type: 'string' },
+          { name: 'value', type: 'number' },
+        ],
+        rows: [{ beat: 1, event: 'set', name: 'speed', value: 1 }],
+        seq: 3, t: 0, src: 'a',
+      },
+    ],
+  })
+  const store = createEditableTableStore()
+  assert.ok(store.load(legacyV2), 'a v2 session loads')
+  const fx = store.get('fx')!
+  assert.deepEqual(fx.rows.map((r) => r.event), ['setCode', 'setVariable'],
+    'seed rows and cell edits read the new names, followed through a rename-table')
+  const options = fx.columns.find((c) => c.name === 'event')!.options!
+  assert.ok(options.includes('setCode') && options.includes('setVariable') && !options.includes('chain'))
+  assert.equal(store.get('particles')!.rows[0].event, 'set', "particles' own 'set' event is untouched")
 })
 
 test('load replaces the store entirely and notifies; clear empties it and notifies', () => {
@@ -745,21 +786,21 @@ test('a deleted slider row stays deleted until a later run declares it again', (
 
 const POST_SCHEMA = {
   beat: 'number',
-  event: ['chain', 'add', 'remove', 'layer', 'transition', 'set', 'pulse'],
+  event: ['setCode', 'add', 'remove', 'layer', 'transition', 'setVariable', 'pulse'],
   code: { type: 'code', language: 'post' },
   name: 'string',
   value: 'number',
 } as const
 
-test("a post cell's val() derives a set row right after it, tracking the call across edits", () => {
+test("a post cell's val() derives a setVariable row right after it, tracking the call across edits", () => {
   const store = createEditableTableStore()
-  store.ensure('post', POST_SCHEMA, [{ beat: 2, event: 'chain', code: 'bloom(val("glow", 0.5))' }])
+  store.ensure('post', POST_SCHEMA, [{ beat: 2, event: 'setCode', code: 'bloom(val("glow", 0.5))' }])
   let rows = store.get('post')!.rows
   assert.equal(rows.length, 2)
   assert.deepEqual(
     { beat: rows[1].beat, event: rows[1].event, name: rows[1].name, value: rows[1].value },
-    { beat: 2, event: 'set', name: 'glow', value: 0.5 },
-    'the derived set row lands right after the cell, at its beat',
+    { beat: 2, event: 'setVariable', name: 'glow', value: 0.5 },
+    'the derived setVariable row lands right after the cell, at its beat',
   )
 
   store.setCell('post', 0, 'code', 'bloom(val("glow", 0.9))')
@@ -779,7 +820,7 @@ test("a post cell's val() derives a set row right after it, tracking the call ac
 test('removing a post code row removes its val()-derived rows with it', () => {
   const store = createEditableTableStore()
   store.ensure('post', POST_SCHEMA, [
-    { beat: 1, event: 'chain', code: 'blur(val("rad", 4))' },
+    { beat: 1, event: 'setCode', code: 'blur(val("rad", 4))' },
     { beat: 4, event: 'add', code: 'pixelate(val("px", 6))' },
   ])
   assert.equal(store.get('post')!.rows.length, 4)

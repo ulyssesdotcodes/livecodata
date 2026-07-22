@@ -61,7 +61,7 @@ test('the legacy "events" table name still cooks into the scene cache', () => {
 test('cookProgram surfaces a broken post chain (e.g. a trailing comment) as an error', () => {
   const rt = createRuntime()
   const code = `
-    define("post", () => rows([{ beat: 1, event: "chain", code: "edges(0.2)\\n// glow" }]))
+    define("post", () => rows([{ beat: 1, event: "setCode", code: "edges(0.2)\\n// glow" }]))
   `
   assert.throws(() => cookProgram(rt, code, 1))
 })
