@@ -7,6 +7,8 @@ import { conformRow, schemaColumns, invalidColumns, type ColumnType } from '../s
 import { SAMPLES } from '../src/samples.js'
 import { buildHydraIndex, hydraFrameAt } from '../src/hydra.js'
 import { frameToBeat } from '../src/constants.js'
+import { rasterizeRows } from '../src/rasterize.js'
+import { outViewName } from '../src/dsl.js'
 
 test('new verbs cook end-to-end (grid/derive/groupBy/csv/join/triggerEach + lineage)', () => {
   const code = `
@@ -53,11 +55,12 @@ define("joined", () => table("cities").join(rows([{ id: "a", note: "hit" }]), "i
 test('every sample.table names a table the sample declares', () => {
   // The example's default tab (see main's openExample) must be a real view or
   // editable table the code produces — a typo would silently fall back to the
-  // default tab. Guard it statically: the name has to be a define()/editable()
-  // target in that sample's own code.
+  // default tab. Guard it statically: the name has to be a
+  // define()/editable()/table(name, …)/.save() target in that sample's own code.
   for (const s of SAMPLES) {
     if (s.table == null) continue
-    const decl = new RegExp(`(define|editable)\\(\\s*"${s.table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`)
+    const escaped = s.table.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const decl = new RegExp(`(define|editable|table|save)\\(\\s*"${escaped}"`)
     assert.ok(decl.test(s.code), `sample "${s.name}" declares its table "${s.table}"`)
   }
 })
@@ -71,7 +74,7 @@ test('Origami Crane sample: 17 exact fold steps, wings held half-raised', () => 
       (seed ?? sample.tables?.[name] ?? []).map((r) => conformRow(r, schemaColumns(schema))),
   }).run(sample.code, { seed: 1 })
 
-  const events = views.get('three')!
+  const events = views.get(outViewName('three'))!
   const create = events.rows.find((r) => r.type === 'create')!
   const program = create.program as FoldTableProgram
   assert.equal(program.kind, 'fold-table')
@@ -101,8 +104,10 @@ test('Origami Crane sample: 17 exact fold steps, wings held half-raised', () => 
   const zMax = Math.max(...held.pos.map((p) => p[2]))
   assert.ok(zMax > 0.5, `wings rise out of plane (z ${zMax.toFixed(2)})`)
 
-  const scene = views.get('scene')!
-  const withFold = scene.rows.filter((r) => typeof r.fold === 'number')
+  // Playback rasterizes the routed events into the scene cache automatically —
+  // the baked frames must carry the same fold track.
+  const sceneRows = rasterizeRows(events.rows)
+  const withFold = sceneRows.filter((r) => typeof r.fold === 'number')
   assert.ok(withFold.length > 0, 'scene frames carry fold')
   const last = withFold[withFold.length - 1]
   assert.equal(last.fold, 16.5)
@@ -164,7 +169,7 @@ test('Origami Cicada sample: nine simple folds, all exact', () => {
     editableRows: (name: string, schema: Record<string, ColumnType>, seed?: Record<string, unknown>[]) =>
       (seed ?? sample.tables?.[name] ?? []).map((r) => conformRow(r, schemaColumns(schema))),
   }).run(sample.code, { seed: 1 })
-  const events = views.get('three')!
+  const events = views.get(outViewName('three'))!
   const program = events.rows.find((r) => r.type === 'create')!.program as FoldTableProgram
   assert.equal(program.steps.length, 9)
   for (const step of program.steps) assert.equal(step.type, 'Pureland')
@@ -187,7 +192,7 @@ test('Run Counter sample: the same code cooks to a different sketch every run', 
   const rt = createRuntime({ logRows: (n) => (n === 'activity' ? activity : null) })
   const { views } = rt.run(sample.code, { seed: 1 })
   assert.equal(views.get('runs')!.length, 2, 'peer-join rows are not runs')
-  const hydra = views.get('hydra')!.rows
+  const hydra = views.get(outViewName('hydra'))!.rows
   const setCode = hydra.find((r) => r.event === 'setCode')!.code as string
   assert.ok(setCode.includes('kaleid(5)'), 'two runs -> 3 + 2 kaleid facets')
   // 3s between the last two applies -> heat 0.7 -> the oscillator runs hot.
@@ -196,13 +201,13 @@ test('Run Counter sample: the same code cooks to a different sketch every run', 
 
   // Another apply lands: same code, different program.
   activity.push({ seq: 3, t: 3, kind: 'apply', id: 'a3', at: 999_000, edits: [] })
-  const again = rt.run(sample.code, { seed: 1 }).views.get('hydra')!.rows
+  const again = rt.run(sample.code, { seed: 1 }).views.get(outViewName('hydra'))!.rows
   assert.ok((again.find((r) => r.event === 'setCode')!.code as string).includes('kaleid(6)'))
   assert.equal(again.find((r) => r.event === 'setVariable')!.value, 7)
 
   // A fresh session (no applies yet) still cooks: the calm baseline.
   const fresh = createRuntime({ logRows: (n) => (n === 'activity' ? [] : null) }).run(sample.code, { seed: 1 })
-  assert.ok((fresh.views.get('hydra')!.rows.find((r) => r.event === 'setCode')!.code as string).includes('kaleid(3)'))
+  assert.ok((fresh.views.get(outViewName('hydra'))!.rows.find((r) => r.event === 'setCode')!.code as string).includes('kaleid(3)'))
 })
 
 test('Session Sculpture sample: one brick per apply, sized by its edit batch, plus the pace graph', () => {
@@ -215,16 +220,20 @@ test('Session Sculpture sample: one brick per apply, sized by its edit batch, pl
   const rt = createRuntime({ logRows: (n) => (n === 'activity' ? activity : null) })
   const { views, graphs } = rt.run(sample.code, { seed: 1 })
 
-  const bricks = views.get('tower')!.rows
+  // Bricks, caption, and camera each route with .outThree() and combine into
+  // the one system scene table.
+  const scene = views.get(outViewName('three'))!.rows
+  const bricks = scene.filter((r) => r.shape === 'box')
   assert.equal(bricks.filter((r) => r.type === 'create').length, 2, 'one brick per apply')
   const [b0, b1] = bricks
   assert.ok((b1.hx as number) > (b0.hx as number), 'a bigger edit batch makes a bigger brick')
-  assert.equal(bricks.filter((r) => r.type === 'update').length, 1, 'the newest brick gets its spin keyframe')
+  const brickIds = new Set(bricks.map((r) => r.id))
+  assert.equal(scene.filter((r) => r.type === 'update' && brickIds.has(r.id)).length, 1, 'the newest brick gets its spin keyframe')
 
-  assert.ok((views.get('label')!.rows[0].text as string).includes('2 runs'))
+  assert.ok((scene.find((r) => r.shape === 'text')!.text as string).includes('2 runs'))
   assert.deepEqual(views.get('pace')!.rows.map((r) => r.gap_s), [0, 3], 'seconds between consecutive runs')
   assert.ok(graphs.some((g) => g.viewName === 'pace'), 'the pace view is charted')
-  assert.ok(views.get('scene')!.length > 0, 'the whole thing rasterizes')
+  assert.ok(rasterizeRows(scene).length > 0, 'the whole thing rasterizes')
 })
 
 test('Tap Constellation sample: on-grid taps ring at radius 1, sloppy taps leave it', () => {
