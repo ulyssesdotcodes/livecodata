@@ -54,12 +54,12 @@ test('gridLines: labels drop wholesale once major spacing collides (<24px)', () 
 
 // --- handlesFor ----------------------------------------------------------------
 
-test('handlesFor: timeline table rows become span handles on their own beat..end, loop picks the lane', () => {
+test('handlesFor: timeline table rows become span handles dur beats long, loop picks the lane', () => {
   const rows = [
-    { beat: 1, end: 9, loop: 0 },
-    { beat: 1, end: 9, loop: 1, disabled: true },
+    { beat: 1, dur: 8, loop: 0 },
+    { beat: 1, dur: 8, loop: 1, disabled: true },
   ]
-  const handles = handlesFor('timeline', rows, cols('beat', 'end', 'loop'), rows)
+  const handles = handlesFor('timeline', rows, cols('beat', 'dur', 'loop'), rows)
   assert.deepEqual(
     handles.map((h) => ({ row: h.row, kind: h.kind, beat: h.beat, end: h.end, lane: h.lane, disabled: h.disabled })),
     [
@@ -73,12 +73,12 @@ test('handlesFor: with no timeline defined, a content row is identity — one no
   const rows = [{ beat: 3, dur: 2 }]
   const handles = handlesFor('three', rows, cols('beat', 'dur'), [])
   assert.deepEqual(handles, [
-    { row: 0, kind: 'span', beat: 3, end: 5, endField: 'dur', lane: 0, ghost: false, disabled: false },
+    { row: 0, kind: 'span', beat: 3, end: 5, lane: 0, ghost: false, disabled: false },
   ])
 })
 
 test('handlesFor: a content row played by a loop event gets one handle per placement, first primary, rest ghosts', () => {
-  const timelineRows = [{ event: 'loop', beat: 1, end: 9, from: 1, to: 5 }]
+  const timelineRows = [{ event: 'loop', beat: 1, dur: 8, from: 1, to: 5 }]
   const rows = [{ id: 'a', beat: 1 }]
   const handles = handlesFor('hits', rows, cols('beat'), timelineRows)
   assert.deepEqual(
@@ -94,8 +94,8 @@ test('handlesFor: a content row placed across a multi-pass timeline lands each g
   // 8-beat span — a content row at source beat 3 (the cycle's midpoint)
   // lands twice per pass, once per cycle.
   const timelineRows = [
-    { event: 'loop', beat: 1, end: 9, from: 1, to: 5, loop: 0 },
-    { event: 'loop', beat: 1, end: 9, from: 1, to: 5, loop: 1 },
+    { event: 'loop', beat: 1, dur: 8, from: 1, to: 5, loop: 0 },
+    { event: 'loop', beat: 1, dur: 8, from: 1, to: 5, loop: 1 },
   ]
   const rows = [{ beat: 3 }]
   const handles = handlesFor('hits', rows, cols('beat'), timelineRows)
@@ -127,8 +127,8 @@ test('handlesFor: a content row whose beat runs past loopBeats wraps into a late
 
 test('laneCountFor: the max of the open handles\' own lanes and the timeline\'s own pass count', () => {
   const twoPassTimeline = [
-    { event: 'hold', beat: 1, end: 9, from: 1, loop: 0 },
-    { event: 'hold', beat: 1, end: 9, from: 1, loop: 1 },
+    { event: 'hold', beat: 1, dur: 8, from: 1, loop: 0 },
+    { event: 'hold', beat: 1, dur: 8, from: 1, loop: 1 },
   ]
   assert.equal(laneCountFor([], twoPassTimeline), 2, 'a two-pass timeline needs 2 lanes even with no handles past lane 0')
   const handles: Handle[] = [{ row: 0, kind: 'point', beat: 1, lane: 3, ghost: false, disabled: false }]
@@ -139,8 +139,8 @@ test('laneCountFor: the max of the open handles\' own lanes and the timeline\'s 
 
 test('coverageBands: each pass\'s segments map onto its own local axis, tagged with that pass\'s lane and event kind', () => {
   const timelineRows = [
-    { event: 'hold', beat: 1, end: 9, from: 1, loop: 0 },
-    { event: 'hold', beat: 1, end: 9, from: 1, loop: 1 },
+    { event: 'hold', beat: 1, dur: 8, from: 1, loop: 0 },
+    { event: 'hold', beat: 1, dur: 8, from: 1, loop: 1 },
   ]
   assert.deepEqual(
     coverageBands(timelineRows).map((b) => ({ p0: b.p0, p1: b.p1, lane: b.lane, kind: b.kind })),
@@ -157,22 +157,22 @@ test('coverageBands: no active timeline yields no bands', () => {
 
 // --- pendingTimelineRows ----------------------------------------------------
 
-test('pendingTimelineRows: a row whose live beat/end drifted from the applied cook is pending; a disabled row is skipped (the applied view excludes it too)', () => {
+test('pendingTimelineRows: a row whose live beat/dur drifted from the applied cook is pending; a disabled row is skipped (the applied view excludes it too)', () => {
   const rows = [
-    { beat: 1, end: 9 },
-    { beat: 20, end: 21, disabled: true },
-    { beat: 9, end: 17 },
+    { beat: 1, dur: 8 },
+    { beat: 20, dur: 1, disabled: true },
+    { beat: 9, dur: 8 },
   ]
   const applied = [
-    { beat: 1, end: 9 },
-    { beat: 10, end: 17 }, // row 2 moved after Apply
+    { beat: 1, dur: 8 },
+    { beat: 10, dur: 8 }, // row 2 moved after Apply
   ]
   assert.deepEqual(pendingTimelineRows(rows, applied), new Set([2]))
 })
 
 test('pendingTimelineRows: an unapplied trailing row past the applied cook length is pending', () => {
-  const rows = [{ beat: 1, end: 9 }, { beat: 9, end: 17 }]
-  const applied = [{ beat: 1, end: 9 }]
+  const rows = [{ beat: 1, dur: 8 }, { beat: 9, dur: 8 }]
+  const applied = [{ beat: 1, dur: 8 }]
   assert.deepEqual(pendingTimelineRows(rows, applied), new Set([1]))
 })
 
@@ -181,7 +181,7 @@ test('pendingTimelineRows: an unapplied trailing row past the applied cook lengt
 test('hitTest: an edge wins over the body within tolerance; background misses return null', () => {
   const geometry = { width: 400, maxBeats: 16 }
   const handles: Handle[] = [
-    { row: 0, kind: 'span', beat: 1, end: 9, endField: 'end', lane: 0, ghost: false, disabled: false },
+    { row: 0, kind: 'span', beat: 1, end: 9, lane: 0, ghost: false, disabled: false },
   ]
   const startX = beatToX(geometry, 1)
   const midX = beatToX(geometry, 5)
@@ -202,29 +202,23 @@ test('snap: quarter-beat by default, whole beats under coarse, unsnapped under f
 
 // --- dragUpdate ----------------------------------------------------------------
 
-test('dragUpdate move on a timeline span shifts beat and end together, preserving duration', () => {
-  const handle: Handle = { row: 2, kind: 'span', beat: 5, end: 13, endField: 'end', lane: 0, ghost: false, disabled: false }
+test('dragUpdate move on a span only writes beat — dur (a length) rides along, preserving duration', () => {
+  const handle: Handle = { row: 2, kind: 'span', beat: 5, end: 13, lane: 0, ghost: false, disabled: false }
   const { row, values } = dragUpdate(handle, 'move', 3)
   assert.equal(row, 2)
-  assert.deepEqual(values, { beat: 8, end: 16 })
+  assert.deepEqual(values, { beat: 8 })
 })
 
-test('dragUpdate move on a dur-span only moves beat; dur is left out of the payload untouched', () => {
-  const handle: Handle = { row: 0, kind: 'span', beat: 4, end: 6, endField: 'dur', lane: 0, ghost: false, disabled: false }
-  const { values } = dragUpdate(handle, 'move', 2)
-  assert.deepEqual(values, { beat: 6 })
-})
-
-test('dragUpdate end-edge drag respects the minimum span', () => {
-  const handle: Handle = { row: 0, kind: 'span', beat: 5, end: 6, endField: 'end', lane: 0, ghost: false, disabled: false }
+test('dragUpdate end-edge drag writes dur back, respecting the minimum span', () => {
+  const handle: Handle = { row: 0, kind: 'span', beat: 5, end: 6, lane: 0, ghost: false, disabled: false }
   // Dragging the end edge far to the left would collapse the span below minSpan.
   const { values } = dragUpdate(handle, 'end', -10, { minSpan: 0.25 })
-  assert.deepEqual(values, { end: 5.25 })
+  assert.deepEqual(values, { dur: 0.25 })
 })
 
 test('dragUpdate maps a content-table drop back through the timeline sourceBeatAt', () => {
   // Half speed: source 1..5 stretched across playback 1..9 (see timeline.test.ts).
-  const timeline = buildTimeline([{ event: 'retime', beat: 1, end: 9, from: 1, to: 5 }])
+  const timeline = buildTimeline([{ event: 'retime', beat: 1, dur: 8, from: 1, to: 5 }])
   const handle: Handle = { row: 0, kind: 'point', beat: 1, lane: 0, ghost: false, disabled: false }
   // Drag the handle from playback beat 1 to playback beat 5 (the midpoint).
   const { values } = dragUpdate(handle, 'move', 4, { timeline })
@@ -236,8 +230,8 @@ test('dragUpdate maps a wrapped ghost back through its own pass, not pass 0', ()
   // Two holds a pass apart, each freezing on a different source beat — the
   // only way to tell which pass's sourceBeatAt actually ran.
   const timeline = buildTimeline([
-    { event: 'hold', beat: 1, end: 5, from: 3, loop: 0 },
-    { event: 'hold', beat: 1, end: 5, from: 7, loop: 1 },
+    { event: 'hold', beat: 1, dur: 4, from: 3, loop: 0 },
+    { event: 'hold', beat: 1, dur: 4, from: 7, loop: 1 },
   ])
   const handle: Handle = { row: 0, kind: 'point', beat: 2, lane: 1, ghost: true, disabled: false, pass: 1 }
   const { values } = dragUpdate(handle, 'move', 0, { timeline })
@@ -246,10 +240,10 @@ test('dragUpdate maps a wrapped ghost back through its own pass, not pass 0', ()
 
 // --- dragUpdate: lanes never move on a horizontal drag ----------------------
 
-test('dragUpdate never touches loop — a horizontal drag on a lane-1 timeline row keeps its pass, only beat/end move', () => {
-  const handle: Handle = { row: 1, kind: 'span', beat: 9, end: 17, endField: 'end', lane: 1, ghost: false, disabled: false }
+test('dragUpdate never touches loop — a horizontal drag on a lane-1 timeline row keeps its pass, only beat moves', () => {
+  const handle: Handle = { row: 1, kind: 'span', beat: 9, end: 17, lane: 1, ghost: false, disabled: false }
   const { values } = dragUpdate(handle, 'move', 2)
-  assert.deepEqual(values, { beat: 11, end: 19 })
+  assert.deepEqual(values, { beat: 11 })
   assert.ok(!('loop' in values), "a horizontal drag's payload never carries the row's pass assignment")
 })
 
@@ -308,15 +302,15 @@ test('resolveHandle: picks the specific ghost placement under the pointer, not j
 
 test('meaningfulSummary: identity columns per event type, never position', () => {
   const timelineCols: EditableColumn[] = [
-    { name: 'beat', type: 'number' }, { name: 'end', type: 'number' },
+    { name: 'beat', type: 'number' }, { name: 'dur', type: 'number' },
     { name: 'event', type: 'enum', options: ['retime', 'loop', 'hold', 'speed'] },
     { name: 'from', type: 'number' }, { name: 'to', type: 'number' },
     { name: 'disabled', type: 'boolean' },
   ]
   assert.deepEqual(
-    meaningfulSummary({ beat: 1, end: 8, event: 'retime', from: 1, to: 4, disabled: false }, timelineCols),
+    meaningfulSummary({ beat: 1, dur: 7, event: 'retime', from: 1, to: 4, disabled: false }, timelineCols),
     ['retime', 'from 1', 'to 4'],
-    'event kind unlabeled, params labeled, beat/end/disabled-false skipped',
+    'event kind unlabeled, params labeled, beat/dur/disabled-false skipped',
   )
   const codeCols: EditableColumn[] = [
     { name: 'beat', type: 'number' },

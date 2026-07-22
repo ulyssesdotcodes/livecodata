@@ -69,11 +69,9 @@ export interface Handle {
   kind: 'point' | 'span'
   // Playback-axis position (post placeBeat for non-timeline tables).
   beat: number
+  // Far edge of a span — spans store their length in the row's `dur` column,
+  // so a pure move never touches it and an edge drag writes it back.
   end?: number
-  // Which stored column the far edge writes back to — 'end' rows (the
-  // `timeline` table) move both edges together on a move; 'dur' rows (a
-  // length, not a second position) only get touched by an edge drag.
-  endField?: 'end' | 'dur'
   // Which stored column `beat`/`end` round-trip through on a drag — 'beat'
   // for every table but the origami fold table, whose own name for it is
   // `at` (see positionField). Omitted (not just 'beat') for the common case.
@@ -109,7 +107,7 @@ function wrapPass(beat: number, unit: number, maxPass?: number): { local: number
 // handle itself), so the readout is reserved for what identifies the row.
 // `at` is the origami fold table's own name for its beat column (see
 // positionField below).
-const POSITIONAL_COLS = new Set(['beat', 'end', 'dur', 'loop', 'disabled', 'at'])
+const POSITIONAL_COLS = new Set(['beat', 'dur', 'loop', 'disabled', 'at'])
 
 // Which column holds a content table's source beat: `beat` for every table
 // but the origami fold table, whose `at` column plays the same role (the
@@ -170,13 +168,12 @@ export function handlesFor(name: string, rows: Row[], columns: EditableColumn[],
       const row = rows[i]
       const beat = num(row.beat)
       if (beat === undefined) continue
-      const end = (colNames.has('end') ? num(row.end) : undefined) ?? beat
+      const dur = (colNames.has('dur') ? num(row.dur) : undefined) ?? 0
       handles.push({
         row: i,
         kind: 'span',
         beat,
-        end,
-        endField: 'end',
+        end: beat + dur,
         lane: hasLoop ? Math.max(0, Math.floor(num(row.loop) ?? 0)) : 0,
         ghost: false,
         disabled: row.disabled === true,
@@ -214,7 +211,6 @@ export function handlesFor(name: string, rows: Row[], columns: EditableColumn[],
         kind: dur !== undefined ? 'span' : 'point',
         beat: w.local,
         end: dur !== undefined ? w.local + dur * p.stretch : undefined,
-        endField: dur !== undefined ? 'dur' : undefined,
         ...(posField === 'at' ? { posField: 'at' as const } : {}),
         lane: timeline ? w.pass : 0,
         ghost: idx > 0,
@@ -277,7 +273,7 @@ export function pendingTimelineRows(rows: Row[], appliedRows: Row[]): Set<number
     if (row.disabled === true) continue
     const applied = appliedRows[pos]
     pos++
-    if (!applied || num(row.beat) !== num(applied.beat) || num(row.end) !== num(applied.end)) pending.add(i)
+    if (!applied || num(row.beat) !== num(applied.beat) || num(row.dur) !== num(applied.dur)) pending.add(i)
   }
   return pending
 }
@@ -396,7 +392,7 @@ const DEFAULT_MIN_SPAN = 0.25
 
 export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts: DragOptions = {}): DragResult {
   const minSpan = opts.minSpan ?? DEFAULT_MIN_SPAN
-  const { row, beat, end, endField, pass, posField = 'beat' } = handle
+  const { row, beat, end, pass, posField = 'beat' } = handle
   // A wrapped placement's `beat`/`end` are local to its own pass (wrapPass) —
   // sourceBeatAt needs that pass back to re-derive the right extended-axis
   // point, the same `loop` argument buildTimeline's own multi-pass playback
@@ -404,19 +400,16 @@ export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts:
   const toSource = (b: number): number => (opts.timeline?.active ? opts.timeline.sourceBeatAt(b, pass ?? 0) : b)
 
   if (mode === 'move') {
+    // A span's length (`dur`) is untouched by a pure move, so its window
+    // keeps the same duration wherever it lands.
     const nextBeat = Math.max(1, beat + dBeats)
-    const values: Record<string, unknown> = { [posField]: toSource(nextBeat) }
-    // A 'dur' span's length is stored in source beats, untouched by a pure
-    // move; an 'end' span (the timeline table) shifts its far edge too, so
-    // its window keeps the same playback duration.
-    if (end !== undefined && endField === 'end') values.end = toSource(end + dBeats)
-    return { row, values }
+    return { row, values: { [posField]: toSource(nextBeat) } }
   }
 
   if (mode === 'start') {
     const fixedEnd = end ?? beat
     const nextBeat = Math.max(1, Math.min(beat + dBeats, fixedEnd - minSpan))
-    if (endField === 'dur') {
+    if (end !== undefined) {
       return { row, values: { [posField]: toSource(nextBeat), dur: toSource(fixedEnd) - toSource(nextBeat) } }
     }
     return { row, values: { [posField]: toSource(nextBeat) } }
@@ -424,8 +417,7 @@ export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts:
 
   // mode === 'end'
   const nextEnd = Math.max((end ?? beat) + dBeats, beat + minSpan)
-  if (endField === 'dur') return { row, values: { dur: toSource(nextEnd) - toSource(beat) } }
-  return { row, values: { end: toSource(nextEnd) } }
+  return { row, values: { dur: toSource(nextEnd) - toSource(beat) } }
 }
 
 // Whether a drag's payload actually changes the stored row — a gesture that

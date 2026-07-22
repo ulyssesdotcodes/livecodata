@@ -93,7 +93,7 @@ const TABLE_DOCS: TableDoc[] = [
   {
     name: 'timeline',
     detail: 'playback time warp',
-    info: 'Define a view named "timeline" to warp playback over the baked content — one event per row (the schemas.timeline columns), each covering playback beats `beat`..`end`: "retime" stretches source `from`..`to` into the block `outFrom`..`outTo` and repeats it across the window (from > to runs backwards), "loop" cycles a source range at natural speed, "hold" freezes a frame, "speed" runs from a beat at a rate. Beats no event covers play unmapped, and the loop length becomes the events\' full extent. beats(count, { fit }) builds a one-retime timeline; .remap(table("timeline")) applies the same warp to any beat table; editable("timeline", schemas.timeline) makes it hand-editable.',
+    info: 'Define a view named "timeline" to warp playback over the baked content — one event per row (the schemas.timeline columns), each covering the playback window `dur` beats long starting at `beat`: "retime" stretches source `from`..`to` into the block `outFrom`..`outTo` and repeats it across the window (from > to runs backwards), "loop" cycles a source range at natural speed, "hold" freezes a frame, "speed" runs from a beat at a rate. Beats no event covers play unmapped, and the loop length becomes the events\' full extent. beats(count, { fit }) builds a one-retime timeline; .remap(table("timeline")) applies the same warp to any beat table; editable("timeline", schemas.timeline) makes it hand-editable.',
   },
   {
     name: 'Streaming logs',

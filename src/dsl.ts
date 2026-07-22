@@ -1313,24 +1313,26 @@ export const SCHEMAS = deepFreeze({
   },
   /**
    * The "timeline" view: an OPTIONAL warp of playback time over the baked
-   * content — one event per row, covering playback beats `beat`..`end`
-   * (1-indexed). `event` picks the warp: "retime" (the general one —
-   * beats(count, { fit }) emits a single retime) stretches input source
-   * beats `from`..`to` into the output block `outFrom`..`outTo` (from > to
-   * runs backwards) and repeats the block until the window closes; "loop"
-   * cycles source `from`..`to` at natural speed (a retime whose output block
-   * is as long as its input); "hold" freezes the frame at `from`; "speed"
-   * runs from `from` at `rate` source beats per playback beat. `from`/`to`
-   * and `outFrom`/`outTo` default to `beat`/`end`, so a bare retime plays
-   * straight through and stretches to fill its window. Playback beats no
-   * event covers play unmapped, and the loop length becomes the events' full
-   * extent. An optional 0-indexed `loop` column places an event in a later
-   * pass of the loop. The same table warps any beat table via
-   * .remap(table("timeline")); check `disabled` to mute a row.
+   * content — one event per row, covering the playback window `dur` beats
+   * long starting at `beat` (1-indexed, like every other table). `event`
+   * picks the warp: "retime" (the general one — beats(count, { fit }) emits
+   * a single retime) stretches input source beats `from`..`to` into the
+   * output block `outFrom`..`outTo` (from > to runs backwards) and repeats
+   * the block until the window closes; "loop" cycles source `from`..`to` at
+   * natural speed (a retime whose output block is as long as its input);
+   * "hold" freezes the frame at `from`; "speed" runs from `from` at `rate`
+   * source beats per playback beat. `from`/`to` and `outFrom`/`outTo`
+   * default to the window's own start/end, so a bare retime plays straight
+   * through — and a blank/0 cell means "unset" (beats are 1-indexed).
+   * Playback beats no event covers play unmapped, and the loop length
+   * becomes the events' full extent. An optional 0-indexed `loop` column
+   * places an event in a later pass of the loop. The same table warps any
+   * beat table via .remap(table("timeline")); check `disabled` to mute a
+   * row.
    */
   timeline: {
     beat: 'number',
-    end: 'number',
+    dur: 'number',
     event: ['retime', 'loop', 'hold', 'speed'],
     from: 'number',
     to: 'number',
@@ -1762,7 +1764,7 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     beats: (count: number, { fit }: { fit?: number } = {}): Table => {
       const spanBeats = fit != null ? fit : count
       return new Table([
-        { event: 'retime', beat: 1, end: count + 1, from: 1, to: spanBeats + 1 },
+        { event: 'retime', beat: 1, dur: count, from: 1, to: spanBeats + 1 },
       ], ctx)
     },
     ...EASINGS,
