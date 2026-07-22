@@ -154,7 +154,10 @@ export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
       if (sketch) {
         const vars = ctx ? resolveBindings(sketch.vars, ctx) : sketch.vars
         const sliders = ctx?.sliders?.()
-        hydraAPI.setSketch(sliders ? { ...sketch, vars: { sliders, ...vars } } : (ctx ? { ...sketch, vars } : sketch))
+        // $midi lets expr.midi() dynamic args sample the playhead's MIDI
+        // ($-prefix reserved, like $expr).
+        const midi = ctx?.midi ? { $midi: ctx.midi } : {}
+        hydraAPI.setSketch(sliders ? { ...sketch, vars: { sliders, ...midi, ...vars } } : (ctx ? { ...sketch, vars: { ...midi, ...vars } } : sketch))
       } else {
         hydraAPI.setSketch(sketch)
       }
