@@ -34,7 +34,7 @@
 import { createSignal, createMemo, onMount, onCleanup, For, Show, type Accessor } from 'solid-js'
 import {
   beatToX, xToBeat, gridLines, handlesFor, hitTest, pendingTimelineRows,
-  resolveHandle, dragModeFor, snapDelta, dragUpdate, withPreview,
+  resolveHandle, snapDelta, dragUpdate, withPreview,
   valuesDiffer, exceedsDragThreshold, laneCountFor, coverageBands, meaningfulSummary,
   type StripGeometry, type Handle, type HitPart, type DragOptions, type SnapMode,
 } from '../timeline-strip.js'
@@ -329,7 +329,7 @@ export function TimelineStrip(props: {
       const tl = buildTimeline(liveTimelineRows())
       if (tl.active) opts.timeline = tl
     }
-    const { values } = dragUpdate(g.handle, dragModeFor(g.part), dBeats, opts)
+    const { values } = dragUpdate(g.handle, g.part, dBeats, opts)
     setPreview({ table: g.table, row: g.handle.row, part: g.part, values, ghost: g.handle.ghost })
   }
 
