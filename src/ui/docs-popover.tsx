@@ -91,6 +91,11 @@ const TABLE_DOCS: TableDoc[] = [
     info: 'taps() is the tap-beat table — one row per Tap button press ({ beat, time }, time an absolute epoch ms). It is the source of tempo: the playhead runs at the tapped rate, and tempo() / beats() read from it.',
   },
   {
+    name: 'timeline',
+    detail: 'playback time warp',
+    info: 'Define a view named "timeline" to warp playback over the baked content — one event per row (the schemas.timeline columns), each covering the playback window `dur` beats long starting at `beat`: "retime" stretches source `from`..`to` into the block `outFrom`..`outTo` and repeats it across the window (from > to runs backwards), "loop" cycles a source range at natural speed, "hold" freezes a frame, "speed" runs from a beat at a rate. Beats no event covers play unmapped, and the loop length becomes the events\' full extent. beats(count, { fit }) builds a one-retime timeline; .remap(table("timeline")) applies the same warp to any beat table; editable("timeline", schemas.timeline) makes it hand-editable.',
+  },
+  {
     name: 'Streaming logs',
     detail: 'the session as data',
     info: 'The read-only log tabs are readable from code under the names their tabs wear: table("activity") is the session\'s pulse (one { kind: "apply" } row per Run, plus peer-join/leave and set-loop-beats markers), table("name·events") any editable table\'s edit history, "code·events" the program\'s. A program view of the same name wins. See the Run Counter / Session Sculpture examples.',

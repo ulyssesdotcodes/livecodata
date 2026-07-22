@@ -1,11 +1,11 @@
 // livecodata timeline — an OPTIONAL remap on top of the beat-grid playhead,
 // defined as a table of EVENTS (see schemas.timeline): each row warps the
-// playback window `beat`..`end` (1-indexed) onto source beats of the baked
-// content — "retime" stretches input `from`..`to` into the output block
-// `outFrom`..`outTo` (default the window; from > to runs backwards) and
-// repeats the block across the window, "loop" cycles `from`..`to` at natural
-// speed, "hold" freezes at `from`, "speed" runs from `from` at `rate`.
-// Playback
+// playback window `dur` beats long starting at `beat` (1-indexed) onto source
+// beats of the baked content — "retime" stretches input `from`..`to` into the
+// output block `outFrom`..`outTo` (default the window; from > to runs
+// backwards) and repeats the block across the window, "loop" cycles
+// `from`..`to` at natural speed, "hold" freezes at `from`, "speed" runs from
+// `from` at `rate`. Playback
 // beats no event covers play unmapped (identity); no timeline means identity
 // everywhere. An optional 0-indexed `loop` column places an event in a later
 // pass of the loop; every pass spans beat 1 to the last event's end.
@@ -44,6 +44,10 @@ export interface TimelineSegment {
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined)
 
+// Blank cells in an editable table conform to 0 (see conformRow), and beats
+// are 1-indexed, so 0 in any optional column reads as "unset".
+const opt = (v: unknown): number | undefined => (typeof v === 'number' && v !== 0 ? v : undefined)
+
 // Compile timeline rows into sorted segments on the extended playback axis
 // (pass L's events sit at beat + L * span).
 function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: number; loops: number } {
@@ -51,7 +55,7 @@ function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: numb
     .filter((r) => !r.disabled && typeof r.beat === 'number')
     .map((r): Row => ({ ...r, loop: Math.max(0, Math.floor(num(r.loop) ?? 0)) }))
   if (!rows.length) return { segments: [], span: 0, loops: 1 }
-  const endOf = (r: Row): number => num(r.end) ?? (r.beat as number)
+  const endOf = (r: Row): number => (r.beat as number) + (opt(r.dur) ?? 0)
   const loops = rows.reduce((m, r) => Math.max(m, r.loop as number), 0) + 1
   // Beats are 1-indexed, so a pass runs from beat 1 to the last event's end —
   // events starting mid-loop leave the early beats unmapped, not cut off.
@@ -62,7 +66,7 @@ function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: numb
     .filter((r) => typeof r.event !== 'string')
     .map((r) => ({
       beat: (r.beat as number) + (r.loop as number) * span,
-      src: num(r.source) ?? (r.beat as number),
+      src: opt(r.source) ?? (r.beat as number),
     }))
     .sort((a, b) => a.beat - b.beat)
   for (let i = 1; i < keyframes.length; i++) {
@@ -75,8 +79,8 @@ function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: numb
     const p0 = (r.beat as number) + off
     const p1 = endOf(r) + off
     if (!(p1 > p0)) continue
-    const from = num(r.from) ?? (r.beat as number)
-    const to = num(r.to) ?? endOf(r)
+    const from = opt(r.from) ?? (r.beat as number)
+    const to = opt(r.to) ?? endOf(r)
     const kind = r.event as TimelineSegment['kind']
     // Tile the block [o0, o1) → source [from, to] across the window [p0, p1],
     // clipping partial blocks at both edges; o0 anchors the cycle phase, so a
@@ -101,13 +105,13 @@ function compile(timelineRows: Row[]): { segments: TimelineSegment[]; span: numb
     }
     switch (r.event) {
       case 'retime':
-        tile((num(r.outFrom) ?? (r.beat as number)) + off, (num(r.outTo) ?? endOf(r)) + off)
+        tile((opt(r.outFrom) ?? (r.beat as number)) + off, (opt(r.outTo) ?? endOf(r)) + off)
         break
       case 'hold':
         segments.push({ p0, p1, s0: from, s1: from, kind })
         break
       case 'speed': {
-        const rate = num(r.rate) ?? 1
+        const rate = opt(r.rate) ?? 1
         segments.push({ p0, p1, s0: from, s1: from + rate * (p1 - p0), kind })
         break
       }
