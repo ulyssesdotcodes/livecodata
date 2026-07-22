@@ -224,24 +224,18 @@ export function createRuntime({ physics, tapRows, editableRows, logRows, defineS
     for (const name of defs.keys()) cook(name, null, [])
 
     // Combined per-consumer output views: every table routed with .outX(),
-    // plus the like-named view when one exists, concatenated beat-sorted (as
-    // groups are) under a "(system)" name (see outViewName) — visible in the
-    // panel; replay prefers it over the bare name. Built after the def cook so
-    // routes made inside lazy view fns are collected too.
+    // concatenated beat-sorted (as groups are) under a "(system)" name (see
+    // outViewName) — visible in the panel. Routing takes precedence: replay
+    // reads this view and IGNORES a same-named view — the bare-name lookup is
+    // only the no-routes backwards-compatibility fallback (see replay.ts).
+    // Built after the def cook so routes made inside lazy view fns are
+    // collected too.
     for (const [kind, members] of outs) {
-      const def = defs.get(kind)
-      const named = def ? cook(kind, null, []) : null
-      const inputs = [
-        ...(named ? [named] : []),
-        // A table both save()d under the consumer's name and routed to it
-        // (e.g. editable("hydra", …).outHydra()) counts once.
-        ...members.filter((m) => !(def?.kind === 'const' && def.table === m)),
-      ]
       const name = outViewName(kind)
       const combined = Table._fromNode(ctx, {
         op: 'out',
         spec: { kind },
-        inputs,
+        inputs: members,
         seedSensitive: false,
         compute: (ins) => {
           const rows: Row[] = ins.flat()
@@ -249,7 +243,7 @@ export function createRuntime({ physics, tapRows, editableRows, logRows, defineS
           return rows
         },
       })
-      deps.set(name, named ? [kind] : [])
+      deps.set(name, [])
       cache.set(name, stampNode(name, combined))
     }
 

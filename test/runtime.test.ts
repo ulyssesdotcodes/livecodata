@@ -106,17 +106,24 @@ test('multiple outX() tables combine, beat-sorted, into one visible "(system)" v
   assert.deepEqual(views.get('hydra (system)')!.rows.map((r) => r.tag), ['b', 'a'])
 })
 
-test('a view named like the consumer joins the combined output, without double-counting a routed save', () => {
+test('routing takes precedence: a view named like the consumer is NOT merged into the combined output', () => {
   const rt = createRuntime()
   const code = `
     define("hydra", () => rows([{ beat: 1, tag: "named" }]))
-    rows([{ beat: 2, tag: "routed" }]).save("extra").outHydra()
+    rows([{ beat: 2, tag: "routed" }]).outHydra()
   `
   const { views } = rt.run(code, { seed: 1 })
-  assert.deepEqual(views.get('hydra (system)')!.rows.map((r) => r.tag), ['named', 'routed'])
+  assert.deepEqual(views.get('hydra (system)')!.rows.map((r) => r.tag), ['routed'],
+    'by-name is only the no-routes fallback')
+  assert.deepEqual(views.get('hydra')!.rows.map((r) => r.tag), ['named'], 'the named view still cooks on its own')
 
-  const dedup = rt.run(`rows([{ beat: 1 }]).save("hydra").outHydra()`, { seed: 1 })
-  assert.equal(dedup.views.get('hydra (system)')!.rows.length, 1, 'save("hydra").outHydra() counts once')
+  // Explicitly routing the named table is how it stays in the mix.
+  const both = rt.run(`
+    define("hydra", () => rows([{ beat: 1, tag: "named" }]))
+    table("hydra").outHydra()
+    rows([{ beat: 2, tag: "routed" }]).outHydra()
+  `, { seed: 1 })
+  assert.deepEqual(both.views.get('hydra (system)')!.rows.map((r) => r.tag), ['named', 'routed'])
 })
 
 test('graph specs are resolved to their cooked tables', () => {
