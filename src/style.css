@@ -1554,6 +1554,13 @@ html, body {
   box-shadow: inset 3px 0 0 rgba(224, 76, 76, 0.7);
 }
 
+/* Relevance: a cell whose column the row's event/type doesn't use (see
+   isCellInert) — dimmed, but stays fully editable, clickable, and navigable. */
+.editable-cell.cell-inert .cell-value,
+.editable-cell.cell-inert .cell-enum {
+  opacity: 0.4;
+}
+
 /* "/"-opened table switcher: a small command-palette-style overlay anchored to
    the top of the table body. */
 .table-picker {

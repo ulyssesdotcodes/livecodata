@@ -37,11 +37,13 @@ export type CodeLanguage = 'dsl' | 'hydra' | 'bauble' | 'post' | 'expr'
 
 // A column spec as passed to editable(name, schema). A string array is
 // shorthand for an enum over those values; enum columns are code-only — the
-// "+ column" UI never creates one.
+// "+ column" UI never creates one. `usedBy` names the event/type values (the
+// row's `event` or `type` column) the column has effect for — omit it for a
+// column that's always live (see EditableColumn.usedBy).
 export type ColumnSpec =
   | ColumnType
   | readonly string[]
-  | { type: ColumnType; options?: readonly string[]; language?: CodeLanguage }
+  | { type: ColumnType; options?: readonly string[]; language?: CodeLanguage; usedBy?: readonly string[] }
 export type Schema = Record<string, ColumnSpec>
 
 /**
@@ -64,6 +66,11 @@ export interface EditableColumn {
   type: ColumnType
   options?: string[] // 'enum' columns: the allowed values
   language?: CodeLanguage // 'code' columns; absent means the DSL
+  // Event/type values the column has effect for (row discriminant: `event` if
+  // the table has one, else `type`) — the table panel dims cells whose row's
+  // discriminant isn't in it (see isCellInert in table-panel.ts). Absent means
+  // universal: always live. Every user-added column is universal.
+  usedBy?: readonly string[]
 }
 
 export interface EditableTableData {
@@ -109,16 +116,24 @@ export function registerExprCellCheck(fn: (text: string) => ExprCellCheck): void
 // Streaming results are invalid here: a { $expr } binding in these columns
 // would NaN rasterize's frame math and silently drop rows from the timeline
 // strip. A constant expression is a plain number by cook time, so it passes.
-const TIMING_COLUMNS = new Set(['beat', 'dur', 'end', 'loop', 'at'])
+const TIMING_COLUMNS = new Set(['beat', 'dur', 'loop', 'at'])
+
+// hydra/bauble events whose fold splices a plain string into the number-typed
+// `value` column (replace's substitute text; bauble's tile/slice/combine/
+// duplicate params) — legitimate there, unlike e.g. radial, whose fold is
+// number-only.
+const STRING_VALUE_EVENTS = new Set(['replace', 'tile', 'slice', 'combine', 'duplicate'])
 
 /**
  * Blank/unset cells always pass: event tables are deliberately sparse, so only
  * a non-blank wrong-typed value (or an enum value outside its options) is
  * worth flagging. In number columns an "=" expression cell is valid when it
  * compiles and evaluates to an Expr or a number — except streaming results in
- * timing columns (see TIMING_COLUMNS).
+ * timing columns (see TIMING_COLUMNS). `event` is the row's own event/type
+ * value, for the handful of events that legitimately hold a string in `value`
+ * (see STRING_VALUE_EVENTS); omit it where no row is at hand.
  */
-export function cellValid(value: unknown, col: EditableColumn): boolean {
+export function cellValid(value: unknown, col: EditableColumn, event?: string): boolean {
   if (value === '' || value == null) return true
   switch (col.type) {
     case 'number': {
@@ -127,7 +142,8 @@ export function cellValid(value: unknown, col: EditableColumn): boolean {
         if (!check?.valid) return false
         return !(check.streaming && TIMING_COLUMNS.has(col.name))
       }
-      return typeof value === 'number' && Number.isFinite(value)
+      if (typeof value === 'number' && Number.isFinite(value)) return true
+      return col.name === 'value' && typeof value === 'string' && event != null && STRING_VALUE_EVENTS.has(event)
     }
     case 'boolean': return typeof value === 'boolean'
     case 'enum': return typeof value === 'string' && !!col.options?.includes(value)
@@ -136,7 +152,8 @@ export function cellValid(value: unknown, col: EditableColumn): boolean {
 }
 
 export function invalidColumns(row: Row, columns: EditableColumn[]): string[] {
-  const bad = columns.filter((c) => !cellValid(row[c.name], c)).map((c) => c.name)
+  const event = typeof row.event === 'string' ? row.event : typeof row.type === 'string' ? row.type : undefined
+  const bad = columns.filter((c) => !cellValid(row[c.name], c, event)).map((c) => c.name)
   const flag = (name: string): void => {
     if (columns.some((c) => c.name === name) && !bad.includes(name)) bad.push(name)
   }
@@ -247,12 +264,13 @@ export function schemaColumns(schema: Schema): EditableColumn[] {
   return Object.entries(schema).map(([name, spec]) => {
     if (Array.isArray(spec)) return { name, type: 'enum', options: [...spec] }
     if (typeof spec === 'object') {
-      const s = spec as { type: ColumnType; options?: readonly string[]; language?: CodeLanguage }
+      const s = spec as { type: ColumnType; options?: readonly string[]; language?: CodeLanguage; usedBy?: readonly string[] }
       return {
         name,
         type: s.type,
         ...(s.options ? { options: [...s.options] } : {}),
         ...(s.language && s.type === 'code' ? { language: s.language } : {}),
+        ...(s.usedBy ? { usedBy: [...s.usedBy] } : {}),
       }
     }
     return { name, type: spec as ColumnType }

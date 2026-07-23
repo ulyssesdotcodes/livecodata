@@ -105,6 +105,19 @@ function previewJSON(v: unknown, budget: number): string {
   return arr ? `[${parts.join(',')}]` : `{${parts.join(',')}}`
 }
 
+// A cell is "inert" when its column only has effect for certain events
+// (col.usedBy) and the row's own discriminant — `event` if the table has one,
+// else `type` — says otherwise; the panel dims it (still fully editable, see
+// EditableCell in ui/table-panel.tsx). A blank/unknown discriminant, or a
+// column with no usedBy (every user-added column included), is always live.
+export function isCellInert(row: Row, col: EditableColumn, columns: EditableColumn[]): boolean {
+  if (!col.usedBy) return false
+  const discCol = columns.some((c) => c.name === 'event') ? 'event' : columns.some((c) => c.name === 'type') ? 'type' : null
+  if (!discCol) return false
+  const disc = row[discCol]
+  return typeof disc === 'string' && disc !== '' && !col.usedBy.includes(disc)
+}
+
 export function formatEditableCell(type: ColumnType, value: unknown): string {
   if (value == null) return ''
   if (type === 'boolean') return value ? 'true' : 'false'

@@ -1135,7 +1135,9 @@ export const EASINGS = {
 export type Easings = typeof EASINGS
 
 // Canonical schemas for the tables the runtime knows by name (surfaced to the
-// editor as `schemas` — its JSDoc there carries the usage docs).
+// editor as `schemas` — its JSDoc there carries the usage docs). A column's
+// `usedBy` lists the events/types that give it effect, so the table panel can
+// grey out cells a row's event ignores; a column without it is always live.
 export const SCHEMAS = deepFreeze({
   /**
    * The hydra view's event stream: one row per event, placed on the loop by
@@ -1158,11 +1160,11 @@ export const SCHEMAS = deepFreeze({
     beat: 'number',
     event: ['setCode', 'setSource', 'append', 'replace', 'layer', 'transition', 'setVariable'],
     out: ['o0', 'o1', 'o2', 'o3'],
-    code: { type: 'code', language: 'hydra' },
-    find: 'string',
-    name: 'string',
-    value: 'number',
-    mode: ['blend', 'add', 'mult', 'diff', 'layer', 'mask'],
+    code: { type: 'code', language: 'hydra', usedBy: ['setCode', 'setSource', 'append', 'layer', 'transition'] },
+    find: { type: 'string', usedBy: ['replace'] },
+    name: { type: 'string', usedBy: ['setVariable'] },
+    value: { type: 'number', usedBy: ['setVariable', 'replace', 'layer'] },
+    mode: { type: 'enum', options: ['blend', 'add', 'mult', 'diff', 'layer', 'mask'], usedBy: ['layer'] },
     disabled: 'boolean',
   },
   /**
@@ -1202,12 +1204,12 @@ export const SCHEMAS = deepFreeze({
   post: {
     beat: 'number',
     event: ['setCode', 'add', 'remove', 'layer', 'transition', 'setVariable', 'pulse'],
-    code: { type: 'code', language: 'post' },
-    name: 'string',
-    value: 'number',
-    dur: 'number',
-    ease: ['linear', 'easeIn', 'easeOut', 'easeInOut'],
-    mode: ['blend', 'add', 'mult', 'diff', 'mask'],
+    code: { type: 'code', language: 'post', usedBy: ['setCode', 'add', 'layer', 'transition'] },
+    name: { type: 'string', usedBy: ['setVariable', 'remove'] },
+    value: { type: 'number', usedBy: ['setVariable', 'pulse', 'layer'] },
+    dur: { type: 'number', usedBy: ['pulse'] },
+    ease: { type: 'enum', options: ['linear', 'easeIn', 'easeOut', 'easeInOut'], usedBy: ['setVariable', 'pulse', 'transition'] },
+    mode: { type: 'enum', options: ['blend', 'add', 'mult', 'diff', 'mask'], usedBy: ['layer'] },
     disabled: 'boolean',
   },
   /**
@@ -1230,13 +1232,19 @@ export const SCHEMAS = deepFreeze({
     beat: 'number',
     id: 'string',
     type: ['create', 'update', 'destroy'],
-    shape: ['box', 'sphere', 'cylinder', 'cone', 'torus', 'text', 'light', 'camera'],
-    px: 'number', py: 'number', pz: 'number',
-    rx: 'number', ry: 'number', rz: 'number',
-    sx: 'number', sy: 'number', sz: 'number',
-    color: 'number',
-    dur: 'number',
-    ease: ['linear', 'easeIn', 'easeOut', 'easeInOut'],
+    shape: { type: 'enum', options: ['box', 'sphere', 'cylinder', 'cone', 'torus', 'text', 'light', 'camera'], usedBy: ['create'] },
+    px: { type: 'number', usedBy: ['create', 'update'] },
+    py: { type: 'number', usedBy: ['create', 'update'] },
+    pz: { type: 'number', usedBy: ['create', 'update'] },
+    rx: { type: 'number', usedBy: ['create', 'update'] },
+    ry: { type: 'number', usedBy: ['create', 'update'] },
+    rz: { type: 'number', usedBy: ['create', 'update'] },
+    sx: { type: 'number', usedBy: ['create', 'update'] },
+    sy: { type: 'number', usedBy: ['create', 'update'] },
+    sz: { type: 'number', usedBy: ['create', 'update'] },
+    color: { type: 'number', usedBy: ['create', 'update'] },
+    dur: { type: 'number', usedBy: ['update'] },
+    ease: { type: 'enum', options: ['linear', 'easeIn', 'easeOut', 'easeInOut'], usedBy: ['update'] },
     disabled: 'boolean',
   },
   /**
@@ -1255,8 +1263,8 @@ export const SCHEMAS = deepFreeze({
   particles: {
     beat: 'number',
     event: ['spawn', 'set'],
-    name: 'string',
-    value: 'number',
+    name: { type: 'string', usedBy: ['set'] },
+    value: { type: 'number', usedBy: ['set'] },
     disabled: 'boolean',
   },
   /**
@@ -1290,12 +1298,12 @@ export const SCHEMAS = deepFreeze({
   bauble: {
     beat: 'number',
     event: ['setCode', 'transform', 'duplicate', 'combine', 'replace', 'slice', 'tile', 'radial', 'transition', 'setVariable'],
-    code: { type: 'code', language: 'bauble' },
-    find: 'string',
-    name: 'string',
-    value: 'number',
-    mode: ['union', 'intersect', 'subtract', 'morph'],
-    axis: ['x', 'y', 'z'],
+    code: { type: 'code', language: 'bauble', usedBy: ['setCode', 'transform', 'duplicate', 'combine', 'slice', 'transition'] },
+    find: { type: 'string', usedBy: ['replace'] },
+    name: { type: 'string', usedBy: ['setVariable'] },
+    value: { type: 'number', usedBy: ['setVariable', 'duplicate', 'combine', 'replace', 'slice', 'tile', 'radial'] },
+    mode: { type: 'enum', options: ['union', 'intersect', 'subtract', 'morph'], usedBy: ['duplicate', 'combine'] },
+    axis: { type: 'enum', options: ['x', 'y', 'z'], usedBy: ['slice', 'radial'] },
     disabled: 'boolean',
   },
   /**
@@ -1323,11 +1331,11 @@ export const SCHEMAS = deepFreeze({
     beat: 'number',
     dur: 'number',
     event: ['retime', 'pingpong', 'loop', 'hold', 'speed'],
-    from: 'number',
-    to: 'number',
-    outFrom: 'number',
-    outTo: 'number',
-    rate: 'number',
+    from: { type: 'number', usedBy: ['retime', 'pingpong', 'loop', 'hold', 'speed'] },
+    to: { type: 'number', usedBy: ['retime', 'pingpong', 'loop'] },
+    outFrom: { type: 'number', usedBy: ['retime', 'pingpong'] },
+    outTo: { type: 'number', usedBy: ['retime', 'pingpong'] },
+    rate: { type: 'number', usedBy: ['speed'] },
     loop: 'number',
     disabled: 'boolean',
   },
