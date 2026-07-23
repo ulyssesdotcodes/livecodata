@@ -12,8 +12,8 @@
 // trio, which the renderer consumes as plain uniforms. This module is pure;
 // compiling and rendering live in bauble-scene.ts.
 
-import { beatToFrame, FPS } from './constants.js'
-import { contentSeqLen, transitionSpan, transitionAt } from './hydra.js'
+import { beatToFrame, beatsToFrames, FPS } from './constants.js'
+import { contentSeqLen, transitionSpan, transitionAt, transitionWindowsIn, type TransitionWindow } from './hydra.js'
 import type { Row } from './lineage.js'
 
 export interface BaubleFrame {
@@ -48,6 +48,14 @@ export function buildBaubleIndex(rows: Row[] | null | undefined): Row[] {
       index: beatToFrame((row.beat as number | undefined) ?? 1),
     }))
     .sort((a, b) => (a.index as number) - (b.index as number))
+}
+
+// The bauble table's transition strip-spans — until-next windows over the
+// whole table (one folded program, no per-output routing).
+export function baubleTransitionWindows(rows: Row[] | null | undefined, loopBeats = 0): TransitionWindow[] {
+  const index = buildBaubleIndex((rows ?? []).map((row, i) => ({ ...row, __row: i })))
+  const loopFrames = beatsToFrames(loopBeats)
+  return transitionWindowsIn([index], contentSeqLen(index, loopFrames), loopFrames)
 }
 
 // Apply a transform form to a subject shape expression. A standalone `_`

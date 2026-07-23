@@ -4,7 +4,7 @@
 // sketch string plus the latest value of each setVariable. This module is pure;
 // GPU rendering lives in hydra-scene.ts.
 
-import { beatToFrame, beatsToFrames, FPS } from './constants.js'
+import { beatToFrame, beatsToFrames, frameToBeat, framesToBeats, FPS } from './constants.js'
 import { isBinding, isStreamingNode, evalExpr, substituteExpr } from './dsl.js'
 import type { Row } from './lineage.js'
 
@@ -99,40 +99,96 @@ export function contentSeqLen(index: Row[], loopFrames: number): number {
   return (Math.floor(maxIndex / loopFrames) + 1) * loopFrames
 }
 
-// A transition's wipe window: its length in frames and the end frame E (the
-// NEXT setCode's frame). "Next" scans `scope` (the fold-ordered rows the wipe
-// lives in — one hydra output, or the whole post/bauble table) forward from the
-// transition at `pos`, wrapping the content cycle. With a loop (seqLen > 0) a
-// same-frame destination yields a zero raw distance → one full pass
-// (loopFrames). With no loop (seqLen 0) the scan stays unwrapped: the nearest
-// setCode strictly ahead, or a one-beat fallback when none. Null when the scope
-// holds no setCode at all — the wipe is inert.
+// A transition's wipe window: its length in frames, the end frame E (the NEXT
+// setCode's frame), and `endPos` — that setCode's index in `scope` (-1 for the
+// no-forward-setCode fallback below). "Next" scans `scope` (the fold-ordered
+// rows the wipe lives in — one hydra output, or the whole post/bauble table)
+// forward from the transition at `pos`, wrapping the content cycle. With a loop
+// (seqLen > 0) a same-frame destination yields a zero raw distance → one full
+// pass (loopFrames). With no loop (seqLen 0) the scan stays unwrapped: the
+// nearest setCode strictly ahead, or a one-beat fallback when none. Null when
+// the scope holds no setCode at all — the wipe is inert.
 export function transitionSpan(
   scope: Row[], pos: number, seqLen: number, loopFrames: number,
-): { end: number; len: number } | null {
+): { end: number; len: number; endPos: number } | null {
   const T = scope[pos].index as number
   if (seqLen > 0) {
     const n = scope.length
     for (let k = 1; k <= n; k++) {
-      const r = scope[(pos + k) % n]
-      if (r.event === 'setCode') {
-        const end = r.index as number
-        return { end, len: ((end - T) % seqLen + seqLen) % seqLen || loopFrames }
+      const endPos = (pos + k) % n
+      if (scope[endPos].event === 'setCode') {
+        const end = scope[endPos].index as number
+        return { end, len: ((end - T) % seqLen + seqLen) % seqLen || loopFrames, endPos }
       }
     }
     return null
   }
   let end = Infinity
+  let endPos = -1
   let any = false
-  for (const r of scope) {
-    if (r.event !== 'setCode') continue
+  for (let i = 0; i < scope.length; i++) {
+    if (scope[i].event !== 'setCode') continue
     any = true
-    const s = r.index as number
-    if (s > T && s < end) end = s
+    const s = scope[i].index as number
+    if (s > T && s < end) { end = s; endPos = i }
   }
   if (!any) return null
-  if (!Number.isFinite(end)) end = T + beatsToFrames(1)
-  return { end, len: end - T }
+  if (!Number.isFinite(end)) return { end: T + beatsToFrames(1), len: beatsToFrames(1), endPos: -1 }
+  return { end, len: end - T, endPos }
+}
+
+// One transition row's window on the timeline strip, in beats: the fold's own
+// until-next window (transitionSpan), so a strip span can never disagree with
+// where playback wipes. `start` is the transition's beat, `end` its true
+// extent (start + the window's beats — a wrapped window ends past the loop),
+// and `endRow` the destination setCode's storage row (absent for the inert
+// no-destination fallback). Non-transition events have no window — the strip
+// draws them as points.
+export interface TransitionWindow {
+  row: number
+  start: number
+  end: number
+  endRow?: number
+}
+
+// Walk each fold scope (hydra: one per `out`; post/bauble: the whole table)
+// for its transitions' until-next windows, mapping frames back to beats and
+// the destination's scope slot back to its storage row (tagged `__row` by the
+// per-table wrappers below). Shared so the three folds derive strip spans
+// identically.
+export function transitionWindowsIn(scopes: Row[][], seqLen: number, loopFrames: number): TransitionWindow[] {
+  const windows: TransitionWindow[] = []
+  for (const scope of scopes) {
+    for (let p = 0; p < scope.length; p++) {
+      if (scope[p].event !== 'transition') continue
+      const span = transitionSpan(scope, p, seqLen, loopFrames)
+      if (!span) continue
+      const start = frameToBeat(scope[p].index as number)
+      windows.push({
+        row: (scope[p] as { __row: number }).__row,
+        start,
+        end: start + framesToBeats(span.len),
+        ...(span.endPos >= 0 ? { endRow: (scope[span.endPos] as { __row: number }).__row } : {}),
+      })
+    }
+  }
+  return windows
+}
+
+// The hydra table's transition strip-spans, scoped per `out` like the fold
+// itself. `loopBeats` (0 → unwrapped) sets the content cycle transitions wrap.
+export function hydraTransitionWindows(rows: Row[] | null | undefined, loopBeats = 0): TransitionWindow[] {
+  const index = buildHydraIndex((rows ?? []).map((row, i) => ({ ...row, __row: i })))
+  const loopFrames = beatsToFrames(loopBeats)
+  const seqLen = contentSeqLen(index, loopFrames)
+  const groups = new Map<string, Row[]>()
+  for (const row of index) {
+    const out = outputOf(row)
+    const g = groups.get(out)
+    if (g) g.push(row)
+    else groups.set(out, [row])
+  }
+  return transitionWindowsIn([...groups.values()], seqLen, loopFrames)
 }
 
 // Is a wipe starting at frame `start` and lasting `len` frames active at

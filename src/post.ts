@@ -11,7 +11,7 @@ import {
   EASINGS, isBinding, isStreamingNode, evalExpr, substituteExpr,
   type Easings, type ExprNode,
 } from './dsl.js'
-import { contentSeqLen, transitionSpan, transitionAt } from './hydra.js'
+import { contentSeqLen, transitionSpan, transitionAt, transitionWindowsIn, type TransitionWindow } from './hydra.js'
 import { evalPostCode, chainSignature, type OpChain } from './post-lang.js'
 import type { Row } from './lineage.js'
 
@@ -59,6 +59,15 @@ export function postStateFrames(index: Row[], loopFrames = 0): number[] {
     }
   }
   return [...frames].sort((a, b) => a - b)
+}
+
+// The post table's transition strip-spans — until-next windows over the whole
+// table (post has one chain, no per-output routing). setVariable/pulse aren't
+// transitions, so they get no span; a stray `dur` on any event is ignored.
+export function postTransitionWindows(rows: Row[] | null | undefined, loopBeats = 0): TransitionWindow[] {
+  const index = buildPostIndex((rows ?? []).map((row, i) => ({ ...row, __row: i })))
+  const loopFrames = beatsToFrames(loopBeats)
+  return transitionWindowsIn([index], contentSeqLen(index, loopFrames), loopFrames)
 }
 
 // Split a chain string into its top-level op-call segments (balanced-paren
