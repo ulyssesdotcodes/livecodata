@@ -60,3 +60,8 @@ request, check whether that pull request has been merged (or closed).
   1. Fetch the latest default branch (e.g. `git fetch origin main`).
   2. Create a new branch off of the default branch for the new work.
   3. Push the new branch and open a new pull request for it.
+
+## Conflict probe (delivery test — will be closed)
+
+Temporary section to force a merge conflict against main so we can verify that a
+Actions-authored conflicts-with-main check is delivered to a watching session.
