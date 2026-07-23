@@ -101,6 +101,10 @@ function TablePanelView(props: PanelProps) {
   const [openInfoRow, setOpenInfoRow] = createSignal<string | null>(null)
   const [subView, setSubView] = createSignal<'table' | 'events'>('table')
   const [graphCollapsed, setGraphCollapsed] = createSignal(window.matchMedia('(max-width: 767px)').matches)
+  // Mobile soft keyboards have no Tab key; on a coarse pointer a cell editor's
+  // "next" action walks to the next cell in the row instead of closing to
+  // arrow-key navigation (which needs a physical keyboard anyway).
+  const coarsePointer = window.matchMedia('(pointer: coarse)').matches
   const [colRanges, setColRanges] = createSignal<ColRange[] | null>(null)
   // Keyboard navigation: the arrow-key cursor over editable cells (null until
   // the grid is first driven), and the "/"-opened table picker overlay.
@@ -584,7 +588,11 @@ function TablePanelView(props: PanelProps) {
         queueMicrotask(refocusGrid)
         return
       }
-      if (e.key === 'Enter') { commitNow(); queueMicrotask(refocusGrid) }
+      if (e.key === 'Enter') {
+        commitNow()
+        if (coarsePointer) advanceEdit(rowIndex, col.name, 1)
+        else queueMicrotask(refocusGrid)
+      }
       if (e.key === 'Enter' && e.ctrlKey && props.onCtrlEnter) props.onCtrlEnter()
     }
 
@@ -681,6 +689,7 @@ function TablePanelView(props: PanelProps) {
                 <input
                   type="text"
                   class="cell-number"
+                  enterkeyhint={coarsePointer ? 'next' : undefined}
                   value={String(cur)}
                   ref={(el) => { num = el; focusInput(el) }}
                   onInput={(e) => {
@@ -707,6 +716,7 @@ function TablePanelView(props: PanelProps) {
                 <input
                   type="text"
                   class="cell-text"
+                  enterkeyhint={coarsePointer ? 'next' : undefined}
                   value={raw() == null ? '' : String(raw())}
                   ref={(el) => { txt = el; focusInput(el) }}
                   onKeyDown={(e) => keyHandler(e, commitTxt)}
