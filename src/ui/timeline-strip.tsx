@@ -103,18 +103,6 @@ export function TimelineStrip(props: {
 
   const geometry = createMemo<StripGeometry>(() => ({ width: width(), maxBeats: maxBeats() }))
   const grid = createMemo(() => gridLines(geometry().maxBeats, geometry().width))
-  // One tint per pass (coverageBands), mapped through passBase so it lines up
-  // with that pass's lane band and spans all of its packed sub-lanes.
-  const coverage = createMemo(() => {
-    const geo = geometry()
-    const bases = passBase()
-    return coverageBands(props.timelineRows(), props.vs().loopBeats).map((band) => {
-      const left = beatToX(geo, band.p0)
-      const lane = bases[band.lane] ?? band.lane
-      const nextBase = bases[band.lane + 1] ?? lane + 1
-      return { left, width: Math.max(0, beatToX(geo, band.p1) - left), lane, span: Math.max(1, nextBase - lane), kind: band.kind }
-    })
-  })
 
   // The only two things that move per playback frame.
   const playheadX = createMemo(() => beatToX(geometry(), scrubPos() + 1))
@@ -172,6 +160,18 @@ export function TimelineStrip(props: {
     return laneLayout(cur.name, rows, cur.columns, liveTimelineRows(), props.vs().loopBeats)
   })
   const passBase = createMemo(() => layout().passBase)
+  // One tint per pass (coverageBands), mapped through passBase so it lines up
+  // with that pass's lane band and spans all of its packed sub-lanes.
+  const coverage = createMemo(() => {
+    const geo = geometry()
+    const bases = passBase()
+    return coverageBands(props.timelineRows(), props.vs().loopBeats).map((band) => {
+      const left = beatToX(geo, band.p0)
+      const lane = bases[band.lane] ?? band.lane
+      const nextBase = bases[band.lane + 1] ?? lane + 1
+      return { left, width: Math.max(0, beatToX(geo, band.p1) - left), lane, span: Math.max(1, nextBase - lane), kind: band.kind }
+    })
+  })
   // At least the packed count, and at least the applied cook's pass count so
   // the coverage layer's lanes still show when the open table has no handle
   // past lane 0 (e.g. a plain content table under a multi-pass timeline).
@@ -229,6 +229,14 @@ export function TimelineStrip(props: {
     if (h.pass) lines.push(`pass ${h.pass + 1}`)
     return lines
   }
+
+  // Idle hover (no gesture in progress): the handle under the pointer — the
+  // cursor affordance, the floating readout, and the panel's row highlight
+  // all read it. `row`/`ghost` mirror the preview's shape so the readout memo
+  // treats a hover and a drag through the same lookup. Declared above the memos
+  // that read it (activeHandle/readout/linkedRows) so their eager first run
+  // can't touch it in its temporal dead zone.
+  const [hover, setHover] = createSignal<{ row: number; ghost: boolean; part: HitPart } | null>(null)
 
   // The hovered, dragged, or selected placement — the one handle the readout
   // and the unlabeled position tag describe. A live gesture (preview/hover)
@@ -304,11 +312,6 @@ export function TimelineStrip(props: {
   }
   let gesture: Gesture | null = null
 
-  // Idle hover (no gesture in progress): the handle under the pointer — the
-  // cursor affordance, the floating readout, and the panel's row highlight
-  // all read it. `row`/`ghost` mirror the preview's shape so the readout memo
-  // treats a hover and a drag through the same lookup.
-  const [hover, setHover] = createSignal<{ row: number; ghost: boolean; part: HitPart } | null>(null)
   // Fold transition ↔ destination pairing: hovering either the transition
   // span or the destination setCode point highlights both (the arrowhead
   // links them). Empty unless the hover lands on a paired row.
