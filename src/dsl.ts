@@ -497,7 +497,7 @@ const numOr = (v: unknown, d: number): number => (typeof v === 'number' ? v : d)
 function modRow(r: Row, specs: [key: string, base: number, f: (v: number) => number][]): Row {
   const out: Row = { ...r }
   for (const [key, base, f] of specs) {
-    if (key in r || r.type !== 'update') out[key] = f(numOr(r[key], base))
+    if (key in r || r.event !== 'update') out[key] = f(numOr(r[key], base))
   }
   return out
 }
@@ -929,11 +929,11 @@ export class Table {
     return this._xf(op, opts, (ins) => {
       const out: Row[] = ins[0].map(recarry)
       for (const c of ins[0]) {
-        if (c.type !== 'create') continue
+        if (c.event !== 'create') continue
         const startBeat = at ?? (typeof c.beat === 'number' ? (c.beat as number) : 1)
         const { start, end } = fieldsFor(c)
-        out.push(tag({ id: c.id, type: 'update', beat: startBeat, ...start }, carry(c)))
-        out.push(tag({ id: c.id, type: 'update', beat: startBeat + dur, ...end, ...(ease ? { ease } : {}) }, carry(c)))
+        out.push(tag({ id: c.id, event: 'update', beat: startBeat, ...start }, carry(c)))
+        out.push(tag({ id: c.id, event: 'update', beat: startBeat + dur, ...end, ...(ease ? { ease } : {}) }, carry(c)))
       }
       return out
     }, hasFn(opts))
@@ -1050,7 +1050,7 @@ export class OrigamiBuilder {
     const rz = typeof props.rz === 'number' ? props.rz : 0
     program.flipAxis = [Math.sin(rz), Math.cos(rz)]
     return new Table([{
-      id: this._id, type: 'create', beat: 1, shape: 'origami',
+      id: this._id, event: 'create', beat: 1, shape: 'origami',
       px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, color: 0xd94f2a,
       fold: 0, program, ...props,
     }], this._ctx)
@@ -1082,8 +1082,8 @@ export class OrigamiBuilder {
     }
     const out: Row[] = []
     timed.forEach((s, k) => {
-      out.push({ id, type: 'update', beat: s.t0, fold: k })
-      out.push({ id, type: 'update', beat: s.t1, fold: k + s.to })
+      out.push({ id, event: 'update', beat: s.t0, fold: k })
+      out.push({ id, event: 'update', beat: s.t1, fold: k + s.to })
     })
     return new Table(out, this._ctx)
   }
@@ -1227,24 +1227,26 @@ export const SCHEMAS = deepFreeze({
    * The 3D scene's event table (the "three" view): sparse object events keyed
    * by `id`, expanded by rasterize() into per-frame rows. `beat` places the
    * event (1-indexed; a beat past the loop's end lands it in a later pass).
-   * `type` picks what it does — "create" (the object appears: set `shape` and
+   * `event` picks what it does — "create" (the object appears: set `shape` and
    * any transform fields), "update" (a keyframe: each field it carries is a
    * per-field track easing from the previous keyframe carrying that field),
-   * "destroy" (the object leaves). px/py/pz position, rx/ry/rz rotation in
-   * radians, sx/sy/sz scale, `color` a 0xRRGGBB number. `ease` names the
-   * easing of the segment INTO this keyframe — blank stays linear (motion's
-   * default), while 'step' makes it a HOLD keyframe: the field keeps the
-   * previous keyframe's value until this beat, then jumps. Number cells accept
-   * "=" expressions (e.g. "=slider('h')" or "=progress().mul(6.283).sin()"),
-   * which hold streaming over their span instead of interpolating; `dur`
-   * (beats) sets the window a value's progress() sweeps — without it, an
-   * expression runs to the next keyframe carrying the same field. Check
-   * `disabled` to mute a row without deleting it.
+   * "color" (a color pulse: a bare event hard-switches `color`, newest wins,
+   * while a `dur` decays back over `ease` — add a `to` column to aim the decay
+   * at a target color instead of the object's base), "destroy" (the object
+   * leaves). px/py/pz position, rx/ry/rz rotation in radians, sx/sy/sz scale,
+   * `color` a 0xRRGGBB number. `ease` names the easing of the segment INTO this
+   * keyframe — blank stays linear (motion's default), while 'step' makes it a
+   * HOLD keyframe: the field keeps the previous keyframe's value until this
+   * beat, then jumps. Number cells accept "=" expressions (e.g. "=slider('h')"
+   * or "=progress().mul(6.283).sin()"), which hold streaming over their span
+   * instead of interpolating; `dur` (beats) sets the window a value's
+   * progress() sweeps — without it, an expression runs to the next keyframe
+   * carrying the same field. Check `disabled` to mute a row without deleting it.
    */
   scene: {
     beat: 'number',
     id: 'string',
-    type: ['create', 'update', 'destroy'],
+    event: ['create', 'update', 'color', 'destroy'],
     shape: { type: 'enum', options: ['box', 'sphere', 'cylinder', 'cone', 'torus', 'text', 'light', 'camera'], usedBy: ['create'] },
     px: { type: 'number', usedBy: ['create', 'update'] },
     py: { type: 'number', usedBy: ['create', 'update'] },
@@ -1255,9 +1257,9 @@ export const SCHEMAS = deepFreeze({
     sx: { type: 'number', usedBy: ['create', 'update'] },
     sy: { type: 'number', usedBy: ['create', 'update'] },
     sz: { type: 'number', usedBy: ['create', 'update'] },
-    color: { type: 'number', usedBy: ['create', 'update'] },
-    dur: { type: 'number', usedBy: ['update'] },
-    ease: { type: 'enum', options: ['step', 'linear', 'easeIn', 'easeOut', 'easeInOut'], usedBy: ['update'] },
+    color: { type: 'number', usedBy: ['create', 'update', 'color'] },
+    dur: { type: 'number', usedBy: ['update', 'color'] },
+    ease: { type: 'enum', options: ['step', 'linear', 'easeIn', 'easeOut', 'easeInOut'], usedBy: ['update', 'color'] },
     disabled: 'boolean',
   },
   /**
@@ -1400,7 +1402,7 @@ function deepFreeze<T>(value: T): T {
 // behind box()/sphere()/… (usage docs live on the DSLSurface members).
 function sceneObject(shape: string, props: Row, ctx: DSLContext | null): Table {
   return new Table([{
-    id: shape, type: 'create', beat: 1, shape,
+    id: shape, event: 'create', beat: 1, shape,
     px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0,
     ...props,
   }], ctx)
@@ -1688,7 +1690,7 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     // A light isn't a mesh, so it skips sceneObject's px/py/pz:0 defaults —
     // leaving position unset lets the renderer apply the kind's own default.
     light: (props: Row = {}) => new Table([{
-      id: 'light', type: 'create', beat: 1, shape: 'light', kind: 'directional', ...props,
+      id: 'light', event: 'create', beat: 1, shape: 'light', kind: 'directional', ...props,
     }], ctx),
     object: (shape: string, props: Row = {}) => sceneObject(shape, props, ctx),
     points: (shape: string, props: Row = {}): Table => {
@@ -1706,8 +1708,8 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       (keyframes ?? []).map((k, i) => {
         const beat = typeof k.beat === 'number' ? k.beat : 1
         return i === 0
-          ? { px: 0, py: 0, pz: 5, tx: 0, ty: 0, tz: 0, ...k, id: 'camera', shape: 'camera', type: 'create', beat }
-          : { ...k, id: 'camera', shape: 'camera', type: 'update', beat }
+          ? { px: 0, py: 0, pz: 5, tx: 0, ty: 0, tz: 0, ...k, id: 'camera', shape: 'camera', event: 'create', beat }
+          : { ...k, id: 'camera', shape: 'camera', event: 'update', beat }
       }),
       ctx,
     ),

@@ -66,13 +66,13 @@ test('end-to-end: the scene cache traces back to the randsin sample that set col
   const rt = createRuntime()
   const code = `
     define("randsin", () => math(t => Math.sin(t * Math.PI * 8)).range(2))
-    define("base", "three", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
+    define("base", "three", () => rows([{ id: "s", event: "create", beat: 1, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
     define("flash", "three", (rand, table) => {
-      const objects = table("base").flatMap(o => o.type === "create" ? { id: o.id } : null)
+      const objects = table("base").flatMap(o => o.event === "create" ? { id: o.id } : null)
       return table("randsin").flatMap((cur, i, rows) =>
         i > 0 && cur.value * rows[i - 1].value < 0
-          ? objects.rows.map(o => ({ id: o.id, type: "color", beat: cur.beat, color: 0xffffff }))
+          ? objects.rows.map(o => ({ id: o.id, event: "color", beat: cur.beat, color: 0xffffff }))
           : null)
     })
     define("scene", () => table("three").rasterize(2))

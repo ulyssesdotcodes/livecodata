@@ -173,7 +173,7 @@ test('keyframe reverse: source runs backwards as playback advances', () => {
 test('cookProgram surfaces timelineRows from a defined timeline view', () => {
   const rt = createRuntime()
   const code = `
-    define("base", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
+    define("base", () => rows([{ id: "s", event: "create", beat: 1, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
     define("scene", () => table("base").rasterize(2))
     define("timeline", () => beats(16, { fit: 4 }))
@@ -187,7 +187,7 @@ test('cookProgram surfaces timelineRows from a defined timeline view', () => {
 test('cookProgram yields no timeline rows when none is defined', () => {
   const rt = createRuntime()
   const code = `
-    define("three", () => rows([{ id: "s", type: "create", beat: 1, shape: "box",
+    define("three", () => rows([{ id: "s", event: "create", beat: 1, shape: "box",
       color: 1, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
   `
   const cooked = cookProgram(rt, code, 1)

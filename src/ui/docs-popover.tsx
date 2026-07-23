@@ -103,7 +103,7 @@ const TABLE_DOCS: TableDoc[] = [
   {
     name: 'Scene rows',
     detail: 'what drives the 3D view',
-    info: 'Rows rendered as 3D objects share a schema: type ("create" | "update"), id, beat, shape, position px/py/pz, rotation rx/ry/rz, scale sx/sy/sz, color. rasterize(maxBeats) bakes sparse beat-keyed event rows into a dense per-frame world state, easing numeric fields between keyframes.',
+    info: 'Rows rendered as 3D objects share a schema: event ("create" | "update" | "color" | "destroy"), id, beat, shape, position px/py/pz, rotation rx/ry/rz, scale sx/sy/sz, color. rasterize(maxBeats) bakes sparse beat-keyed event rows into a dense per-frame world state, easing numeric fields between keyframes.',
   },
 ]
 
