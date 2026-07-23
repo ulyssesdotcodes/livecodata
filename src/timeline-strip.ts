@@ -115,8 +115,8 @@ export interface Handle {
 // an active timeline's actual loop count (so the map's shared terminal instant
 // resolves to the last pass, not a phantom one after it); omitted when passes
 // are unbounded (content run long with no timeline defined).
-function wrapPass(beat: number, unit: number, maxPass?: number): { local: number; pass: number } {
-  if (!(unit > 0)) return { local: beat, pass: 0 }
+function wrapPass(beat: number, unit: number | undefined, maxPass?: number): { local: number; pass: number } {
+  if (!(unit && unit > 0)) return { local: beat, pass: 0 }
   let pass = Math.max(0, Math.floor((beat - 1) / unit))
   if (maxPass !== undefined) pass = Math.min(pass, maxPass)
   return { local: beat - pass * unit, pass }
@@ -217,7 +217,7 @@ function buildRaw(
     const disabled = row.disabled === true
     const placements = segments.length ? placeBeat(segments, beat) : [{ beat, stretch: 1 }]
     placements.forEach((p, idx) => {
-      const w = wrapUnit && wrapUnit > 0 ? wrapPass(p.beat, wrapUnit, maxPass) : { local: p.beat, pass: 0 }
+      const w = wrapPass(p.beat, wrapUnit, maxPass)
       const group = timeline ? w.pass : 0
       const common = {
         row: i, group, lane: group, ghost: idx > 0, disabled,
@@ -349,7 +349,10 @@ export interface HitResult {
   part: HitPart
 }
 
-const EDGE_TOLERANCE_PX = 6
+// Wide enough that a fingertip can land on a span's edge to resize it, not
+// just a mouse cursor — the edge shows a resize cursor on hover, so the
+// larger zone is self-correcting for the mouse.
+const EDGE_TOLERANCE_PX = 12
 
 // Which handle (and which part of it) sits under a pointer at `(x, lane)`.
 // Edges win over body within EDGE_TOLERANCE_PX; among body hits a point
@@ -428,15 +431,6 @@ export function snapDelta(anchor: number, dBeats: number, opts: { mode?: SnapMod
   return snap(anchor + dBeats, opts) - anchor
 }
 
-export type DragMode = 'move' | 'start' | 'end'
-
-// hitTest's part vocabulary ('start'/'end'/'body') maps directly onto
-// dragUpdate's mode vocabulary ('start'/'end'/'move') — a handle's body is
-// dragged by moving it, an edge by resizing that edge.
-export function dragModeFor(part: HitPart): DragMode {
-  return part === 'body' ? 'move' : part
-}
-
 export interface DragOptions {
   // Minimum span (beats) a 'start'/'end' drag may shrink a span to.
   minSpan?: number
@@ -454,7 +448,9 @@ export interface DragResult {
 
 const DEFAULT_MIN_SPAN = 0.25
 
-export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts: DragOptions = {}): DragResult {
+// The drag reuses hitTest's `part` vocabulary directly: a handle's body is
+// dragged by moving it, an edge ('start'/'end') by resizing that edge.
+export function dragUpdate(handle: Handle, part: HitPart, dBeats: number, opts: DragOptions = {}): DragResult {
   const minSpan = opts.minSpan ?? DEFAULT_MIN_SPAN
   const { row, beat, end, pass, derived, endRow } = handle
   // A wrapped placement's `beat`/`end` are local to its own pass (wrapPass) —
@@ -463,7 +459,7 @@ export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts:
   // uses.
   const toSource = (b: number): number => (opts.timeline?.active ? opts.timeline.sourceBeatAt(b, pass ?? 0) : b)
 
-  if (mode === 'move') {
+  if (part === 'body') {
     // A span's length (`dur`) is untouched by a pure move, so its window
     // keeps the same duration wherever it lands.
     const nextBeat = Math.max(1, beat + dBeats)
@@ -474,7 +470,7 @@ export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts:
   // destination setCode (a fold transition's `endRow`): dragging it moves THAT
   // row's beat. Every other edge just moves this row — the window recomputes.
   if (derived) {
-    if (mode === 'end' && endRow !== undefined) {
+    if (part === 'end' && endRow !== undefined) {
       const nextEnd = Math.max((end ?? beat) + dBeats, beat + minSpan)
       return { row: endRow, values: { beat: toSource(nextEnd) } }
     }
@@ -482,7 +478,7 @@ export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts:
     return { row, values: { beat: toSource(nextBeat) } }
   }
 
-  if (mode === 'start') {
+  if (part === 'start') {
     const fixedEnd = end ?? beat
     const nextBeat = Math.max(1, Math.min(beat + dBeats, fixedEnd - minSpan))
     if (end !== undefined) {
@@ -491,7 +487,7 @@ export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts:
     return { row, values: { beat: toSource(nextBeat) } }
   }
 
-  // mode === 'end'
+  // part === 'end'
   const nextEnd = Math.max((end ?? beat) + dBeats, beat + minSpan)
   return { row, values: { dur: toSource(nextEnd) - toSource(beat) } }
 }

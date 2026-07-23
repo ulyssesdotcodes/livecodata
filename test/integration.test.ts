@@ -113,6 +113,81 @@ test('Origami Crane sample: 17 exact fold steps, wings held half-raised', () => 
   assert.equal(last.fold, 16.5)
 })
 
+// The two flower samples are hand-authored fold tables; the contract is that
+// they solve to flat states that read as a flower — a bloom with four-fold
+// radial symmetry — not the exact fold count, which is free to change.
+for (const { name, steps } of [
+  { name: 'Origami Lotus', steps: 12 },
+  { name: 'Origami Lily', steps: 8 },
+]) {
+  test(`${name} sample: simple folds solve to a flat, four-fold-symmetric bloom`, () => {
+    const sample = SAMPLES.find((s) => s.name === name)!
+    const { views } = createRuntime({
+      editableRows: (n: string, schema: Record<string, ColumnType>, seed?: Record<string, unknown>[]) =>
+        (seed ?? sample.tables?.[n] ?? []).map((r) => conformRow(r, schemaColumns(schema))),
+    }).run(sample.code, { seed: 1 })
+
+    const program = views.get(outViewName('three'))!.rows
+      .find((r) => r.event === 'create')!.program as FoldTableProgram
+    assert.equal(program.kind, 'fold-table')
+    assert.equal(program.steps.length, steps)
+
+    // the finished flower lies flat
+    const { pos } = foldTablePositions(program, steps)
+    for (const p of pos) assert.ok(Math.abs(p[2]) < 1e-9, 'landed flower is flat')
+
+    // and it reads as a bloom: paper reaches out to a comparable radius in
+    // every quarter turn, so petals radiate all the way around rather than
+    // bunching to one side
+    const cx = pos.reduce((s, p) => s + p[0], 0) / pos.length
+    const cy = pos.reduce((s, p) => s + p[1], 0) / pos.length
+    const reach = [0, 0, 0, 0]
+    let rMax = 0
+    for (const p of pos) {
+      const dx = p[0] - cx
+      const dy = p[1] - cy
+      const r = Math.hypot(dx, dy)
+      rMax = Math.max(rMax, r)
+      const q = (Math.floor((Math.atan2(dy, dx) / (Math.PI / 2) + 4)) % 4)
+      reach[q] = Math.max(reach[q], r)
+    }
+    for (const r of reach) assert.ok(r > 0.6 * rMax, 'petals radiate in every quarter')
+  })
+}
+
+test('Origami Metamorphosis sample: retime pingpongs the lotus back to a square before the lily', () => {
+  const sample = SAMPLES.find((s) => s.name === 'Origami Metamorphosis')!
+  const { views } = createRuntime({
+    editableRows: (n: string, schema: Record<string, ColumnType>, seed?: Record<string, unknown>[]) =>
+      (seed ?? sample.tables?.[n] ?? []).map((r) => conformRow(r, schemaColumns(schema))),
+  }).run(sample.code, { seed: 1 })
+  const rows = views.get(outViewName('three'))!.rows
+
+  // two flowers, handed off at the flat square: lotus retired, lily raised
+  assert.ok(rows.some((r) => r.event === 'create' && r.id === 'flowerA'), 'lotus spawns')
+  assert.ok(rows.some((r) => r.event === 'create' && r.id === 'flowerB'), 'lily spawns')
+  assert.ok(rows.some((r) => r.event === 'destroy' && r.id === 'flowerA'), 'lotus is retired')
+
+  const track = (id: string): [number, number][] => rows
+    .filter((r) => r.id === id && r.event === 'update' && typeof r.fold === 'number')
+    .map((r) => [r.beat as number, r.fold as number] as [number, number])
+    .sort((a, b) => a[0] - b[0])
+
+  // the lotus folds up, then .retime(pingpong) folds the very same run back
+  // down to a flat square — no hand-mirrored rows
+  const a = track('flowerA')
+  const peak = Math.max(...a.map(([, f]) => f))
+  const peakBeat = a.find(([, f]) => f === peak)![0]
+  assert.ok(peak >= 11, 'lotus reaches its full fold')
+  assert.ok(a[a.length - 1][1] < 0.5, 'lotus unfolds back to a flat square')
+  assert.ok(a[a.length - 1][0] > peakBeat, 'the unfold comes after the bloom')
+
+  // the lily then folds up from that square
+  const b = track('flowerB')
+  assert.equal(b[0][1], 0, 'the lily starts from a square')
+  assert.ok(Math.max(...b.map(([, f]) => f)) >= 7, 'the lily folds into its bloom')
+})
+
 test('Hydra Meta sample: replace/append/setSource/layer rewrite the sketch across the loop', () => {
   const sample = SAMPLES.find((s) => s.name === 'Hydra Meta')!
   const { views } = createRuntime({

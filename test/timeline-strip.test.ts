@@ -10,7 +10,6 @@ import {
   resolveHandle,
   snap,
   snapDelta,
-  dragModeFor,
   dragUpdate,
   valuesDiffer,
   exceedsDragThreshold,
@@ -271,7 +270,7 @@ test('snap: quarter-beat by default, whole beats under coarse, unsnapped under f
 
 test('dragUpdate move on a span only writes beat — dur (a length) rides along, preserving duration', () => {
   const handle: Handle = { row: 2, kind: 'span', beat: 5, end: 13, lane: 0, ghost: false, disabled: false }
-  const { row, values } = dragUpdate(handle, 'move', 3)
+  const { row, values } = dragUpdate(handle, 'body', 3)
   assert.equal(row, 2)
   assert.deepEqual(values, { beat: 8 })
 })
@@ -289,7 +288,7 @@ test('dragUpdate on a derived transition span: the end edge retargets the destin
   assert.equal(end.row, 2, 'the end edge belongs to the destination setCode')
   assert.deepEqual(end.values, { beat: 10 }, 'moves the destination beat, never a dur')
   assert.deepEqual([dragUpdate(handle, 'start', -1).row, dragUpdate(handle, 'start', -1).values], [1, { beat: 2 }], 'a start edge moves only the transition row')
-  assert.deepEqual(dragUpdate(handle, 'move', 1).values, { beat: 4 })
+  assert.deepEqual(dragUpdate(handle, 'body', 1).values, { beat: 4 })
 })
 
 test('dragUpdate maps a content-table drop back through the timeline sourceBeatAt', () => {
@@ -297,7 +296,7 @@ test('dragUpdate maps a content-table drop back through the timeline sourceBeatA
   const timeline = buildTimeline([{ event: 'retime', beat: 1, from: 1, to: 5 }], 8)
   const handle: Handle = { row: 0, kind: 'point', beat: 1, lane: 0, ghost: false, disabled: false }
   // Drag the handle from playback beat 1 to playback beat 5 (the midpoint).
-  const { values } = dragUpdate(handle, 'move', 4, { timeline })
+  const { values } = dragUpdate(handle, 'body', 4, { timeline })
   assert.equal(values.beat, timeline.sourceBeatAt(5), 'stored source beat matches the visual landing spot')
   assert.equal(values.beat, 3)
 })
@@ -310,17 +309,8 @@ test('dragUpdate maps a wrapped ghost back through its own pass, not pass 0', ()
     { event: 'hold', beat: 1, from: 7, loop: 1 },
   ])
   const handle: Handle = { row: 0, kind: 'point', beat: 2, lane: 1, ghost: true, disabled: false, pass: 1 }
-  const { values } = dragUpdate(handle, 'move', 0, { timeline })
+  const { values } = dragUpdate(handle, 'body', 0, { timeline })
   assert.equal(values.beat, 7, "pass 2's hold source (7), not pass 1's (3)")
-})
-
-// --- dragUpdate: lanes never move on a horizontal drag ----------------------
-
-test('dragUpdate never touches loop — a horizontal drag on a lane-1 timeline row keeps its pass, only beat moves', () => {
-  const handle: Handle = { row: 1, kind: 'span', beat: 9, end: 17, lane: 1, ghost: false, disabled: false }
-  const { values } = dragUpdate(handle, 'move', 2)
-  assert.deepEqual(values, { beat: 11 })
-  assert.ok(!('loop' in values), "a horizontal drag's payload never carries the row's pass assignment")
 })
 
 // --- drag gesture helpers (phase 4) ----------------------------------------
@@ -330,12 +320,6 @@ test('exceedsDragThreshold: below the threshold is a click, beyond it a drag, di
   assert.equal(exceedsDragThreshold(3, 0), false, 'exactly at the threshold is still a click')
   assert.equal(exceedsDragThreshold(4, 0), true)
   assert.equal(exceedsDragThreshold(3, 1), true, 'diagonal distance can exceed the threshold even though neither component alone does')
-})
-
-test('dragModeFor: hitTest parts map onto dragUpdate modes, body becomes a move', () => {
-  assert.equal(dragModeFor('body'), 'move')
-  assert.equal(dragModeFor('start'), 'start')
-  assert.equal(dragModeFor('end'), 'end')
 })
 
 test('snapDelta: snaps the point the drag actually moves, not the raw delta, so an off-grid start still lands on-grid', () => {

@@ -60,3 +60,18 @@ request, check whether that pull request has been merged (or closed).
   1. Fetch the latest default branch (e.g. `git fetch origin main`).
   2. Create a new branch off of the default branch for the new work.
   3. Push the new branch and open a new pull request for it.
+
+## Keeping a PR watched
+
+When you open a PR, enable **Auto-fix** on it (`/autofix-pr`, the web CI status
+bar, or asking Claude to watch it) rather than calling `subscribe_pr_activity`
+by hand — Auto-fix is the durable, per-PR watch, and it supersedes a manual
+subscription anyway (if it's on, the hand-rolled subscription receives nothing).
+Auto-fix requires the Claude GitHub App installed on the repo.
+
+Auto-fix reacts to CI check failures and review comments, but GitHub emits no
+webhook when `main` advances and the branch starts conflicting, so it can't see
+conflicts on its own. The `flag-conflicting-prs` workflow closes that gap: on a
+merge to `main` it posts a failing `conflicts-with-main` check on each open PR
+that no longer merges cleanly, which reaches the watching session as an ordinary
+CI-failure event — the cue to rebase onto `main`.

@@ -34,7 +34,7 @@
 import { createSignal, createMemo, onMount, onCleanup, For, Show, type Accessor } from 'solid-js'
 import {
   beatToX, xToBeat, gridLines, handlesFor, hitTest, pendingTimelineRows,
-  resolveHandle, dragModeFor, snapDelta, dragUpdate, withPreview,
+  resolveHandle, snapDelta, dragUpdate, withPreview,
   valuesDiffer, exceedsDragThreshold, laneLayout, coverageBands, meaningfulSummary,
   type StripGeometry, type Handle, type HitPart, type DragOptions, type SnapMode,
 } from '../timeline-strip.js'
@@ -354,7 +354,7 @@ export function TimelineStrip(props: {
     }
     // dragUpdate can retarget another row (a fold transition's end edge moves
     // its destination setCode) — preview and commit that row, not the grabbed one.
-    const { row: target, values } = dragUpdate(g.handle, dragModeFor(g.part), dBeats, opts)
+    const { row: target, values } = dragUpdate(g.handle, g.part, dBeats, opts)
     setPreview({ table: g.table, row: target, part: g.part, values, ghost: g.handle.ghost })
   }
 
