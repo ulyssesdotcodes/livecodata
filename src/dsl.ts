@@ -1135,7 +1135,9 @@ export const EASINGS = {
 export type Easings = typeof EASINGS
 
 // Canonical schemas for the tables the runtime knows by name (surfaced to the
-// editor as `schemas` — its JSDoc there carries the usage docs).
+// editor as `schemas` — its JSDoc there carries the usage docs). A column's
+// `usedBy` lists the events/types that give it effect, so the table panel can
+// grey out cells a row's event ignores; a column without it is always live.
 export const SCHEMAS = deepFreeze({
   /**
    * The hydra view's event stream: one row per event, placed on the loop by
