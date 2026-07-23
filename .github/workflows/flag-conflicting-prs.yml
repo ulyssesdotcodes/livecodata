@@ -2,9 +2,10 @@ name: Flag PRs conflicting with main
 
 # Runs after a merge to main and posts a failing `conflicts-with-main` check on
 # every open PR that no longer merges cleanly. GitHub emits no webhook when a
-# PR's mergeability flips, so this manufactures that signal as a check run — the
-# one surface a Claude Code session subscribed to the PR (subscribe_pr_activity)
-# actually receives, without polling. The check is created only on the PR head
+# PR's mergeability flips, so this manufactures that signal as a check run — a
+# CI-failure event that a watching Claude Code session receives without polling.
+# It plugs the documented blind spot in Auto-fix, which reacts to CI failures
+# and review comments but can't see base-branch conflicts. The check is on the PR head
 # that first conflicts, so a PR that stays conflicting across several merges
 # wakes its session once, not once per merge. workflow_dispatch is a manual
 # escape hatch for re-scanning without a new commit.
