@@ -6,7 +6,7 @@
 // (`edges(0.2).bloom(1.2)`) with no routing. This module is pure — no GPU, no
 // `three`; the node graph is built and rendered by post-scene.ts.
 
-import { beatToFrame, beatsToFrames } from './constants.js'
+import { beatToFrame, beatsToFrames, frameToBeat } from './constants.js'
 import {
   EASINGS, isBinding, isStreamingNode, evalExpr, substituteExpr,
   type Easings, type ExprNode,
@@ -61,13 +61,53 @@ export function postStateFrames(index: Row[], loopFrames = 0): number[] {
   return [...frames].sort((a, b) => a - b)
 }
 
-// The post table's transition strip-spans — until-next windows over the whole
-// table (post has one chain, no per-output routing). setVariable/pulse aren't
-// transitions, so they get no span; a stray `dur` on any event is ignored.
-export function postTransitionWindows(rows: Row[] | null | undefined, loopBeats = 0): TransitionWindow[] {
+// A pulse's effective duration in beats: a positive `dur`, else the 1-beat
+// default so a bare pulse still has extent. The single source of truth shared
+// by pulseAt (playback) and postSpanWindows (the strip bar) so the two never
+// drift.
+const pulseDurBeats = (r: Row): number => (typeof r.dur === 'number' && r.dur > 0 ? r.dur : 1)
+
+// The post table's strip bars — until-next windows for transitions (post has
+// one chain, no per-output routing) plus each pulse's [beat, beat + dur) extent
+// (mirroring pulseAt). setVariable rows carry no bar (a glide is an arrow, not a
+// duration block — see postGlidePairs); a stray `dur` on any other event is
+// ignored.
+export function postSpanWindows(rows: Row[] | null | undefined, loopBeats = 0): TransitionWindow[] {
   const index = buildPostIndex((rows ?? []).map((row, i) => ({ ...row, __row: i })))
   const loopFrames = beatsToFrames(loopBeats)
-  return transitionWindowsIn([index], contentSeqLen(index, loopFrames), loopFrames)
+  const windows = transitionWindowsIn([index], contentSeqLen(index, loopFrames), loopFrames)
+  for (const r of index) {
+    if (r.event !== 'pulse') continue
+    const start = frameToBeat(r.index as number)
+    windows.push({ row: (r as { __row: number }).__row, start, end: start + pulseDurBeats(r) })
+  }
+  return windows
+}
+
+export interface GlidePair {
+  // The arriving (eased) setVariable row, and the previous same-name row it
+  // glides from — the strip draws an on-arrival arrow (arrowhead at `row`) and
+  // hover-links the pair.
+  row: number
+  from: number
+}
+
+// Which previous same-name setVariable row each eased keyframe glides from —
+// the pairing the strip renders as a connector arrow. Reuses varTracks (the
+// grouping foldVars folds over) and trackSegment's curr→next adjacency: a NAMED
+// ease glides from the previous keyframe in the name's frame-ordered track;
+// blank/step rows glide from nothing. The first row's circular (loop-wrap) glide
+// is omitted here — an arrow running the loop backward isn't drawn.
+export function postGlidePairs(rows: Row[] | null | undefined): GlidePair[] {
+  const index = buildPostIndex((rows ?? []).map((row, i) => ({ ...row, __row: i })))
+  const rowOf = (r: Row): number => (r as { __row: number }).__row
+  const pairs: GlidePair[] = []
+  for (const track of varTracks(index).values()) {
+    for (let k = 1; k < track.length; k++) {
+      if (isNamedEase(track[k].ease)) pairs.push({ row: rowOf(track[k]), from: rowOf(track[k - 1]) })
+    }
+  }
+  return pairs
 }
 
 // Split a chain string into its top-level op-call segments (balanced-paren
@@ -241,9 +281,8 @@ function baseValue(track: Row[], frame: number, seqLen: number): unknown {
 // decay shaped by `ease` (default easeOut), or a full-value square GATE while
 // ease is 'step'. env is 0 outside the window.
 function pulseAt(r: Row, frame: number): { u: number; env: number } {
-  const durBeats = typeof r.dur === 'number' && r.dur > 0 ? r.dur : 1
   const start = r.index as number
-  const durFrames = Math.max(1, beatsToFrames(durBeats))
+  const durFrames = Math.max(1, beatsToFrames(pulseDurBeats(r)))
   if (frame < start || frame >= start + durFrames) return { u: 0, env: 0 }
   const u = clamp01((frame - start) / durFrames)
   return { u, env: r.ease === 'step' ? 1 : 1 - easingOf(r.ease, 'easeOut')(u) }
@@ -312,6 +351,19 @@ function pulseParts(pulses: Row[], frame: number): { num: number; nodes: ExprNod
   return { num, nodes }
 }
 
+// Each setVariable name's keyframe track — its rows in buildPostIndex (frame)
+// order. The one grouping foldVars folds base values over and postGlidePairs
+// pairs glide arrows over, so the strip's pairing can't drift from playback's.
+function varTracks(index: Row[]): Map<string, Row[]> {
+  const tracks = new Map<string, Row[]>()
+  for (const row of index) {
+    if (row.event === 'setVariable' && typeof row.name === 'string') {
+      (tracks.get(row.name) ?? tracks.set(row.name, []).get(row.name)!).push(row)
+    }
+  }
+  return tracks
+}
+
 // Fold every setVariable/pulse row into the variable map at `frame`: each name's
 // keyframe track (base value) plus its active pulses. A setVariable track is the
 // name's whole row set — later keyframes shape the segment the playhead is
@@ -320,13 +372,10 @@ function pulseParts(pulses: Row[], frame: number): { num: number; nodes: ExprNod
 // glides across the loop boundary. Total when called ctx-free (cook/replay run
 // it too): composites are constructed, never evaluated, here.
 export function foldVars(index: Row[], frame: number, seqLen = 0): Record<string, unknown> {
-  const sets = new Map<string, Row[]>()
+  const sets = varTracks(index)
   const pulses = new Map<string, Row[]>()
   for (const row of index) {
-    if (typeof row.name !== 'string') continue
-    if (row.event === 'setVariable') {
-      (sets.get(row.name) ?? sets.set(row.name, []).get(row.name)!).push(row)
-    } else if (row.event === 'pulse' && (row.index as number) <= frame) {
+    if (row.event === 'pulse' && typeof row.name === 'string' && (row.index as number) <= frame) {
       (pulses.get(row.name) ?? pulses.set(row.name, []).get(row.name)!).push(row)
     }
   }
