@@ -33,7 +33,7 @@ interface SampledState {
 // untouched, to be read (and bindings resolved) at playback. `loop` is the
 // retired pass column: still reserved so old tables carrying one stay inert.
 const RESERVED = new Set([
-  'id', 'type', 'beat', 'loop', 'dur', 'ease', 'to', 'shape', 'color',
+  'id', 'event', 'beat', 'loop', 'dur', 'ease', 'to', 'shape', 'color',
   'px', 'py', 'pz', 'rx', 'ry', 'rz', 'sx', 'sy', 'sz', 'frame',
 ])
 
@@ -78,7 +78,7 @@ function buildTimelines(events: Row[]): Map<unknown, Row[]> {
 function sampleColor(events: Row[], createEv: Row, i: number): { color: number | null; source: Row | null } {
   let colorEv: Row | null = null
   for (const e of events) {
-    if (e.type === 'color' && (e.frame as number) <= i) colorEv = e
+    if (e.event === 'color' && (e.frame as number) <= i) colorEv = e
   }
   if (!colorEv) return { color: (createEv.color as number | null | undefined) ?? null, source: null }
 
@@ -104,11 +104,11 @@ function sampleColor(events: Row[], createEv: Row, i: number): { color: number |
 const NO_TRACK = new Set(['frame', 'beat', 'loop', 'dur', 'id', 'color'])
 
 function sampleObject(events: Row[], i: number, extent: number): SampledState | null {
-  const createEv = events.find((e) => e.type === 'create')
+  const createEv = events.find((e) => e.event === 'create')
   if (!createEv || i < (createEv.frame as number)) return null
-  if (events.some((e) => e.type === 'destroy' && (e.frame as number) <= i)) return null
+  if (events.some((e) => e.event === 'destroy' && (e.frame as number) <= i)) return null
 
-  const keyframes = events.filter((e) => e.type === 'create' || e.type === 'update')
+  const keyframes = events.filter((e) => e.event === 'create' || e.event === 'update')
 
   const fields: Row = { ...createEv }
   Object.assign(fields, gatherExtra(events, i))
@@ -150,7 +150,7 @@ function sampleObject(events: Row[], i: number, extent: number): SampledState | 
       // the object's remaining life (destroy frame or bake extent).
       const start = prev.frame as number
       const dur = typeof prev.dur === 'number' && prev.dur > 0 ? prev.dur : 0
-      const destroy = events.find((e) => e.type === 'destroy')
+      const destroy = events.find((e) => e.event === 'destroy')
       const end = dur > 0 ? start + dur
         : next ? (next.frame as number)
           : destroy ? (destroy.frame as number) : extent
@@ -158,10 +158,16 @@ function sampleObject(events: Row[], i: number, extent: number): SampledState | 
       const node = substituteExpr(pv.$expr, { progress: u })
       fields[name] = isStreamingNode(node) ? { $expr: node } : evalExpr(node, fields, i)
     } else if (next && typeof next[name] === 'number') {
-      const raw = (i - (prev.frame as number)) / ((next.frame as number) - (prev.frame as number))
-      const ease = easeFnOf(next.ease)
-      const t = ease ? ease(raw) : raw
-      fields[name] = lerp(pv as number, next[name] as number, t)
+      // 'step' is a HOLD keyframe: prev's value stays put until next's beat, then
+      // jumps (next becomes prev at its own frame). Otherwise ease the segment.
+      if (next.ease === 'step') {
+        fields[name] = pv
+      } else {
+        const raw = (i - (prev.frame as number)) / ((next.frame as number) - (prev.frame as number))
+        const ease = easeFnOf(next.ease)
+        const t = ease ? ease(raw) : raw
+        fields[name] = lerp(pv as number, next[name] as number, t)
+      }
       sources.add(next)
     } else {
       fields[name] = pv

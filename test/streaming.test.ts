@@ -67,7 +67,7 @@ test('midi bindings are diffable: same note hashes equal, different note differs
 
 test('rasterize carries a midi binding onto each dense frame row', () => {
   const events = t([
-    { id: 's', type: 'create', beat: 1, shape: 'box', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
+    { id: 's', event: 'create', beat: 1, shape: 'box', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
   ]).derive({ amount: midi('c4') })
 
   const baked = rasterizeRows(events.rows, 0.1) // ~3 frames
@@ -89,7 +89,7 @@ test('a note recorded at frame 60 drives the field every time the loop passes it
   })
 
   const baked = rasterizeRows(
-    t([{ id: 's', type: 'create', beat: 1, shape: 'box', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
+    t([{ id: 's', event: 'create', beat: 1, shape: 'box', px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
       .derive({ amount: midi('c4') }).rows,
     5,
   )

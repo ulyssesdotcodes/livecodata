@@ -177,7 +177,7 @@ function buildPostGlobals(root) {
     '  function prev(): PostChain;',
     '  /** A live on-screen slider as a live arg — blur(slider("r", 0, 8)) reads the slider each frame. Calling it also declares the control: one "sliders"-table row per name, the latest declaration winning min/max (default 0–1). */',
     '  function slider(name: string, min?: number, max?: number): (p: PostProps) => number;',
-    '  /** A live post variable as a live arg — val("name", initial) reads the folded variable each frame (the initial as fallback), and a "set" row for it materializes right after this cell — tweak or tween it there; deleting the val() call deletes the row. */',
+    '  /** A live post variable as a live arg — val("name", initial) reads the folded variable each frame (the initial as fallback), and a "setVariable" row for it materializes right after this cell — tweak or tween it there; deleting the val() call deletes the row. */',
     '  function val(name: string, value?: number): (p: PostProps) => number;',
     '}',
     'export {};',

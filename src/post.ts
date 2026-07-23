@@ -11,6 +11,7 @@ import {
   EASINGS, isBinding, isStreamingNode, evalExpr, substituteExpr,
   type Easings, type ExprNode,
 } from './dsl.js'
+import { contentSeqLen, transitionSpan, transitionAt, transitionWindowsIn, type TransitionWindow } from './hydra.js'
 import { evalPostCode, chainSignature, type OpChain } from './post-lang.js'
 import type { Row } from './lineage.js'
 
@@ -42,20 +43,31 @@ export function buildPostIndex(rows: Row[] | null | undefined): Row[] {
 }
 
 // The frames whose folded state must be precompiled: every event frame, plus
-// each transition's END frame (the fold changes when a wipe window expires with
-// no row there — the verified fused-fx failure mode). setProgram enumerates
-// these; a warm-compile audit checks no other frame introduces a new state.
-export function postStateFrames(index: Row[]): number[] {
+// each transition's window-END frame — usually the next setCode's frame (so
+// already enumerated), except the same-beat/full-pass case, which lands a full
+// pass (loopFrames) later. setProgram enumerates these; a warm-compile audit
+// checks no other frame introduces a new state.
+export function postStateFrames(index: Row[], loopFrames = 0): number[] {
+  const seqLen = contentSeqLen(index, loopFrames)
   const frames = new Set<number>()
-  for (const row of index) {
-    const f = row.index as number
+  for (let p = 0; p < index.length; p++) {
+    const f = index[p].index as number
     frames.add(f)
-    if (row.event === 'transition') {
-      const durBeats = typeof row.dur === 'number' && row.dur > 0 ? row.dur : 1
-      frames.add(f + Math.max(1, beatsToFrames(durBeats)))
+    if (index[p].event === 'transition') {
+      const span = transitionSpan(index, p, seqLen, loopFrames)
+      if (span) frames.add(seqLen > 0 ? ((span.end % seqLen) + seqLen) % seqLen : span.end)
     }
   }
   return [...frames].sort((a, b) => a - b)
+}
+
+// The post table's transition strip-spans — until-next windows over the whole
+// table (post has one chain, no per-output routing). setVariable/pulse aren't
+// transitions, so they get no span; a stray `dur` on any event is ignored.
+export function postTransitionWindows(rows: Row[] | null | undefined, loopBeats = 0): TransitionWindow[] {
+  const index = buildPostIndex((rows ?? []).map((row, i) => ({ ...row, __row: i })))
+  const loopFrames = beatsToFrames(loopBeats)
+  return transitionWindowsIn([index], contentSeqLen(index, loopFrames), loopFrames)
 }
 
 // Split a chain string into its top-level op-call segments (balanced-paren
@@ -99,59 +111,81 @@ function amountExpr(value: unknown): string {
   return s.includes('=>') ? `(${s})` : `(p) => (${s})`
 }
 
-// A transition snapshotted mid-fold: the frozen "before" chain, its mask chain
-// ('' = plain crossfade), and the grid-frame wipe window.
-interface Transition { before: string; mask: string; startFrame: number; durFrames: number }
+// Apply one chain-shape event — everything that mutates the chain string.
+// setVariable/pulse/transition leave it unchanged (handled elsewhere).
+function applyPostShape(code: string, row: Row): string {
+  const c = typeof row.code === 'string' ? row.code.trim() : ''
+  switch (row.event) {
+    case 'setCode':
+      return c
+    case 'add':
+      return c === '' ? code : code === '' ? c.replace(/^\./, '') : `${code}.${c.replace(/^\./, '')}`
+    case 'remove':
+      return code !== '' && typeof row.name === 'string' && row.name !== '' ? removeOp(code, row.name) : code
+    case 'layer':
+      if (c !== '') {
+        const mode = typeof row.mode === 'string' && LAYER_MODES.has(row.mode) ? row.mode : 'blend'
+        const amt = LAYER_AMOUNT.has(mode) ? `, ${amountExpr(row.value)}` : ''
+        return `${code === '' ? 'scene()' : code}.${mode}(${c}${amt})`
+      }
+      return code
+    default:
+      return code
+  }
+}
+
+// The transition's `pos` fn (playback time → clamped 0 → 1), with `ease` baked
+// in as its closed form: the fn is eval'd with no access to EASINGS, so the
+// shape must be inlined. Blank/unknown ease is linear.
+function easedPos(ease: unknown, start: number, dur: number): string {
+  const u = `Math.min(Math.max((p.time - ${start}) / ${dur}, 0), 1)`
+  switch (ease) {
+    case 'easeIn': return `(p) => (${u}) ** 2`
+    case 'easeOut': return `(p) => 1 - (1 - (${u})) ** 2`
+    case 'easeInOut': return `(p) => ((e) => e < 0.5 ? 2 * e * e : 1 - ((-2 * e + 2) ** 2) / 2)(${u})`
+    default: return `(p) => ${u}`
+  }
+}
 
 // Fold the event stream into the running chain string at `frame`. Returns null
 // (post stage inactive → scene shows through) until the chain is non-empty.
 // setVariable/pulse are handled separately (foldVars); this is chain shape only.
-function foldChain(index: Row[], frame: number): string | null {
-  let code = ''
-  const transitions: Transition[] = []
-  for (const row of index) {
-    if ((row.index as number) > frame) break
-    const c = typeof row.code === 'string' ? row.code.trim() : ''
-    switch (row.event) {
-      case 'setCode':
-        code = c
-        break
-      case 'add':
-        if (c !== '') code = code === '' ? c.replace(/^\./, '') : `${code}.${c.replace(/^\./, '')}`
-        break
-      case 'remove':
-        if (code !== '' && typeof row.name === 'string' && row.name !== '') code = removeOp(code, row.name)
-        break
-      case 'layer':
-        if (c !== '') {
-          const mode = typeof row.mode === 'string' && LAYER_MODES.has(row.mode) ? row.mode : 'blend'
-          const amt = LAYER_AMOUNT.has(mode) ? `, ${amountExpr(row.value)}` : ''
-          const base = code === '' ? 'scene()' : code
-          code = `${base}.${mode}(${c}${amt})`
-        }
-        break
-      case 'transition': {
-        // Snapshot the current chain as "before"; the wipe applies to the final
-        // "after" once folded. Elapsed windows drop (postStateFrames enumerates
-        // the window END as its own state).
-        const durBeats = typeof row.dur === 'number' && row.dur > 0 ? row.dur : 1
-        const durFrames = Math.max(1, beatsToFrames(durBeats))
-        const startFrame = row.index as number
-        if (frame < startFrame + durFrames) {
-          transitions.push({ before: code === '' ? 'scene()' : code, mask: c, startFrame, durFrames })
-        }
-        break
+// A transition wipes from the chain at its beat to the chain at the next setCode
+// ahead (its window end), revealing that destination mid-wipe via look-ahead —
+// chain-shape events fold up to the furthest active window end.
+function foldChain(index: Row[], frame: number, seqLen: number, loopFrames: number): string | null {
+  const active: { before: string; mask: string; start: number; len: number; end: number; ease: unknown }[] = []
+  let running = ''
+  let codeAtF = ''
+  for (let p = 0; p < index.length; p++) {
+    const row = index[p]
+    if (row.event === 'transition') {
+      const span = transitionSpan(index, p, seqLen, loopFrames)
+      if (span != null && transitionAt(frame, row.index as number, span.len, seqLen) != null) {
+        active.push({
+          before: running === '' ? 'scene()' : running,
+          mask: typeof row.code === 'string' ? row.code.trim() : '',
+          start: row.index as number, len: span.len, end: span.end, ease: row.ease,
+        })
       }
+    } else {
+      running = applyPostShape(running, row)
     }
+    if ((row.index as number) <= frame) codeAtF = running
   }
-  if (code === '' && transitions.length === 0) return null
+  if (codeAtF === '' && active.length === 0) return null
+  // The "after": chain-shape folded up to the furthest active window end.
+  const horizon = active.length ? Math.max(...active.map((a) => a.end)) : frame
+  let after = ''
+  for (const row of index) {
+    if ((row.index as number) > horizon) break
+    if (row.event !== 'transition') after = applyPostShape(after, row)
+  }
   // Apply wipes innermost-first so nested transitions compose in beat order.
-  let result = code === '' ? 'scene()' : code
-  for (let i = transitions.length - 1; i >= 0; i--) {
-    const tr = transitions[i]
-    const start = tr.startFrame / FPS
-    const dur = tr.durFrames / FPS
-    const posFn = `(p) => Math.min(Math.max((p.time - ${start}) / ${dur}, 0), 1)`
+  let result = after === '' ? 'scene()' : after
+  for (let i = active.length - 1; i >= 0; i--) {
+    const tr = active[i]
+    const posFn = easedPos(tr.ease, tr.start / FPS, tr.len / FPS)
     const mask = tr.mask !== '' ? `(${tr.mask})` : 'null'
     result = `transition((${tr.before}), (${result}), ${mask}, ${posFn})`
   }
@@ -162,54 +196,89 @@ const clamp01 = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x)
 const easingOf = (name: unknown, fallback: keyof Easings): ((t: number) => number) =>
   EASINGS[(typeof name === 'string' && name in EASINGS ? name : fallback) as keyof Easings]
 
-// The base (step-or-tween) value of one variable at `frame`, from its
-// `setVariable` rows in index order (all at/before frame). The last row is the active one:
-// with a `dur` it interpolates from the previous row's value via EASINGS[ease]
-// over dur beats; otherwise it steps. Numeric-only rows come here (foldVars'
-// fast path); rows carrying `$expr` bindings go through baseComposite.
-function baseValue(sets: Row[], frame: number): unknown {
-  if (sets.length === 0) return undefined
-  let prev: unknown = undefined
-  for (let i = 0; i < sets.length - 1; i++) prev = sets[i].value
-  const r = sets[sets.length - 1]
-  const target = r.value
-  const dur = typeof r.dur === 'number' && r.dur > 0 ? r.dur : 0
-  if (dur > 0 && typeof target === 'number' && typeof prev === 'number') {
-    const durFrames = Math.max(1, beatsToFrames(dur))
-    const u = clamp01((frame - (r.index as number)) / durFrames)
-    return prev + (target - prev) * easingOf(r.ease, 'linear')(u)
+// A named ease (linear/easeIn/easeOut/easeInOut) glides the segment into a
+// keyframe; anything else — blank, absent, or the explicit 'step' — holds and
+// jumps on the beat.
+const isNamedEase = (ease: unknown): boolean => typeof ease === 'string' && ease in EASINGS
+
+// The active segment of a setVariable keyframe track (rows of one name in frame
+// order) at `frame`: the holding keyframe `curr` whose value reigns up to the
+// arriving keyframe `next` (null once past the last row when not looping), and
+// `u` the 0→1 fraction across [curr, next]. Wrapped (seqLen>0) the track is
+// circular — the last row's segment crosses the sequence boundary into the
+// first, using the same wrapped-distance math transitions use.
+function trackSegment(
+  track: Row[], frame: number, seqLen: number,
+): { curr: Row | null; next: Row | null; u: number } {
+  const n = track.length
+  const F = (r: Row): number => r.index as number
+  if (seqLen > 0) {
+    const wf = ((frame % seqLen) + seqLen) % seqLen
+    let ci = -1
+    for (let i = 0; i < n; i++) if (F(track[i]) <= wf) ci = i
+    if (ci < 0) ci = n - 1
+    const curr = track[ci]
+    const next = track[(ci + 1) % n]
+    const dist = ((F(next) - F(curr)) % seqLen + seqLen) % seqLen || seqLen
+    const pos = ((wf - F(curr)) % seqLen + seqLen) % seqLen
+    return { curr, next, u: clamp01(pos / dist) }
   }
-  return target
+  let ci = -1
+  for (let i = 0; i < n; i++) if (F(track[i]) <= frame) ci = i
+  if (ci < 0) return { curr: null, next: null, u: 1 }
+  const curr = track[ci]
+  if (ci === n - 1) return { curr, next: null, u: 1 }
+  const next = track[ci + 1]
+  const dist = F(next) - F(curr)
+  return { curr, next, u: dist > 0 ? clamp01((frame - F(curr)) / dist) : 1 }
 }
 
-// The summed contribution of one variable's active pulses at `frame`. Each adds
-// value·env(u) over `dur` beats, u = elapsed fraction, env decaying 1→0 shaped
-// by `ease` (default easeOut); expired or not-yet-started rows are inert.
+// The base value of one variable at `frame`, from its setVariable keyframe track.
+// The arriving keyframe's `ease` shapes the segment into it: a named ease glides
+// from the holding keyframe's value, arriving on the beat; step (blank/'step')
+// holds and jumps. Numeric-only tracks come here (foldVars' fast path); tracks
+// carrying `$expr` bindings go through baseComposite.
+function baseValue(track: Row[], frame: number, seqLen: number): unknown {
+  const { curr, next, u } = trackSegment(track, frame, seqLen)
+  if (!curr) return undefined
+  if (next && next !== curr && isNamedEase(next.ease)
+    && typeof curr.value === 'number' && typeof next.value === 'number') {
+    return curr.value + (next.value - curr.value) * easingOf(next.ease, 'linear')(u)
+  }
+  return curr.value
+}
+
+// A pulse's window at `frame`: `u` the 0→1 fraction over its `dur` (default 1
+// beat, so a bare pulse still fires), and `env` the added-value envelope — a 1→0
+// decay shaped by `ease` (default easeOut), or a full-value square GATE while
+// ease is 'step'. env is 0 outside the window.
+function pulseAt(r: Row, frame: number): { u: number; env: number } {
+  const durBeats = typeof r.dur === 'number' && r.dur > 0 ? r.dur : 1
+  const start = r.index as number
+  const durFrames = Math.max(1, beatsToFrames(durBeats))
+  if (frame < start || frame >= start + durFrames) return { u: 0, env: 0 }
+  const u = clamp01((frame - start) / durFrames)
+  return { u, env: r.ease === 'step' ? 1 : 1 - easingOf(r.ease, 'easeOut')(u) }
+}
+
+// The summed contribution of one variable's active pulses at `frame`.
 function pulseSum(pulses: Row[], frame: number): number {
   let sum = 0
   for (const r of pulses) {
-    const dur = typeof r.dur === 'number' && r.dur > 0 ? r.dur : 0
-    if (dur <= 0) continue
-    const start = r.index as number
-    const durFrames = Math.max(1, beatsToFrames(dur))
-    if (frame < start || frame >= start + durFrames) continue
-    const val = typeof r.value === 'number' ? r.value : 0
-    const u = clamp01((frame - start) / durFrames)
-    sum += val * (1 - easingOf(r.ease, 'easeOut')(u))
+    const { env } = pulseAt(r, frame)
+    if (typeof r.value === 'number') sum += r.value * env
   }
   return sum
 }
 
-// A setVariable/pulse row's value with the row's own context substituted in: field()
-// reads the row's columns (resolveBindings later sees the vars map as its
-// row, which would read sibling variables instead), progress() the row's own
-// dur window at `frame`. A still-streaming result stays a binding; otherwise
-// the expression collapses to its value right here.
-function resolvedValue(r: Row, frame: number): unknown {
+// A setVariable/pulse row's value with the row's own context substituted in:
+// field() reads the row's columns (resolveBindings later sees the vars map as
+// its row, which would read sibling variables instead), progress() the reign the
+// caller passes as `u`. A still-streaming result stays a binding; otherwise the
+// expression collapses to its value right here.
+function resolvedValue(r: Row, u: number): unknown {
   const v = r.value
   if (!isBinding(v)) return v
-  const dur = typeof r.dur === 'number' && r.dur > 0 ? r.dur : 0
-  const u = dur > 0 ? clamp01((frame - (r.index as number)) / Math.max(1, beatsToFrames(dur))) : 1
   const node = substituteExpr(v.$expr, { progress: u, fields: r })
   return isStreamingNode(node) ? { $expr: node } : evalExpr(node, r, 0)
 }
@@ -219,27 +288,25 @@ const addNode = (a: ExprNode, b: ExprNode): ExprNode => ({ k: 'bin', op: 'add', 
 const nodeOf = (v: unknown): ExprNode | null =>
   typeof v === 'number' && Number.isFinite(v) ? litNode(v) : isBinding(v) ? v.$expr : null
 
-// baseValue's sibling for names whose rows carry expressions: a tween with an
-// expression endpoint emits a per-frame lerp composite — u and the ease are
-// known here, the endpoints resolve at the visualizer's resolveBindings —
-// instead of degrading to a step.
-function baseComposite(sets: Row[], frame: number): unknown {
-  if (sets.length === 0) return undefined
-  let prev: unknown = undefined
-  for (let i = 0; i < sets.length - 1; i++) prev = resolvedValue(sets[i], frame)
-  const r = sets[sets.length - 1]
-  const target = resolvedValue(r, frame)
-  const dur = typeof r.dur === 'number' && r.dur > 0 ? r.dur : 0
-  if (dur > 0) {
-    const durFrames = Math.max(1, beatsToFrames(dur))
-    const u = clamp01((frame - (r.index as number)) / durFrames)
-    const eased = easingOf(r.ease, 'linear')(u)
-    if (typeof target === 'number' && typeof prev === 'number') return prev + (target - prev) * eased
-    const a = nodeOf(prev)
-    const b = nodeOf(target)
-    if (a && b) return { $expr: { k: 'call', fn: 'lerp', args: [a, b, litNode(eased)] } satisfies ExprNode }
+// baseValue's sibling for tracks whose rows carry expressions: the holding
+// keyframe's value resolves over its reign (progress() = the segment fraction);
+// a named-ease glide to the arriving keyframe emits a per-frame lerp composite —
+// u and the ease are known here, the endpoints resolve at the visualizer's
+// resolveBindings — instead of degrading to a step.
+function baseComposite(track: Row[], frame: number, seqLen: number): unknown {
+  const { curr, next, u } = trackSegment(track, frame, seqLen)
+  if (!curr) return undefined
+  const currVal = resolvedValue(curr, u)
+  if (!next || next === curr || !isNamedEase(next.ease)) return currVal
+  const nextVal = resolvedValue(next, 0)
+  const eased = easingOf(next.ease, 'linear')(u)
+  if (typeof currVal === 'number' && typeof nextVal === 'number') {
+    return currVal + (nextVal - currVal) * eased
   }
-  return target
+  const a = nodeOf(currVal)
+  const b = nodeOf(nextVal)
+  if (a && b) return { $expr: { k: 'call', fn: 'lerp', args: [a, b, litNode(eased)] } satisfies ExprNode }
+  return currVal
 }
 
 // pulseSum's sibling for expression rows: each active expression pulse
@@ -248,49 +315,50 @@ function pulseParts(pulses: Row[], frame: number): { num: number; nodes: ExprNod
   let num = 0
   const nodes: ExprNode[] = []
   for (const r of pulses) {
-    const dur = typeof r.dur === 'number' && r.dur > 0 ? r.dur : 0
-    if (dur <= 0) continue
-    const start = r.index as number
-    const durFrames = Math.max(1, beatsToFrames(dur))
-    if (frame < start || frame >= start + durFrames) continue
-    const u = clamp01((frame - start) / durFrames)
-    const env = 1 - easingOf(r.ease, 'easeOut')(u)
-    const v = resolvedValue(r, frame)
+    const { u, env } = pulseAt(r, frame)
+    if (env === 0) continue
+    const v = resolvedValue(r, u)
     if (typeof v === 'number') num += v * env
     else if (isBinding(v)) nodes.push({ k: 'bin', op: 'mul', a: v.$expr, b: litNode(env) })
   }
   return { num, nodes }
 }
 
-// Fold every setVariable/pulse row into the variable map at `frame`: each name's base
-// value plus its active pulses. Total when called ctx-free (cook/replay run
+// Fold every setVariable/pulse row into the variable map at `frame`: each name's
+// keyframe track (base value) plus its active pulses. A setVariable track is the
+// name's whole row set — later keyframes shape the segment the playhead is
+// inside — while pulses stay windowed at/before frame. seqLen (the content
+// cycle, >0 while looping) makes tracks circular so a named-ease first row
+// glides across the loop boundary. Total when called ctx-free (cook/replay run
 // it too): composites are constructed, never evaluated, here.
-export function foldVars(index: Row[], frame: number): Record<string, unknown> {
+export function foldVars(index: Row[], frame: number, seqLen = 0): Record<string, unknown> {
   const sets = new Map<string, Row[]>()
   const pulses = new Map<string, Row[]>()
   for (const row of index) {
-    if ((row.index as number) > frame) break
     if (typeof row.name !== 'string') continue
-    const bucket = row.event === 'setVariable' ? sets : row.event === 'pulse' ? pulses : null
-    if (bucket) (bucket.get(row.name) ?? bucket.set(row.name, []).get(row.name)!).push(row)
+    if (row.event === 'setVariable') {
+      (sets.get(row.name) ?? sets.set(row.name, []).get(row.name)!).push(row)
+    } else if (row.event === 'pulse' && (row.index as number) <= frame) {
+      (pulses.get(row.name) ?? pulses.set(row.name, []).get(row.name)!).push(row)
+    }
   }
   const vars: Record<string, unknown> = {}
   for (const name of new Set([...sets.keys(), ...pulses.keys()])) {
     const setRows = sets.get(name)
     const pulseRows = pulses.get(name)
-    // Numeric-only names take the original arithmetic path untouched; only a
-    // row carrying a binding pays for the composite machinery.
+    // Numeric-only names take the arithmetic path untouched; only a row carrying
+    // a binding pays for the composite machinery.
     const hasExpr = (setRows?.some((r) => isBinding(r.value)) ?? false)
       || (pulseRows?.some((r) => isBinding(r.value)) ?? false)
     if (!hasExpr) {
-      const base = setRows ? baseValue(setRows, frame) : undefined
+      const base = setRows ? baseValue(setRows, frame, seqLen) : undefined
       const pulse = pulseRows ? pulseSum(pulseRows, frame) : 0
       if (typeof base === 'number' && Number.isFinite(base)) vars[name] = base + pulse
-      else if (base === undefined && pulseRows) vars[name] = pulse
-      else vars[name] = base
+      else if (base !== undefined) vars[name] = base
+      else if (pulseRows) vars[name] = pulse
       continue
     }
-    const base = setRows ? baseComposite(setRows, frame) : undefined
+    const base = setRows ? baseComposite(setRows, frame, seqLen) : undefined
     const { num, nodes } = pulseRows ? pulseParts(pulseRows, frame) : { num: 0, nodes: [] }
     if (typeof base === 'number' && Number.isFinite(base)) {
       vars[name] = nodes.length ? { $expr: nodes.reduce(addNode, litNode(base + num)) } : base + num
@@ -305,7 +373,7 @@ export function foldVars(index: Row[], frame: number): Record<string, unknown> {
         const head = num !== 0 ? addNode(litNode(num), nodes[0]) : nodes[0]
         vars[name] = { $expr: nodes.slice(1).reduce(addNode, head) }
       }
-    } else {
+    } else if (base !== undefined) {
       // A non-numeric, non-expression base steps as-is; pulses can't ride it.
       vars[name] = base
     }
@@ -317,25 +385,29 @@ export function foldVars(index: Row[], frame: number): Record<string, unknown> {
 // into one running chain, evaluated to an op list. The state id is its
 // structural signature, so frames sharing structure share a precompiled graph.
 // Returns null until the chain is non-empty — playback then leaves post inactive.
-export function postFrameAt(index: Row[], f: number): PostFrame | null {
+export function postFrameAt(index: Row[], f: number, loopFrames = 0): PostFrame | null {
   const frame = Math.floor(f)
   if (frame < 0) return null
-  const codeStr = foldChain(index, frame)
+  const seqLen = contentSeqLen(index, loopFrames)
+  const codeStr = foldChain(index, frame, seqLen, loopFrames)
   if (codeStr == null) return null
   // Let a broken chain (syntax error, unknown op, a trailing line comment the
   // `return (...)` wrap can't close) throw. The cook compiles every state up
   // front, so the error surfaces to the user there rather than being swallowed.
   const chain = evalPostCode(codeStr)
-  return { stateId: chainSignature(chain), chain, vars: foldVars(index, frame) }
+  return { stateId: chainSignature(chain), chain, vars: foldVars(index, frame, seqLen) }
 }
 
-// The compiled chain source as of one table row: events folded up to and
-// INCLUDING the row at `rowIndex`. Powers the table panel's per-row popover.
-export function postCodeUpToRow(rows: Row[] | null | undefined, rowIndex: number): string | null {
+// The compiled chain source shown for one table row: the full fold sampled at
+// that row's own frame — exactly what the runtime shows there (a transition
+// row's popover includes the next setCode via look-ahead; the destination
+// setCode row, a window end, shows the plain after chain). Powers the table
+// panel's per-row popover; loopFrames defaults to unwrapped.
+export function postCodeUpToRow(rows: Row[] | null | undefined, rowIndex: number, loopFrames = 0): string | null {
   const all = rows ?? []
   if (!isPostRow(all[rowIndex])) return null
   const index = buildPostIndex(all.map((row, i) => ({ ...row, __row: i })))
   const pos = index.findIndex((r) => (r as { __row?: number }).__row === rowIndex)
   if (pos < 0) return null
-  return foldChain(index.slice(0, pos + 1), index[pos].index as number)
+  return foldChain(index, index[pos].index as number, contentSeqLen(index, loopFrames), loopFrames)
 }

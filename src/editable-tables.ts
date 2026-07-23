@@ -37,11 +37,13 @@ export type CodeLanguage = 'dsl' | 'hydra' | 'bauble' | 'post' | 'expr'
 
 // A column spec as passed to editable(name, schema). A string array is
 // shorthand for an enum over those values; enum columns are code-only — the
-// "+ column" UI never creates one.
+// "+ column" UI never creates one. `usedBy` names the event/type values (the
+// row's `event` or `type` column) the column has effect for — omit it for a
+// column that's always live (see EditableColumn.usedBy).
 export type ColumnSpec =
   | ColumnType
   | readonly string[]
-  | { type: ColumnType; options?: readonly string[]; language?: CodeLanguage }
+  | { type: ColumnType; options?: readonly string[]; language?: CodeLanguage; usedBy?: readonly string[] }
 export type Schema = Record<string, ColumnSpec>
 
 /**
@@ -64,6 +66,11 @@ export interface EditableColumn {
   type: ColumnType
   options?: string[] // 'enum' columns: the allowed values
   language?: CodeLanguage // 'code' columns; absent means the DSL
+  // Event/type values the column has effect for (row discriminant: `event` if
+  // the table has one, else `type`) — the table panel dims cells whose row's
+  // discriminant isn't in it (see isCellInert in table-panel.ts). Absent means
+  // universal: always live. Every user-added column is universal.
+  usedBy?: readonly string[]
 }
 
 export interface EditableTableData {
@@ -109,16 +116,24 @@ export function registerExprCellCheck(fn: (text: string) => ExprCellCheck): void
 // Streaming results are invalid here: a { $expr } binding in these columns
 // would NaN rasterize's frame math and silently drop rows from the timeline
 // strip. A constant expression is a plain number by cook time, so it passes.
-const TIMING_COLUMNS = new Set(['beat', 'dur', 'end', 'loop', 'at'])
+const TIMING_COLUMNS = new Set(['beat', 'dur', 'loop'])
+
+// hydra/bauble events whose fold splices a plain string into the number-typed
+// `value` column (replace's substitute text; bauble's tile/slice/combine/
+// duplicate params) — legitimate there, unlike e.g. radial, whose fold is
+// number-only.
+const STRING_VALUE_EVENTS = new Set(['replace', 'tile', 'slice', 'combine', 'duplicate'])
 
 /**
  * Blank/unset cells always pass: event tables are deliberately sparse, so only
  * a non-blank wrong-typed value (or an enum value outside its options) is
  * worth flagging. In number columns an "=" expression cell is valid when it
  * compiles and evaluates to an Expr or a number — except streaming results in
- * timing columns (see TIMING_COLUMNS).
+ * timing columns (see TIMING_COLUMNS). `event` is the row's own event/type
+ * value, for the handful of events that legitimately hold a string in `value`
+ * (see STRING_VALUE_EVENTS); omit it where no row is at hand.
  */
-export function cellValid(value: unknown, col: EditableColumn): boolean {
+export function cellValid(value: unknown, col: EditableColumn, event?: string): boolean {
   if (value === '' || value == null) return true
   switch (col.type) {
     case 'number': {
@@ -127,7 +142,8 @@ export function cellValid(value: unknown, col: EditableColumn): boolean {
         if (!check?.valid) return false
         return !(check.streaming && TIMING_COLUMNS.has(col.name))
       }
-      return typeof value === 'number' && Number.isFinite(value)
+      if (typeof value === 'number' && Number.isFinite(value)) return true
+      return col.name === 'value' && typeof value === 'string' && event != null && STRING_VALUE_EVENTS.has(event)
     }
     case 'boolean': return typeof value === 'boolean'
     case 'enum': return typeof value === 'string' && !!col.options?.includes(value)
@@ -136,7 +152,8 @@ export function cellValid(value: unknown, col: EditableColumn): boolean {
 }
 
 export function invalidColumns(row: Row, columns: EditableColumn[]): string[] {
-  const bad = columns.filter((c) => !cellValid(row[c.name], c)).map((c) => c.name)
+  const event = typeof row.event === 'string' ? row.event : typeof row.type === 'string' ? row.type : undefined
+  const bad = columns.filter((c) => !cellValid(row[c.name], c, event)).map((c) => c.name)
   const flag = (name: string): void => {
     if (columns.some((c) => c.name === name) && !bad.includes(name)) bad.push(name)
   }
@@ -247,12 +264,13 @@ export function schemaColumns(schema: Schema): EditableColumn[] {
   return Object.entries(schema).map(([name, spec]) => {
     if (Array.isArray(spec)) return { name, type: 'enum', options: [...spec] }
     if (typeof spec === 'object') {
-      const s = spec as { type: ColumnType; options?: readonly string[]; language?: CodeLanguage }
+      const s = spec as { type: ColumnType; options?: readonly string[]; language?: CodeLanguage; usedBy?: readonly string[] }
       return {
         name,
         type: s.type,
         ...(s.options ? { options: [...s.options] } : {}),
         ...(s.language && s.type === 'code' ? { language: s.language } : {}),
+        ...(s.usedBy ? { usedBy: [...s.usedBy] } : {}),
       }
     }
     return { name, type: spec as ColumnType }
@@ -265,7 +283,7 @@ export function schemaColumns(schema: Schema): EditableColumn[] {
 const SLIDERS_TABLE = 'sliders'
 const DEFINE_SLIDER_KIND = 'define-slider'
 const SLIDERS_COLUMNS: EditableColumn[] = schemaColumns({
-  id: 'string', min: 'number', max: 'number', default: 'number', disabled: 'boolean',
+  name: 'string', min: 'number', max: 'number', default: 'number', disabled: 'boolean',
 })
 
 // ── Serialized-schema migrations ─────────────────────────────────────────────
@@ -335,7 +353,111 @@ function migratePostEventNames(events: StampedEvent[]): StampedEvent[] {
   })
 }
 
-const EDITABLE_MIGRATIONS: EventMigration[] = [migrateColumnsToArray, migratePostEventNames]
+// v3 → v4: the column-naming unification. Four tables each kept a legacy name
+// for a field every other table spells the common way. Rename each, scoped to
+// the tables shaped like the schema it targets (recognized by a create/
+// declare-schema's columns — or, for sliders, a define-slider event) and
+// followed through rename-table:
+//   origami   `at`  time column  → `beat`
+//   scene     `type` discriminant → `event` (+ the 'color' event rasterize folds)
+//   particles `set`  event value  → `setVariable`
+//   sliders   `id`   name column  → `name`
+// The define-slider fold already reads its wire `id` into the `name` column, so
+// those events pass through untouched; only the sliders table's create/seed/edit
+// events carry the old column name. Runs after migratePostEventNames, so a
+// post table's own `set`→`setVariable` is already done and particles (whose
+// enum has the unique `spawn`) is the only remaining `set`.
+type RenameKind = 'origami' | 'scene' | 'particles' | 'sliders'
+
+// The column whose NAME changes (particles renames a VALUE, not a column).
+const RENAMED_COLUMN: Partial<Record<RenameKind, readonly [from: string, to: string]>> = {
+  origami: ['at', 'beat'], scene: ['type', 'event'], sliders: ['id', 'name'],
+}
+
+function classifyColumns(cols: EditableColumn[]): RenameKind | null {
+  const has = (n: string): EditableColumn | undefined => cols.find((c) => c.name === n)
+  if (has('at') && (has('step') || has('p1') || has('move'))) return 'origami'
+  const type = has('type')
+  if (type?.options && ['create', 'update', 'destroy'].every((o) => type.options!.includes(o))) return 'scene'
+  const event = has('event')
+  if (event?.options?.includes('spawn') && event.options.includes('set')) return 'particles'
+  if (has('id') && has('min') && has('max') && has('default')) return 'sliders'
+  return null
+}
+
+function renameKey(row: unknown, from: string, to: string): unknown {
+  if (!row || typeof row !== 'object' || !(from in row)) return row
+  const { [from]: v, ...rest } = row as Row
+  return { ...rest, [to]: v }
+}
+
+function migrateColumnNaming(events: StampedEvent[]): StampedEvent[] {
+  const kinds = new Map<string, RenameKind>()
+  const migrateCols = (cols: EditableColumn[], kind: RenameKind): EditableColumn[] => cols.map((c) => {
+    const ren = RENAMED_COLUMN[kind]
+    if (ren && c.name === ren[0]) {
+      const next: EditableColumn = { ...c, name: ren[1] }
+      // scene: surface the 'color' event rasterize already folds
+      return kind === 'scene' && next.options && !next.options.includes('color')
+        ? { ...next, options: next.options.flatMap((o) => (o === 'destroy' ? ['color', 'destroy'] : [o])) }
+        : next
+    }
+    return kind === 'particles' && c.name === 'event' && c.options
+      ? { ...c, options: c.options.map((o) => (o === 'set' ? 'setVariable' : o)) }
+      : c
+  })
+  const migrateRow = (row: unknown, kind: RenameKind): unknown => {
+    const ren = RENAMED_COLUMN[kind]
+    const r = ren ? renameKey(row, ren[0], ren[1]) : row
+    return kind === 'particles' && r && typeof r === 'object' && (r as Row).event === 'set'
+      ? { ...(r as Row), event: 'setVariable' }
+      : r
+  }
+  return events.map((e) => {
+    const table = typeof e.table === 'string' ? e.table : ''
+    if (e.kind === 'define-slider') { kinds.set(table, 'sliders'); return e }
+    if (e.kind === 'create' || e.kind === 'declare-schema') {
+      const cols = e.columns
+      const kind = Array.isArray(cols) ? classifyColumns(cols as EditableColumn[]) : null
+      if (!kind) { if (e.kind === 'declare-schema') kinds.delete(table); return e }
+      kinds.set(table, kind)
+      return {
+        ...e,
+        columns: migrateCols(cols as EditableColumn[], kind),
+        ...(Array.isArray(e.rows) ? { rows: e.rows.map((r) => migrateRow(r, kind)) } : {}),
+      }
+    }
+    const kind = kinds.get(table)
+    if (!kind) return e
+    const ren = RENAMED_COLUMN[kind]
+    switch (e.kind) {
+      case 'rename-table':
+        kinds.delete(table)
+        if (typeof e.to === 'string') kinds.set(e.to, kind)
+        return e
+      case 'remove-table':
+        kinds.delete(table)
+        return e
+      case 'seed-rows':
+        return Array.isArray(e.rows) ? { ...e, rows: e.rows.map((r) => migrateRow(r, kind)) } : e
+      case 'set-cell':
+        if (kind === 'particles') return e.col === 'event' && e.value === 'set' ? { ...e, value: 'setVariable' } : e
+        return ren && e.col === ren[0] ? { ...e, col: ren[1] } : e
+      case 'set-row':
+        return { ...e, values: migrateRow(e.values, kind) }
+      case 'rename-column': {
+        if (!ren) return e
+        const col = e.col === ren[0] ? ren[1] : e.col
+        const to = e.to === ren[0] ? ren[1] : e.to
+        return col === e.col && to === e.to ? e : { ...e, col, to }
+      }
+      default:
+        return e
+    }
+  })
+}
+
+const EDITABLE_MIGRATIONS: EventMigration[] = [migrateColumnsToArray, migratePostEventNames, migrateColumnNaming]
 
 // Re-drive a code-created table's rows from a fresh seed: a pristine code row
 // (code && !dirty) takes the new seed value at its slot; a dirty row stays as-is.
@@ -441,9 +563,10 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
     return
   }
   // A code-declared slider (expr.slider / a post cell's slider()): ensure the
-  // definitions table exists and upsert the row keyed by id — the fold keeps
+  // definitions table exists and upsert the row keyed by name — the fold keeps
   // one row per name however many declarations (reruns, peers, several code
-  // sites) land, and the last declaration in log order wins its range.
+  // sites) land, and the last declaration in log order wins its range. The wire
+  // event still carries the name as `id`; the folded column is `name`.
   if (e.kind === DEFINE_SLIDER_KIND) {
     const id = e.id != null ? String(e.id) : ''
     if (!id) return
@@ -459,7 +582,7 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
     t.events.push(eventRow(e))
     const min = typeof e.min === 'number' ? e.min : 0
     const max = typeof e.max === 'number' ? e.max : 1
-    const i = t.rows.findIndex((r) => r.id === id)
+    const i = t.rows.findIndex((r) => r.name === id)
     if (i >= 0) {
       // Only the declared range — default/disabled and any extra columns are
       // the row's own state.
@@ -467,7 +590,7 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
       t.rows[i].max = max
       t.rowMeta[i].dirty = true
     } else {
-      t.rows.push(conformRow({ id, min, max, default: min }, effectiveColumns(t)))
+      t.rows.push(conformRow({ name: id, min, max, default: min }, effectiveColumns(t)))
       t.rowMeta.push(userMeta())
     }
     return
@@ -640,7 +763,7 @@ export interface EditableTableStore {
   // the same log gives them serialize/load/multiplayer-sync for free.
   record(table: string, kind: string, payload?: Record<string, unknown>): void
   // Declare an on-screen slider from code (expr.slider / a post cell's
-  // slider()): upserts { id, min, max } in the "sliders" table. Every run's
+  // slider()): upserts { name, min, max } in the "sliders" table. Every run's
   // declaration is appended — the log is the canonical record — with src
   // derived from the name; the fold keeps one row per name and the last
   // declaration wins its range.

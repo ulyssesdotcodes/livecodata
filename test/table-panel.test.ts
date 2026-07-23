@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import {
   formatCell, formatEditableCell, allNames, nextTableName, fallbackTab, chartFor,
   displayOrder, activeRowIndex, viewersOf, tabRingStyle, lastEditors, moveFocus,
-  EVENTS_SUFFIX, type PeerPresence,
+  isCellInert, EVENTS_SUFFIX, type PeerPresence,
 } from '../src/table-panel.js'
 import type { EditableColumn } from '../src/editable-tables.js'
 import { Table } from '../src/dsl.js'
@@ -37,6 +37,38 @@ test('formatCell: object cells render a bounded preview, never a full stringify'
 test('formatEditableCell: "=" cells in number columns display as themselves', () => {
   assert.equal(formatEditableCell('number', "=slider('h').mul(2)"), "=slider('h').mul(2)")
   assert.equal(formatEditableCell('number', 2.5), '2.500', 'plain numbers keep their formatting')
+})
+
+// --- cell greying (isCellInert) ---------------------------------------------
+
+test('isCellInert: dims a cell only when its column\'s usedBy excludes the row\'s discriminant', () => {
+  const scoped: EditableColumn = { name: 'code', type: 'code', usedBy: ['setCode', 'layer'] }
+  const universal: EditableColumn = { name: 'beat', type: 'number' } // no usedBy → always live
+  const cols: EditableColumn[] = [{ name: 'event', type: 'enum', options: ['setCode', 'layer', 'transition'] }, scoped, universal]
+  assert.equal(isCellInert({ event: 'layer' }, scoped, cols), false, 'discriminant in usedBy → live')
+  assert.equal(isCellInert({ event: 'transition' }, scoped, cols), true, 'discriminant not in usedBy → inert')
+  assert.equal(isCellInert({ event: 'transition' }, universal, cols), false, 'a column with no usedBy is always live')
+  assert.equal(isCellInert({ event: '' }, scoped, cols), false, 'a blank discriminant leaves every cell live')
+  // No `event` column: the discriminant falls back to a legacy `type` column.
+  const typeCols: EditableColumn[] = [{ name: 'type', type: 'enum', options: ['create', 'update'] }, { name: 'shape', type: 'enum', options: ['box'], usedBy: ['create'] }]
+  assert.equal(isCellInert({ type: 'update' }, typeCols[1], typeCols), true)
+  assert.equal(isCellInert({ type: 'create' }, typeCols[1], typeCols), false)
+})
+
+test('isCellInert: greying tracks the merged fold — pulse names, setVariable eases, bauble transitions', async () => {
+  const { schemaColumns } = await import('../src/editable-tables.js')
+  const { SCHEMAS } = await import('../src/dsl.js')
+  const cell = (cols: EditableColumn[], name: string): EditableColumn => cols.find((c) => c.name === name)!
+  const post = schemaColumns(SCHEMAS.post)
+  assert.equal(isCellInert({ event: 'pulse' }, cell(post, 'name'), post), false, 'a pulse targets a named variable')
+  assert.equal(isCellInert({ event: 'pulse' }, cell(post, 'dur'), post), false, 'a pulse runs over dur')
+  assert.equal(isCellInert({ event: 'setVariable' }, cell(post, 'dur'), post), true, 'a setVariable keyframe eases by segment, not dur')
+  assert.equal(isCellInert({ event: 'setVariable' }, cell(post, 'ease'), post), false, "a setVariable's ease shapes the segment into it")
+  // A bauble transition morphs to the next setCode — it reads neither its own
+  // code nor value, so both cells grey out on a transition row.
+  const bauble = schemaColumns(SCHEMAS.bauble)
+  assert.equal(isCellInert({ event: 'transition' }, cell(bauble, 'code'), bauble), true)
+  assert.equal(isCellInert({ event: 'transition' }, cell(bauble, 'value'), bauble), true)
 })
 
 // --- presence helpers ---------------------------------------------------------

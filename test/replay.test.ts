@@ -4,7 +4,7 @@ import { createRuntime } from '../src/runtime.js'
 import { cookProgram } from '../src/replay.js'
 
 const PROG = (n: number): string => `
-  define("base", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
+  define("base", () => rows([{ id: "s", event: "create", beat: 1, shape: "sphere",
     color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
   define("noise", (rand) => math(() => rand()).range(${n}/30))
   define("three", (rand, table) => table("base"))
@@ -40,7 +40,7 @@ test('cooked sigs detect change per output without touching the dense rows', () 
 test('cookProgram falls back to rasterizing the three table when there is no scene view', () => {
   const rt = createRuntime()
   const code = `
-    define("three", () => rows([{ id: "s", type: "create", beat: 1, shape: "box",
+    define("three", () => rows([{ id: "s", event: "create", beat: 1, shape: "box",
       color: 1, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
   `
   const cooked = cookProgram(rt, code, 1)
@@ -51,7 +51,7 @@ test('cookProgram falls back to rasterizing the three table when there is no sce
 test('the legacy "events" table name still cooks into the scene cache', () => {
   const rt = createRuntime()
   const code = `
-    define("events", () => rows([{ id: "s", type: "create", beat: 1, shape: "box",
+    define("events", () => rows([{ id: "s", event: "create", beat: 1, shape: "box",
       color: 1, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
   `
   const cooked = cookProgram(rt, code, 1)
@@ -93,7 +93,7 @@ test('cookProgram surfaces a broken post chain (e.g. a trailing comment) as an e
 test('cookProgram surfaces the hydra setCode/setVariable rows from the "hydra" view', () => {
   const rt = createRuntime()
   const code = `
-    define("base", () => rows([{ id: "s", type: "create", beat: 1, shape: "box",
+    define("base", () => rows([{ id: "s", event: "create", beat: 1, shape: "box",
       color: 1, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
     define("scene", (rand, table) => table("base").rasterize(1/30))
     define("hydra", () => rows([
@@ -112,9 +112,9 @@ test('hydra variables can be data-driven from another view without cycling', () 
   const rt = createRuntime()
   const code = `
     define("sim", () => rows([
-      { id: "s", type: "create", beat: 1, shape: "box", color: 1,
+      { id: "s", event: "create", beat: 1, shape: "box", color: 1,
         px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 },
-      { id: "s", type: "collision", beat: 3, other: "floor" },
+      { id: "s", event: "collision", beat: 3, other: "floor" },
     ]))
     define("scene", (rand, table) => table("sim").rasterize(1/30))
     define("hydra", (rand, table) =>
@@ -123,7 +123,7 @@ test('hydra variables can be data-driven from another view without cycling', () 
         { beat: 1, event: "setVariable", name: "amount", value: 0.2 },
       ]).concat(
         table("sim")
-          .filter({ type: "collision", other: "floor" })
+          .filter({ event: "collision", other: "floor" })
           .map(r => ({ beat: r.beat, event: "setVariable", name: "amount", value: 2.6 }))
       ))
   `

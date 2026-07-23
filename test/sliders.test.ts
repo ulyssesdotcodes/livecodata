@@ -30,19 +30,19 @@ function fakeStore(): SliderStore {
 // ── Definitions ──────────────────────────────────────────────────────────────
 
 test('sliderDef parses id/min/max/default and clamps the default into range', () => {
-  const d = sliderDef({ id: 'x', min: 0, max: 10 })!
+  const d = sliderDef({ name: 'x', min: 0, max: 10 })!
   assert.deepEqual({ id: d.id, min: d.min, max: d.max, default: d.default }, { id: 'x', min: 0, max: 10, default: 0 })
-  assert.equal(sliderDef({ id: 'x', min: 0, max: 10, default: 5 })!.default, 5)
-  assert.equal(sliderDef({ id: 'x', min: 0, max: 10, default: 99 })!.default, 10, 'clamped to max')
-  assert.equal(sliderDef({ id: 'x', min: -1, max: 1, default: -9 })!.default, -1, 'clamped to min')
-  const y = sliderDef({ id: 'y' })!
+  assert.equal(sliderDef({ name: 'x', min: 0, max: 10, default: 5 })!.default, 5)
+  assert.equal(sliderDef({ name: 'x', min: 0, max: 10, default: 99 })!.default, 10, 'clamped to max')
+  assert.equal(sliderDef({ name: 'x', min: -1, max: 1, default: -9 })!.default, -1, 'clamped to min')
+  const y = sliderDef({ name: 'y' })!
   assert.deepEqual({ min: y.min, max: y.max, default: y.default }, { min: 0, max: 1, default: 0 }, 'min/max default to 0/1, default to min')
-  assert.equal(sliderDef({ min: 0, max: 1 }), null, 'no id → null')
+  assert.equal(sliderDef({ min: 0, max: 1 }), null, 'no name → null')
 })
 
 test('sliderDef takes an explicit step and defaults to a fine continuous one', () => {
-  assert.equal(sliderDef({ id: 'n', min: 0, max: 10, step: 1 })!.step, 1, 'explicit integer step')
-  const step = sliderDef({ id: 'f', min: 0, max: 1 })!.step
+  assert.equal(sliderDef({ name: 'n', min: 0, max: 10, step: 1 })!.step, 1, 'explicit integer step')
+  const step = sliderDef({ name: 'f', min: 0, max: 1 })!.step
   assert.ok(step > 0 && step <= 0.01, 'fine default, not quantized to 1')
 })
 
@@ -52,11 +52,11 @@ test('a hand-created "sliders" table (table panel, no code) yields slider defs',
   // back to editableStore.get("sliders").rows — this checks that path parses.
   const store = createEditableTableStore()
   store.createTable('sliders') // seeded with a "beat" column
-  store.addColumn('sliders', 'id', 'string')
+  store.addColumn('sliders', 'name', 'string')
   store.addColumn('sliders', 'min', 'number')
   store.addColumn('sliders', 'max', 'number')
   store.addRow('sliders')
-  store.setCell('sliders', 0, 'id', 'brightness')
+  store.setCell('sliders', 0, 'name', 'brightness')
   store.setCell('sliders', 0, 'min', 0)
   store.setCell('sliders', 0, 'max', 1)
 
@@ -70,10 +70,10 @@ test('a hand-created "sliders" table (table panel, no code) yields slider defs',
 
 test('sliderDefs keeps one def per id, last row wins', () => {
   const defs = sliderDefs([
-    { id: 'a', min: 0, max: 1 },
-    { id: 'a', min: 0, max: 5 },
-    { id: 'b', min: 0, max: 1 },
-    { min: 0, max: 1 }, // no id — dropped
+    { name: 'a', min: 0, max: 1 },
+    { name: 'a', min: 0, max: 5 },
+    { name: 'b', min: 0, max: 1 },
+    { min: 0, max: 1 }, // no name — dropped
   ])
   assert.equal(defs.length, 2)
   assert.equal(defs.find((d) => d.id === 'a')!.max, 5)
@@ -142,13 +142,13 @@ test('a fresh take (clearId then record) replaces the old one; untouched sliders
 // sameSliderDefs gates the definition refresh: a "slider" value write (a drag)
 // must fold to "unchanged" so updateSliderDefs skips rebuilding the control.
 test('sameSliderDefs is true only when every def matches, in order', () => {
-  const a = sliderDefs([{ id: 'h', min: -3, max: 3, default: 0 }])
-  assert.equal(sameSliderDefs(a, sliderDefs([{ id: 'h', min: -3, max: 3, default: 0 }])), true,
+  const a = sliderDefs([{ name: 'h', min: -3, max: 3, default: 0 }])
+  assert.equal(sameSliderDefs(a, sliderDefs([{ name: 'h', min: -3, max: 3, default: 0 }])), true,
     'a value write leaves the definitions untouched')
-  assert.equal(sameSliderDefs(a, sliderDefs([{ id: 'h', min: -5, max: 5, default: 0 }])), false,
+  assert.equal(sameSliderDefs(a, sliderDefs([{ name: 'h', min: -5, max: 5, default: 0 }])), false,
     'a retuned range is a real change')
   assert.equal(sameSliderDefs(a, sliderDefs([
-    { id: 'h', min: -3, max: 3, default: 0 }, { id: 'w', min: 0, max: 1 },
+    { name: 'h', min: -3, max: 3, default: 0 }, { name: 'w', min: 0, max: 1 },
   ])), false, 'a newly declared slider is a real change')
 })
 

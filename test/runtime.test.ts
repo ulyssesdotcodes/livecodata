@@ -168,20 +168,20 @@ test('reproduces the zero-crossing events program end-to-end', () => {
   const rt = createRuntime()
   const code = `
     define("wave", () => math(i => Math.sin(i * Math.PI / 4)).range(16))
-    define("base", "three", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
+    define("base", "three", () => rows([{ id: "s", event: "create", beat: 1, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
     define("flash", "three", (rand, table) => {
       const crossings = table("wave").flatMap((cur, i, rows) =>
         i > 0 && cur.value * rows[i - 1].value < 0 ? { beat: cur.beat } : null)
       return table("base").flatMap(o =>
-        o.type !== "create" ? null
-          : crossings.rows.map(c => ({ id: o.id, type: "color", beat: c.beat, color: 0xffffff })))
+        o.event !== "create" ? null
+          : crossings.rows.map(c => ({ id: o.id, event: "color", beat: c.beat, color: 0xffffff })))
     })
   `
   const { views } = rt.run(code, { seed: 1 })
   const events = views.get('three')!.rows
-  assert.equal(events[0].type, 'create')
-  assert.ok(events.some((e) => e.type === 'color'), 'a zero-crossing color event exists')
+  assert.equal(events[0].event, 'create')
+  assert.ok(events.some((e) => e.event === 'color'), 'a zero-crossing color event exists')
   assert.deepEqual(events.map((e) => e.beat), [...events.map((e) => e.beat)].sort((a, b) => (a as number) - (b as number)),
     'events come out beat-sorted')
 })
@@ -191,12 +191,12 @@ test('incremental cooking reuses an unchanged physics subgraph across runs', () 
   const engine = {
     simulate: (rows: Row[]): Row[] => {
       bakes++
-      return [...rows, { id: 'x', type: 'update', beat: 2, py: 1 }]
+      return [...rows, { id: 'x', event: 'update', beat: 2, py: 1 }]
     },
   }
   const rt = createRuntime({ physics: () => engine })
   const codeA = `
-    define("base", () => rows([{ id: "x", type: "create", motion: "dynamic" }]))
+    define("base", () => rows([{ id: "x", event: "create", motion: "dynamic" }]))
     define("sim", (rand, table) => physics(table("base")).simulate({ steps: 1 }))
     define("out", (rand, table) => table("sim").map(r => ({ ...r })))
   `

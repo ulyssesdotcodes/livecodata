@@ -86,7 +86,7 @@ function fakeTime(startMs: number) {
 const HYDRA_ROWS: Row[] = [{ event: 'setCode', code: 'osc().out()', beat: 1 }]
 
 const sceneCreate = (): Row => ({
-  id: 's', type: 'create', beat: 1, shape: 'sphere',
+  id: 's', event: 'create', beat: 1, shape: 'sphere',
   px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0,
 })
 
@@ -522,7 +522,7 @@ test('scene: content past the loop plays in later passes; short content resets e
   // (480 frames) makes a two-loop, 32-beat sequence.
   viz.load({ sceneRows: rasterizeRows([
     sceneCreate(),
-    { id: 's', type: 'update', beat: 21, px: 20 },
+    { id: 's', event: 'update', beat: 21, px: 20 },
   ], 16), hydraRows: [] })
   assert.equal(at(240, 480, 0).px, 8, 'pass 0, beat 9')
   assert.equal(at(60, 480, 1).px, 18, 'pass 1 continues the glide (beat 19)')
@@ -533,7 +533,7 @@ test('scene: content past the loop plays in later passes; short content resets e
   // whatever the wall-aligned pass count says.
   viz.load({ sceneRows: rasterizeRows([
     sceneCreate(),
-    { id: 's', type: 'update', beat: 13, px: 12 },
+    { id: 's', event: 'update', beat: 13, px: 12 },
   ], 16), hydraRows: [] })
   assert.equal(at(300, 480, 7).px, 10, 'beat 11 of any loop')
 })

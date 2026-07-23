@@ -83,7 +83,7 @@ const TABLE_DOCS: TableDoc[] = [
   {
     name: 'sliders / slider',
     detail: 'on-screen controls',
-    info: 'Calling expr.slider("id", min?, max?) — or slider("id", min?, max?) in a post cell — declares a labelled slider over the visual: a row lands in the "sliders" table (rows { id, min, max, default? }, also definable by hand or as a view). Dragging one records automation as "slider" events; the value resolves against the folded "slider" table (raw log: "slider·events"), exactly like MIDI.',
+    info: 'Calling expr.slider("name", min?, max?) — or slider("name", min?, max?) in a post cell — declares a labelled slider over the visual: a row lands in the "sliders" table (rows { name, min, max, default? }, also definable by hand or as a view). Dragging one records automation as "slider" events; the value resolves against the folded "slider" table (raw log: "slider·events"), exactly like MIDI.',
   },
   {
     name: 'taps',
@@ -93,7 +93,7 @@ const TABLE_DOCS: TableDoc[] = [
   {
     name: 'timeline',
     detail: 'playback time warp',
-    info: 'Define a view named "timeline" to warp playback over the baked content — one event per row (the schemas.timeline columns), each covering the playback window `dur` beats long starting at `beat`: "retime" stretches source `from`..`to` into the block `outFrom`..`outTo` and repeats it across the window (from > to runs backwards), "pingpong" plays the block there and back, "loop" cycles a source range at natural speed, "hold" freezes a frame, "speed" runs from a beat at a rate. Beats no event covers play unmapped, and the loop length becomes the events\' full extent. beats(count, { fit }) builds a one-retime timeline; .retime(table("timeline")) applies the same warp to any beat table; editable("timeline", schemas.timeline) makes it hand-editable.',
+    info: 'Define a view named "timeline" to warp playback over the baked content — one event per row (the schemas.timeline columns), each covering an until-next window from its `beat` to the next row\'s (rows ordered by loop, then beat): "retime" stretches source `from`..`to` into the block `outFrom`..`outTo` and repeats it across the window (from > to runs backwards), "pingpong" plays the block there and back, "loop" cycles a source range at natural speed, "hold" freezes a frame, "speed" runs from a beat at a rate. The last row runs to the end of its pass, whose length is the "beats" loop control; beats before the first row play unmapped, and a bare retime row is the identity warp for a plain stretch. beats(count, { fit }) builds a one-retime timeline; .retime(table("timeline")) applies the same warp to any beat table; editable("timeline", schemas.timeline) makes it hand-editable.',
   },
   {
     name: 'Streaming logs',
@@ -103,7 +103,7 @@ const TABLE_DOCS: TableDoc[] = [
   {
     name: 'Scene rows',
     detail: 'what drives the 3D view',
-    info: 'Rows rendered as 3D objects share a schema: type ("create" | "update"), id, beat, shape, position px/py/pz, rotation rx/ry/rz, scale sx/sy/sz, color. rasterize(maxBeats) bakes sparse beat-keyed event rows into a dense per-frame world state, easing numeric fields between keyframes.',
+    info: 'Rows rendered as 3D objects share a schema: event ("create" | "update" | "color" | "destroy"), id, beat, shape, position px/py/pz, rotation rx/ry/rz, scale sx/sy/sz, color. rasterize(maxBeats) bakes sparse beat-keyed event rows into a dense per-frame world state, easing numeric fields between keyframes.',
   },
 ]
 
@@ -136,7 +136,7 @@ const DSL_HELP: DslHelp[] = [
       { event: 'append', cols: 'code', info: 'Append a `.effect(…)` fragment onto the running chain.' },
       { event: 'replace', cols: 'find · value', info: 'Literal substring swap over the whole current sketch: every occurrence of `find` becomes `value`.' },
       { event: 'layer', cols: 'code · mode · value', info: 'Composite another sketch (`code`) over the current one via `mode` (blend / add / mult / diff / layer / mask); `value` is the blend amount where the mode takes one.' },
-      { event: 'transition', cols: 'code · value', info: 'Wipe from the program so far to the program after it over `value` beats. `code` is an optional black-and-white mask sketch; blank = a plain crossfade.' },
+      { event: 'transition', cols: 'code', info: 'Wipe to the NEXT setCode ahead — the wipe runs from this beat until that setCode\'s beat, so place the destination where the wipe should END. `code` is an optional black-and-white mask sketch; blank = a plain crossfade.' },
       { event: 'setVariable', cols: 'name · value', info: 'Set a live input `name` to `value`; the sketch reads it as a per-frame props function, so driving it never recompiles.' },
     ],
   },
@@ -153,7 +153,7 @@ const DSL_HELP: DslHelp[] = [
       { event: 'slice', cols: 'code · value · axis', info: 'Cut the shape open as a shell: an onion `value` thick (default 3) minus `code` — or a half-space about `axis` when `code` is blank.' },
       { event: 'tile', cols: 'value', info: 'Repeat the shape on an infinite lattice. A number spaces all three axes evenly; a string is a Janet vec3 like `[80 120 80]`.' },
       { event: 'radial', cols: 'value · axis', info: 'Repeat the shape in a circular array of `value` copies (default 6) about `axis`.' },
-      { event: 'transition', cols: 'value', info: 'Morph from the program so far to the program after it over `value` beats, on the playback clock. Build the destination with ordinary events at the same beat.' },
+      { event: 'transition', cols: '—', info: 'Morph to the NEXT setCode ahead, on the playback clock — the morph runs from this beat until that setCode\'s beat, so its beat sets the length. Build the destination with ordinary events at that later beat.' },
       { event: 'setVariable', cols: 'name · value', info: 'Compile `(def name value)` ahead of the sketch (changing one recompiles), except the reserved camera-x / camera-y / camera-zoom names, which orbit the camera as live uniforms.' },
     ],
   },
@@ -166,9 +166,9 @@ const DSL_HELP: DslHelp[] = [
       { event: 'add', cols: 'code', info: 'Append effects onto the running chain (`pixelate(6)`; a leading `.` is optional).' },
       { event: 'remove', cols: 'name', info: 'Drop every op named `name` from the chain — the beat-time bypass.' },
       { event: 'layer', cols: 'code · mode · value', info: 'Composite another chain (`code`) via `mode` (blend / add / mult / diff / mask); `value` is the blend amount where the mode takes one.' },
-      { event: 'transition', cols: 'code · dur', info: 'Wipe to the program after it over `dur` beats. `code` is an optional black-and-white mask chain; blank = a plain crossfade.' },
-      { event: 'setVariable', cols: 'name · value · dur · ease', info: 'Set a live input `name` the chain reads through a props function. Add `dur`/`ease` to tween it from its current value instead of stepping.' },
-      { event: 'pulse', cols: 'name · value · dur · ease', info: 'Add `value·env` to `name` over `dur` beats, `ease` shaping the decaying envelope. Pulses stack.' },
+      { event: 'transition', cols: 'code · ease', info: 'Wipe to the NEXT setCode ahead — the wipe runs from this beat until that setCode\'s beat, so its beat sets the length. `ease` shapes the wipe; `code` is an optional black-and-white mask chain, blank = a plain crossfade.' },
+      { event: 'setVariable', cols: 'name · value · ease', info: 'Set a live input `name` the chain reads through a props function. Rows of one `name` are a keyframe track ordered by beat, and `ease` shapes the segment INTO this one — blank STEPS (jumps to `value` on the beat), a named ease GLIDES from the previous keyframe\'s value.' },
+      { event: 'pulse', cols: 'name · value · dur · ease', info: 'Add `value·env` to `name` over `dur` beats (default 1), `ease` shaping the decaying envelope — or \'step\' for a square gate that holds the full value then drops. Pulses stack.' },
     ],
   },
 ]

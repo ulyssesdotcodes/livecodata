@@ -18,12 +18,12 @@ test('arithmetic chains evaluate left-to-right', () => {
 
 test('and/or/not compose predicates', () => {
   const base = t([
-    { type: 'collision', other: 'floor' },
-    { type: 'collision', other: 'wall' },
-    { type: 'update', other: 'floor' },
+    { event: 'collision', other: 'floor' },
+    { event: 'collision', other: 'wall' },
+    { event: 'update', other: 'floor' },
   ])
-  const out = base.filter(field('type').eq('collision').and(field('other').eq('floor')))
-  assert.deepEqual(out.rows, [{ type: 'collision', other: 'floor' }])
+  const out = base.filter(field('event').eq('collision').and(field('other').eq('floor')))
+  assert.deepEqual(out.rows, [{ event: 'collision', other: 'floor' }])
 })
 
 test('cond picks a value declaratively', () => {

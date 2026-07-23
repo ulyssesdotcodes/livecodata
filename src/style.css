@@ -1554,6 +1554,13 @@ html, body {
   box-shadow: inset 3px 0 0 rgba(224, 76, 76, 0.7);
 }
 
+/* Relevance: a cell whose column the row's event/type doesn't use (see
+   isCellInert) — dimmed, but stays fully editable, clickable, and navigable. */
+.editable-cell.cell-inert .cell-value,
+.editable-cell.cell-inert .cell-enum {
+  opacity: 0.4;
+}
+
 /* "/"-opened table switcher: a small command-palette-style overlay anchored to
    the top of the table body. */
 .table-picker {
@@ -2068,6 +2075,25 @@ html, body {
 
 .timeline-strip-handle-edge-end {
   right: 0;
+}
+
+/* Arrowhead on a fold transition span's end edge — a small triangle pointing
+   into the destination setCode's point handle (which sits at the same beat),
+   showing which sketch the wipe reveals. */
+.timeline-strip-handle-arrow {
+  position: absolute;
+  right: -1px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-right: 5px solid #4a9eff;
+}
+
+/* Both ends of a hovered transition↔destination pair (see linkedRows) — the
+   span and the setCode point it wipes toward brighten together. */
+.timeline-strip-handle-linked {
+  filter: brightness(1.35);
 }
 
 /* Ghost: a later placement of a row a loop event plays more than once — not

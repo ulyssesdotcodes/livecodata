@@ -35,7 +35,7 @@ import { createSignal, createMemo, onMount, onCleanup, For, Show, type Accessor 
 import {
   beatToX, xToBeat, gridLines, handlesFor, hitTest, pendingTimelineRows,
   resolveHandle, snapDelta, dragUpdate, withPreview,
-  valuesDiffer, exceedsDragThreshold, laneCountFor, coverageBands, meaningfulSummary,
+  valuesDiffer, exceedsDragThreshold, laneLayout, coverageBands, meaningfulSummary,
   type StripGeometry, type Handle, type HitPart, type DragOptions, type SnapMode,
 } from '../timeline-strip.js'
 import { buildTimeline } from '../timeline.js'
@@ -103,13 +103,16 @@ export function TimelineStrip(props: {
 
   const geometry = createMemo<StripGeometry>(() => ({ width: width(), maxBeats: maxBeats() }))
   const grid = createMemo(() => gridLines(geometry().maxBeats, geometry().width))
-  // Lane-per-pass (coverageBands), same split as the handles layer below —
-  // a pass's coverage tint lines up with that pass's lane band.
+  // One tint per pass (coverageBands), mapped through passBase so it lines up
+  // with that pass's lane band and spans all of its packed sub-lanes.
   const coverage = createMemo(() => {
     const geo = geometry()
-    return coverageBands(props.timelineRows()).map((band) => {
+    const bases = passBase()
+    return coverageBands(props.timelineRows(), props.vs().loopBeats).map((band) => {
       const left = beatToX(geo, band.p0)
-      return { left, width: Math.max(0, beatToX(geo, band.p1) - left), lane: band.lane, kind: band.kind }
+      const lane = bases[band.lane] ?? band.lane
+      const nextBase = bases[band.lane + 1] ?? lane + 1
+      return { left, width: Math.max(0, beatToX(geo, band.p1) - left), lane, span: Math.max(1, nextBase - lane), kind: band.kind }
     })
   })
 
@@ -157,15 +160,22 @@ export function TimelineStrip(props: {
     return handlesFor(cur.name, rows, cur.columns, liveTimelineRows(), props.vs().loopBeats)
   })
 
-  // Lane bands: at least the open table's own handles (live — the
-  // `timeline` table's `loop` column, or a content table's pass-wrapped
-  // ghosts) and at least the applied cook's own pass count, so the coverage
-  // layer's lanes still show when the currently open table has no handle
+  // The open table's packed lane layout: total bands (sub-lanes and all) and
+  // where each pass begins. Reads the same live rows handles() does — with
+  // the drag preview merged — so the two never disagree. passBase drives the
+  // coverage tints and pass labels; a pass tint spans exactly its sub-lanes.
+  const layout = createMemo(() => {
+    const cur = currentData()
+    if (!cur) return { laneCount: 1, passBase: [0] }
+    const p = preview()
+    const rows = p && p.table === cur.name ? withPreview(cur.rows, p) : cur.rows
+    return laneLayout(cur.name, rows, cur.columns, liveTimelineRows(), props.vs().loopBeats)
+  })
+  const passBase = createMemo(() => layout().passBase)
+  // At least the packed count, and at least the applied cook's pass count so
+  // the coverage layer's lanes still show when the open table has no handle
   // past lane 0 (e.g. a plain content table under a multi-pass timeline).
-  const laneCount = createMemo(() => Math.max(
-    laneCountFor(handles(), liveTimelineRows()),
-    buildTimeline(props.timelineRows()).loops,
-  ))
+  const laneCount = createMemo(() => Math.max(layout().laneCount, buildTimeline(props.timelineRows(), props.vs().loopBeats).loops))
   // Rendered lane bands cap at MAX_VISIBLE_LANES — past that the strip
   // stops growing taller (lane bands just thin out further, still exactly
   // laneCount of them) and an overflow badge names the real count.
@@ -299,6 +309,19 @@ export function TimelineStrip(props: {
   // all read it. `row`/`ghost` mirror the preview's shape so the readout memo
   // treats a hover and a drag through the same lookup.
   const [hover, setHover] = createSignal<{ row: number; ghost: boolean; part: HitPart } | null>(null)
+  // Fold transition ↔ destination pairing: hovering either the transition
+  // span or the destination setCode point highlights both (the arrowhead
+  // links them). Empty unless the hover lands on a paired row.
+  const linkedRows = createMemo<Set<number>>(() => {
+    const hv = hover()
+    const set = new Set<number>()
+    if (!hv) return set
+    for (const h of handles()) {
+      if (h.endRow === undefined) continue
+      if (h.row === hv.row || h.endRow === hv.row) { set.add(h.row); set.add(h.endRow) }
+    }
+    return set
+  })
   // Last row reported to onStripRowChange — hover fires per pointermove, so
   // dedupe to actual row changes rather than spamming the panel every frame.
   let reportedRow: string | null = null
@@ -326,11 +349,13 @@ export function TimelineStrip(props: {
     // The `timeline` table's own rows are already playback-axis positions —
     // only a content table's drop needs mapping back through sourceBeatAt.
     if (g.table !== 'timeline') {
-      const tl = buildTimeline(liveTimelineRows())
+      const tl = buildTimeline(liveTimelineRows(), props.vs().loopBeats)
       if (tl.active) opts.timeline = tl
     }
-    const { values } = dragUpdate(g.handle, g.part, dBeats, opts)
-    setPreview({ table: g.table, row: g.handle.row, part: g.part, values, ghost: g.handle.ghost })
+    // dragUpdate can retarget another row (a fold transition's end edge moves
+    // its destination setCode) — preview and commit that row, not the grabbed one.
+    const { row: target, values } = dragUpdate(g.handle, g.part, dBeats, opts)
+    setPreview({ table: g.table, row: target, part: g.part, values, ghost: g.handle.ghost })
   }
 
   // One store.setRow for the whole gesture (a no-op if the drag snapped back
@@ -411,10 +436,15 @@ export function TimelineStrip(props: {
     if (!hit) { props.onSelectRow?.(cur.name, null); return }
     const handle = resolveHandle(handles(), geometry(), hit, x, lane)
     if (!handle) return
+    // A finger can't reliably land on a few-px edge, so touch drags always
+    // move the whole row — duration edits stay in the table on mobile. The
+    // `timeline` table's windows are until-next, so their edges belong to the
+    // neighbouring row: there's no length to resize, and every drag is a move.
+    const part = e.pointerType === 'touch' || cur.name === 'timeline' ? 'body' : hit.part
     gesture = {
       table: cur.name,
       handle,
-      part: hit.part,
+      part,
       pointerId: e.pointerId,
       startClientX: e.clientX,
       startClientY: e.clientY,
@@ -480,17 +510,20 @@ export function TimelineStrip(props: {
         onPointerCancel={onPointerCancel}
         onPointerLeave={onPointerLeave}
       >
-      <Show when={laneCount() > 1}>
-        <For each={Array.from({ length: laneCount() })}>
-          {(_, i) => (
-            <div class="timeline-strip-lane" style={{ top: `${(i() / laneCount()) * 100}%`, height: `${100 / laneCount()}%` }}>
-              <span class="timeline-strip-lane-label">pass {i() + 1}</span>
+      <Show when={passBase().length > 1}>
+        <For each={passBase()}>
+          {(base, g) => (
+            <div
+              class="timeline-strip-lane"
+              style={{ top: `${(base / laneCount()) * 100}%`, height: `${(((passBase()[g() + 1] ?? laneCount()) - base) / laneCount()) * 100}%` }}
+            >
+              <span class="timeline-strip-lane-label">pass {g() + 1}</span>
             </div>
           )}
         </For>
       </Show>
       <Show when={laneCount() > MAX_VISIBLE_LANES}>
-        <div class="timeline-strip-lane-overflow">{laneCount()} passes</div>
+        <div class="timeline-strip-lane-overflow">{laneCount()} lanes</div>
       </Show>
       <For each={coverage()}>
         {(seg) => (
@@ -500,7 +533,7 @@ export function TimelineStrip(props: {
               left: `${seg.left}px`,
               width: `${seg.width}px`,
               top: `${(seg.lane / laneCount()) * 100}%`,
-              height: `${100 / laneCount()}%`,
+              height: `${(seg.span / laneCount()) * 100}%`,
             }}
           />
         )}
@@ -525,6 +558,7 @@ export function TimelineStrip(props: {
                     'timeline-strip-handle-disabled': h.disabled,
                     'timeline-strip-handle-pending': pendingRows().has(h.row),
                     'timeline-strip-handle-dragging': preview()?.table === cur().name && preview()?.row === h.row,
+                    'timeline-strip-handle-linked': linkedRows().has(h.row),
                   }}
                   style={{ ...handleBox(h), 'box-shadow': ringStyle(cur().name, h) }}
                 >
@@ -534,6 +568,11 @@ export function TimelineStrip(props: {
                   <Show when={h.kind === 'span'}>
                     <span class="timeline-strip-handle-edge timeline-strip-handle-edge-start" />
                     <span class="timeline-strip-handle-edge timeline-strip-handle-edge-end" />
+                    {/* A fold transition's end edge points to its destination
+                        setCode's dot — the arrowhead meets that point handle. */}
+                    <Show when={h.endRow !== undefined}>
+                      <span class="timeline-strip-handle-arrow" />
+                    </Show>
                   </Show>
                   <Show when={h.pass}>
                     <span class="timeline-strip-handle-pass">{`pass ${(h.pass ?? 0) + 1}`}</span>

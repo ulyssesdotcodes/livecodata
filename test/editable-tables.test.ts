@@ -255,11 +255,11 @@ test('migrates a v1 session whose create event stored the editable() schema obje
   ], 'the table data is intact')
 
   const reSaved = JSON.parse(store.serialize())
-  assert.equal(reSaved.version, 3)
+  assert.equal(reSaved.version, 4)
   assert.ok(Array.isArray(reSaved.events[0].columns))
 })
 
-test('migrates a v2 session: post chain/set events become setCode/setVariable, particles keep set', () => {
+test('migrates a v2 session: post chain/set events become setCode/setVariable, particles set becomes setVariable', () => {
   const legacyV2 = JSON.stringify({
     version: 2, start: 1,
     events: [
@@ -297,7 +297,98 @@ test('migrates a v2 session: post chain/set events become setCode/setVariable, p
     'seed rows and cell edits read the new names, followed through a rename-table')
   const options = fx.columns.find((c) => c.name === 'event')!.options!
   assert.ok(options.includes('setCode') && options.includes('setVariable') && !options.includes('chain'))
-  assert.equal(store.get('particles')!.rows[0].event, 'set', "particles' own 'set' event is untouched")
+  // migratePostEventNames leaves particles alone (no 'chain'); the later
+  // column-naming migration is what renames particles' own 'set'.
+  assert.equal(store.get('particles')!.rows[0].event, 'setVariable', "particles' 'set' folds to 'setVariable'")
+  assert.ok(store.get('particles')!.columns.find((c) => c.name === 'event')!.options!.includes('setVariable'))
+})
+
+test('column-naming migration (v3→v4): old-shape tables fold to the new columns and events', () => {
+  const legacy = JSON.stringify({
+    version: 3, start: 1,
+    events: [
+      // origami: `at` time column → `beat`, edited (set-row) after a rename-table
+      {
+        kind: 'create', table: 'folds', declared: true,
+        columns: [
+          { name: 'step', type: 'string' }, { name: 'p1', type: 'string' },
+          { name: 'move', type: 'string' }, { name: 'at', type: 'number' }, { name: 'dur', type: 'number' },
+        ],
+        rows: [{ step: 'diag', p1: '0,0', move: '0.6,0.3', at: 1, dur: 2 }],
+        seq: 0, t: 0, src: 'a',
+      },
+      { kind: 'rename-table', table: 'folds', to: 'crane', seq: 1, t: 0, src: 'a' },
+      { kind: 'set-row', table: 'crane', row: 0, values: { at: 6 }, seq: 2, t: 0, src: 'a' },
+      // scene: `type` discriminant → `event`, a seeded 'color' row survives, a
+      // set-cell on the old `type` column lands on `event`
+      {
+        kind: 'create', table: 'scene', declared: true,
+        columns: [
+          { name: 'beat', type: 'number' }, { name: 'id', type: 'string' },
+          { name: 'type', type: 'enum', options: ['create', 'update', 'destroy'] },
+          { name: 'color', type: 'number' }, { name: 'dur', type: 'number' },
+        ],
+        rows: [{ beat: 1, id: 'a', type: 'create', color: 0xffffff }, { beat: 5, id: 'a', type: 'color', color: 0xff0000, dur: 2 }],
+        seq: 3, t: 0, src: 'a',
+      },
+      { kind: 'set-cell', table: 'scene', row: 0, col: 'type', value: 'update', seq: 4, t: 0, src: 'a' },
+      // sliders: `id` name column → `name`, both a seeded row (edited) and a
+      // define-slider (whose wire keeps `id`) fold into `name`
+      {
+        kind: 'create', table: 'sliders', declared: true,
+        columns: [
+          { name: 'id', type: 'string' }, { name: 'min', type: 'number' },
+          { name: 'max', type: 'number' }, { name: 'default', type: 'number' },
+        ],
+        rows: [{ id: 'height', min: -1, max: 1, default: 0 }],
+        seq: 5, t: 0, src: 'a',
+      },
+      { kind: 'set-cell', table: 'sliders', row: 0, col: 'id', value: 'depth', seq: 6, t: 0, src: 'a' },
+      { kind: 'define-slider', table: 'sliders', src: 'slider:warp', id: 'warp', min: 0, max: 2, seq: 7, t: 0 },
+    ],
+  })
+  const store = createEditableTableStore()
+  assert.ok(store.load(legacy), 'the old session loads')
+
+  const crane = store.get('crane')!
+  assert.ok(crane.columns.some((c) => c.name === 'beat') && !crane.columns.some((c) => c.name === 'at'))
+  assert.equal(crane.rows[0].beat, 6, 'the set-row on `at` landed on `beat`')
+  assert.equal('at' in crane.rows[0], false)
+
+  const scene = store.get('scene')!
+  assert.ok(scene.columns.find((c) => c.name === 'event')!.options!.includes('color'), 'the color event is a dropdown option')
+  assert.ok(!scene.columns.some((c) => c.name === 'type'))
+  assert.deepEqual(scene.rows.map((r) => r.event), ['update', 'color'],
+    'the color row folds to event:color; the set-cell on `type` retargets to `event`')
+
+  const sliders = store.get('sliders')!
+  assert.ok(sliders.columns.some((c) => c.name === 'name') && !sliders.columns.some((c) => c.name === 'id'))
+  assert.deepEqual(sliders.rows.map((r) => r.name).sort(), ['depth', 'warp'],
+    'the seeded row (renamed by set-cell) and the define-slider both fold into `name`')
+})
+
+test('column-naming migration: a rename-column referencing an old name is retargeted', () => {
+  const legacy = JSON.stringify({
+    version: 3, start: 1,
+    events: [
+      {
+        kind: 'create', table: 'sliders',
+        columns: [
+          { name: 'id', type: 'string' }, { name: 'min', type: 'number' },
+          { name: 'max', type: 'number' }, { name: 'default', type: 'number' },
+        ],
+        rows: [{ id: 'x', min: 0, max: 1, default: 0 }], seq: 0, t: 0, src: 'a',
+      },
+      // the user had renamed the (old) `id` column before the convention change
+      { kind: 'rename-column', table: 'sliders', col: 'id', to: 'label', seq: 1, t: 0, src: 'a' },
+    ],
+  })
+  const store = createEditableTableStore()
+  assert.ok(store.load(legacy))
+  const cols = store.get('sliders')!.columns.map((c) => c.name)
+  assert.ok(cols.includes('label') && !cols.includes('id') && !cols.includes('name'),
+    'the rename-column retargets from the migrated `name` column to `label`')
+  assert.equal(store.get('sliders')!.rows[0].label, 'x')
 })
 
 test('load replaces the store entirely and notifies; clear empties it and notifies', () => {
@@ -351,15 +442,24 @@ test('schemaColumns: a string[] spec is enum shorthand; the object form is expli
   const cols = schemaColumns({
     beat: 'number',
     event: ['setCode', 'layer'],
-    mode: { type: 'enum', options: ['blend', 'add'] },
+    mode: { type: 'enum', options: ['blend', 'add'], usedBy: ['layer'] },
     plain: { type: 'string' },
   })
   assert.deepEqual(cols, [
     { name: 'beat', type: 'number' },
     { name: 'event', type: 'enum', options: ['setCode', 'layer'] },
-    { name: 'mode', type: 'enum', options: ['blend', 'add'] },
+    { name: 'mode', type: 'enum', options: ['blend', 'add'], usedBy: ['layer'] },
     { name: 'plain', type: 'string' },
   ])
+})
+
+test('declare-schema round-trips usedBy through serialize/load', () => {
+  const store = createEditableTableStore()
+  store.ensure('h', { event: ['setCode', 'layer'], mode: { type: 'enum', options: ['blend', 'add'], usedBy: ['layer'] } })
+  const store2 = createEditableTableStore()
+  assert.ok(store2.load(store.serialize()))
+  const col = store2.get('h')!.columns.find((c) => c.name === 'mode')!
+  assert.deepEqual(col.usedBy, ['layer'])
 })
 
 test('a code column language rides events, survives serialize/load, and tracks re-declaration', () => {
@@ -416,11 +516,18 @@ test('"=" cells: valid in number columns; streaming results barred from timing c
   assert.equal(cellValid('=broken(', num), false)
   assert.equal(cellValid('=notAFn(1)', num), false)
 
-  for (const name of ['beat', 'dur', 'end', 'loop']) {
+  for (const name of ['beat', 'dur', 'loop']) {
     const col: EditableColumn = { name, type: 'number' }
     assert.equal(cellValid("=slider('h')", col), false, `a binding in ${name} would NaN the frame math`)
     assert.equal(cellValid('=lit(4).mul(2)', col), true, 'a constant expression is a plain number by cook time')
   }
+})
+
+test('cellValid: a plain string in `value` is valid for events that legitimately consume one there, not others', () => {
+  const num: EditableColumn = { name: 'value', type: 'number' }
+  assert.equal(cellValid('[80 120 80]', num, 'tile'), true)
+  assert.equal(cellValid('[80 120 80]', num, 'radial'), false)
+  assert.equal(cellValid('foo', num, 'replace'), true)
 })
 
 test('row rules: replace events and color pulses reject "=" values', () => {
@@ -743,8 +850,8 @@ test('every declaration is logged; the fold keeps one row per name and the last 
   const store = createEditableTableStore()
   store.defineSlider('height', 0, 2)
   assert.deepEqual(
-    store.get('sliders')!.rows.map((r) => ({ id: r.id, min: r.min, max: r.max, default: r.default })),
-    [{ id: 'height', min: 0, max: 2, default: 0 }],
+    store.get('sliders')!.rows.map((r) => ({ name: r.name, min: r.min, max: r.max, default: r.default })),
+    [{ name: 'height', min: 0, max: 2, default: 0 }],
   )
   assert.equal(store.log.all().find((e) => e.kind === 'define-slider')!.src, 'slider:height')
   const len = store.log.length
@@ -755,7 +862,7 @@ test('every declaration is logged; the fold keeps one row per name and the last 
   const row = store.get('sliders')!.rows[0]
   assert.deepEqual({ min: row.min, max: row.max }, { min: 0, max: 4 }, 'last declaration wins')
   store.defineSlider('warp') // min/max default 0–1
-  const warp = store.get('sliders')!.rows.find((r) => r.id === 'warp')!
+  const warp = store.get('sliders')!.rows.find((r) => r.name === 'warp')!
   assert.deepEqual({ min: warp.min, max: warp.max }, { min: 0, max: 1 })
 })
 

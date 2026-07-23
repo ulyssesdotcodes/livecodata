@@ -151,7 +151,7 @@ export function simulateScene(Jolt: JoltModule, baseRows: Row[], opts: SimulateO
     collisions = true,
   } = opts
 
-  const creates = (baseRows ?? []).filter((r) => ((r.type as string | undefined) ?? 'create') === 'create' && r.id != null)
+  const creates = (baseRows ?? []).filter((r) => ((r.event as string | undefined) ?? 'create') === 'create' && r.id != null)
 
   const jolt = makeJoltInterface(Jolt)
   const physicsSystem = jolt.GetPhysicsSystem()
@@ -219,8 +219,8 @@ export function simulateScene(Jolt: JoltModule, baseRows: Row[], opts: SimulateO
       const p = manifold.GetWorldSpaceContactPointOn1(0)
       const cx = p.GetX() as number, cy = p.GetY() as number, cz = p.GetZ() as number
       const beat = secondsToBeat(frame / fps)
-      collisionRows.push({ id: idA, type: 'collision', beat, other: idB, cx, cy, cz })
-      collisionRows.push({ id: idB, type: 'collision', beat, other: idA, cx, cy, cz })
+      collisionRows.push({ id: idA, event: 'collision', beat, other: idB, cx, cy, cz })
+      collisionRows.push({ id: idB, event: 'collision', beat, other: idA, cx, cy, cz })
     }
     listener.OnContactPersisted = () => {}
     listener.OnContactRemoved = () => {}
@@ -248,7 +248,7 @@ export function simulateScene(Jolt: JoltModule, baseRows: Row[], opts: SimulateO
       const r = bodyInterface.GetRotation(bodyId)
       const e = quatToEuler(r.GetX() as number, r.GetY() as number, r.GetZ() as number, r.GetW() as number)
       updateRows.push({
-        id, type: 'update', beat: secondsToBeat(frame / fps),
+        id, event: 'update', beat: secondsToBeat(frame / fps),
         px: p.GetX() as number, py: p.GetY() as number, pz: p.GetZ() as number,
         rx: e.rx, ry: e.ry, rz: e.rz,
       })

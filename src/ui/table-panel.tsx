@@ -12,7 +12,7 @@ import { SERIES_COLORS, computeColRanges, drawSeriesChart, fmtNum, PANEL_CHART_S
 import {
   MAX_ROWS, COLUMN_TYPES, EVENTS_SUFFIX, formatCell, formatEditableCell,
   allNames, nextTableName, fallbackTab, chartFor, displayOrder, activeRowIndex,
-  tabRingStyle, viewersOf, lastEditors, moveFocus,
+  tabRingStyle, viewersOf, lastEditors, moveFocus, isCellInert,
   type TablePanel, type TablePanelOptions, type PeerPresence, type CellFocus, type FocusDir,
 } from '../table-panel.js'
 import { listenGlobal, focusInput } from './dom.js'
@@ -553,12 +553,23 @@ function TablePanelView(props: PanelProps) {
   // show an always-live dropdown so a value is one pick away mid-performance.
   // Committing appends a set-cell event to the store — the edit *is* the
   // event. Values that don't fit the column type get a `cell-invalid` marker.
+  // A cell whose column the row's event/type ignores gets `cell-inert`
+  // (dimmed, but stays fully editable — see isCellInert in table-panel.ts).
   function EditableCell(cellProps: { table: string; rowIndex: number; col: EditableColumn }) {
     const { table, rowIndex, col } = cellProps
     const key = `${rowIndex}::${col.name}`
     const editing = () => editingCell() === key
-    const raw = () => editableData()?.data.rows[rowIndex]?.[col.name]
-    const invalid = () => !cellValid(raw(), col)
+    const row = () => editableData()?.data.rows[rowIndex]
+    const raw = () => row()?.[col.name]
+    const rowEvent = () => {
+      const r = row()
+      return typeof r?.event === 'string' ? r.event : typeof r?.type === 'string' ? r.type : undefined
+    }
+    const invalid = () => !cellValid(raw(), col, rowEvent())
+    const inert = () => {
+      const r = row()
+      return r ? isCellInert(r, col, editableData()?.data.columns ?? []) : false
+    }
 
     const commit = (value: unknown, viaBlur = false): void => {
       // Guard the Enter-then-blur double fire: only the open editor commits.
@@ -604,7 +615,7 @@ function TablePanelView(props: PanelProps) {
     return (
       <td
         class="editable-cell"
-        classList={{ editing: editing(), 'cell-invalid': invalid(), 'cell-focused': focused() }}
+        classList={{ editing: editing(), 'cell-invalid': invalid(), 'cell-focused': focused(), 'cell-inert': inert() }}
         data-row={rowIndex}
         data-col={col.name}
         style={editors().length ? { outline: `2px solid ${editors()[0].color}`, 'outline-offset': '-2px' } : undefined}
