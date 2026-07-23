@@ -34,7 +34,7 @@
 import { createSignal, createMemo, onMount, onCleanup, For, Show, type Accessor } from 'solid-js'
 import {
   beatToX, xToBeat, gridLines, handlesFor, hitTest, pendingTimelineRows,
-  resolveHandle, dragModeFor, snapDelta, dragUpdate, withPreview,
+  resolveHandle, snapDelta, dragUpdate, withPreview,
   valuesDiffer, exceedsDragThreshold, laneCountFor, coverageBands, meaningfulSummary,
   type StripGeometry, type Handle, type HitPart, type DragOptions, type SnapMode,
 } from '../timeline-strip.js'
@@ -329,7 +329,7 @@ export function TimelineStrip(props: {
       const tl = buildTimeline(liveTimelineRows())
       if (tl.active) opts.timeline = tl
     }
-    const { values } = dragUpdate(g.handle, dragModeFor(g.part), dBeats, opts)
+    const { values } = dragUpdate(g.handle, g.part, dBeats, opts)
     setPreview({ table: g.table, row: g.handle.row, part: g.part, values, ghost: g.handle.ghost })
   }
 
@@ -411,13 +411,10 @@ export function TimelineStrip(props: {
     if (!hit) { props.onSelectRow?.(cur.name, null); return }
     const handle = resolveHandle(handles(), geometry(), hit, x, lane)
     if (!handle) return
-    // A finger can't reliably land on a few-px edge, so touch drags always
-    // move the whole row — duration edits stay in the table on mobile.
-    const part = e.pointerType === 'touch' ? 'body' : hit.part
     gesture = {
       table: cur.name,
       handle,
-      part,
+      part: hit.part,
       pointerId: e.pointerId,
       startClientX: e.clientX,
       startClientY: e.clientY,
