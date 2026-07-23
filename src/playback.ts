@@ -279,6 +279,9 @@ export function createPlaybackEngine(
   let startTime: number | null = null
   let anchorBeatSec = DEFAULT_BEAT_SECONDS
   let pausedBeat = 0
+  // The live timeline rows, kept so a loop-beats change can rebuild the warp:
+  // a timeline's pass length is now the GUI loop-beats, not its own extent.
+  let timelineRows: Row[] = []
   let timeline: Timeline = buildTimeline([])
   // Absolute instant the timeline's pass counting is based on — its shared
   // apply stamp (see loopEpochsFromApplies). 0 (the Unix epoch) until stamped.
@@ -435,7 +438,8 @@ export function createPlaybackEngine(
   // a kind absent keeps its current epoch.
   function load(cooked: LoadedRows): void {
     for (const v of visualizers) v.load(cooked)
-    timeline = buildTimeline(cooked.timelineRows ?? [])
+    timelineRows = cooked.timelineRows ?? []
+    timeline = buildTimeline(timelineRows, loopBeats)
     if (typeof cooked.loopEpochs?.timeline === 'number') timelineEpoch = cooked.loopEpochs.timeline
     recomputeMax()
     retimeTo(currentTime())
@@ -478,6 +482,8 @@ export function createPlaybackEngine(
     }
     loopBeats = n
     onLoopBeats?.(n)
+    // The pass length feeds the timeline warp, so a new loop length rebuilds it.
+    timeline = buildTimeline(timelineRows, loopBeats)
     recomputeMax()
     retimeTo(currentTime())
   }

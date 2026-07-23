@@ -107,7 +107,7 @@ export function TimelineStrip(props: {
   // a pass's coverage tint lines up with that pass's lane band.
   const coverage = createMemo(() => {
     const geo = geometry()
-    return coverageBands(props.timelineRows()).map((band) => {
+    return coverageBands(props.timelineRows(), props.vs().loopBeats).map((band) => {
       const left = beatToX(geo, band.p0)
       return { left, width: Math.max(0, beatToX(geo, band.p1) - left), lane: band.lane, kind: band.kind }
     })
@@ -163,8 +163,8 @@ export function TimelineStrip(props: {
   // layer's lanes still show when the currently open table has no handle
   // past lane 0 (e.g. a plain content table under a multi-pass timeline).
   const laneCount = createMemo(() => Math.max(
-    laneCountFor(handles(), liveTimelineRows()),
-    buildTimeline(props.timelineRows()).loops,
+    laneCountFor(handles(), liveTimelineRows(), props.vs().loopBeats),
+    buildTimeline(props.timelineRows(), props.vs().loopBeats).loops,
   ))
   // Rendered lane bands cap at MAX_VISIBLE_LANES — past that the strip
   // stops growing taller (lane bands just thin out further, still exactly
@@ -326,7 +326,7 @@ export function TimelineStrip(props: {
     // The `timeline` table's own rows are already playback-axis positions —
     // only a content table's drop needs mapping back through sourceBeatAt.
     if (g.table !== 'timeline') {
-      const tl = buildTimeline(liveTimelineRows())
+      const tl = buildTimeline(liveTimelineRows(), props.vs().loopBeats)
       if (tl.active) opts.timeline = tl
     }
     const { values } = dragUpdate(g.handle, dragModeFor(g.part), dBeats, opts)
@@ -412,8 +412,10 @@ export function TimelineStrip(props: {
     const handle = resolveHandle(handles(), geometry(), hit, x, lane)
     if (!handle) return
     // A finger can't reliably land on a few-px edge, so touch drags always
-    // move the whole row — duration edits stay in the table on mobile.
-    const part = e.pointerType === 'touch' ? 'body' : hit.part
+    // move the whole row — duration edits stay in the table on mobile. The
+    // `timeline` table's windows are until-next, so their edges belong to the
+    // neighbouring row: there's no length to resize, and every drag is a move.
+    const part = e.pointerType === 'touch' || cur.name === 'timeline' ? 'body' : hit.part
     gesture = {
       table: cur.name,
       handle,

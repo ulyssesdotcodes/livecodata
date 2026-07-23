@@ -103,20 +103,24 @@ editable("post", schemas.post)
 // same path, different time.
 // Press "Run" (or Cmd/Ctrl-Enter), then hit Play under the scene.
 
-// 1. The warp: one timeline EVENT per row (\`schemas.timeline\` — hover it),
-//    each covering the playback window \`dur\` beats long starting at \`beat\`.
-//    Seeded on the right, one of each kind:
+// 1. The warp: one timeline EVENT per row (\`schemas.timeline\` — hover it).
+//    Each row covers an UNTIL-NEXT window — from its own \`beat\` to the next
+//    row's — so there's no \`dur\`: to make a window longer, move the next row
+//    later. Rows are seeded on the right, one of each kind:
 //      retime    beats 1..7   plays source 1..5 stretched across 6 beats
 //      loop      beats 7..11  cycles source 1..3 at natural speed (2×)
 //      pingpong  beats 11..15 swings source 1..5 there and back
 //      hold      beats 15..17 freezes on source beat 5 (the path's end)
-//    retime is the general one: \`from\`..\`to\` is the source range (from > to
-//    runs it backwards), and an optional output block \`outFrom\`..\`outTo\`
-//    repeats across the window — pingpong is a retime whose block plays the
-//    range forward then backward. A numeric cell left 0 means "unset". The
-//    name is ours to pick — "timeline" is the one reserved name: a table
-//    saved under it (or routed with .outTimeline()) warps GLOBAL playback,
-//    every table at once, instead of being applied by hand like this one.
+//    The last row (the hold) runs to the end of the loop — that length is the
+//    "beats" control under the scene, not the timeline. retime is the general
+//    one: \`from\`..\`to\` is the source range (from > to runs it backwards), and
+//    an optional output block \`outFrom\`..\`outTo\` repeats across the window —
+//    pingpong is a retime whose block plays the range forward then backward. A
+//    plain stretch of unwarped time is just a bare retime row (its window
+//    plays straight through). A numeric cell left 0 means "unset". The name is
+//    ours to pick — "timeline" is the one reserved name: a table saved under
+//    it (or routed with .outTimeline()) warps GLOBAL playback, every table at
+//    once, instead of being applied by hand like this one.
 editable("warp", schemas.timeline)
 
 // 2. The sphere's keyframes, warped on their way to the scene:
@@ -144,10 +148,10 @@ editable("post", schemas.post)
         { beat: 5, px: 0,  py: 0.3, pz: -1 },
       ],
       warp: [
-        { event: 'retime',   beat: 1,  dur: 6, from: 1, to: 5 },
-        { event: 'loop',     beat: 7,  dur: 4, from: 1, to: 3 },
-        { event: 'pingpong', beat: 11, dur: 4, from: 1, to: 5 },
-        { event: 'hold',     beat: 15, dur: 2, from: 5 },
+        { event: 'retime',   beat: 1,  from: 1, to: 5 },
+        { event: 'loop',     beat: 7,  from: 1, to: 3 },
+        { event: 'pingpong', beat: 11, from: 1, to: 5 },
+        { event: 'hold',     beat: 15, from: 5 },
       ],
       post: [
         { beat: 1, event: "setCode", code: "bloom((p) => p.glow, 0.4, 0.6)" },
