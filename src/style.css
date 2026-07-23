@@ -2077,6 +2077,25 @@ html, body {
   right: 0;
 }
 
+/* Arrowhead on a fold transition span's end edge — a small triangle pointing
+   into the destination setCode's point handle (which sits at the same beat),
+   showing which sketch the wipe reveals. */
+.timeline-strip-handle-arrow {
+  position: absolute;
+  right: -1px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-right: 5px solid #4a9eff;
+}
+
+/* Both ends of a hovered transition↔destination pair (see linkedRows) — the
+   span and the setCode point it wipes toward brighten together. */
+.timeline-strip-handle-linked {
+  filter: brightness(1.35);
+}
+
 /* Ghost: a later placement of a row a loop event plays more than once — not
    the primary click target, so it reads as translucent. */
 .timeline-strip-handle-ghost {

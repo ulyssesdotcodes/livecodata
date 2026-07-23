@@ -16,11 +16,13 @@ import {
   exceedsDragThreshold,
   withPreview,
   pendingTimelineRows,
-  laneCountFor,
+  laneLayout,
   coverageBands,
   meaningfulSummary,
   type Handle,
 } from '../src/timeline-strip.js'
+import { hydraTransitionWindows } from '../src/hydra.js'
+import { postTransitionWindows } from '../src/post.js'
 import type { EditableColumn } from '../src/editable-tables.js'
 
 const cols = (...names: string[]): EditableColumn[] => names.map((name) => ({ name, type: 'number' }))
@@ -79,6 +81,54 @@ test('handlesFor: with no timeline defined, a content row is identity — one no
   ])
 })
 
+test('handlesFor: a fold transition draws its until-next window as a span (endRow → destination); instants stay points', () => {
+  // hydra transitions wipe to the NEXT setCode ahead — the span width is that
+  // window, matching hydraTransitionWindows (so the strip can't disagree with
+  // playback). Every other event, and any stray column, draws a point.
+  const rows = [
+    { beat: 3, event: 'setCode', code: 'osc().out(o0)' },
+    { beat: 5, event: 'transition' },
+    { beat: 9, event: 'setCode', code: 'noise().out(o0)' },
+  ]
+  const handles = handlesFor('hydra', rows, cols('beat'), [])
+  assert.equal(handles.find((h) => h.row === 0)!.kind, 'point', 'setCode is an instant')
+  const t = handles.find((h) => h.row === 1)!
+  const win = hydraTransitionWindows(rows)[0]
+  assert.equal(t.kind, 'span')
+  assert.deepEqual([t.beat, t.end, t.endRow], [win.start, win.end, win.endRow], 'span parity with the fold window')
+  assert.deepEqual([t.beat, t.end, t.endRow], [5, 9, 2], 'runs to the beat-9 setCode, whose row is the arrow target')
+})
+
+test('handlesFor: a fold table draws a point for an inert dur; setVariable/pulse never span', () => {
+  // Nothing here consumes a window — a stray dur on a post setCode, a plain
+  // setVariable, a pulse — so all three are points, never misleading spans.
+  const rows = [
+    { beat: 1, event: 'setCode', code: 'edges(0.2)', dur: 4 },
+    { beat: 3, event: 'setVariable', name: 'x', value: 1, dur: 2 },
+    { beat: 5, event: 'pulse', dur: 2 },
+  ]
+  const handles = handlesFor('post', rows, cols('beat', 'dur'), [])
+  assert.deepEqual(handles.map((h) => h.kind), ['point', 'point', 'point'])
+})
+
+test('handlesFor: a wrapped fold transition (destination earlier in the loop) renders two arcs', () => {
+  // The transition at beat 7 wipes to the beat-2 setCode of the next pass, so
+  // its window wraps the 8-beat loop: a tail arc to the strip end and a head
+  // arc from the start to the destination, the arrowhead (endRow) on the head.
+  const rows = [
+    { beat: 2, event: 'setCode', code: 'a().out(o0)' },
+    { beat: 6, event: 'setCode', code: 'b().out(o0)' },
+    { beat: 7, event: 'transition' },
+  ]
+  const arcs = handlesFor('hydra', rows, cols('beat'), [], 8).filter((h) => h.row === 2)
+  assert.equal(arcs.length, 2, 'a wrapped window is a tail arc + a head arc')
+  const tail = arcs.find((h) => h.endRow === undefined)!
+  const head = arcs.find((h) => h.endRow !== undefined)!
+  assert.deepEqual([tail.beat, tail.end], [7, 9], 'tail: transition → strip end (loopBeats + 1)')
+  assert.deepEqual([head.beat, head.end], [1, 2], 'head: strip start → destination beat')
+  assert.equal(head.endRow, 0, 'arrowhead targets the earlier setCode')
+})
+
 test('handlesFor: a content row played by a loop event gets one handle per placement, first primary, rest ghosts', () => {
   const timelineRows = [{ event: 'loop', beat: 1, from: 1, to: 5 }]
   const rows = [{ id: 'a', beat: 1 }]
@@ -126,16 +176,30 @@ test('handlesFor: a content row whose beat runs past loopBeats wraps into a late
   )
 })
 
-// --- laneCountFor ----------------------------------------------------------
+// --- laneLayout + sub-lane packing ------------------------------------------
 
-test('laneCountFor: the max of the open handles\' own lanes and the timeline\'s own pass count', () => {
+test('laneLayout: a two-pass timeline reserves one lane per pass even with no content handles', () => {
   const twoPassTimeline = [
     { event: 'hold', beat: 1, from: 1, loop: 0 },
     { event: 'hold', beat: 1, from: 1, loop: 1 },
   ]
-  assert.equal(laneCountFor([], twoPassTimeline), 2, 'a two-pass timeline needs 2 lanes even with no handles past lane 0')
-  const handles: Handle[] = [{ row: 0, kind: 'point', beat: 1, lane: 3, ghost: false, disabled: false }]
-  assert.equal(laneCountFor(handles, []), 4, 'a handle already in lane 3 needs 4 lanes even with no timeline')
+  assert.deepEqual(laneLayout('scene', [], cols('beat', 'dur'), twoPassTimeline), { laneCount: 2, passBase: [0, 1] })
+})
+
+test('sub-lane packing: overlapping spans stack into sub-lanes, disjoint spans share one, deterministically', () => {
+  // A plain dur-column table: 1..4 and 3..6 overlap, so they pack into
+  // sub-lanes 0 and 1; 7..9 is clear of both, back to lane 0.
+  const rows = [
+    { beat: 7, dur: 2 },
+    { beat: 1, dur: 3 },
+    { beat: 3, dur: 3 },
+  ]
+  const columns = cols('beat', 'dur')
+  const laneOf = () => handlesFor('scene', rows, columns, [])
+    .sort((a, b) => a.beat - b.beat).map((h) => h.lane)
+  assert.deepEqual(laneOf(), [0, 1, 0], 'first-fit by start: 1..4 → 0, 3..6 → 1, 7..9 → 0')
+  assert.deepEqual(laneOf(), laneOf(), 'deterministic')
+  assert.equal(laneLayout('scene', rows, columns, []).laneCount, 2)
 })
 
 // --- coverageBands -----------------------------------------------------------
@@ -217,6 +281,15 @@ test('dragUpdate end-edge drag writes dur back, respecting the minimum span', ()
   // Dragging the end edge far to the left would collapse the span below minSpan.
   const { values } = dragUpdate(handle, 'end', -10, { minSpan: 0.25 })
   assert.deepEqual(values, { dur: 0.25 })
+})
+
+test('dragUpdate on a derived transition span: the end edge retargets the destination row, start/move move the transition', () => {
+  const handle: Handle = { row: 1, kind: 'span', beat: 3, end: 8, lane: 0, ghost: false, disabled: false, derived: true, endRow: 2 }
+  const end = dragUpdate(handle, 'end', 2)
+  assert.equal(end.row, 2, 'the end edge belongs to the destination setCode')
+  assert.deepEqual(end.values, { beat: 10 }, 'moves the destination beat, never a dur')
+  assert.deepEqual([dragUpdate(handle, 'start', -1).row, dragUpdate(handle, 'start', -1).values], [1, { beat: 2 }], 'a start edge moves only the transition row')
+  assert.deepEqual(dragUpdate(handle, 'move', 1).values, { beat: 4 })
 })
 
 test('dragUpdate maps a content-table drop back through the timeline sourceBeatAt', () => {

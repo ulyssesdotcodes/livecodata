@@ -11,8 +11,22 @@ import type { Row } from './lineage.js'
 import type { EditableColumn } from './editable-tables.js'
 import { formatEditableCell } from './table-panel.js'
 import { placeBeat, timelineSegments, buildTimeline, windowsFor, type Timeline, type TimelineSegment } from './timeline.js'
+import { hydraTransitionWindows, type TransitionWindow } from './hydra.js'
+import { postTransitionWindows } from './post.js'
+import { baubleTransitionWindows } from './bauble.js'
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+
+// The fold tables whose spans come from a transition's until-next window (the
+// exact width playback wipes over) rather than a `dur` column. A table absent
+// here falls back to its `dur` (scene/origami/path keep their live-dur spans);
+// a fold table's non-transition events — and any stray `dur` on one — draw a
+// point, never a misleading span.
+const FOLD_WINDOWS: Record<string, (rows: Row[], loopBeats?: number) => TransitionWindow[]> = {
+  hydra: hydraTransitionWindows,
+  post: postTransitionWindows,
+  bauble: baubleTransitionWindows,
+}
 
 export interface StripGeometry {
   width: number
@@ -69,9 +83,19 @@ export interface Handle {
   kind: 'point' | 'span'
   // Playback-axis position (post placeBeat for non-timeline tables).
   beat: number
-  // Far edge of a span — spans store their length in the row's `dur` column,
-  // so a pure move never touches it and an edge drag writes it back.
+  // Far edge of a span — a stored-dur span keeps its length in the row's `dur`
+  // column (a pure move never touches it, an edge drag writes it back); a
+  // `derived` span's edge is computed, not stored.
   end?: number
+  // A derived (until-next) span whose length isn't a stored `dur` — the
+  // `timeline` table's windows and a fold table's transition spans. An edge
+  // drag can't write dur back: a start edge just moves the row, and an end
+  // edge with an `endRow` moves that destination instead.
+  derived?: boolean
+  // The destination setCode a fold transition wipes toward: the view draws an
+  // arrowhead to its point handle (hover-linking the pair) and an end drag
+  // retargets THAT row's beat. Absent on a wrap tail and on inert transitions.
+  endRow?: number
   // Which stored column `beat`/`end` round-trip through on a drag — 'beat'
   // for every table but the origami fold table, whose own name for it is
   // `at` (see positionField). Omitted (not just 'beat') for the common case.
@@ -158,68 +182,134 @@ export function withPreview(rows: Row[], preview: { row: number; values: Record<
   return next
 }
 
-export function handlesFor(name: string, rows: Row[], columns: EditableColumn[], timelineRows: Row[], loopBeats?: number): Handle[] {
+// A handle tagged with the pass group it belongs to, before sub-lane packing
+// resolves its final `lane`. The `group` is internal — stripped from the
+// public Handle handlesFor returns.
+type RawHandle = Handle & { group: number }
+
+// Every placement's raw handle plus how many pass groups the strip spans.
+// The `timeline` table's own rows are until-next windows (windowsFor), already
+// on the playback axis; every other table's `beat` is a source beat placed via
+// placeBeat, wrapping past one pass into a "pass n" badge. A fold table draws a
+// transition as its fold window (FOLD_WINDOWS) — a wrapped window (its
+// destination earlier in the loop) splits into two arcs; other tables fall
+// back to their `dur` column. An active timeline's passes are the groups.
+function buildRaw(
+  name: string, rows: Row[], columns: EditableColumn[], timelineRows: Row[], loopBeats?: number,
+): { raw: RawHandle[]; groupCount: number } {
   const colNames = new Set(columns.map((c) => c.name))
-  const handles: Handle[] = []
+  const raw: RawHandle[] = []
 
   if (name === 'timeline') {
-    // Spans come from the shared until-next computation, so the strip and
-    // playback can never disagree on a window. windowsFor drops disabled rows
-    // (their window falls to their neighbors), so they get no handle here.
+    // windowsFor drops disabled rows (their window falls to their neighbors),
+    // so they get no handle. Its spans are derived: an edge belongs to the
+    // neighbouring row, never a stored dur.
     for (const w of windowsFor(rows, loopBeats)) {
-      handles.push({ row: w.row, kind: 'span', beat: w.beat, end: w.end, lane: w.lane, ghost: false, disabled: false })
+      raw.push({ row: w.row, kind: 'span', beat: w.beat, end: w.end, lane: w.lane, group: w.lane, ghost: false, disabled: false, derived: true })
     }
-    return handles
+    const groupCount = raw.reduce((m, h) => Math.max(m, h.group + 1), buildTimeline(timelineRows, loopBeats).loops)
+    return { raw, groupCount }
   }
 
-  // Content table: beat is a source beat. With no timeline defined this is
-  // the identity map (the common case); with one, every playback placement
-  // of that source beat (placeBeat) gets its own handle. Either way, a
-  // placement can land past one pass's worth of beats — a multi-pass active
-  // timeline's span, or (with none) the GUI loop length — and wraps into a
-  // "pass n" badge (wrapPass) rather than rendering off-strip. An active
-  // timeline's passes get their own lane (matching the coverage shading,
-  // which is lane-per-pass too — see coverageBands); with no timeline there
-  // are no lanes to place a later pass into, so it stays in lane 0 with just
-  // the badge.
   const segments = timelineSegments(timelineRows, loopBeats)
   const timeline = segments.length ? buildTimeline(timelineRows, loopBeats) : null
   const wrapUnit = timeline ? timeline.beats : loopBeats
   const maxPass = timeline ? Math.max(0, timeline.loops - 1) : undefined
+  const loopEnd = wrapUnit && wrapUnit > 0 ? wrapUnit + 1 : Infinity
   const posField = positionField(colNames)
+  const foldWindows = FOLD_WINDOWS[name]
+    ? new Map(FOLD_WINDOWS[name](rows, loopBeats).map((w) => [w.row, w]))
+    : null
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
     const beat = num(row[posField])
     if (beat === undefined) continue
-    const dur = colNames.has('dur') ? num(row.dur) : undefined
+    const win = foldWindows?.get(i)
+    const dur = foldWindows
+      ? (win ? win.end - win.start : undefined)
+      : colNames.has('dur') ? num(row.dur) : undefined
     const disabled = row.disabled === true
     const placements = segments.length ? placeBeat(segments, beat) : [{ beat, stretch: 1 }]
     placements.forEach((p, idx) => {
       const w = wrapUnit && wrapUnit > 0 ? wrapPass(p.beat, wrapUnit, maxPass) : { local: p.beat, pass: 0 }
-      handles.push({
-        row: i,
-        kind: dur !== undefined ? 'span' : 'point',
-        beat: w.local,
-        end: dur !== undefined ? w.local + dur * p.stretch : undefined,
+      const group = timeline ? w.pass : 0
+      const common = {
+        row: i, group, lane: group, ghost: idx > 0, disabled,
         ...(posField === 'at' ? { posField: 'at' as const } : {}),
-        lane: timeline ? w.pass : 0,
-        ghost: idx > 0,
-        disabled,
         ...(w.pass > 0 ? { pass: w.pass } : {}),
+      }
+      if (dur === undefined) {
+        raw.push({ ...common, kind: 'point', beat: w.local })
+        return
+      }
+      const end = w.local + dur * p.stretch
+      if (win && end > loopEnd + 1e-6) {
+        // A wrapped fold window runs off the strip's end and re-enters at the
+        // start: a tail arc to the loop's end (no arrowhead) and a head arc
+        // from the start to the destination (arrowhead), reusing span machinery.
+        raw.push({ ...common, kind: 'span', beat: w.local, end: loopEnd, derived: true })
+        raw.push({ ...common, kind: 'span', beat: 1, end: end - (wrapUnit as number), derived: true, endRow: win.endRow })
+        return
+      }
+      raw.push({
+        ...common, kind: 'span', beat: w.local, end,
+        ...(win ? { derived: true as const, ...(win.endRow !== undefined ? { endRow: win.endRow } : {}) } : {}),
       })
     })
   }
-  return handles
+  return { raw, groupCount: timeline ? timeline.loops : 1 }
 }
 
-// How many lane bands the strip needs: at least the current table's own
-// handles (the `timeline` table's `loop` column, or a content table's
-// pass-wrapped ghosts), and at least the timeline's own pass count — so
-// lanes still show (for the coverage layer's sake) when the open table has
-// no handle past lane 0, e.g. a content table with nothing looping.
-export function laneCountFor(handles: Handle[], timelineRows: Row[], loopBeats?: number): number {
-  const fromHandles = handles.reduce((m, h) => Math.max(m, h.lane + 1), 1)
-  return Math.max(fromHandles, buildTimeline(timelineRows, loopBeats).loops)
+// Greedy interval packing: within each pass group, spans overlapping in their
+// [beat, end) range stack into sub-lanes (first-fit by start beat), while
+// points and empty groups sit at the group's base sub-lane. Groups lay out
+// contiguously in pass order, so pass g owns lanes [base[g], base[g + 1]).
+// Writes each handle's packed `lane` back and returns the layout.
+function packLanes(raw: RawHandle[], groupCount: number): { base: number[]; laneCount: number } {
+  const perGroup: RawHandle[][] = Array.from({ length: groupCount }, () => [])
+  for (const h of raw) if (h.group >= 0 && h.group < groupCount) perGroup[h.group].push(h)
+  const base: number[] = []
+  let cursor = 0
+  for (let g = 0; g < groupCount; g++) {
+    base[g] = cursor
+    const spans = perGroup[g]
+      .filter((h) => h.kind === 'span')
+      .sort((a, b) => a.beat - b.beat || (a.end ?? a.beat) - (b.end ?? b.beat) || a.row - b.row)
+    const ends: number[] = []
+    for (const h of spans) {
+      let s = ends.findIndex((e) => e <= h.beat)
+      if (s < 0) { s = ends.length; ends.push(0) }
+      ends[s] = h.end ?? h.beat
+      h.lane = cursor + s
+    }
+    for (const h of perGroup[g]) if (h.kind !== 'span') h.lane = cursor
+    cursor += Math.max(1, ends.length)
+  }
+  return { base, laneCount: Math.max(1, cursor) }
+}
+
+export function handlesFor(name: string, rows: Row[], columns: EditableColumn[], timelineRows: Row[], loopBeats?: number): Handle[] {
+  const { raw, groupCount } = buildRaw(name, rows, columns, timelineRows, loopBeats)
+  packLanes(raw, groupCount)
+  return raw.map(({ group: _group, ...h }) => h)
+}
+
+export interface LaneLayout {
+  // Total lane bands the strip needs — packed sub-lanes included.
+  laneCount: number
+  // The first lane of each pass; pass g spans [passBase[g], passBase[g + 1]).
+  // Length is the pass count, so passBase.length > 1 means a multi-pass strip.
+  passBase: number[]
+}
+
+// The lane layout for the open table's handles: how many lane bands (packed
+// sub-lanes and all), and where each pass starts — the coverage shading and
+// pass labels key off passBase so a pass's tint spans exactly its sub-lanes.
+// Recomputes the same handles handlesFor does, so the two never disagree.
+export function laneLayout(name: string, rows: Row[], columns: EditableColumn[], timelineRows: Row[], loopBeats?: number): LaneLayout {
+  const { raw, groupCount } = buildRaw(name, rows, columns, timelineRows, loopBeats)
+  const { base, laneCount } = packLanes(raw, groupCount)
+  return { laneCount, passBase: base }
 }
 
 export interface CoverageBand {
@@ -381,7 +471,7 @@ const DEFAULT_MIN_SPAN = 0.25
 
 export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts: DragOptions = {}): DragResult {
   const minSpan = opts.minSpan ?? DEFAULT_MIN_SPAN
-  const { row, beat, end, pass, posField = 'beat' } = handle
+  const { row, beat, end, pass, posField = 'beat', derived, endRow } = handle
   // A wrapped placement's `beat`/`end` are local to its own pass (wrapPass) —
   // sourceBeatAt needs that pass back to re-derive the right extended-axis
   // point, the same `loop` argument buildTimeline's own multi-pass playback
@@ -391,6 +481,18 @@ export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts:
   if (mode === 'move') {
     // A span's length (`dur`) is untouched by a pure move, so its window
     // keeps the same duration wherever it lands.
+    const nextBeat = Math.max(1, beat + dBeats)
+    return { row, values: { [posField]: toSource(nextBeat) } }
+  }
+
+  // A derived span has no stored dur to resize. Its end edge belongs to the
+  // destination setCode (a fold transition's `endRow`): dragging it moves THAT
+  // row's beat. Every other edge just moves this row — the window recomputes.
+  if (derived) {
+    if (mode === 'end' && endRow !== undefined) {
+      const nextEnd = Math.max((end ?? beat) + dBeats, beat + minSpan)
+      return { row: endRow, values: { [posField]: toSource(nextEnd) } }
+    }
     const nextBeat = Math.max(1, beat + dBeats)
     return { row, values: { [posField]: toSource(nextBeat) } }
   }
