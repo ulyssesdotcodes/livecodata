@@ -173,7 +173,7 @@ test('keyframe reverse: source runs backwards as playback advances', () => {
 test('cookProgram surfaces timelineRows from a defined timeline view', () => {
   const rt = createRuntime()
   const code = `
-    define("base", () => rows([{ id: "s", type: "create", beat: 1, shape: "sphere",
+    define("base", () => rows([{ id: "s", event: "create", beat: 1, shape: "sphere",
       color: 0x4a9eff, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
     define("scene", () => table("base").rasterize(2))
     define("timeline", () => beats(16, { fit: 4 }))
@@ -187,7 +187,7 @@ test('cookProgram surfaces timelineRows from a defined timeline view', () => {
 test('cookProgram yields no timeline rows when none is defined', () => {
   const rt = createRuntime()
   const code = `
-    define("three", () => rows([{ id: "s", type: "create", beat: 1, shape: "box",
+    define("three", () => rows([{ id: "s", event: "create", beat: 1, shape: "box",
       color: 1, px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }]))
   `
   const cooked = cookProgram(rt, code, 1)
@@ -283,8 +283,8 @@ test('retime carries each source row\'s lineage onto every placed copy', () => {
 test('retime loops a subsection of an origami fold sequence', () => {
   const dsl = createDSL(null)
   const paper = dsl.origami().steps([
-    { step: 'diag', p1: '0,0', p2: '1,1', move: '0.667,0.333', at: 1, dur: 2 },
-    { step: 'collapse', p1: '0,0.5', p2: '1,0.5', move: '0.333,0.167', kind: 'reverse', at: 4, dur: 2 },
+    { step: 'diag', p1: '0,0', p2: '1,1', move: '0.667,0.333', beat: 1, dur: 2 },
+    { step: 'collapse', p1: '0,0.5', p2: '1,0.5', move: '0.333,0.167', kind: 'reverse', beat: 4, dur: 2 },
   ])
   const spawn = paper.spawn({ id: 'sheet' })
   // First fold plays straight; the second fold's window (source 4..7) loops

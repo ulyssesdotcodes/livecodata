@@ -49,7 +49,7 @@ test('isCellInert: dims a cell only when its column\'s usedBy excludes the row\'
   assert.equal(isCellInert({ event: 'transition' }, scoped, cols), true, 'discriminant not in usedBy → inert')
   assert.equal(isCellInert({ event: 'transition' }, universal, cols), false, 'a column with no usedBy is always live')
   assert.equal(isCellInert({ event: '' }, scoped, cols), false, 'a blank discriminant leaves every cell live')
-  // No `event` column: the discriminant falls back to `type` (the scene table).
+  // No `event` column: the discriminant falls back to a legacy `type` column.
   const typeCols: EditableColumn[] = [{ name: 'type', type: 'enum', options: ['create', 'update'] }, { name: 'shape', type: 'enum', options: ['box'], usedBy: ['create'] }]
   assert.equal(isCellInert({ type: 'update' }, typeCols[1], typeCols), true)
   assert.equal(isCellInert({ type: 'create' }, typeCols[1], typeCols), false)

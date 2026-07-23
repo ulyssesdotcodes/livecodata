@@ -121,7 +121,7 @@ test('compiled crane bakes the deep reverses and keeps flat states exact', () =>
       move: spec.move.map((m) => m.join(',')).join(';'),
       kind: spec.kind === 'Inside Reverse' ? 'reverse' : '',
       pick: spec.pick ?? 0,
-      at: i + 1,
+      beat: i + 1,
     }
   })
   const program = compileFoldTable(rows, { size: 1 })

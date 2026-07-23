@@ -83,7 +83,7 @@ const TABLE_DOCS: TableDoc[] = [
   {
     name: 'sliders / slider',
     detail: 'on-screen controls',
-    info: 'Calling expr.slider("id", min?, max?) — or slider("id", min?, max?) in a post cell — declares a labelled slider over the visual: a row lands in the "sliders" table (rows { id, min, max, default? }, also definable by hand or as a view). Dragging one records automation as "slider" events; the value resolves against the folded "slider" table (raw log: "slider·events"), exactly like MIDI.',
+    info: 'Calling expr.slider("name", min?, max?) — or slider("name", min?, max?) in a post cell — declares a labelled slider over the visual: a row lands in the "sliders" table (rows { name, min, max, default? }, also definable by hand or as a view). Dragging one records automation as "slider" events; the value resolves against the folded "slider" table (raw log: "slider·events"), exactly like MIDI.',
   },
   {
     name: 'taps',
@@ -103,7 +103,7 @@ const TABLE_DOCS: TableDoc[] = [
   {
     name: 'Scene rows',
     detail: 'what drives the 3D view',
-    info: 'Rows rendered as 3D objects share a schema: type ("create" | "update"), id, beat, shape, position px/py/pz, rotation rx/ry/rz, scale sx/sy/sz, color. rasterize(maxBeats) bakes sparse beat-keyed event rows into a dense per-frame world state, easing numeric fields between keyframes.',
+    info: 'Rows rendered as 3D objects share a schema: event ("create" | "update" | "color" | "destroy"), id, beat, shape, position px/py/pz, rotation rx/ry/rz, scale sx/sy/sz, color. rasterize(maxBeats) bakes sparse beat-keyed event rows into a dense per-frame world state, easing numeric fields between keyframes.',
   },
 ]
 

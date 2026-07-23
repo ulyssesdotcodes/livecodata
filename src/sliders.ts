@@ -4,7 +4,7 @@
 // replays every loop and tracks the timeline mapping. Unlike MIDI, the log
 // rides the shared editable-table store, which buys multiplayer sync and
 // session persistence for free. Slider definitions come from the program (a
-// view named "sliders" with { id, min, max, default? } rows).
+// view named "sliders" with { name, min, max, default? } rows).
 
 import { beatToFrame } from './constants.js'
 import type { StampedEvent } from './event-log.js'
@@ -38,9 +38,9 @@ export function sameSliderDefs(a: SliderDef[], b: SliderDef[]): boolean {
   return a.length === b.length && a.every((d, i) => sameSliderDef(d, b[i]))
 }
 
-// Parse one definition row into a normalized def, or null if it has no id.
+// Parse one definition row into a normalized def, or null if it has no name.
 export function sliderDef(row: Row): SliderDef | null {
-  const id = row.id != null ? String(row.id) : ''
+  const id = row.name != null ? String(row.name) : ''
   if (!id) return null
   const min = Number(row.min ?? 0)
   const max = Number(row.max ?? 1)

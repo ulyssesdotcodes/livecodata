@@ -59,7 +59,7 @@ editable("path", schemas.path)
 //    motion automatically. The loop itself is the "beats" control under the
 //    scene (16 by default), so the sphere holds its last pose until it wraps.
 table("path").orderBy("beat").map((r, i) => ({
-  id: "ball", type: i === 0 ? "create" : "update", beat: r.beat,
+  id: "ball", event: i === 0 ? "create" : "update", beat: r.beat,
   shape: "sphere", color: 0x4a9eff, px: r.px, py: r.py, pz: r.pz, rx: 0, ry: 0, rz: 0,
 })).outThree()
 
@@ -131,7 +131,7 @@ editable("warp", schemas.timeline)
 //    in the panel shows the retimed rows). Only THIS table is retimed.
 editable("path", schemas.path)
 table("path").orderBy("beat").map((r, i) => ({
-  id: "ball", type: i === 0 ? "create" : "update", beat: r.beat,
+  id: "ball", event: i === 0 ? "create" : "update", beat: r.beat,
   shape: "sphere", color: 0x4a9eff, px: r.px, py: r.py, pz: r.pz, rx: 0, ry: 0, rz: 0,
 })).retime(table("warp")).outThree()
 
@@ -181,13 +181,13 @@ editable("post", schemas.post)
 // keyframes ease back and forth, landing back on the start pose just before
 // the loop wraps so it repeats without a jump.
 rows([
-  { id: "title", type: "create", beat: 1, shape: "text", text: "livecodata",
+  { id: "title", event: "create", beat: 1, shape: "text", text: "livecodata",
     color: 0x4a9eff, size: 0.7, px: 0, py: 0.4, pz: 0, rx: 0, ry: 0, rz: 0 },
   // A second line that gently swings side to side while turning about y.
-  { id: "sub", type: "create", beat: 1, shape: "text", text: "tables to visuals",
+  { id: "sub", event: "create", beat: 1, shape: "text", text: "tables to visuals",
     color: 0xffd43b, size: 0.32, px: 0, py: -0.5, pz: 0, rx: 0, ry: -0.6, rz: 0 },
-  { id: "sub", type: "update", beat: 9, ry: 0.6 },
-  { id: "sub", type: "update", beat: 16, ry: -0.6 },
+  { id: "sub", event: "update", beat: 9, ry: 0.6 },
+  { id: "sub", event: "update", beat: 16, ry: -0.6 },
 ]).outThree()
 `,
   },
@@ -244,7 +244,7 @@ t.text({ id: "caption", py: 1.4, size: 0.4, text: "primitives", color: 0xffffff 
 //    "cubes" for its own tab, routed to the scene with .outThree().
 table("cubes",
   grid(3, 3, { spacing: 0.8 }).map((c, i) => ({
-    id: "c" + i, type: "create", beat: 1, shape: "box",
+    id: "c" + i, event: "create", beat: 1, shape: "box",
     color: 0x4a9eff, hx: 0.2, hy: 0.2, hz: 0.2,
     px: c.px, py: c.py, pz: c.pz, rx: 0, ry: 0, rz: 0,
   }))
@@ -279,7 +279,7 @@ t.camera([
 // 1. Something to light: a row of pale spheres to catch the colored lights,
 //    routed to the scene with .outThree() — no name needed.
 grid(5, 1, { spacing: 0.9 }).map((c, i) => ({
-  id: "b" + i, type: "create", beat: 1, shape: "sphere",
+  id: "b" + i, event: "create", beat: 1, shape: "sphere",
   color: 0xdddddd, r: 0.35, px: c.px, py: 0, pz: 0, rx: 0, ry: 0, rz: 0,
 })).outThree()
 
@@ -303,12 +303,12 @@ table("lights",
 //    into the one "three (system)" scene table, and playback bakes the
 //    per-frame cache automatically.
 rows([
-  { id: "bulb", type: "create", beat: 1, shape: "light", kind: "point",
+  { id: "bulb", event: "create", beat: 1, shape: "light", kind: "point",
     color: 0xff6b6b, intensity: 5, distance: 12, px: 0, py: 1.5, pz: 2 },
-  { id: "bulb", type: "update", beat: 3, px: 3,  pz: 0, intensity: 2 },
-  { id: "bulb", type: "update", beat: 5, px: 0,  pz: -2, intensity: 5 },
-  { id: "bulb", type: "update", beat: 7, px: -3, pz: 0, intensity: 2 },
-  { id: "bulb", type: "update", beat: 9, px: 0,  pz: 2, intensity: 5 },
+  { id: "bulb", event: "update", beat: 3, px: 3,  pz: 0, intensity: 2 },
+  { id: "bulb", event: "update", beat: 5, px: 0,  pz: -2, intensity: 5 },
+  { id: "bulb", event: "update", beat: 7, px: -3, pz: 0, intensity: 2 },
+  { id: "bulb", event: "update", beat: 9, px: 0,  pz: 2, intensity: 5 },
 ]).outThree()
 `,
   },
@@ -346,7 +346,7 @@ rows([
 //          over), "reverse" (inside reverse fold), "sink", … — the solver
 //          checks the paper really can fold that way
 //   pick   when several stackings of that kind are valid, which one
-//   at,dur when the swing starts, and how long it takes, in beats
+//   beat,dur when the swing starts, and how long it takes, in beats
 //   to     how far to swing: 1 lands flat (default). Only the last row
 //          may stop short — the wings hold at 0.5, half-raised
 //   disabled  an ordinary boolean column: check a step's box to skip that
@@ -403,29 +403,29 @@ rows([
     tables: {
       origami: [
         // in half along the diagonal
-        { step: "diag", p1: "0,0", p2: "1,1", move: "0.667,0.333", at: 1, dur: 2 },
+        { step: "diag", p1: "0,0", p2: "1,1", move: "0.667,0.333", beat: 1, dur: 2 },
         // collapse into the square base: four inside reverse folds
-        { step: "collapse1", p1: "0,0.5", p2: "1,0.5", move: "0.333,0.167", kind: "reverse", at: 4, dur: 2 },
-        { step: "collapse2", p1: "0.5,0", p2: "0.5,1", move: "0.833,0.667", kind: "reverse", at: 7, dur: 2 },
-        { step: "collapse3", p1: "0,1", p2: "0.4142135624,0", move: "0.667,0.069036", kind: "reverse", at: 10, dur: 2 },
-        { step: "collapse4", p1: "0,1", p2: "1,0.5857864376", move: "0.930964,0.667", kind: "reverse", at: 13, dur: 2 },
+        { step: "collapse1", p1: "0,0.5", p2: "1,0.5", move: "0.333,0.167", kind: "reverse", beat: 4, dur: 2 },
+        { step: "collapse2", p1: "0.5,0", p2: "0.5,1", move: "0.833,0.667", kind: "reverse", beat: 7, dur: 2 },
+        { step: "collapse3", p1: "0,1", p2: "0.4142135624,0", move: "0.667,0.069036", kind: "reverse", beat: 10, dur: 2 },
+        { step: "collapse4", p1: "0,1", p2: "1,0.5857864376", move: "0.930964,0.667", kind: "reverse", beat: 13, dur: 2 },
         // flatten the stray flap, then tuck the side corners in
-        { step: "flatten", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.930964,0.333", at: 16, dur: 2 },
-        { step: "tuck1", p1: "0,1", p2: "0.4142135624,0", move: "0.069036,0.667", kind: "reverse", at: 19, dur: 2 },
-        { step: "tuck2", p1: "0,1", p2: "1,0.5857864376", move: "0.667,0.930964", kind: "reverse", at: 22, dur: 2 },
+        { step: "flatten", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.930964,0.333", beat: 16, dur: 2 },
+        { step: "tuck1", p1: "0,1", p2: "0.4142135624,0", move: "0.069036,0.667", kind: "reverse", beat: 19, dur: 2 },
+        { step: "tuck2", p1: "0,1", p2: "1,0.5857864376", move: "0.667,0.930964", kind: "reverse", beat: 22, dur: 2 },
         // kite folds onto the centre line, front then (after turning a flap
         // like a page) back — this thins the points into neck and tail
-        { step: "kite1", p1: "0,1", p2: "0.6681786379,0", move: "0.525373,0.274808", pick: 1, at: 25, dur: 2 },
-        { step: "kite2", p1: "0,1", p2: "1,0.3318213621", move: "0.897812,0.667", at: 28, dur: 2 },
-        { step: "turn", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.333,0.930964", at: 31, dur: 2 },
-        { step: "kite3", p1: "0,1", p2: "1,0.3318213621", move: "0.667,0.897812", pick: 1, at: 34, dur: 2 },
-        { step: "kite4", p1: "0,1", p2: "0.6681786379,0", move: "0.208238,0.583899", pick: 1, at: 37, dur: 2 },
+        { step: "kite1", p1: "0,1", p2: "0.6681786379,0", move: "0.525373,0.274808", pick: 1, beat: 25, dur: 2 },
+        { step: "kite2", p1: "0,1", p2: "1,0.3318213621", move: "0.897812,0.667", beat: 28, dur: 2 },
+        { step: "turn", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.333,0.930964", beat: 31, dur: 2 },
+        { step: "kite3", p1: "0,1", p2: "1,0.3318213621", move: "0.667,0.897812", pick: 1, beat: 34, dur: 2 },
+        { step: "kite4", p1: "0,1", p2: "0.6681786379,0", move: "0.208238,0.583899", pick: 1, beat: 37, dur: 2 },
         // swing the points up: neck, tail, then the head, all reverse folds
-        { step: "neck", p1: "0.1345593806,0", p2: "0.4733251916,1", move: "0.906033,0.694263", kind: "reverse", at: 40, dur: 2 },
-        { step: "tail", p1: "0,0.5266748083", p2: "1,0.8654406193", move: "0.246505,0.203815", kind: "reverse", at: 43, dur: 2 },
-        { step: "head", p1: "0,0.1274716613", p2: "1,0.8431274379", move: "0.096435,0.080352", kind: "reverse", at: 46, dur: 2 },
+        { step: "neck", p1: "0.1345593806,0", p2: "0.4733251916,1", move: "0.906033,0.694263", kind: "reverse", beat: 40, dur: 2 },
+        { step: "tail", p1: "0,0.5266748083", p2: "1,0.8654406193", move: "0.246505,0.203815", kind: "reverse", beat: 43, dur: 2 },
+        { step: "head", p1: "0,0.1274716613", p2: "1,0.8431274379", move: "0.096435,0.080352", kind: "reverse", beat: 46, dur: 2 },
         // both wings at once — front sheet and back sheet — held half-raised
-        { step: "wings", p1: "0,0.1414213562", p2: "0.8585786438,1", move: "0.858,0.377;0.377,0.858", at: 49, dur: 4, to: 0.5 },
+        { step: "wings", p1: "0,0.1414213562", p2: "0.8585786438,1", move: "0.858,0.377;0.377,0.858", beat: 49, dur: 4, to: 0.5 },
       ],
     },
   },
@@ -462,21 +462,21 @@ paper.spawn({ id: "cicada", color: 0xf4efe2, backColor: 0x79b356, pz: 1.2, rz: -
     tables: {
       origami: [
         // in half along the diagonal: the triangle, point down
-        { step: "half", p1: "0,0", p2: "1,1", move: "0.667,0.333", at: 1, dur: 2 },
+        { step: "half", p1: "0,0", p2: "1,1", move: "0.667,0.333", beat: 1, dur: 2 },
         // both corners up to the top point
-        { step: "cornerL", p1: "0,0.5", p2: "1,0.5", move: "0.1,0.3;0.3,0.1", at: 4, dur: 2 },
-        { step: "cornerR", p1: "0.5,0", p2: "0.5,1", move: "0.6,0.8;0.8,0.6", at: 7, dur: 2 },
+        { step: "cornerL", p1: "0,0.5", p2: "1,0.5", move: "0.1,0.3;0.3,0.1", beat: 4, dur: 2 },
+        { step: "cornerR", p1: "0.5,0", p2: "0.5,1", move: "0.6,0.8;0.8,0.6", beat: 7, dur: 2 },
         // wings: sweep each tip back down so they point away from each
         // other and stick out past the triangle's edges
-        { step: "wingL", p1: "0.19885,0.598479", p2: "1.001892,0.99618", move: "0.03,0.12;0.12,0.03", at: 10, dur: 2 },
-        { step: "wingR", p1: "0.401521,0.80115", p2: "0.00382,-0.001892", move: "0.88,0.97;0.97,0.88", at: 13, dur: 2 },
+        { step: "wingL", p1: "0.19885,0.598479", p2: "1.001892,0.99618", move: "0.03,0.12;0.12,0.03", beat: 10, dur: 2 },
+        { step: "wingR", p1: "0.401521,0.80115", p2: "0.00382,-0.001892", move: "0.88,0.97;0.97,0.88", beat: 13, dur: 2 },
         // the head: one layer down over the wings, the second stops short —
         // that little gap is the cicada's stripe
-        { step: "head1", p1: "-0.19,0.59", p2: "0.41,1.19", move: "0.97,0.03", at: 16, dur: 2 },
-        { step: "head2", p1: "-0.24,0.64", p2: "0.36,1.24", move: "0.03,0.97", at: 19, dur: 2 },
+        { step: "head1", p1: "-0.19,0.59", p2: "0.41,1.19", move: "0.97,0.03", beat: 16, dur: 2 },
+        { step: "head2", p1: "-0.24,0.64", p2: "0.36,1.24", move: "0.03,0.97", beat: 19, dur: 2 },
         // narrow the body: fold the side corners behind
-        { step: "tuckL", p1: "0.09,0.59", p2: "0.39,0.29", move: "0.05,0.55", at: 22, dur: 2 },
-        { step: "tuckR", p1: "0.41,0.91", p2: "0.71,0.61", move: "0.45,0.95", at: 25, dur: 2 },
+        { step: "tuckL", p1: "0.09,0.59", p2: "0.39,0.29", move: "0.05,0.55", beat: 22, dur: 2 },
+        { step: "tuckR", p1: "0.41,0.91", p2: "0.71,0.61", move: "0.45,0.95", beat: 25, dur: 2 },
       ],
     },
   },
@@ -559,9 +559,9 @@ editable("hydra", schemas.hydra)
 //    it turns edge-on to the camera, rather than vanishing to a line.
 //    .outThree() routes it to the 3D scene — no define, no name.
 rows([
-  { id: "square", type: "create", beat: 1, shape: "box", color: 0x4a9eff,
+  { id: "square", event: "create", beat: 1, shape: "box", color: 0x4a9eff,
     px: 0, py: 0, pz: 0, hx: 0.6, hy: 0.6, hz: 0.05, rx: 0.3, ry: 0, rz: 0 },
-  { id: "square", type: "update", beat: 16, ry: Math.PI * 2 },
+  { id: "square", event: "update", beat: 16, ry: Math.PI * 2 },
 ]).outThree()
 
 // 2. A two-part hydra sketch, on the same 16-beat grid as the square's spin
@@ -595,9 +595,9 @@ editable("hydra", schemas.hydra)
 // 1. A square spinning one full turn per 16-beat loop — the thing to process —
 //    routed to the 3D scene with .outThree().
 rows([
-  { id: "square", type: "create", beat: 1, shape: "box", color: 0x4a9eff,
+  { id: "square", event: "create", beat: 1, shape: "box", color: 0x4a9eff,
     px: 0, py: 0, pz: 0, hx: 0.7, hy: 0.7, hz: 0.06, rx: 0.3, ry: 0, rz: 0 },
-  { id: "square", type: "update", beat: 16, ry: Math.PI * 2 },
+  { id: "square", event: "update", beat: 16, ry: Math.PI * 2 },
 ]).outThree()
 
 // 2. The post chain. The scene is the IMPLICIT source, so a cell reads like
@@ -660,30 +660,30 @@ editable("post", schemas.post)
 // Sliders are labelled controls drawn over the visual. Press "Run", then Play,
 // then drag a slider on the top-left of the scene.
 
-// 1. A table named "sliders" DEFINES them: one row per slider, { id, min, max }
+// 1. A table named "sliders" DEFINES them: one row per slider, { name, min, max }
 //    (plus an optional \`default\`). Each row becomes a labelled control over the
 //    visual. It's an editable() table, seeded on the right with the schema
 //    declared here (\`schemas.sliders\`, the canonical slider-table schema —
 //    hover it to see the columns) — so open the "sliders" tab in the panel
-//    and add a row, rename an id, or change a min/max, then Run to apply.
+//    and add a row, rename a name, or change a min/max, then Run to apply.
 //    (It could just as well be computed: table("sliders", rows([...])).)
 //    Check a row's \`disabled\` box to pull that control off the screen
 //    without losing its settings — uncheck to bring it back.
 editable("sliders", schemas.sliders)
 
-// 2. expr.slider(id) is the sibling of expr.midi(note): a live per-frame value
+// 2. expr.slider(name) is the sibling of expr.midi(note): a live per-frame value
 //    you bind into any field. Here the sphere's height follows the "height"
 //    slider — drag it and the orb moves; the value is recorded against playback
 //    time and replays every loop (watch the thumb retrace your move). derive
 //    leaves a binding resolved each frame, exactly like
 //    derive({ amount: expr.midi("c4") }) — or derive({ ry: expr.time() }) to
 //    ride the playback clock itself. .outThree() routes the orb to the scene.
-rows([{ id: "orb", type: "create", beat: 1, shape: "sphere", color: 0xffd43b,
+rows([{ id: "orb", event: "create", beat: 1, shape: "sphere", color: 0xffd43b,
         px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0 }])
   .derive({ py: expr.slider("height") })
   .outThree()
 
-// 3. In a hydra sketch every slider is also on props.sliders, keyed by id — no
+// 3. In a hydra sketch every slider is also on props.sliders, keyed by name — no
 //    setVariable rows needed. Reference it as a FUNCTION so hydra reads it fresh
 //    each frame: (props) => props.sliders.warp. Here "warp" drives the modulate
 //    amount and "brightness" the output level; .outHydra() routes the sketch.
@@ -706,9 +706,9 @@ rows([
 `,
     tables: {
       sliders: [
-        { id: "brightness", min: 0, max: 1,   default: 0.6 },
-        { id: "warp",       min: 0, max: 1.5, default: 0.3 },
-        { id: "height",     min: -1, max: 1,  default: 0 },
+        { name: "brightness", min: 0, max: 1,   default: 0.6 },
+        { name: "warp",       min: 0, max: 1.5, default: 0.3 },
+        { name: "height",     min: -1, max: 1,  default: 0 },
       ],
     },
   },
@@ -725,7 +725,7 @@ rows([
 
 // 1. The "particles" view opts the sim in and steers it — an event table folded
 //    at the playhead, like "post" and "hydra". A \`spawn\` row turns the sim ON
-//    (without one it never runs). \`set\` rows drive the field: \`name\` is "speed"
+//    (without one it never runs). \`setVariable\` rows drive the field: \`name\` is "speed"
 //    (how fast points ride the flow), "elscale" (size of the swirls), or
 //    "timeMultiplier" (how fast the flow itself churns); \`value\` is the number.
 //    Here it starts slow and broad, then quickens and tightens halfway through.
@@ -748,11 +748,11 @@ t.sphere({ id: "core", r: 0.6, color: 0x140f28, px: 0, py: 0, pz: 0 })
     tables: {
       particles: [
         { beat: 1, event: "spawn" },
-        { beat: 1, event: "set", name: "speed",          value: 0.002 },
-        { beat: 1, event: "set", name: "elscale",        value: 16 },
-        { beat: 1, event: "set", name: "timeMultiplier", value: 0.06 },
-        { beat: 9, event: "set", name: "speed",          value: 0.009 },
-        { beat: 9, event: "set", name: "elscale",        value: 8 },
+        { beat: 1, event: "setVariable", name: "speed",          value: 0.002 },
+        { beat: 1, event: "setVariable", name: "elscale",        value: 16 },
+        { beat: 1, event: "setVariable", name: "timeMultiplier", value: 0.06 },
+        { beat: 9, event: "setVariable", name: "speed",          value: 0.009 },
+        { beat: 9, event: "setVariable", name: "elscale",        value: 8 },
       ],
     },
   },
@@ -1041,7 +1041,7 @@ const bricks = applies.map((a, i) => {
   const s = 0.09 + Math.min(edits, 20) * 0.012          // committed more → bigger brick
   const angle = i * 2.39996                             // the golden angle
   return {
-    id: "b" + i, type: "create", beat: 1, shape: "box",
+    id: "b" + i, event: "create", beat: 1, shape: "box",
     color: (Math.round(70 + 185 * hot) << 16) | (70 << 8) | Math.round(255 - 185 * hot),
     hx: s, hy: s, hz: s,
     px: Math.cos(angle) * 0.9, py: -0.8 + i * 0.17, pz: Math.sin(angle) * 0.9,
@@ -1053,7 +1053,7 @@ const bricks = applies.map((a, i) => {
 // Square + Hydra).
 if (bricks.length) {
   const top = bricks[bricks.length - 1]
-  bricks.push({ id: top.id, type: "update", beat: 16, ry: top.ry + Math.PI * 2 })
+  bricks.push({ id: top.id, event: "update", beat: 16, ry: top.ry + Math.PI * 2 })
 }
 rows(bricks).outThree()
 
@@ -1129,7 +1129,7 @@ table("stars", () => {
     const rad = 1 + err * 4
     const off = Math.min(1, Math.abs(err) * 10)          // 0 on the grid → 1 wild
     return {
-      id: "t" + i, type: "create", beat: 1, shape: "sphere",
+      id: "t" + i, event: "create", beat: 1, shape: "sphere",
       r: i === n - 1 ? 0.09 : 0.055,
       color: (255 << 16) | (Math.round(255 - 130 * off) << 8) | Math.round(255 - 225 * off),
       px: Math.cos(a) * rad, py: Math.sin(a) * rad, pz: 0, rx: 0, ry: 0, rz: 0,
@@ -1137,8 +1137,8 @@ table("stars", () => {
   })
   // The newest press blinks — a color pulse early in the loop.
   const newest = stars[stars.length - 1]
-  stars.push({ id: newest.id, type: "update", beat: 5, color: 0x334455 })
-  stars.push({ id: newest.id, type: "update", beat: 9, color: newest.color })
+  stars.push({ id: newest.id, event: "update", beat: 5, color: 0x334455 })
+  stars.push({ id: newest.id, event: "update", beat: 9, color: newest.color })
   return rows(stars)
 })
 table("stars").outThree()
@@ -1202,10 +1202,10 @@ for (let k = 0; k < n; k++) {
   for (let i = 0; i < numTents; i++) {
     const tx = -(numTents - 1) * S / 2 + i * S     // apex x
     cards.push(
-      { id: "s" + k + "t" + i + "a", type: "create", shape: "box", color: 0xfdf6e3,
+      { id: "s" + k + "t" + i + "a", event: "create", shape: "box", color: 0xfdf6e3,
         motion: "dynamic", friction: 0.3, restitution: 0,
         px: tx - dx, py: cardCY, pz: 0, hx: T, hy: H, hz: W, rz: -lean },
-      { id: "s" + k + "t" + i + "b", type: "create", shape: "box", color: 0xfdf6e3,
+      { id: "s" + k + "t" + i + "b", event: "create", shape: "box", color: 0xfdf6e3,
         motion: "dynamic", friction: 0.3, restitution: 0,
         px: tx + dx, py: cardCY, pz: 0, hx: T, hy: H, hz: W, rz:  lean },
     )
@@ -1215,7 +1215,7 @@ for (let k = 0; k < n; k++) {
   for (let i = 0; i < numTents - 1; i++) {
     const bx = -(numTents - 1) * S / 2 + (i + 0.5) * S
     cards.push(
-      { id: "s" + k + "b" + i, type: "create", shape: "box", color: 0xe74c3c,
+      { id: "s" + k + "b" + i, event: "create", shape: "box", color: 0xe74c3c,
         motion: "dynamic", friction: 0.3, restitution: 0,
         px: bx, py: topY + T, pz: 0, hx: bHx, hy: T, hz: W },
     )
@@ -1224,7 +1224,7 @@ for (let k = 0; k < n; k++) {
   // Crown on the top-story apex (replaces bridges on the final story)
   if (k === n - 1) {
     cards.push(
-      { id: "crown", type: "create", shape: "box", color: 0xe74c3c,
+      { id: "crown", event: "create", shape: "box", color: 0xe74c3c,
         motion: "dynamic", friction: 0.3, restitution: 0,
         px: 0, py: topY + T, pz: 0, hx: bHx, hy: T, hz: W },
     )
@@ -1234,9 +1234,9 @@ for (let k = 0; k < n; k++) {
 }
 
 const base = rows([
-  { id: "floor", type: "create", shape: "box", color: 0x1a2e1a,
+  { id: "floor", event: "create", shape: "box", color: 0x1a2e1a,
     motion: "static", px: 0, py: -1.2, pz: 0, hx: 4, hy: 0.2, hz: 4 },
-  { id: "ball",  type: "create", shape: "sphere", color: 0xf39c12,
+  { id: "ball",  event: "create", shape: "sphere", color: 0xf39c12,
     motion: "dynamic", restitution: 0.2, r: 0.12, dropAt: 2,
     px: 0.05, py: 2.0, pz: 0 },
   ...cards,
@@ -1258,9 +1258,9 @@ sim.outThree()
 // 3. Collisions are just rows — pull them into their own named view (.save
 //    gives them a tab) to inspect, and graph the ball's height over time as
 //    it bounces and settles.
-sim.filter({ type: "collision" }).save("collisions")
+sim.filter({ event: "collision" }).save("collisions")
 
-sim.filter({ id: "ball", type: "update" })
+sim.filter({ id: "ball", event: "update" })
   .map(r => ({ beat: r.beat, height: r.py }))
   .save("ball_height")
   .graph("height")

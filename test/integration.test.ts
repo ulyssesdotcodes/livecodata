@@ -14,14 +14,14 @@ test('new verbs cook end-to-end (grid/derive/groupBy/csv/join/triggerEach + line
   const code = `
 define("wave", () => math(t => Math.sin(t * Math.PI * 10)).range(0.8))
 define("base", "three", () => grid(2, 2).derive({
-  id: r => "o" + r.i, type: "create", beat: 1, shape: "sphere",
+  id: r => "o" + r.i, event: "create", beat: 1, shape: "sphere",
   rx: 0, ry: 0, rz: 0, color: 0x4444ff,
 }))
 define("flash", "three", (rand, table) =>
   table("wave").triggerEach(
     (cur, i, rows) => i > 0 && cur.value * rows[i - 1].value < 0,
     table("base"),
-    (o, cur) => ({ id: o.id, type: "color", beat: cur.beat, color: 0xff0000, dur: 4/30 })
+    (o, cur) => ({ id: o.id, event: "color", beat: cur.beat, color: 0xff0000, dur: 4/30 })
   ))
 define("scene", () => table("three").rasterize(24/30))
 define("bySign", () => table("wave").derive({ sign: r => r.value >= 0 ? "pos" : "neg" }).groupBy("sign").count())
@@ -32,7 +32,7 @@ define("joined", () => table("cities").join(rows([{ id: "a", note: "hit" }]), "i
 
   assert.equal(views.get('base')!.length, 4)
 
-  const colorRows = views.get('three')!.rows.filter((r) => r.type === 'color')
+  const colorRows = views.get('three')!.rows.filter((r) => r.event === 'color')
   assert.equal(views.get('three')!.length, 4 + colorRows.length)
   assert.ok(colorRows.length >= 4 && colorRows.length % 4 === 0, 'color events fan out per object')
 
@@ -75,7 +75,7 @@ test('Origami Crane sample: 17 exact fold steps, wings held half-raised', () => 
   }).run(sample.code, { seed: 1 })
 
   const events = views.get(outViewName('three'))!
-  const create = events.rows.find((r) => r.type === 'create')!
+  const create = events.rows.find((r) => r.event === 'create')!
   const program = create.program as FoldTableProgram
   assert.equal(program.kind, 'fold-table')
   assert.equal(program.steps.length, 17)
@@ -88,7 +88,7 @@ test('Origami Crane sample: 17 exact fold steps, wings held half-raised', () => 
 
   // the schedule drives one numeric: fold rises 0 → 16.5 and never falls
   const folds = events.rows
-    .filter((r) => r.type === 'update' && typeof r.fold === 'number')
+    .filter((r) => r.event === 'update' && typeof r.fold === 'number')
     .sort((a, b) => (a.beat as number) - (b.beat as number))
     .map((r) => r.fold as number)
   assert.equal(folds[folds.length - 1], 16.5)
@@ -170,7 +170,7 @@ test('Origami Cicada sample: nine simple folds, all exact', () => {
       (seed ?? sample.tables?.[name] ?? []).map((r) => conformRow(r, schemaColumns(schema))),
   }).run(sample.code, { seed: 1 })
   const events = views.get(outViewName('three'))!
-  const program = events.rows.find((r) => r.type === 'create')!.program as FoldTableProgram
+  const program = events.rows.find((r) => r.event === 'create')!.program as FoldTableProgram
   assert.equal(program.steps.length, 9)
   for (const step of program.steps) assert.equal(step.type, 'Pureland')
   for (let k = 0; k <= 9; ++k) {
@@ -224,11 +224,11 @@ test('Session Sculpture sample: one brick per apply, sized by its edit batch, pl
   // the one system scene table.
   const scene = views.get(outViewName('three'))!.rows
   const bricks = scene.filter((r) => r.shape === 'box')
-  assert.equal(bricks.filter((r) => r.type === 'create').length, 2, 'one brick per apply')
+  assert.equal(bricks.filter((r) => r.event === 'create').length, 2, 'one brick per apply')
   const [b0, b1] = bricks
   assert.ok((b1.hx as number) > (b0.hx as number), 'a bigger edit batch makes a bigger brick')
   const brickIds = new Set(bricks.map((r) => r.id))
-  assert.equal(scene.filter((r) => r.type === 'update' && brickIds.has(r.id)).length, 1, 'the newest brick gets its spin keyframe')
+  assert.equal(scene.filter((r) => r.event === 'update' && brickIds.has(r.id)).length, 1, 'the newest brick gets its spin keyframe')
 
   assert.ok((scene.find((r) => r.shape === 'text')!.text as string).includes('2 runs'))
   assert.deepEqual(views.get('pace')!.rows.map((r) => r.gap_s), [0, 3], 'seconds between consecutive runs')
@@ -242,7 +242,7 @@ test('Tap Constellation sample: on-grid taps ring at radius 1, sloppy taps leave
   const perfect = Array.from({ length: 5 }, (_, i) => ({ beat: i, time: i * 500 }))
   const rt = createRuntime({ tapRows: () => perfect })
   const stars = rt.run(sample.code, { seed: 1 }).views.get('stars')!.rows
-  const creates = stars.filter((r) => r.type === 'create')
+  const creates = stars.filter((r) => r.event === 'create')
   assert.equal(creates.length, 5, 'one star per tap')
   for (const s of creates) {
     const rad = Math.hypot(s.px as number, s.py as number)
@@ -252,7 +252,7 @@ test('Tap Constellation sample: on-grid taps ring at radius 1, sloppy taps leave
   // …then the middle tap lands a quarter-beat late: its star leaves the ring.
   const sloppy = perfect.map((r, i) => (i === 2 ? { ...r, time: r.time + 125 } : r))
   const off = createRuntime({ tapRows: () => sloppy }).run(sample.code, { seed: 1 })
-    .views.get('stars')!.rows.filter((r) => r.type === 'create')
+    .views.get('stars')!.rows.filter((r) => r.event === 'create')
   const rads = off.map((s) => Math.hypot(s.px as number, s.py as number))
   assert.ok(Math.max(...rads) > 1.5, 'the late tap is pushed well off the ring')
 

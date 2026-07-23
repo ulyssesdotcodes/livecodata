@@ -497,7 +497,7 @@ const numOr = (v: unknown, d: number): number => (typeof v === 'number' ? v : d)
 function modRow(r: Row, specs: [key: string, base: number, f: (v: number) => number][]): Row {
   const out: Row = { ...r }
   for (const [key, base, f] of specs) {
-    if (key in r || r.type !== 'update') out[key] = f(numOr(r[key], base))
+    if (key in r || r.event !== 'update') out[key] = f(numOr(r[key], base))
   }
   return out
 }
@@ -519,7 +519,7 @@ export interface DSLContext {
   getData?(url: string): string
   // Live rows for a user-editable table, creating/reconciling it on first use.
   editableRows?(name: string, schema: Schema, seedRows?: Row[]): Row[]
-  // Declare an on-screen slider: expr.slider(name, min, max) adds { id, min,
+  // Declare an on-screen slider: expr.slider(name, min, max) adds { name, min,
   // max } to the "sliders" table the first time the name is seen.
   defineSlider?(id: string, min?: number, max?: number): void
 }
@@ -929,11 +929,11 @@ export class Table {
     return this._xf(op, opts, (ins) => {
       const out: Row[] = ins[0].map(recarry)
       for (const c of ins[0]) {
-        if (c.type !== 'create') continue
+        if (c.event !== 'create') continue
         const startBeat = at ?? (typeof c.beat === 'number' ? (c.beat as number) : 1)
         const { start, end } = fieldsFor(c)
-        out.push(tag({ id: c.id, type: 'update', beat: startBeat, ...start }, carry(c)))
-        out.push(tag({ id: c.id, type: 'update', beat: startBeat + dur, ...end, ...(ease ? { ease } : {}) }, carry(c)))
+        out.push(tag({ id: c.id, event: 'update', beat: startBeat, ...start }, carry(c)))
+        out.push(tag({ id: c.id, event: 'update', beat: startBeat + dur, ...end, ...(ease ? { ease } : {}) }, carry(c)))
       }
       return out
     }, hasFn(opts))
@@ -1050,7 +1050,7 @@ export class OrigamiBuilder {
     const rz = typeof props.rz === 'number' ? props.rz : 0
     program.flipAxis = [Math.sin(rz), Math.cos(rz)]
     return new Table([{
-      id: this._id, type: 'create', beat: 1, shape: 'origami',
+      id: this._id, event: 'create', beat: 1, shape: 'origami',
       px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0, color: 0xd94f2a,
       fold: 0, program, ...props,
     }], this._ctx)
@@ -1058,8 +1058,8 @@ export class OrigamiBuilder {
 
   /**
    * Fold schedule → update keyframes driving `fold`. With no argument, uses
-   * the at/dur timings from the steps() rows; override with rows
-   * { step?, at, dur? } to retime.
+   * the beat/dur timings from the steps() rows; override with rows
+   * { step?, beat, dur? } to retime.
    */
   sequence(steps?: Table | Row[] | null, opts: { id?: unknown } = {}): Table {
     const id = opts.id ?? this._id
@@ -1071,7 +1071,7 @@ export class OrigamiBuilder {
       overrides.forEach((r, i) => {
         const target = r.step != null ? byName.get(String(r.step)) : timed[i]
         if (!target) return
-        const at = r.at ?? r.beat
+        const at = r.beat
         if (at != null) {
           const dur = r.dur != null ? Math.max(Number(r.dur), 1 / FRAMES_PER_BEAT) : target.t1 - target.t0
           target.t0 = Number(at)
@@ -1082,8 +1082,8 @@ export class OrigamiBuilder {
     }
     const out: Row[] = []
     timed.forEach((s, k) => {
-      out.push({ id, type: 'update', beat: s.t0, fold: k })
-      out.push({ id, type: 'update', beat: s.t1, fold: k + s.to })
+      out.push({ id, event: 'update', beat: s.t0, fold: k })
+      out.push({ id, event: 'update', beat: s.t1, fold: k + s.to })
     })
     return new Table(out, this._ctx)
   }
@@ -1227,24 +1227,26 @@ export const SCHEMAS = deepFreeze({
    * The 3D scene's event table (the "three" view): sparse object events keyed
    * by `id`, expanded by rasterize() into per-frame rows. `beat` places the
    * event (1-indexed; a beat past the loop's end lands it in a later pass).
-   * `type` picks what it does — "create" (the object appears: set `shape` and
+   * `event` picks what it does — "create" (the object appears: set `shape` and
    * any transform fields), "update" (a keyframe: each field it carries is a
    * per-field track easing from the previous keyframe carrying that field),
-   * "destroy" (the object leaves). px/py/pz position, rx/ry/rz rotation in
-   * radians, sx/sy/sz scale, `color` a 0xRRGGBB number. `ease` names the
-   * easing of the segment INTO this keyframe — blank stays linear (motion's
-   * default), while 'step' makes it a HOLD keyframe: the field keeps the
-   * previous keyframe's value until this beat, then jumps. Number cells accept
-   * "=" expressions (e.g. "=slider('h')" or "=progress().mul(6.283).sin()"),
-   * which hold streaming over their span instead of interpolating; `dur`
-   * (beats) sets the window a value's progress() sweeps — without it, an
-   * expression runs to the next keyframe carrying the same field. Check
-   * `disabled` to mute a row without deleting it.
+   * "color" (a color pulse: a bare event hard-switches `color`, newest wins,
+   * while a `dur` decays back over `ease` — add a `to` column to aim the decay
+   * at a target color instead of the object's base), "destroy" (the object
+   * leaves). px/py/pz position, rx/ry/rz rotation in radians, sx/sy/sz scale,
+   * `color` a 0xRRGGBB number. `ease` names the easing of the segment INTO this
+   * keyframe — blank stays linear (motion's default), while 'step' makes it a
+   * HOLD keyframe: the field keeps the previous keyframe's value until this
+   * beat, then jumps. Number cells accept "=" expressions (e.g. "=slider('h')"
+   * or "=progress().mul(6.283).sin()"), which hold streaming over their span
+   * instead of interpolating; `dur` (beats) sets the window a value's
+   * progress() sweeps — without it, an expression runs to the next keyframe
+   * carrying the same field. Check `disabled` to mute a row without deleting it.
    */
   scene: {
     beat: 'number',
     id: 'string',
-    type: ['create', 'update', 'destroy'],
+    event: ['create', 'update', 'color', 'destroy'],
     shape: { type: 'enum', options: ['box', 'sphere', 'cylinder', 'cone', 'torus', 'text', 'light', 'camera'], usedBy: ['create'] },
     px: { type: 'number', usedBy: ['create', 'update'] },
     py: { type: 'number', usedBy: ['create', 'update'] },
@@ -1255,17 +1257,17 @@ export const SCHEMAS = deepFreeze({
     sx: { type: 'number', usedBy: ['create', 'update'] },
     sy: { type: 'number', usedBy: ['create', 'update'] },
     sz: { type: 'number', usedBy: ['create', 'update'] },
-    color: { type: 'number', usedBy: ['create', 'update'] },
-    dur: { type: 'number', usedBy: ['update'] },
-    ease: { type: 'enum', options: ['step', 'linear', 'easeIn', 'easeOut', 'easeInOut'], usedBy: ['update'] },
+    color: { type: 'number', usedBy: ['create', 'update', 'color'] },
+    dur: { type: 'number', usedBy: ['update', 'color'] },
+    ease: { type: 'enum', options: ['step', 'linear', 'easeIn', 'easeOut', 'easeInOut'], usedBy: ['update', 'color'] },
     disabled: 'boolean',
   },
   /**
    * The GPU particle view: a table that opts the curl-noise particle sim in
    * and drives its parameters. A "spawn" row turns the sim on — without one
    * it never runs (WebGPU browsers only; the WebGL2 fallback has no compute
-   * shaders, so the rest of the scene renders without particles). "set" rows
-   * drive the sim's parameters, folded at-or-before the playhead like every
+   * shaders, so the rest of the scene renders without particles). "setVariable"
+   * rows drive the sim's parameters, folded at-or-before the playhead like every
    * event table: `name` is one of "timeMultiplier" (how fast the noise field
    * evolves), "elscale" (spatial scale of the swirls), or "speed"
    * (per-particle speed along the field); `value` the number. A slider named
@@ -1275,9 +1277,9 @@ export const SCHEMAS = deepFreeze({
    */
   particles: {
     beat: 'number',
-    event: ['spawn', 'set'],
-    name: { type: 'string', usedBy: ['set'] },
-    value: { type: 'number', usedBy: ['set'] },
+    event: ['spawn', 'setVariable'],
+    name: { type: 'string', usedBy: ['setVariable'] },
+    value: { type: 'number', usedBy: ['setVariable'] },
     disabled: 'boolean',
   },
   /**
@@ -1355,13 +1357,13 @@ export const SCHEMAS = deepFreeze({
     disabled: 'boolean',
   },
   /**
-   * The "sliders" view: one on-screen control per row — `id` names it (and is
-   * what expr.slider(id) reads), `min`/`max` its range, `default` its initial
-   * value. Rows are usually declared by just calling expr.slider(id, min, max)
-   * (or a post cell's slider(id, min, max)). Check `disabled` to pull the
-   * control off screen without losing its settings.
+   * The "sliders" view: one on-screen control per row — `name` labels it (and
+   * is what expr.slider("name") reads), `min`/`max` its range, `default` its
+   * initial value. Rows are usually declared by just calling
+   * expr.slider("name", min, max) (or a post cell's slider("name", min, max)).
+   * Check `disabled` to pull the control off screen without losing its settings.
    */
-  sliders: { id: 'string', min: 'number', max: 'number', default: 'number', disabled: 'boolean' },
+  sliders: { name: 'string', min: 'number', max: 'number', default: 'number', disabled: 'boolean' },
   /**
    * Beat-timed positions: one keyframe per row — `beat` places it on the loop
    * (1-indexed), `px`/`py`/`pz` the position. The usual shape for an editable
@@ -1372,13 +1374,13 @@ export const SCHEMAS = deepFreeze({
    * An origami fold table (see origami().steps()): one fold per row — `step`
    * a label, `p1`/`p2` two points "x,y" on the fold line, `move` the sheet
    * point(s) naming the flap(s) that swing, `kind`/`pick` choose among valid
-   * layer orders ("simple", "reverse", "sink", …), `at`/`dur` the swing's
-   * beat timing, `to` how far it lands (1 = flat). Check `disabled` to skip
-   * a fold.
+   * layer orders ("simple", "reverse", "sink", …), `beat`/`dur` the swing's
+   * timing (1-indexed, like every other table), `to` how far it lands
+   * (1 = flat). Check `disabled` to skip a fold.
    */
   origami: {
     step: 'string', p1: 'string', p2: 'string', move: 'string',
-    kind: 'string', pick: 'number', at: 'number', dur: 'number', to: 'number',
+    kind: 'string', pick: 'number', beat: 'number', dur: 'number', to: 'number',
     disabled: 'boolean',
   },
 } as const satisfies Record<string, Schema>)
@@ -1400,7 +1402,7 @@ function deepFreeze<T>(value: T): T {
 // behind box()/sphere()/… (usage docs live on the DSLSurface members).
 function sceneObject(shape: string, props: Row, ctx: DSLContext | null): Table {
   return new Table([{
-    id: shape, type: 'create', beat: 1, shape,
+    id: shape, event: 'create', beat: 1, shape,
     px: 0, py: 0, pz: 0, rx: 0, ry: 0, rz: 0,
     ...props,
   }], ctx)
@@ -1688,7 +1690,7 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     // A light isn't a mesh, so it skips sceneObject's px/py/pz:0 defaults —
     // leaving position unset lets the renderer apply the kind's own default.
     light: (props: Row = {}) => new Table([{
-      id: 'light', type: 'create', beat: 1, shape: 'light', kind: 'directional', ...props,
+      id: 'light', event: 'create', beat: 1, shape: 'light', kind: 'directional', ...props,
     }], ctx),
     object: (shape: string, props: Row = {}) => sceneObject(shape, props, ctx),
     points: (shape: string, props: Row = {}): Table => {
@@ -1706,8 +1708,8 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       (keyframes ?? []).map((k, i) => {
         const beat = typeof k.beat === 'number' ? k.beat : 1
         return i === 0
-          ? { px: 0, py: 0, pz: 5, tx: 0, ty: 0, tz: 0, ...k, id: 'camera', shape: 'camera', type: 'create', beat }
-          : { ...k, id: 'camera', shape: 'camera', type: 'update', beat }
+          ? { px: 0, py: 0, pz: 5, tx: 0, ty: 0, tz: 0, ...k, id: 'camera', shape: 'camera', event: 'create', beat }
+          : { ...k, id: 'camera', shape: 'camera', event: 'update', beat }
       }),
       ctx,
     ),

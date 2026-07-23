@@ -68,7 +68,7 @@ test('the service cooks a program end-to-end and the packed result unpacks to ta
   const service = createCookService()
   const resp = service.handle(req(`
 define("base", "three", () => grid(2, 2).derive({
-  id: r => "o" + r.i, type: "create", beat: 1, shape: "sphere",
+  id: r => "o" + r.i, event: "create", beat: 1, shape: "sphere",
   rx: 0, ry: 0, rz: 0, color: 0x4444ff,
 }))
 define("scene", () => table("three").rasterize(4/30))

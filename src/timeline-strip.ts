@@ -96,10 +96,6 @@ export interface Handle {
   // arrowhead to its point handle (hover-linking the pair) and an end drag
   // retargets THAT row's beat. Absent on a wrap tail and on inert transitions.
   endRow?: number
-  // Which stored column `beat`/`end` round-trip through on a drag — 'beat'
-  // for every table but the origami fold table, whose own name for it is
-  // `at` (see positionField). Omitted (not just 'beat') for the common case.
-  posField?: 'beat' | 'at'
   lane: number
   // A later placement of the same row (a loop event playing it more than
   // once) — draggable, but not the "primary" one a click should focus.
@@ -129,16 +125,7 @@ function wrapPass(beat: number, unit: number, maxPass?: number): { local: number
 // Positional/bookkeeping columns the hover/drag readout skips: position is
 // what the strip already shows visually (and as the unlabeled tag on the
 // handle itself), so the readout is reserved for what identifies the row.
-// `at` is the origami fold table's own name for its beat column (see
-// positionField below).
-const POSITIONAL_COLS = new Set(['beat', 'dur', 'loop', 'disabled', 'at'])
-
-// Which column holds a content table's source beat: `beat` for every table
-// but the origami fold table, whose `at` column plays the same role (the
-// fold solver's own name for it — see fold-engine.ts).
-function positionField(colNames: Set<string>): 'beat' | 'at' {
-  return colNames.has('beat') ? 'beat' : 'at'
-}
+const POSITIONAL_COLS = new Set(['beat', 'dur', 'loop', 'disabled'])
 
 // First non-blank line of a code cell, whitespace-collapsed and capped — a
 // sketch identifies its row at a glance without flooding the readout.
@@ -216,13 +203,12 @@ function buildRaw(
   const wrapUnit = timeline ? timeline.beats : loopBeats
   const maxPass = timeline ? Math.max(0, timeline.loops - 1) : undefined
   const loopEnd = wrapUnit && wrapUnit > 0 ? wrapUnit + 1 : Infinity
-  const posField = positionField(colNames)
   const foldWindows = FOLD_WINDOWS[name]
     ? new Map(FOLD_WINDOWS[name](rows, loopBeats).map((w) => [w.row, w]))
     : null
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
-    const beat = num(row[posField])
+    const beat = num(row.beat)
     if (beat === undefined) continue
     const win = foldWindows?.get(i)
     const dur = foldWindows
@@ -235,7 +221,6 @@ function buildRaw(
       const group = timeline ? w.pass : 0
       const common = {
         row: i, group, lane: group, ghost: idx > 0, disabled,
-        ...(posField === 'at' ? { posField: 'at' as const } : {}),
         ...(w.pass > 0 ? { pass: w.pass } : {}),
       }
       if (dur === undefined) {
@@ -471,7 +456,7 @@ const DEFAULT_MIN_SPAN = 0.25
 
 export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts: DragOptions = {}): DragResult {
   const minSpan = opts.minSpan ?? DEFAULT_MIN_SPAN
-  const { row, beat, end, pass, posField = 'beat', derived, endRow } = handle
+  const { row, beat, end, pass, derived, endRow } = handle
   // A wrapped placement's `beat`/`end` are local to its own pass (wrapPass) —
   // sourceBeatAt needs that pass back to re-derive the right extended-axis
   // point, the same `loop` argument buildTimeline's own multi-pass playback
@@ -482,7 +467,7 @@ export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts:
     // A span's length (`dur`) is untouched by a pure move, so its window
     // keeps the same duration wherever it lands.
     const nextBeat = Math.max(1, beat + dBeats)
-    return { row, values: { [posField]: toSource(nextBeat) } }
+    return { row, values: { beat: toSource(nextBeat) } }
   }
 
   // A derived span has no stored dur to resize. Its end edge belongs to the
@@ -491,19 +476,19 @@ export function dragUpdate(handle: Handle, mode: DragMode, dBeats: number, opts:
   if (derived) {
     if (mode === 'end' && endRow !== undefined) {
       const nextEnd = Math.max((end ?? beat) + dBeats, beat + minSpan)
-      return { row: endRow, values: { [posField]: toSource(nextEnd) } }
+      return { row: endRow, values: { beat: toSource(nextEnd) } }
     }
     const nextBeat = Math.max(1, beat + dBeats)
-    return { row, values: { [posField]: toSource(nextBeat) } }
+    return { row, values: { beat: toSource(nextBeat) } }
   }
 
   if (mode === 'start') {
     const fixedEnd = end ?? beat
     const nextBeat = Math.max(1, Math.min(beat + dBeats, fixedEnd - minSpan))
     if (end !== undefined) {
-      return { row, values: { [posField]: toSource(nextBeat), dur: toSource(fixedEnd) - toSource(nextBeat) } }
+      return { row, values: { beat: toSource(nextBeat), dur: toSource(fixedEnd) - toSource(nextBeat) } }
     }
-    return { row, values: { [posField]: toSource(nextBeat) } }
+    return { row, values: { beat: toSource(nextBeat) } }
   }
 
   // mode === 'end'
