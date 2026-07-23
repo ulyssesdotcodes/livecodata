@@ -55,13 +55,15 @@ test('isCellInert: dims a cell only when its column\'s usedBy excludes the row\'
   assert.equal(isCellInert({ type: 'create' }, typeCols[1], typeCols), false)
 })
 
-test('isCellInert: greying tracks the merged fold — pulse names, setVariable durs, bauble transitions', async () => {
+test('isCellInert: greying tracks the merged fold — pulse names, setVariable eases, bauble transitions', async () => {
   const { schemaColumns } = await import('../src/editable-tables.js')
   const { SCHEMAS } = await import('../src/dsl.js')
   const cell = (cols: EditableColumn[], name: string): EditableColumn => cols.find((c) => c.name === name)!
   const post = schemaColumns(SCHEMAS.post)
   assert.equal(isCellInert({ event: 'pulse' }, cell(post, 'name'), post), false, 'a pulse targets a named variable')
-  assert.equal(isCellInert({ event: 'setVariable' }, cell(post, 'dur'), post), false, 'a setVariable tweens over dur')
+  assert.equal(isCellInert({ event: 'pulse' }, cell(post, 'dur'), post), false, 'a pulse runs over dur')
+  assert.equal(isCellInert({ event: 'setVariable' }, cell(post, 'dur'), post), true, 'a setVariable keyframe eases by segment, not dur')
+  assert.equal(isCellInert({ event: 'setVariable' }, cell(post, 'ease'), post), false, "a setVariable's ease shapes the segment into it")
   // A bauble transition morphs to the next setCode — it reads neither its own
   // code nor value, so both cells grey out on a transition row.
   const bauble = schemaColumns(SCHEMAS.bauble)
