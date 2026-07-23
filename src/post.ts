@@ -11,6 +11,7 @@ import {
   EASINGS, isBinding, isStreamingNode, evalExpr, substituteExpr,
   type Easings, type ExprNode,
 } from './dsl.js'
+import { contentSeqLen, transitionSpan, transitionAt } from './hydra.js'
 import { evalPostCode, chainSignature, type OpChain } from './post-lang.js'
 import type { Row } from './lineage.js'
 
@@ -42,17 +43,19 @@ export function buildPostIndex(rows: Row[] | null | undefined): Row[] {
 }
 
 // The frames whose folded state must be precompiled: every event frame, plus
-// each transition's END frame (the fold changes when a wipe window expires with
-// no row there — the verified fused-fx failure mode). setProgram enumerates
-// these; a warm-compile audit checks no other frame introduces a new state.
-export function postStateFrames(index: Row[]): number[] {
+// each transition's window-END frame — usually the next setCode's frame (so
+// already enumerated), except the same-beat/full-pass case, which lands a full
+// pass (loopFrames) later. setProgram enumerates these; a warm-compile audit
+// checks no other frame introduces a new state.
+export function postStateFrames(index: Row[], loopFrames = 0): number[] {
+  const seqLen = contentSeqLen(index, loopFrames)
   const frames = new Set<number>()
-  for (const row of index) {
-    const f = row.index as number
+  for (let p = 0; p < index.length; p++) {
+    const f = index[p].index as number
     frames.add(f)
-    if (row.event === 'transition') {
-      const durBeats = typeof row.dur === 'number' && row.dur > 0 ? row.dur : 1
-      frames.add(f + Math.max(1, beatsToFrames(durBeats)))
+    if (index[p].event === 'transition') {
+      const span = transitionSpan(index, p, seqLen, loopFrames)
+      if (span) frames.add(seqLen > 0 ? ((span.end % seqLen) + seqLen) % seqLen : span.end)
     }
   }
   return [...frames].sort((a, b) => a - b)
@@ -99,59 +102,81 @@ function amountExpr(value: unknown): string {
   return s.includes('=>') ? `(${s})` : `(p) => (${s})`
 }
 
-// A transition snapshotted mid-fold: the frozen "before" chain, its mask chain
-// ('' = plain crossfade), and the grid-frame wipe window.
-interface Transition { before: string; mask: string; startFrame: number; durFrames: number }
+// Apply one chain-shape event — everything that mutates the chain string.
+// setVariable/pulse/transition leave it unchanged (handled elsewhere).
+function applyPostShape(code: string, row: Row): string {
+  const c = typeof row.code === 'string' ? row.code.trim() : ''
+  switch (row.event) {
+    case 'setCode':
+      return c
+    case 'add':
+      return c === '' ? code : code === '' ? c.replace(/^\./, '') : `${code}.${c.replace(/^\./, '')}`
+    case 'remove':
+      return code !== '' && typeof row.name === 'string' && row.name !== '' ? removeOp(code, row.name) : code
+    case 'layer':
+      if (c !== '') {
+        const mode = typeof row.mode === 'string' && LAYER_MODES.has(row.mode) ? row.mode : 'blend'
+        const amt = LAYER_AMOUNT.has(mode) ? `, ${amountExpr(row.value)}` : ''
+        return `${code === '' ? 'scene()' : code}.${mode}(${c}${amt})`
+      }
+      return code
+    default:
+      return code
+  }
+}
+
+// The transition's `pos` fn (playback time → clamped 0 → 1), with `ease` baked
+// in as its closed form: the fn is eval'd with no access to EASINGS, so the
+// shape must be inlined. Blank/unknown ease is linear.
+function easedPos(ease: unknown, start: number, dur: number): string {
+  const u = `Math.min(Math.max((p.time - ${start}) / ${dur}, 0), 1)`
+  switch (ease) {
+    case 'easeIn': return `(p) => (${u}) ** 2`
+    case 'easeOut': return `(p) => 1 - (1 - (${u})) ** 2`
+    case 'easeInOut': return `(p) => ((e) => e < 0.5 ? 2 * e * e : 1 - ((-2 * e + 2) ** 2) / 2)(${u})`
+    default: return `(p) => ${u}`
+  }
+}
 
 // Fold the event stream into the running chain string at `frame`. Returns null
 // (post stage inactive → scene shows through) until the chain is non-empty.
 // setVariable/pulse are handled separately (foldVars); this is chain shape only.
-function foldChain(index: Row[], frame: number): string | null {
-  let code = ''
-  const transitions: Transition[] = []
-  for (const row of index) {
-    if ((row.index as number) > frame) break
-    const c = typeof row.code === 'string' ? row.code.trim() : ''
-    switch (row.event) {
-      case 'setCode':
-        code = c
-        break
-      case 'add':
-        if (c !== '') code = code === '' ? c.replace(/^\./, '') : `${code}.${c.replace(/^\./, '')}`
-        break
-      case 'remove':
-        if (code !== '' && typeof row.name === 'string' && row.name !== '') code = removeOp(code, row.name)
-        break
-      case 'layer':
-        if (c !== '') {
-          const mode = typeof row.mode === 'string' && LAYER_MODES.has(row.mode) ? row.mode : 'blend'
-          const amt = LAYER_AMOUNT.has(mode) ? `, ${amountExpr(row.value)}` : ''
-          const base = code === '' ? 'scene()' : code
-          code = `${base}.${mode}(${c}${amt})`
-        }
-        break
-      case 'transition': {
-        // Snapshot the current chain as "before"; the wipe applies to the final
-        // "after" once folded. Elapsed windows drop (postStateFrames enumerates
-        // the window END as its own state).
-        const durBeats = typeof row.dur === 'number' && row.dur > 0 ? row.dur : 1
-        const durFrames = Math.max(1, beatsToFrames(durBeats))
-        const startFrame = row.index as number
-        if (frame < startFrame + durFrames) {
-          transitions.push({ before: code === '' ? 'scene()' : code, mask: c, startFrame, durFrames })
-        }
-        break
+// A transition wipes from the chain at its beat to the chain at the next setCode
+// ahead (its window end), revealing that destination mid-wipe via look-ahead —
+// chain-shape events fold up to the furthest active window end.
+function foldChain(index: Row[], frame: number, seqLen: number, loopFrames: number): string | null {
+  const active: { before: string; mask: string; start: number; len: number; end: number; ease: unknown }[] = []
+  let running = ''
+  let codeAtF = ''
+  for (let p = 0; p < index.length; p++) {
+    const row = index[p]
+    if (row.event === 'transition') {
+      const span = transitionSpan(index, p, seqLen, loopFrames)
+      if (span != null && transitionAt(frame, row.index as number, span.len, seqLen) != null) {
+        active.push({
+          before: running === '' ? 'scene()' : running,
+          mask: typeof row.code === 'string' ? row.code.trim() : '',
+          start: row.index as number, len: span.len, end: span.end, ease: row.ease,
+        })
       }
+    } else {
+      running = applyPostShape(running, row)
     }
+    if ((row.index as number) <= frame) codeAtF = running
   }
-  if (code === '' && transitions.length === 0) return null
+  if (codeAtF === '' && active.length === 0) return null
+  // The "after": chain-shape folded up to the furthest active window end.
+  const horizon = active.length ? Math.max(...active.map((a) => a.end)) : frame
+  let after = ''
+  for (const row of index) {
+    if ((row.index as number) > horizon) break
+    if (row.event !== 'transition') after = applyPostShape(after, row)
+  }
   // Apply wipes innermost-first so nested transitions compose in beat order.
-  let result = code === '' ? 'scene()' : code
-  for (let i = transitions.length - 1; i >= 0; i--) {
-    const tr = transitions[i]
-    const start = tr.startFrame / FPS
-    const dur = tr.durFrames / FPS
-    const posFn = `(p) => Math.min(Math.max((p.time - ${start}) / ${dur}, 0), 1)`
+  let result = after === '' ? 'scene()' : after
+  for (let i = active.length - 1; i >= 0; i--) {
+    const tr = active[i]
+    const posFn = easedPos(tr.ease, tr.start / FPS, tr.len / FPS)
     const mask = tr.mask !== '' ? `(${tr.mask})` : 'null'
     result = `transition((${tr.before}), (${result}), ${mask}, ${posFn})`
   }
@@ -317,10 +342,10 @@ export function foldVars(index: Row[], frame: number): Record<string, unknown> {
 // into one running chain, evaluated to an op list. The state id is its
 // structural signature, so frames sharing structure share a precompiled graph.
 // Returns null until the chain is non-empty — playback then leaves post inactive.
-export function postFrameAt(index: Row[], f: number): PostFrame | null {
+export function postFrameAt(index: Row[], f: number, loopFrames = 0): PostFrame | null {
   const frame = Math.floor(f)
   if (frame < 0) return null
-  const codeStr = foldChain(index, frame)
+  const codeStr = foldChain(index, frame, contentSeqLen(index, loopFrames), loopFrames)
   if (codeStr == null) return null
   // Let a broken chain (syntax error, unknown op, a trailing line comment the
   // `return (...)` wrap can't close) throw. The cook compiles every state up
@@ -329,13 +354,16 @@ export function postFrameAt(index: Row[], f: number): PostFrame | null {
   return { stateId: chainSignature(chain), chain, vars: foldVars(index, frame) }
 }
 
-// The compiled chain source as of one table row: events folded up to and
-// INCLUDING the row at `rowIndex`. Powers the table panel's per-row popover.
-export function postCodeUpToRow(rows: Row[] | null | undefined, rowIndex: number): string | null {
+// The compiled chain source shown for one table row: the full fold sampled at
+// that row's own frame — exactly what the runtime shows there (a transition
+// row's popover includes the next setCode via look-ahead; the destination
+// setCode row, a window end, shows the plain after chain). Powers the table
+// panel's per-row popover; loopFrames defaults to unwrapped.
+export function postCodeUpToRow(rows: Row[] | null | undefined, rowIndex: number, loopFrames = 0): string | null {
   const all = rows ?? []
   if (!isPostRow(all[rowIndex])) return null
   const index = buildPostIndex(all.map((row, i) => ({ ...row, __row: i })))
   const pos = index.findIndex((r) => (r as { __row?: number }).__row === rowIndex)
   if (pos < 0) return null
-  return foldChain(index.slice(0, pos + 1), index[pos].index as number)
+  return foldChain(index, index[pos].index as number, contentSeqLen(index, loopFrames), loopFrames)
 }

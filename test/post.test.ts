@@ -14,7 +14,7 @@ import { evalPostCode, chainSignature, collectLiveValues, sliderDeclsInCode, pos
 // Registers the Expr live-arg adapter post-lang consults (expr in post cells).
 import '../src/expr-cell.js'
 import { slider, progress, field, isBinding, evalExpr, type Binding } from '../src/dsl.js'
-import { frameToBeat } from '../src/constants.js'
+import { frameToBeat, beatsToFrames } from '../src/constants.js'
 import type { Row } from '../src/lineage.js'
 
 const b = (frame: number): number => frameToBeat(frame)
@@ -91,16 +91,59 @@ test('layer composites another chain via the chosen mode', () => {
   assert.deepEqual(chain[2].chainArgs![0].map((o) => o.op), ['scene', 'strobe'])
 })
 
-test('a transition wraps before→after during its window, then expires to the after program', () => {
+test('a transition wipes to the next setCode ahead, then expires to it (end-exclusive)', () => {
   const rows: Row[] = [
     { beat: 1, event: 'setCode', code: 'blur(4)' },
-    { beat: 5, event: 'transition', dur: 2 }, // frame 120, window [120,180)
-    { beat: 5, event: 'setCode', code: 'edges(0.2, 0)' },
+    { beat: 5, event: 'transition' },                  // frame 120
+    { beat: 7, event: 'setCode', code: 'edges(0.2, 0)' }, // frame 180 = window end
   ]
   const idx = buildPostIndex(rows)
-  assert.deepEqual(ops(postFrameAt(idx, 120)), ['transition'], 'inside the window: the wipe')
-  assert.deepEqual(ops(postFrameAt(idx, 180)), ['scene', 'edges'], 'at the end: the after program stands alone')
+  // Inside the window [120, 180): the wipe. Look-ahead reveals the destination
+  // (edges) as the wipe's "after" chain arg, though its setCode is at beat 7.
+  const wipe = postFrameAt(idx, 150)!.chain
+  assert.equal(wipe[0].op, 'transition')
+  assert.deepEqual(wipe[0].chainArgs![0].map((o) => o.op), ['scene', 'blur'], 'before')
+  assert.deepEqual(wipe[0].chainArgs![1].map((o) => o.op), ['scene', 'edges'], 'after (look-ahead)')
+  // The window END is the setCode's own frame (end-exclusive): after stands alone.
+  assert.deepEqual(ops(postFrameAt(idx, 180)), ['scene', 'edges'])
   assert.ok(postStateFrames(idx).includes(180), 'the window END is an enumerated state frame')
+})
+
+test('a post transition ease shapes its wipe progress, inlined (no EASINGS at eval)', () => {
+  const posAt = (ease: unknown, time: number): number => {
+    const rows: Row[] = [
+      { beat: 1, event: 'setCode', code: 'blur(4)' },
+      { beat: 5, event: 'transition', ease }, // frame 120 → t 2s; window [120,180) → t 2..3
+      { beat: 7, event: 'setCode', code: 'edges(0.2)' },
+    ]
+    const fn = postFrameAt(buildPostIndex(rows), 150)!.chain[0].args[0].value as (p: { time: number }) => number
+    return fn({ time })
+  }
+  close(posAt('linear', 2.5), 0.5)   // linear midpoint
+  close(posAt(undefined, 2.5), 0.5)  // blank = linear
+  close(posAt('easeIn', 2.5), 0.25)  // u² at u=0.5
+  close(posAt('easeOut', 2.5), 0.75) // 1-(1-u)² at u=0.5
+  close(posAt('easeInOut', 2.25), 0.125) // 2u² at u=0.25
+})
+
+test('a wrapped post window runs to a setCode across the loop boundary', () => {
+  // No setCode ahead this pass → the window wraps to the next pass's first
+  // setCode. loopFrames 120: maxIndex 180 → 2 passes, seqLen 240.
+  const rows: Row[] = [
+    { beat: 1, event: 'setCode', code: 'blur(4)' },      // frame 0
+    { beat: 5, event: 'setCode', code: 'edges(0.2)' },   // frame 120
+    { beat: 7, event: 'transition' },                    // frame 180
+  ]
+  const idx = buildPostIndex(rows)
+  const L = 120
+  // Frame 0: window covers [180,240), inactive here — the plain start chain.
+  assert.deepEqual(ops(postFrameAt(idx, 0, L)), ['scene', 'blur'])
+  // Frame 210: wiping from edges (code at the transition beat) to the wrapped
+  // destination blur — a seamless loop back to the start.
+  const wipe = postFrameAt(idx, 210, L)!.chain
+  assert.equal(wipe[0].op, 'transition')
+  assert.deepEqual(wipe[0].chainArgs![0].map((o) => o.op), ['scene', 'edges'], 'before')
+  assert.deepEqual(wipe[0].chainArgs![1].map((o) => o.op), ['scene', 'blur'], 'after wraps to start')
 })
 
 test('prev() is an explicit feedback head usable as a branch arg', () => {
@@ -195,13 +238,26 @@ test('substitution never mutates the source nodes (cook memo safety)', () => {
   assert.deepEqual(value, snapshot)
 })
 
-test('postCodeUpToRow shows the running chain after the given row', () => {
+test('postCodeUpToRow samples the fold at the row’s frame (runtime parity, look-ahead)', () => {
   const rows: Row[] = [
     { beat: 1, event: 'setCode', code: 'blur(3)' },
     { beat: b(4), event: 'add', code: 'pixelate(6)' },
   ]
   assert.equal(postCodeUpToRow(rows, 0), 'blur(3)')
   assert.equal(postCodeUpToRow(rows, 1), 'blur(3).pixelate(6)')
+
+  const wipeRows: Row[] = [
+    { beat: 1, event: 'setCode', code: 'blur(3)' },
+    { beat: 5, event: 'transition' },                  // frame 120
+    { beat: 7, event: 'setCode', code: 'edges(0.2)' }, // frame 180 = window end
+  ]
+  // The transition row's popover is the wipe composite the runtime shows there,
+  // with the destination revealed via look-ahead — not the bare before chain.
+  const at1 = postCodeUpToRow(wipeRows, 1)!
+  assert.ok(at1.startsWith('transition('))
+  assert.ok(at1.includes('edges(0.2)'))
+  // The destination setCode row (a window end, end-exclusive) shows plain after.
+  assert.equal(postCodeUpToRow(wipeRows, 2), 'edges(0.2)')
 })
 
 test('warm-compile audit: no frame of a loop introduces an unenumerated state', () => {
@@ -210,15 +266,16 @@ test('warm-compile audit: no frame of a loop introduces an unenumerated state', 
     { beat: 1, event: 'setVariable', name: 'th', value: 0.2 },
     { beat: 9, event: 'add', code: 'bloom((p) => p.glow)' },
     { beat: 11, event: 'remove', name: 'bloom' },
-    { beat: 13, event: 'transition', dur: 2 },
-    { beat: 13, event: 'setCode', code: 'blend(prev().mosaic(4), 0.5)' },
+    { beat: 13, event: 'transition' },                                   // frame 360
+    { beat: 15, event: 'setCode', code: 'blend(prev().mosaic(4), 0.5)' }, // frame 420 = window end
   ]
+  const L = beatsToFrames(16) // 16-beat loop, seqLen 480
   const idx = buildPostIndex(rows)
+  const stateFrames = postStateFrames(idx, L)
   const enumerated = new Set<string>()
-  for (const f of postStateFrames(idx)) { const fr = postFrameAt(idx, f); if (fr) enumerated.add(fr.stateId) }
-  const maxF = Math.max(...postStateFrames(idx)) + 120
-  for (let f = 0; f <= maxF; f++) {
-    const fr = postFrameAt(idx, f)
+  for (const f of stateFrames) { const fr = postFrameAt(idx, f, L); if (fr) enumerated.add(fr.stateId) }
+  for (let f = 0; f < Math.max(...stateFrames) + L; f++) {
+    const fr = postFrameAt(idx, f, L)
     if (fr) assert.ok(enumerated.has(fr.stateId), `frame ${f} state "${fr.stateId}" was not precompiled`)
   }
 })

@@ -1147,7 +1147,10 @@ export const SCHEMAS = deepFreeze({
    * head / a ".effect(…)" fragment), "replace" (swap substring `find` for
    * `value`), "layer" (`code` = another sketch composited via `mode`, amount
    * `value`), "transition" (`code` = a black-and-white mask that wipes to the
-   * program after it over `value` beats). `out` names the hydra output the row
+   * NEXT setCode ahead — the wipe runs from this beat until that setCode's beat,
+   * so you place the destination where the wipe should END; with the
+   * destination on the transition's own beat it fills one whole loop pass).
+   * `out` names the hydra output the row
    * drives (o0 by default) and is appended as the terminal `.out(oN)`, so a
    * setCode's `code` needn't write its own; each output's events fold
    * independently. `event`, `mode`, and `out` are enums (dropdowns in the table
@@ -1194,9 +1197,10 @@ export const SCHEMAS = deepFreeze({
    * live input the chain reads through a props function; add `dur`/`ease` to
    * TWEEN it from its current value), "pulse" (add `value·env` over `dur` beats, `ease`
    * shaping the envelope; pulses stack), "layer" (composite another chain via
-   * `mode`, amount `value`), and "transition" (wipe to the program after it over
-   * `dur` beats; `code` = an optional black-and-white mask chain, blank =
-   * crossfade). `event`, `ease`, and `mode` are enums (dropdowns); `code` cells
+   * `mode`, amount `value`), and "transition" (wipe to the NEXT setCode ahead —
+   * the wipe runs from this beat until that setCode's beat, so its beat sets the
+   * length; `ease` shapes the wipe, `code` = an optional black-and-white mask
+   * chain, blank = crossfade). `event`, `ease`, and `mode` are enums (dropdowns); `code` cells
    * open in the editor with post completions; check `disabled` to mute a row.
    */
   post: {
@@ -1279,9 +1283,9 @@ export const SCHEMAS = deepFreeze({
    * onion shell `value` thick minus `code` — or a half-space about `axis`),
    * "tile" (repeat on an infinite lattice — `value` spaces all axes, or a
    * string vec3 like "[80 120 80]"), "radial" (`value` copies in a circle
-   * about `axis`), and "transition" (morph from the program so far to the
-   * program after it over `value` beats, riding the playback clock — build
-   * the destination with ordinary events at the same beat). The render shows
+   * about `axis`), and "transition" (morph from the program so far to the NEXT
+   * setCode ahead, riding the playback clock — the morph runs from this beat
+   * until that setCode's beat, so its beat sets the length). The render shows
    * directly when no hydra sketch is live, and is hydra's s1 source either
    * way — composite it with src(s1). `code` cells open in the editor as
    * Janet (no JS completions); check `disabled` to mute a row without

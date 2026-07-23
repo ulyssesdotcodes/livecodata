@@ -89,24 +89,66 @@ function outputOf(row: Row): string {
   return OUTPUT_RE.test(o) ? o : 'o0'
 }
 
-// A `transition` snapshotted mid-fold: the frozen "before" chain, its mask
-// sketch ('' = plain crossfade), and the grid-frame wipe window. The window is
-// exposed to the mask in `props.time` (seconds) units and bakes as constants,
-// so the mask animates on hydra's own clock without the sketch string changing
-// per frame.
-export interface Transition {
-  before: string
-  mask: string
-  startFrame: number
-  durFrames: number
+// The content cycle length in frames: playback wraps the playhead into
+// [0, seqLen), each pass re-sampling [0, loopFrames), so an event beyond the
+// loop lands in a later pass (see visualizer.ts). A 0/absent loopFrames means
+// no loop — callers then treat transition windows as unwrapped.
+export function contentSeqLen(index: Row[], loopFrames: number): number {
+  if (!loopFrames || loopFrames <= 0) return 0
+  const maxIndex = index.reduce((m, r) => Math.max(m, r.index as number), 0)
+  return (Math.floor(maxIndex / loopFrames) + 1) * loopFrames
+}
+
+// A transition's wipe window: its length in frames and the end frame E (the
+// NEXT setCode's frame). "Next" scans `scope` (the fold-ordered rows the wipe
+// lives in — one hydra output, or the whole post/bauble table) forward from the
+// transition at `pos`, wrapping the content cycle. With a loop (seqLen > 0) a
+// same-frame destination yields a zero raw distance → one full pass
+// (loopFrames). With no loop (seqLen 0) the scan stays unwrapped: the nearest
+// setCode strictly ahead, or a one-beat fallback when none. Null when the scope
+// holds no setCode at all — the wipe is inert.
+export function transitionSpan(
+  scope: Row[], pos: number, seqLen: number, loopFrames: number,
+): { end: number; len: number } | null {
+  const T = scope[pos].index as number
+  if (seqLen > 0) {
+    const n = scope.length
+    for (let k = 1; k <= n; k++) {
+      const r = scope[(pos + k) % n]
+      if (r.event === 'setCode') {
+        const end = r.index as number
+        return { end, len: ((end - T) % seqLen + seqLen) % seqLen || loopFrames }
+      }
+    }
+    return null
+  }
+  let end = Infinity
+  let any = false
+  for (const r of scope) {
+    if (r.event !== 'setCode') continue
+    any = true
+    const s = r.index as number
+    if (s > T && s < end) end = s
+  }
+  if (!any) return null
+  if (!Number.isFinite(end)) end = T + beatsToFrames(1)
+  return { end, len: end - T }
+}
+
+// Is a wipe starting at frame `start` and lasting `len` frames active at
+// `frame`, and how far through (0 → 1)? Distance is forward-wrapped over the
+// content cycle so a window re-runs each pass and wrapped windows work when the
+// playhead re-samples [0, loopFrames).
+export function transitionAt(frame: number, start: number, len: number, seqLen: number): number | null {
+  const dist = seqLen > 0 ? ((frame - start) % seqLen + seqLen) % seqLen : frame - start
+  return dist >= 0 && dist < len ? dist / len : null
 }
 
 // The window bounds a transition exposes to its mask sketch, in `props.time`
-// (seconds) units, plus the clamped 0 → 1 `transitionPos(t)` helper. Exported
-// for src/post.ts, which mirrors hydra's transition windowing.
-export function transitionWindow(t: Transition): { start: number; end: number; posFn: string } {
-  const start = t.startFrame / FPS
-  const dur = t.durFrames / FPS
+// (seconds) units, plus the clamped 0 → 1 `transitionPos(t)` helper.
+function transitionWindow(startFrame: number, windowFrames: number): { start: number; end: number; posFn: string } {
+  const start = startFrame / FPS
+  const dur = windowFrames / FPS
   return {
     start,
     end: start + dur,
@@ -124,78 +166,95 @@ function rowScopedValue(row: Row): unknown {
   return isStreamingNode(node) ? { $expr: node } : evalExpr(node, row, 0)
 }
 
+// Apply one code-shape event — everything that mutates the running sketch
+// string — returning the new code. setVariable/transition leave it unchanged.
+function applyHydraShape(code: string | null, row: Row, output: string): string | null {
+  switch (row.event) {
+    case 'setCode':
+      return typeof row.code === 'string' ? row.code : code
+    case 'setSource':
+      // Swap the head generator, keeping every effect (and .out()) after it.
+      if (code != null && typeof row.code === 'string' && row.code.trim() !== '')
+        return `${chainOf(row.code.trim())}${splitHead(code)[1]}`
+      return code
+    case 'replace':
+      // Literal substring swap over the whole current sketch.
+      if (code != null && typeof row.find === 'string' && row.find !== '')
+        return code.split(row.find).join(row.value == null ? '' : String(row.value))
+      return code
+    case 'append':
+      if (code != null && typeof row.code === 'string' && row.code.trim() !== '')
+        return `${chainOf(code)}${row.code.trim()}.out(${output})`
+      return code
+    case 'layer':
+      if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
+        const mode = typeof row.mode === 'string' && row.mode in BLEND_OPS ? row.mode : 'blend'
+        const amt = BLEND_OPS[mode] && hasAmount(row.value) ? `, ${amountExpr(row.value)}` : ''
+        return `${chainOf(code)}.${mode}(${chainOf(row.code.trim())}${amt}).out(${output})`
+      }
+      return code
+    default:
+      return code
+  }
+}
+
 // Fold one output's events (already sorted, filtered to this output) into its
-// running code string; setVariable folds into the shared `vars`. Returns null
-// until a setCode establishes some code.
+// running code string; setVariable folds into the shared `vars`. A transition
+// wipes from the code at its beat to the code at the next setCode ahead (its
+// window end E), revealing that destination mid-wipe via look-ahead: code-shape
+// events fold up to the furthest active window's E, while setVariable stays at
+// the playhead. Returns null until a setCode establishes some code.
 function foldOutput(
   rows: Row[], frame: number, output: string,
-  vars: Record<string, unknown>,
+  vars: Record<string, unknown>, seqLen: number, loopFrames: number,
 ): string | null {
-  let code: string | null = null
-  const transitions: Transition[] = []
   for (const row of rows) {
     if ((row.index as number) > frame) break
-    switch (row.event) {
-      case 'setCode':
-        if (typeof row.code === 'string') code = row.code
-        break
-      case 'setVariable':
-        if (typeof row.name === 'string') vars[row.name] = rowScopedValue(row)
-        break
-      case 'setSource':
-        // Swap the head generator, keeping every effect (and .out()) after it.
-        if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
-          code = `${chainOf(row.code.trim())}${splitHead(code)[1]}`
-        }
-        break
-      case 'replace':
-        // Literal substring swap over the whole current sketch.
-        if (code != null && typeof row.find === 'string' && row.find !== '') {
-          code = code.split(row.find).join(row.value == null ? '' : String(row.value))
-        }
-        break
-      case 'append':
-        if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
-          code = `${chainOf(code)}${row.code.trim()}.out(${output})`
-        }
-        break
-      case 'layer':
-        if (code != null && typeof row.code === 'string' && row.code.trim() !== '') {
-          const mode = typeof row.mode === 'string' && row.mode in BLEND_OPS ? row.mode : 'blend'
-          const amt = BLEND_OPS[mode] && hasAmount(row.value) ? `, ${amountExpr(row.value)}` : ''
-          code = `${chainOf(code)}.${mode}(${chainOf(row.code.trim())}${amt}).out(${output})`
-        }
-        break
-      case 'transition': {
-        // Snapshot the current code as the "before"; the wipe is applied to the
-        // final "after" once the whole output is folded. Elapsed windows are
-        // dropped so finished wipes don't pile up without bound.
-        if (code != null) {
-          const durBeats = typeof row.value === 'number' && row.value > 0 ? row.value : 1
-          const durFrames = Math.max(1, beatsToFrames(durBeats))
-          const startFrame = row.index as number
-          if (frame < startFrame + durFrames) {
-            transitions.push({
-              before: chainOf(code),
-              mask: typeof row.code === 'string' ? row.code.trim() : '',
-              startFrame,
-              durFrames,
-            })
-          }
-        }
-        break
-      }
-    }
+    if (row.event === 'setVariable' && typeof row.name === 'string') vars[row.name] = rowScopedValue(row)
   }
-  if (code == null) return null
+  // Walk the whole scope in fold order: snapshot each active transition's
+  // "before" and track the running code at the playhead. A wrapped window can
+  // be active while its transition row sits past the playhead (an early
+  // next-pass frame), so this doesn't stop at the playhead.
+  const active: { before: string; mask: string; start: number; len: number; end: number }[] = []
+  let running: string | null = null
+  let codeAtF: string | null = null
+  for (let p = 0; p < rows.length; p++) {
+    const row = rows[p]
+    if (row.event === 'transition') {
+      if (running != null) {
+        const span = transitionSpan(rows, p, seqLen, loopFrames)
+        if (span != null && transitionAt(frame, row.index as number, span.len, seqLen) != null) {
+          active.push({
+            before: chainOf(running),
+            mask: typeof row.code === 'string' ? row.code.trim() : '',
+            start: row.index as number, len: span.len, end: span.end,
+          })
+        }
+      }
+    } else {
+      running = applyHydraShape(running, row, output)
+    }
+    if ((row.index as number) <= frame) codeAtF = running
+  }
+  // The "after": code-shape folded up to the furthest active window end (the
+  // playhead when nothing is wiping), so the destination shows through.
+  const horizon = active.length ? Math.max(...active.map((a) => a.end)) : frame
+  let after: string | null = null
+  for (const row of rows) {
+    if ((row.index as number) > horizon) break
+    if (row.event !== 'transition') after = applyHydraShape(after, row, output)
+  }
+  const base = after ?? codeAtF
+  if (base == null) return null
 
   // Apply the wipes from the innermost (latest) out: each earlier transition
   // blends its frozen "before" over the wipe that follows it, so nested
   // transitions compose in beat order.
-  let result = chainOf(code)
-  for (let i = transitions.length - 1; i >= 0; i--) {
-    const t = transitions[i]
-    const { start, end, posFn } = transitionWindow(t)
+  let result = chainOf(base)
+  for (let i = active.length - 1; i >= 0; i--) {
+    const t = active[i]
+    const { start, end, posFn } = transitionWindow(t.start, t.len)
     if (t.mask !== '') {
       // Composite before (mask black) under after (mask white) through the
       // mask's luminance, binding transitionStart/End/Pos around the user's
@@ -216,9 +275,10 @@ function foldOutput(
 // later pass of the loop is just sampling further along the grid, so earlier
 // passes fold in full for free. Returns null until some output reaches a
 // setCode — playback then falls back to showing the raw scene.
-export function hydraFrameAt(index: Row[], f: number): HydraFrame | null {
+export function hydraFrameAt(index: Row[], f: number, loopFrames = 0): HydraFrame | null {
   const frame = Math.floor(f)
   if (frame < 0) return null
+  const seqLen = contentSeqLen(index, loopFrames)
   // Fold each output's stream independently; concatenate in output-name order
   // for a deterministic program.
   const groups = new Map<string, Row[]>()
@@ -231,17 +291,19 @@ export function hydraFrameAt(index: Row[], f: number): HydraFrame | null {
   const vars: Record<string, unknown> = {}
   const codes: string[] = []
   for (const out of [...groups.keys()].sort()) {
-    const code = foldOutput(groups.get(out)!, frame, out, vars)
+    const code = foldOutput(groups.get(out)!, frame, out, vars, seqLen, loopFrames)
     if (code != null) codes.push(code)
   }
   return codes.length === 0 ? null : { code: codes.join('\n'), vars }
 }
 
-// The compiled sketch as of one table row: events folded up to and INCLUDING
-// the row at `rowIndex`. Unlike sampling a frame, this stops at the row itself,
-// so two events on the same beat show the running code after each in turn.
-// Powers the table panel's per-row "compiled code" popover.
-export function hydraCodeUpToRow(rows: Row[] | null | undefined, rowIndex: number): string | null {
+// The compiled sketch shown for one table row: the full fold sampled at that
+// row's own frame — exactly what the runtime shows there. So a transition row's
+// popover shows the composite including the next setCode (look-ahead), and the
+// destination setCode row's popover (a window end, end-exclusive) shows the
+// plain after program. Powers the table panel's per-row "compiled code"
+// popover; loopFrames defaults to unwrapped when the panel has no loop handy.
+export function hydraCodeUpToRow(rows: Row[] | null | undefined, rowIndex: number, loopFrames = 0): string | null {
   const all = rows ?? []
   if (!isHydraRow(all[rowIndex])) return null
   // Tag rows with their original position so the target is findable after the
@@ -249,6 +311,5 @@ export function hydraCodeUpToRow(rows: Row[] | null | undefined, rowIndex: numbe
   const index = buildHydraIndex(all.map((row, i) => ({ ...row, __row: i })))
   const pos = index.findIndex((r) => (r as { __row?: number }).__row === rowIndex)
   if (pos < 0) return null
-  const at = index[pos]
-  return hydraFrameAt(index.slice(0, pos + 1), at.index as number)?.code ?? null
+  return hydraFrameAt(index, index[pos].index as number, loopFrames)?.code ?? null
 }

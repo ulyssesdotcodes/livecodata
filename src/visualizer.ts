@@ -148,7 +148,7 @@ export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
       // clock, so transitions animate across passes.
       const loops = loopFrames > 0 ? Math.floor(maxIndex / loopFrames) + 1 : 1
       const frameF = (loops > 1 ? (passAt(epoch) % loops) * loopFrames : 0) + srcFrameF
-      const sketch = hydraFrameAt(index, Math.floor(frameF))
+      const sketch = hydraFrameAt(index, Math.floor(frameF), loopFrames)
       // Resolve midi/slider bindings, then expose every slider's value as
       // `props.sliders` (an explicit user variable named "sliders" still wins).
       if (sketch) {
@@ -193,7 +193,7 @@ export function createBaubleVisualizer(baubleAPI: BaubleAPI): Visualizer {
       // also drives `t`, keeping (ss t …) transition windows on one clock.
       const loops = loopFrames > 0 ? Math.floor(maxIndex / loopFrames) + 1 : 1
       const frameF = (loops > 1 ? (passAt(epoch) % loops) * loopFrames : 0) + srcFrameF
-      const sketch = baubleFrameAt(index, Math.floor(frameF))
+      const sketch = baubleFrameAt(index, Math.floor(frameF), loopFrames)
       // NB: unlike hydra there is no props escape hatch — a resolved variable
       // bakes into the compiled script, so a binding that sweeps every frame
       // recompiles every frame; bind sweeping inputs to the camera vars.
@@ -230,7 +230,7 @@ export function createPostVisualizer(postAPI: PostAPI): Visualizer {
     applyFrame({ srcFrameF, loopFrames, ctx, passAt, bpm }): Row[] {
       const loops = loopFrames > 0 ? Math.floor(maxIndex / loopFrames) + 1 : 1
       const frameF = (loops > 1 ? (passAt(epoch) % loops) * loopFrames : 0) + srcFrameF
-      const frame = postFrameAt(index, Math.floor(frameF))
+      const frame = postFrameAt(index, Math.floor(frameF), loopFrames)
       if (frame) {
         // Live-arg functions read the props object: the folded variables (with
         // midi/slider bindings resolved), every slider under `p.sliders`, and

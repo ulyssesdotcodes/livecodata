@@ -617,10 +617,13 @@ rows([
 //      - beat 9  add:   pixelate(6) — append an effect mid-loop.
 //      - beat 11 remove: pixelate — drop it again by op name (the beat-time
 //                       bypass, the un-add). No chain rewrite.
-//      - beat 13 transition: wipe over dur:2 beats (blank code = crossfade) to...
-//      - beat 13 setCode: blend(prev().mosaic(4), 0.5) — the destination feeds
-//                       back the PREVIOUS output frame (prev()) blended with a
-//                       mosaic of it, for a trailing kaleidoscope.
+//      - beat 13 transition: wipe (blank code = crossfade), shaped by \`ease\`,
+//                       to the NEXT setCode ahead — it runs from here UNTIL that
+//                       beat, so the destination's beat sets the wipe length...
+//      - beat 15 setCode: blend(prev().mosaic(4), 0.5) — the destination the
+//                       wipe crosses to over beats 13→15; it feeds back the
+//                       PREVIOUS output frame (prev()) blended with a mosaic of
+//                       it, for a trailing kaleidoscope.
 //    editable() makes the table live: click a code cell to edit the chain here,
 //    or tweak/"+ row" events on the right — \`schemas.post\` is the canonical
 //    schema (hover it for the columns). Check "disabled" to mute a row.
@@ -635,8 +638,8 @@ editable("post", schemas.post)
         { beat: 7, event: "pulse", name: "glow", value: 1.2, dur: 1, ease: "easeOut" },
         { beat: 9, event: "add", code: "pixelate(6)" },
         { beat: 11, event: "remove", name: "pixelate" },
-        { beat: 13, event: "transition", dur: 2 },
-        { beat: 13, event: "setCode", code: "blend(prev().mosaic(4), 0.5)" },
+        { beat: 13, event: "transition", ease: "easeInOut" },
+        { beat: 15, event: "setCode", code: "blend(prev().mosaic(4), 0.5)" },
       ],
     },
   },
@@ -819,14 +822,18 @@ table("hydra sketch").pairBy({ event: "setCode" }, flicker(3, 0.1)).outHydra()
 //                 mult (which also take an amount \`value\`) or diff / layer /
 //                 mask. Here voronoi is added in over the tail of the loop.
 //   - transition : WIPE from the program built up so far (the "before", layers
-//                 and all) to the program built up after it over \`value\` beats,
-//                 using \`code\` as a MASK: where it's BLACK the before shows,
-//                 where it's WHITE the after shows. The mask is YOUR sketch and
-//                 you animate it from all-black to all-white across the window —
-//                 three names are in scope to drive it: \`transitionStart\` /
-//                 \`transitionEnd\` (the window in props.time units) and
-//                 \`transitionPos(t)\` (that time as 0→1). Here a gradient ramp
-//                 thresholded by transitionPos sweeps in as a directional wipe.
+//                 and all) to the NEXT setCode ahead — the wipe runs from this
+//                 beat UNTIL that setCode's beat, so you place the destination
+//                 where the wipe should END (no duration to tune; move the beat
+//                 to make it longer or shorter). \`code\` is a MASK: where it's
+//                 BLACK the before shows, where it's WHITE the after shows. The
+//                 mask is YOUR sketch and you animate it from all-black to
+//                 all-white across the window — three names are in scope to
+//                 drive it: \`transitionStart\` / \`transitionEnd\` (the window in
+//                 props.time units) and \`transitionPos(t)\` (that time as 0→1).
+//                 Here a gradient ramp thresholded by transitionPos sweeps in as
+//                 a directional wipe. (With the destination on the transition's
+//                 OWN beat, the wipe fills a whole loop pass instead.)
 //
 // The events fold in beat order onto one running sketch: sampling at any beat
 // replays every earlier transform, so the code you see is always the sum of the
@@ -859,16 +866,17 @@ editable("hydra", schemas.hydra)
         // beat 13: add a voronoi field in over the current sketch (mode "add",
         // amount 0.5) — a different compositor than a plain crossfade.
         { beat: 13, event: "layer", code: "voronoi(10)", mode: "add", value: 0.5 },
-        // beat 14: WIPE to a fresh program over 2 beats. `transition` snapshots
+        // beat 14: WIPE to the next setCode ahead. `transition` snapshots
         // everything so far (noise + kaleid + voronoi) as the "before"; `code`
         // is the mask YOU animate black→white across the window. Here a static
         // gradient ramp is thresholded by transitionPos, so the threshold sweeps
         // 1→0 and the ramp fills in white left→right — a directional wipe. Swap
         // the mask for a dissolve, an iris, anything that goes black→white.
-        { beat: 14, event: "transition", code: "gradient(0).thresh((props) => 1 - transitionPos(props.time), 0.15)", value: 2 },
-        // beat 14 (right after the transition): the destination it reveals — a
-        // brand-new sketch that the wipe crosses over to by beat 16.
-        { beat: 14, event: "setCode", code: "osc(30, 0.2, 2).kaleid(7)" },
+        { beat: 14, event: "transition", code: "gradient(0).thresh((props) => 1 - transitionPos(props.time), 0.15)" },
+        // beat 16: the destination the wipe reveals — a brand-new sketch. The
+        // wipe runs from beat 14 UNTIL here, so this beat sets the wipe's length;
+        // drag it later for a slower cross, earlier for a snappier one.
+        { beat: 16, event: "setCode", code: "osc(30, 0.2, 2).kaleid(7)" },
       ],
     },
   },

@@ -256,44 +256,52 @@ test('radial repeats in a circle about `axis`, defaulting to 6 copies about y', 
   assert.equal(baubleFrameAt(idx, 3)!.code, '(radial (radial (move (box 15) [70 0 0]) :z 8) :y 6)')
 })
 
-test('transition morphs from the before program to the after, on the t clock', () => {
+test('transition morphs to the next setCode ahead, over the frames between them', () => {
   const idx = buildBaubleIndex([
     { beat: 1, event: 'setCode', code: '(box 60)' },
-    // At the same beat: the transition (snapshots the box as "before"), then
-    // the destination program that folds on as the live "after".
-    { beat: 5, event: 'transition', value: 4 }, // frames 120–240 → t 2s–4s
-    { beat: 5, event: 'setCode', code: '(sphere 70)' },
+    { beat: 5, event: 'transition' },                    // frame 120 → t 2s
+    { beat: 9, event: 'setCode', code: '(sphere 70)' },  // frame 240 → t 4s = window end
   ])
   // Before the transition beat, just the before program.
   assert.equal(baubleFrameAt(idx, 0)!.code, '(box 60)')
-  // Inside the window: a morph whose amount rides the playback clock. The
-  // string is byte-stable across the whole window — no recompile mid-wipe.
-  const at = baubleFrameAt(idx, 120)!
+  // Inside the window: a morph whose amount rides the playback clock. Look-ahead
+  // reveals (sphere 70) though its setCode is at beat 9. Byte-stable — no
+  // recompile mid-wipe.
+  const at = baubleFrameAt(idx, 180)!
   assert.equal(at.code, '(morph (box 60) (sphere 70) (ss t 2 4))')
-  assert.equal(baubleFrameAt(idx, 180)!.code, at.code)
   assert.equal(baubleFrameAt(idx, 239)!.code, at.code)
-  // Once the window elapses the wipe is done and collapses to the after.
+  // The window END is the setCode's own frame (end-exclusive): plain after.
   assert.equal(baubleFrameAt(idx, 240)!.code, '(sphere 70)')
 })
 
-test('transition composes with meta events as the after program; nested wipes wrap in beat order', () => {
+test('a destination setCode on the transition’s own beat morphs a full loop pass', () => {
+  // loopFrames 240 (one pass, seqLen 240): the co-located setCode gives a
+  // zero-distance next → the morph fills a whole pass, t 2s → 6s.
   const idx = buildBaubleIndex([
-    { beat: 1, event: 'setCode', code: '(box 60)' },
-    { beat: 5, event: 'transition', value: 8 }, // frames 120–360 → t 2s–6s
-    { beat: 5, event: 'setCode', code: '(sphere 70)' },
-    { beat: 9, event: 'transition', value: 2 }, // frames 240–300 → t 4s–5s
-    { beat: 9, event: 'transform', code: '(twist _ :y 0.02)' },
+    { beat: 1, event: 'setCode', code: '(box 60)' },     // frame 0
+    { beat: 5, event: 'transition' },                    // frame 120
+    { beat: 5, event: 'setCode', code: '(sphere 70)' },  // frame 120 (destination)
   ])
-  // At beat 9 both windows are live: the inner wipe goes sphere → twisted
-  // sphere, the outer wraps it from the box.
-  assert.equal(
-    baubleFrameAt(idx, 240)!.code,
-    '(morph (box 60) (morph (sphere 70) (twist (sphere 70) :y 0.02) (ss t 4 5)) (ss t 2 6))',
-  )
-  // The inner wipe finishes at frame 300; only the outer remains.
+  const at = baubleFrameAt(idx, 180, 240)!
+  assert.equal(at.code, '(morph (box 60) (sphere 70) (ss t 2 6))')
+  assert.equal(baubleFrameAt(idx, 0, 240)!.code, at.code)
+})
+
+test('nested transitions wiping to a shared setCode compose in beat order', () => {
+  const idx = buildBaubleIndex([
+    { beat: 1, event: 'setCode', code: '(box 60)' },     // frame 0
+    { beat: 5, event: 'transition' },                    // frame 120 (outer)
+    { beat: 9, event: 'transition' },                    // frame 240 (inner)
+    { beat: 13, event: 'setCode', code: '(sphere 70)' }, // frame 360 (both ends)
+    { beat: 13, event: 'transform', code: '(twist _ :y 0.02)' }, // folds onto the destination
+  ])
+  // At frame 300 both windows are live: the after (folded to frame 360, the
+  // transform riding on the destination setCode) is the twisted sphere; the
+  // inner morphs the box toward it, the outer wraps that from the box.
+  const after = '(twist (sphere 70) :y 0.02)'
   assert.equal(
     baubleFrameAt(idx, 300)!.code,
-    '(morph (box 60) (twist (sphere 70) :y 0.02) (ss t 2 6))',
+    `(morph (box 60) (morph (box 60) ${after} (ss t 4 6)) (ss t 2 6))`,
   )
 })
 
@@ -323,14 +331,16 @@ test('meta events compose in beat order and fold across loop passes', () => {
   assert.equal(baubleFrameAt(idx, 102)!.code, '(union (box 70) (move (box 70) [120 0 0]))')
 })
 
-test('baubleCodeUpToRow folds up to and including the given row (in raw table order)', () => {
+test('baubleCodeUpToRow samples the full fold at the given row’s frame', () => {
   const rows: Row[] = [
     { beat: 1, event: 'setCode', code: '(sphere size)' },
     { beat: 1, event: 'setVariable', name: 'size', value: 50 },
     { beat: 5, event: 'setVariable', name: 'size', value: 90 },
     { beat: 9, event: 'setCode', code: '(box size)' },
   ]
-  assert.equal(baubleCodeUpToRow(rows, 0), '(sphere size)')
+  // Rows 0 and 1 share beat 1: both show the runtime snapshot there (the
+  // same-beat variable included), not a slice stopping at each row.
+  assert.equal(baubleCodeUpToRow(rows, 0), '(def size 50)\n(sphere size)')
   assert.equal(baubleCodeUpToRow(rows, 1), '(def size 50)\n(sphere size)')
   assert.equal(baubleCodeUpToRow(rows, 2), '(def size 90)\n(sphere size)')
   assert.equal(baubleCodeUpToRow(rows, 3), '(def size 90)\n(box size)')

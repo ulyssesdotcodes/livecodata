@@ -261,41 +261,42 @@ test('the `out` column supplies the terminal .out(oN); code needn’t write it',
 })
 
 // A transition's window is in props.time seconds (FPS=60, 30 frames/beat):
-// transitionPos(t) normalises a time to 0→1 across [start, start+dur], clamped.
-const posFn = (startFrame: number, durFrames: number): string =>
-  `(t) => Math.min(Math.max((t - ${startFrame / 60}) / ${durFrames / 60}, 0), 1)`
+// transitionPos(t) normalises a time to 0→1 across [start, start+len], clamped.
+const posFn = (startFrame: number, winFrames: number): string =>
+  `(t) => Math.min(Math.max((t - ${startFrame / 60}) / ${winFrames / 60}, 0), 1)`
 // A masked transition wraps the user's mask sketch, binding transitionStart /
 // transitionEnd / transitionPos around it so the mask can drive itself.
-const maskExpr = (mask: string, startFrame: number, durFrames: number): string =>
+const maskExpr = (mask: string, startFrame: number, winFrames: number): string =>
   `((transitionStart, transitionEnd, transitionPos) => (${mask}))`
-  + `(${startFrame / 60}, ${(startFrame + durFrames) / 60}, ${posFn(startFrame, durFrames)})`
+  + `(${startFrame / 60}, ${(startFrame + winFrames) / 60}, ${posFn(startFrame, winFrames)})`
 
-test('code/transition/code wipes from the before program to the after through the mask', () => {
+test('a transition wipes to the next setCode ahead, over the frames between them', () => {
   const idx = buildHydraIndex([
     { beat: 1, event: 'setCode', code: 'src(s0).out(o0)' },
-    // Same beat: the transition snapshots the "before"; the setCode folds on as the "after".
-    { beat: 5, event: 'transition', code: 'voronoi(5).out(o0)', value: 4 },
-    { beat: 5, event: 'setCode', code: 'osc(10).out(o0)' },
+    { beat: 5, event: 'transition', code: 'voronoi(5).out(o0)' }, // frame 120
+    { beat: 9, event: 'setCode', code: 'osc(10).out(o0)' },        // frame 240 = window end
   ])
+  // Before the transition beat: just the before program.
   assert.equal(hydraFrameAt(idx, 0)!.code, 'src(s0).out(o0)')
-  const at = hydraFrameAt(idx, 120)! // beat 5 = frame 120
+  // Inside the window [120, 240): before layers the after through the mask.
+  // Look-ahead: osc(10) is revealed mid-wipe though its setCode sits at beat 9.
+  const at = hydraFrameAt(idx, 180)! // window length 240 − 120 = 120 frames
   assert.equal(
     at.code,
     `src(s0).layer((osc(10)).mask(${maskExpr('voronoi(5)', 120, 120)})).out(o0)`,
   )
   // Byte-stable through the window — the wipe rides props.time, so no recompile.
   assert.deepEqual(at.vars, {})
-  assert.equal(hydraFrameAt(idx, 180)!.code, at.code)
   assert.equal(hydraFrameAt(idx, 239)!.code, at.code)
-  // Window elapses at frame 120 + 120 = 240: only the after program remains.
+  // The window END is the setCode's own frame (end-exclusive): plain destination.
   assert.equal(hydraFrameAt(idx, 240)!.code, 'osc(10).out(o0)')
 })
 
 test('a transition with no mask code falls back to a plain crossfade', () => {
   const idx = buildHydraIndex([
     { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
-    { beat: 5, event: 'transition', value: 2 },
-    { beat: 5, event: 'setCode', code: 'noise(3).out(o0)' },
+    { beat: 5, event: 'transition' },                        // frame 120
+    { beat: 7, event: 'setCode', code: 'noise(3).out(o0)' }, // frame 180 = window end
   ])
   assert.equal(
     hydraFrameAt(idx, 120)!.code,
@@ -303,49 +304,61 @@ test('a transition with no mask code falls back to a plain crossfade', () => {
   )
 })
 
-test('a wipe wraps cleanly at the loop boundary (loop 0) and re-runs each pass', () => {
-  // hydraFrameAt is a pure function of the within-loop frame, and playback
-  // samples it at the wrapped frame each pass — so every loop replays the wipe.
+test('a wrapped window runs to a setCode across the loop boundary', () => {
+  // No setCode ahead of the transition this pass, so the window wraps to the
+  // next pass's first setCode — a seamless wipe back to the loop's start.
+  // loopFrames 120: maxIndex 180 → 2 passes, seqLen 240.
   const idx = buildHydraIndex([
-    { beat: 1, event: 'setCode', code: 'osc(20).out(o0)' },
-    { beat: 14, event: 'transition', code: 'gradient(1).out(o0)', value: 2 }, // frames 390–450
-    { beat: 14, event: 'setCode', code: 'noise(3).out(o0)' },
+    { beat: 1, event: 'setCode', code: 'osc(20).out(o0)' },       // frame 0
+    { beat: 5, event: 'setCode', code: 'noise(3).out(o0)' },      // frame 120
+    { beat: 7, event: 'transition', code: 'gradient(1).out(o0)' }, // frame 180
   ])
-  const start = 'osc(20).out(o0)'
-  // Frame 0: no residue of the after program from the pass just ended.
-  assert.equal(hydraFrameAt(idx, 0)!.code, start)
-  const mid = hydraFrameAt(idx, 420)!.code // mid-wipe
+  const L = 120
+  // Frame 0: window inactive here (it covers [180, 240)); plain start program.
+  assert.equal(hydraFrameAt(idx, 0, L)!.code, 'osc(20).out(o0)')
+  // Frame 210: mid-wipe from noise(3) (code at the transition beat) toward the
+  // wrapped destination osc(20) — window length (0 − 180) mod 240 = 60.
   assert.equal(
-    mid,
-    `osc(20).layer((noise(3)).mask(${maskExpr('gradient(1)', 390, 60)})).out(o0)`,
+    hydraFrameAt(idx, 210, L)!.code,
+    `noise(3).layer((osc(20)).mask(${maskExpr('gradient(1)', 180, 60)})).out(o0)`,
   )
-  // Frame 450+: window elapsed, just the after program until the wrap.
-  assert.equal(hydraFrameAt(idx, 450)!.code, 'noise(3).out(o0)')
-  assert.equal(hydraFrameAt(idx, 479)!.code, 'noise(3).out(o0)')
-  assert.equal(hydraFrameAt(idx, 0)!.code, start)
-  assert.equal(hydraFrameAt(idx, 420)!.code, mid)
+  assert.equal(hydraFrameAt(idx, 239, L)!.code, hydraFrameAt(idx, 210, L)!.code)
 })
 
-test('overlapping transitions compose in beat order, the earliest wrapping the later', () => {
+test('a destination setCode on the transition’s own beat wipes a full loop pass', () => {
+  // loopFrames 240 (one pass, seqLen 240). The co-located setCode gives a
+  // zero-distance next → the window becomes a whole pass.
   const idx = buildHydraIndex([
-    { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },
-    // A long (8-beat, frames 120–360) wipe still running when a short one starts.
-    { beat: 5, event: 'transition', code: 'noise(3).out(o0)', value: 8 },
-    { beat: 5, event: 'setCode', code: 'src(s0).out(o0)' },
-    { beat: 9, event: 'transition', code: 'voronoi(4).out(o0)', value: 2 },
-    { beat: 9, event: 'setCode', code: 'gradient().out(o0)' },
+    { beat: 1, event: 'setCode', code: 'osc(20).out(o0)' },       // frame 0
+    { beat: 5, event: 'transition', code: 'gradient(1).out(o0)' }, // frame 120
+    { beat: 5, event: 'setCode', code: 'noise(3).out(o0)' },      // frame 120 (destination)
   ])
-  // At frame 240 both windows are live (120–360 and 240–300), so they nest.
-  const inner = `src(s0).layer((gradient()).mask(${maskExpr('voronoi(4)', 240, 60)}))`
+  const L = 240
+  const at = hydraFrameAt(idx, 180, L)!
   assert.equal(
-    hydraFrameAt(idx, 240)!.code,
-    `osc(10).layer((${inner}).mask(${maskExpr('noise(3)', 120, 240)})).out(o0)`,
+    at.code,
+    `osc(20).layer((noise(3)).mask(${maskExpr('gradient(1)', 120, 240)})).out(o0)`,
   )
-  // The inner wipe ends at frame 300; only the outer remains.
+  // Active across the whole pass — the wipe never expires within the loop.
+  assert.equal(hydraFrameAt(idx, 0, L)!.code, at.code)
+})
+
+test('overlapping transitions wiping to a shared setCode nest in beat order', () => {
+  const idx = buildHydraIndex([
+    { beat: 1, event: 'setCode', code: 'osc(10).out(o0)' },        // frame 0
+    { beat: 5, event: 'transition', code: 'noise(3).out(o0)' },     // frame 120 (outer)
+    { beat: 7, event: 'transition', code: 'voronoi(4).out(o0)' },   // frame 180 (inner)
+    { beat: 9, event: 'setCode', code: 'src(s0).out(o0)' },         // frame 240 (both ends)
+  ])
+  // At frame 200 both windows are live ([120,240) and [180,240)): they nest,
+  // each wiping from the code at its own beat (both osc(10)) to src(s0).
+  const inner = `osc(10).layer((src(s0)).mask(${maskExpr('voronoi(4)', 180, 60)}))`
   assert.equal(
-    hydraFrameAt(idx, 300)!.code,
-    `osc(10).layer((gradient()).mask(${maskExpr('noise(3)', 120, 240)})).out(o0)`,
+    hydraFrameAt(idx, 200)!.code,
+    `osc(10).layer((${inner}).mask(${maskExpr('noise(3)', 120, 120)})).out(o0)`,
   )
+  // Both windows end at frame 240: only the shared destination remains.
+  assert.equal(hydraFrameAt(idx, 240)!.code, 'src(s0).out(o0)')
 })
 
 test('hydraCodeUpToRow folds up to and including the given row (in raw table order)', () => {
