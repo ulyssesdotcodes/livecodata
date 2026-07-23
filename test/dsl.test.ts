@@ -313,7 +313,8 @@ test('schemas: canonical table schemas ride the DSL surface, typed and frozen', 
   assert.equal(schemas, SCHEMAS)
   const { schemaColumns } = await import('../src/editable-tables.js')
   const cols = schemaColumns(schemas.hydra)
-  assert.deepEqual(cols.find((c) => c.name === 'code'), { name: 'code', type: 'code', language: 'hydra' })
+  assert.deepEqual(cols.find((c) => c.name === 'code'),
+    { name: 'code', type: 'code', language: 'hydra', usedBy: ['setCode', 'setSource', 'append', 'layer', 'transition'] })
   assert.deepEqual(cols.find((c) => c.name === 'event')?.options,
     ['setCode', 'setSource', 'append', 'replace', 'layer', 'transition', 'setVariable'])
   assert.deepEqual(cols.find((c) => c.name === 'out')?.options, ['o0', 'o1', 'o2', 'o3'])

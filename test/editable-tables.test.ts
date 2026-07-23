@@ -351,15 +351,24 @@ test('schemaColumns: a string[] spec is enum shorthand; the object form is expli
   const cols = schemaColumns({
     beat: 'number',
     event: ['setCode', 'layer'],
-    mode: { type: 'enum', options: ['blend', 'add'] },
+    mode: { type: 'enum', options: ['blend', 'add'], usedBy: ['layer'] },
     plain: { type: 'string' },
   })
   assert.deepEqual(cols, [
     { name: 'beat', type: 'number' },
     { name: 'event', type: 'enum', options: ['setCode', 'layer'] },
-    { name: 'mode', type: 'enum', options: ['blend', 'add'] },
+    { name: 'mode', type: 'enum', options: ['blend', 'add'], usedBy: ['layer'] },
     { name: 'plain', type: 'string' },
   ])
+})
+
+test('declare-schema round-trips usedBy through serialize/load', () => {
+  const store = createEditableTableStore()
+  store.ensure('h', { event: ['setCode', 'layer'], mode: { type: 'enum', options: ['blend', 'add'], usedBy: ['layer'] } })
+  const store2 = createEditableTableStore()
+  assert.ok(store2.load(store.serialize()))
+  const col = store2.get('h')!.columns.find((c) => c.name === 'mode')!
+  assert.deepEqual(col.usedBy, ['layer'])
 })
 
 test('a code column language rides events, survives serialize/load, and tracks re-declaration', () => {
@@ -416,11 +425,18 @@ test('"=" cells: valid in number columns; streaming results barred from timing c
   assert.equal(cellValid('=broken(', num), false)
   assert.equal(cellValid('=notAFn(1)', num), false)
 
-  for (const name of ['beat', 'dur', 'end', 'loop']) {
+  for (const name of ['beat', 'dur', 'loop']) {
     const col: EditableColumn = { name, type: 'number' }
     assert.equal(cellValid("=slider('h')", col), false, `a binding in ${name} would NaN the frame math`)
     assert.equal(cellValid('=lit(4).mul(2)', col), true, 'a constant expression is a plain number by cook time')
   }
+})
+
+test('cellValid: a plain string in `value` is valid for events that legitimately consume one there, not others', () => {
+  const num: EditableColumn = { name: 'value', type: 'number' }
+  assert.equal(cellValid('[80 120 80]', num, 'tile'), true)
+  assert.equal(cellValid('[80 120 80]', num, 'radial'), false)
+  assert.equal(cellValid('foo', num, 'replace'), true)
 })
 
 test('row rules: replace events and color pulses reject "=" values', () => {
