@@ -10,7 +10,7 @@
 import type { Row } from './lineage.js'
 import type { EditableColumn } from './editable-tables.js'
 import { formatEditableCell } from './table-panel.js'
-import { placeBeat, timelineSegments, buildTimeline, type Timeline, type TimelineSegment } from './timeline.js'
+import { placeBeat, timelineSegments, buildTimeline, windowsFor, type Timeline, type TimelineSegment } from './timeline.js'
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
 
@@ -163,21 +163,11 @@ export function handlesFor(name: string, rows: Row[], columns: EditableColumn[],
   const handles: Handle[] = []
 
   if (name === 'timeline') {
-    const hasLoop = colNames.has('loop')
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i]
-      const beat = num(row.beat)
-      if (beat === undefined) continue
-      const dur = (colNames.has('dur') ? num(row.dur) : undefined) ?? 0
-      handles.push({
-        row: i,
-        kind: 'span',
-        beat,
-        end: beat + dur,
-        lane: hasLoop ? Math.max(0, Math.floor(num(row.loop) ?? 0)) : 0,
-        ghost: false,
-        disabled: row.disabled === true,
-      })
+    // Spans come from the shared until-next computation, so the strip and
+    // playback can never disagree on a window. windowsFor drops disabled rows
+    // (their window falls to their neighbors), so they get no handle here.
+    for (const w of windowsFor(rows, loopBeats)) {
+      handles.push({ row: w.row, kind: 'span', beat: w.beat, end: w.end, lane: w.lane, ghost: false, disabled: false })
     }
     return handles
   }
@@ -192,8 +182,8 @@ export function handlesFor(name: string, rows: Row[], columns: EditableColumn[],
   // which is lane-per-pass too — see coverageBands); with no timeline there
   // are no lanes to place a later pass into, so it stays in lane 0 with just
   // the badge.
-  const segments = timelineSegments(timelineRows)
-  const timeline = segments.length ? buildTimeline(timelineRows) : null
+  const segments = timelineSegments(timelineRows, loopBeats)
+  const timeline = segments.length ? buildTimeline(timelineRows, loopBeats) : null
   const wrapUnit = timeline ? timeline.beats : loopBeats
   const maxPass = timeline ? Math.max(0, timeline.loops - 1) : undefined
   const posField = positionField(colNames)
@@ -227,9 +217,9 @@ export function handlesFor(name: string, rows: Row[], columns: EditableColumn[],
 // pass-wrapped ghosts), and at least the timeline's own pass count — so
 // lanes still show (for the coverage layer's sake) when the open table has
 // no handle past lane 0, e.g. a content table with nothing looping.
-export function laneCountFor(handles: Handle[], timelineRows: Row[]): number {
+export function laneCountFor(handles: Handle[], timelineRows: Row[], loopBeats?: number): number {
   const fromHandles = handles.reduce((m, h) => Math.max(m, h.lane + 1), 1)
-  return Math.max(fromHandles, buildTimeline(timelineRows).loops)
+  return Math.max(fromHandles, buildTimeline(timelineRows, loopBeats).loops)
 }
 
 export interface CoverageBand {
@@ -241,17 +231,16 @@ export interface CoverageBand {
 
 // One tinted band per compiled segment, its beats mapped from the extended
 // playback axis (see timeline.ts's compile) onto its own pass's local
-// 0..span axis and tagged with which lane that pass is — mirrors
-// handlesFor's content-row wrap, but exact rather than approximate: a
-// segment never straddles a pass boundary (compile builds every segment
-// within one loop's `beat + L*span` offset), so its p0 and p1 always fall
-// in the same lane.
-export function coverageBands(timelineRows: Row[]): CoverageBand[] {
-  const timeline = buildTimeline(timelineRows)
+// 0..span axis and tagged with which lane that pass is — mirrors handlesFor's
+// content-row wrap. A window that spans a pass boundary (a row in an earlier
+// pass whose next row is a later one) tints the band by its p0's lane; the
+// common case, a pass filled by its own rows, keeps p0 and p1 in one lane.
+export function coverageBands(timelineRows: Row[], loopBeats?: number): CoverageBand[] {
+  const timeline = buildTimeline(timelineRows, loopBeats)
   if (!timeline.active) return []
   const span = timeline.beats
   const maxLane = Math.max(0, timeline.loops - 1)
-  return timelineSegments(timelineRows).map((seg) => {
+  return timelineSegments(timelineRows, loopBeats).map((seg) => {
     const lane = span > 0 ? Math.min(maxLane, Math.max(0, Math.floor((seg.p0 - 1) / span))) : 0
     const off = lane * span
     return { p0: seg.p0 - off, p1: seg.p1 - off, lane, kind: seg.kind }
@@ -273,7 +262,7 @@ export function pendingTimelineRows(rows: Row[], appliedRows: Row[]): Set<number
     if (row.disabled === true) continue
     const applied = appliedRows[pos]
     pos++
-    if (!applied || num(row.beat) !== num(applied.beat) || num(row.dur) !== num(applied.dur)) pending.add(i)
+    if (!applied || num(row.beat) !== num(applied.beat) || num(row.loop) !== num(applied.loop)) pending.add(i)
   }
   return pending
 }

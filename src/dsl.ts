@@ -1300,28 +1300,30 @@ export const SCHEMAS = deepFreeze({
   },
   /**
    * The "timeline" view: an OPTIONAL warp of playback time over the baked
-   * content — one event per row, covering the playback window `dur` beats
-   * long starting at `beat` (1-indexed, like every other table). `event`
-   * picks the warp: "retime" (the general one — beats(count, { fit }) emits
-   * a single retime) stretches input source beats `from`..`to` into the
-   * output block `outFrom`..`outTo` (from > to runs backwards) and repeats
-   * the block until the window closes; "pingpong" is a retime whose block
-   * plays `from`..`to` there and back (out 5..9 from 1..4 swings forward
-   * then backward, each leg double-time); "loop" cycles source `from`..`to`
-   * at natural speed (a retime whose output block is as long as its input);
+   * content — one event per row, each covering an UNTIL-NEXT window. Rows are
+   * ordered by (loop, beat); a row's window runs from its own `beat`
+   * (1-indexed, like every other table) to the next row's, so there are never
+   * gaps or overlaps — the LAST row runs to the end of its pass, and the pass
+   * length is the GUI "beats" control, NOT the timeline's own extent. `event`
+   * picks the warp: "retime" (the general one — beats(count, { fit }) emits a
+   * single retime) stretches input source beats `from`..`to` into the output
+   * block `outFrom`..`outTo` (from > to runs backwards) and repeats the block
+   * until the window closes; "pingpong" is a retime whose block plays
+   * `from`..`to` there and back (out 5..9 from 1..4 swings forward then
+   * backward, each leg double-time); "loop" cycles source `from`..`to` at
+   * natural speed (a retime whose output block is as long as its input);
    * "hold" freezes the frame at `from`; "speed" runs from `from` at `rate`
-   * source beats per playback beat. `from`/`to` and `outFrom`/`outTo`
-   * default to the window's own start/end, so a bare retime plays straight
-   * through — and a blank/0 cell means "unset" (beats are 1-indexed).
-   * Playback beats no event covers play unmapped, and the loop length
-   * becomes the events' full extent. An optional 0-indexed `loop` column
-   * places an event in a later pass of the loop. The same table warps any
-   * beat table via .retime(table("timeline")); check `disabled` to mute a
-   * row.
+   * source beats per playback beat. `from`/`to` and `outFrom`/`outTo` default
+   * to the window's own start/end, so a bare retime plays straight through —
+   * author a hold or a plain stretch of unwarped time as an explicit bare
+   * retime row, which is that identity warp. A blank/0 cell means "unset"
+   * (beats are 1-indexed). Playback beats BEFORE the first row play unmapped
+   * (identity). An optional 0-indexed `loop` column places a row in a later
+   * pass. The same table warps any beat table via .retime(table("timeline"));
+   * check `disabled` to mute a row (its window falls to its neighbors).
    */
   timeline: {
     beat: 'number',
-    dur: 'number',
     event: ['retime', 'pingpong', 'loop', 'hold', 'speed'],
     from: 'number',
     to: 'number',
@@ -1632,12 +1634,13 @@ export type DSLSurface = Easings & {
   /** Seconds per beat derived from the taps (average interval), or `fallback` (default 0.5s = 120 BPM) until two taps exist. The playhead already runs at this tempo; tempo() is for programs that want the number. */
   tempo(fallback?: number): number
   /**
-   * A timeline that loops every `count` playback beats — one "retime" event
-   * row in the timeline schema (see schemas.timeline). Tempo is automatic, so
-   * this is purely a retime: identity by default (content plays once per
-   * loop); pass { fit } in source-beats to stretch that much content across
-   * the window — beats(16, { fit: 8 }) plays 8 beats of content at half
-   * speed. Concat more event rows onto it for loops, holds, and reverses.
+   * A single-row timeline: one "retime" event in the timeline schema (see
+   * schemas.timeline). The pass length is the GUI "beats" control, so `count`
+   * is only the loop length you intend — set the control to match. Identity by
+   * default (content plays once per loop); pass { fit } in source-beats to
+   * stretch that much content across the loop — beats(16, { fit: 8 }) plays 8
+   * beats of content at half speed over a 16-beat loop. Concat more event rows
+   * onto it for loops, holds, and reverses.
    */
   beats(count: number, opts?: { fallback?: number; fit?: number }): Table
   /**
@@ -1750,12 +1753,9 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
     expr: makeExprNamespace(ctx),
     taps: () => new Table((ctx?.tapRows?.() ?? []).map((r) => ({ ...r })), ctx),
     tempo: (fallback = DEFAULT_BEAT_SECONDS): number => beatSecondsFromTaps(ctx?.tapRows?.()) ?? fallback,
-    beats: (count: number, { fit }: { fit?: number } = {}): Table => {
-      const spanBeats = fit != null ? fit : count
-      return new Table([
-        { event: 'retime', beat: 1, dur: count, from: 1, to: spanBeats + 1 },
-      ], ctx)
-    },
+    beats: (_count: number, { fit }: { fit?: number } = {}): Table => new Table([
+      fit != null ? { event: 'retime', beat: 1, from: 1, to: fit + 1 } : { event: 'retime', beat: 1 },
+    ], ctx),
     ...EASINGS,
     schemas: SCHEMAS,
   }
