@@ -614,8 +614,13 @@ rows([
 //      - beat 1  setCode: edges((p) => p.th, 1).bloom((p) => p.glow)
 //                       (colorMode 1 = edges drawn over the source).
 //      - beat 1  setVariable: th = 0.15, glow = 0.2 — the chain's live inputs.
-//      - beat 5  setVariable: th → 0.4 with dur:2 — a TWEEN (interpolates from
-//                       the current value over 2 beats via \`ease\`), not a step.
+//      - beat 3  setVariable: th = 0.15 again — a REPEAT keyframe, so th holds
+//                       flat here; it's the idiom that starts a ramp later than
+//                       beat 1 (hold, then ramp).
+//      - beat 5  setVariable: th → 0.4 with ease:easeInOut — same-name rows are
+//                       a KEYFRAME TRACK, and a named ease GLIDES from the
+//                       previous keyframe (0.15), arriving on THIS beat; blank
+//                       ease would STEP (jump) instead.
 //      - beat 7  pulse: glow += 1.2 over dur:1, easeOut — an additive decaying
 //                       burst (pulses stack); the bloom flares.
 //      - beat 9  add:   pixelate(6) — append an effect mid-loop.
@@ -638,7 +643,8 @@ editable("post", schemas.post)
         { beat: 1, event: "setCode", code: "edges((p) => p.th, 1)\n  .bloom((p) => p.glow)" },
         { beat: 1, event: "setVariable", name: "th", value: 0.15 },
         { beat: 1, event: "setVariable", name: "glow", value: 0.2 },
-        { beat: 5, event: "setVariable", name: "th", value: 0.4, dur: 2, ease: "easeInOut" },
+        { beat: 3, event: "setVariable", name: "th", value: 0.15 },
+        { beat: 5, event: "setVariable", name: "th", value: 0.4, ease: "easeInOut" },
         { beat: 7, event: "pulse", name: "glow", value: 1.2, dur: 1, ease: "easeOut" },
         { beat: 9, event: "add", code: "pixelate(6)" },
         { beat: 11, event: "remove", name: "pixelate" },

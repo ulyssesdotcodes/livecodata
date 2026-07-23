@@ -22,7 +22,8 @@ const frameAt = (rows: Row[], frame: number): PostFrame | null => postFrameAt(bu
 const ops = (frame: PostFrame | null): string[] => (frame?.chain ?? []).map((o) => o.op)
 const close = (a: unknown, x: number): void =>
   assert.ok(typeof a === 'number' && Math.abs(a - x) < 1e-9, `expected ~${x}, got ${a}`)
-const vars = (rows: Row[], frame: number): Record<string, unknown> => foldVars(buildPostIndex(rows), frame)
+const vars = (rows: Row[], frame: number, seqLen = 0): Record<string, unknown> =>
+  foldVars(buildPostIndex(rows), frame, seqLen)
 
 test('isPostRow/postRows keep only post events', () => {
   const rows: Row[] = [
@@ -160,14 +161,49 @@ test('a structural arg change selects a different state; a live change does not'
   assert.notEqual(live.stateId, struct.stateId)
 })
 
-test('set with dur tweens from the previous value using the eased curve', () => {
+test('a setVariable track steps by default: the value holds, then jumps on the beat', () => {
   const rows: Row[] = [
     { beat: 1, event: 'setVariable', name: 'th', value: 0.2 },
-    { beat: 5, event: 'setVariable', name: 'th', value: 0.5, dur: 2, ease: 'linear' }, // frame 120..180
+    { beat: 5, event: 'setVariable', name: 'th', value: 0.5 }, // frame 120, blank ease = step
   ]
-  close(vars(rows, 60).th, 0.2)   // before the tween: the step value
-  close(vars(rows, 150).th, 0.35) // midpoint (linear)
-  close(vars(rows, 180).th, 0.5)  // settled at the target
+  close(vars(rows, 60).th, 0.2)  // holds the previous keyframe
+  close(vars(rows, 119).th, 0.2) // right up to the beat
+  close(vars(rows, 120).th, 0.5) // jumps exactly on the beat
+})
+
+test('a named ease glides from the previous keyframe, arriving exactly on the beat', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'setVariable', name: 'th', value: 0.2 },
+    { beat: 5, event: 'setVariable', name: 'th', value: 0.5, ease: 'linear' }, // ramp occupies frames 0..120
+  ]
+  close(vars(rows, 0).th, 0.2)   // the ramp reaches back to the previous keyframe
+  close(vars(rows, 60).th, 0.35) // midpoint (linear)
+  close(vars(rows, 120).th, 0.5) // arrives ON beat 5, not after it
+})
+
+test('repeating a value holds, then a named-ease row ramps out of the hold', () => {
+  const rows: Row[] = [
+    { beat: 1, event: 'setVariable', name: 'th', value: 0.2 },
+    { beat: 5, event: 'setVariable', name: 'th', value: 0.2, ease: 'linear' }, // repeat → flat hold
+    { beat: 9, event: 'setVariable', name: 'th', value: 0.8, ease: 'linear' }, // frame 240
+  ]
+  close(vars(rows, 60).th, 0.2)  // first segment glides 0.2→0.2 = a hold
+  close(vars(rows, 180).th, 0.5) // second segment midpoint: 0.2 → 0.8
+  close(vars(rows, 240).th, 0.8)
+})
+
+test('a looping track wraps: a named-ease first keyframe glides in from the last', () => {
+  const seqLen = beatsToFrames(8) // 8-beat loop; maxIndex 120 → content cycle 240 == 8 beats
+  const rows: Row[] = [
+    { beat: 1, event: 'setVariable', name: 'th', value: 0.2, ease: 'linear' }, // frame 0, first row named
+    { beat: 5, event: 'setVariable', name: 'th', value: 0.8 },                  // frame 120, step
+  ]
+  close(vars(rows, 60, seqLen).th, 0.2)  // [0,120): step into beat 5 → holds 0.2
+  close(vars(rows, 180, seqLen).th, 0.5) // wrap segment glides the last value 0.8 → the first 0.2
+  close(vars(rows, 240, seqLen).th, 0.2) // wf 0: arrived back at the first keyframe
+  // Drop the first row's ease and the last value just holds across the boundary.
+  const stepFirst = rows.map((r, i) => (i === 0 ? { ...r, ease: undefined } : r))
+  close(vars(stepFirst, 180, seqLen).th, 0.8)
 })
 
 test('pulse adds a decaying (default easeOut) contribution that stacks and expires', () => {
@@ -181,34 +217,49 @@ test('pulse adds a decaying (default easeOut) contribution that stacks and expir
   close(vars(rows, 90).g, 0.3)   // expired: inert
 })
 
+test('a pulse with blank/0 dur defaults to a 1-beat envelope (no longer silently inert)', () => {
+  const rows: Row[] = [{ beat: 3, event: 'pulse', name: 'g', value: 1 }] // window [60, 90)
+  close(vars(rows, 60).g, 1)                            // fires at onset
+  assert.ok((vars(rows, 75).g as number) > 0, 'still decaying mid-beat')
+  close(vars(rows, 90).g, 0)                            // one beat later, done
+})
+
+test("a 'step' pulse is a square gate: full value across the window, then off", () => {
+  const rows: Row[] = [
+    { beat: 3, event: 'pulse', name: 'g', value: 1, dur: 1, ease: 'step' }, // window [60, 90)
+  ]
+  close(vars(rows, 60).g, 1) // full value at onset
+  close(vars(rows, 75).g, 1) // held, no easeOut decay
+  close(vars(rows, 89).g, 1)
+  close(vars(rows, 90).g, 0) // gate closes
+})
+
 // ── expression values in set/pulse rows ──────────────────────────────────────
 
 const resolveAt = (v: unknown, sliderValue: number): unknown =>
   evalExpr((v as Binding).$expr, {}, 0, { slider: () => sliderValue })
 
-test('a set with dur shaping itself with progress() sweeps 0→1 and rests at 1', () => {
+test("progress() in a set value sweeps the row's reign — its beat to the next same-name row", () => {
   const rows: Row[] = [
-    { beat: 1, event: 'setVariable', name: 'v', value: progress().toJSON(), dur: 2 }, // frames 0..60
+    { beat: 1, event: 'setVariable', name: 'v', value: progress().toJSON() }, // reign [frame 0, 120)
+    { beat: 5, event: 'setVariable', name: 'v', value: 1 },                    // frame 120
   ]
-  assert.equal(typeof vars(rows, 30).v, 'number', 'progress-only exprs bake to plain numbers')
+  assert.equal(typeof vars(rows, 60).v, 'number', 'progress-only exprs bake to plain numbers')
   close(vars(rows, 0).v, 0)
-  close(vars(rows, 30).v, 0.5)
-  close(vars(rows, 60).v, 1)
-  close(vars(rows, 300).v, 1)
+  close(vars(rows, 60).v, 0.5) // halfway through the reign
+  close(vars(rows, 120).v, 1)  // the next keyframe takes over
 })
 
-test('a tween to an expression target emits a per-frame-resolving lerp composite', () => {
+test('a named-ease glide to an expression target emits a per-frame-resolving lerp composite', () => {
   const rows: Row[] = [
     { beat: 1, event: 'setVariable', name: 'v', value: 1 },
-    { beat: 5, event: 'setVariable', name: 'v', value: slider('x').toJSON(), dur: 2, ease: 'linear' }, // frames 120..180
+    { beat: 5, event: 'setVariable', name: 'v', value: slider('x').toJSON(), ease: 'linear' }, // frames 0..120
   ]
-  assert.equal(typeof vars(rows, 60).v, 'number', 'numeric-only prefix stays on the arithmetic path')
-  close(vars(rows, 60).v, 1)
-  const mid = vars(rows, 150).v // u = 0.5
-  assert.ok(isBinding(mid), 'the tween resolves per frame, not at fold')
+  const mid = vars(rows, 60).v // u = 0.5 across the segment [beat 1, beat 5]
+  assert.ok(isBinding(mid), 'the glide resolves per frame, not at fold')
   close(resolveAt(mid, 5), 3) // 1 + (5 - 1) · 0.5
-  // settled: eased u = 1 leaves the target expression alone
-  close(resolveAt(vars(rows, 180).v, 5), 5)
+  // arrives on the beat: eased u = 1 leaves the target expression alone
+  close(resolveAt(vars(rows, 120).v, 5), 5)
 })
 
 test('a pulse stacks over an expression base instead of being dropped', () => {
@@ -231,10 +282,13 @@ test('field() in a value cell reads its own row, not sibling vars', () => {
 test('substitution never mutates the source nodes (cook memo safety)', () => {
   const value = progress().mul(2).toJSON()
   const snapshot = JSON.parse(JSON.stringify(value))
-  const rows: Row[] = [{ beat: 1, event: 'setVariable', name: 'v', value, dur: 2 }]
+  const rows: Row[] = [
+    { beat: 1, event: 'setVariable', name: 'v', value },     // reign [0, 60)
+    { beat: 3, event: 'setVariable', name: 'v', value: 5 },
+  ]
   vars(rows, 15)
   vars(rows, 45)
-  vars(rows, 90)
+  vars(rows, 60)
   assert.deepEqual(value, snapshot)
 })
 

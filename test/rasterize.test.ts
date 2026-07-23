@@ -165,6 +165,17 @@ test('an ease function on the destination keyframe shapes the segment', () => {
   assert.equal(at5.wings, 0.25, 'custom numeric eased the same way')
 })
 
+test("a 'step' ease makes a HOLD keyframe: the field holds, then jumps on the beat", () => {
+  const rows = rasterizeRows([
+    create({ px: 0 }),
+    { id: 's', type: 'update', beat: b(10), px: 10, ease: 'step' }, // keyframe on frame 10
+  ], mb(12))
+  const pxAt = (fr: number): unknown => rows.find((r) => r.frame === fr)!.px
+  assert.equal(pxAt(5), 0, 'holds the previous keyframe — no ramp')
+  assert.equal(pxAt(9), 0, 'right up to the beat')
+  assert.equal(pxAt(10), 10, 'jumps exactly on the keyframe frame')
+})
+
 test('numeric tracks glide across keyframes that omit them', () => {
   const rows = rasterizeRows([
     create({ ry: 0, wings: 0 }),

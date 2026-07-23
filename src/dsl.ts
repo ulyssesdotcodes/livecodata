@@ -1196,14 +1196,21 @@ export const SCHEMAS = deepFreeze({
    * (`code` = the whole chain; empty = passthrough), "add" (append effects,
    * `pixelate(6)`, leading `.` optional), "remove" (`name` = op name; drop every
    * op with that name — the beat-time bypass), "setVariable" (`name`/`value` = a
-   * live input the chain reads through a props function; add `dur`/`ease` to
-   * TWEEN it from its current value), "pulse" (add `value·env` over `dur` beats, `ease`
-   * shaping the envelope; pulses stack), "layer" (composite another chain via
-   * `mode`, amount `value`), and "transition" (wipe to the NEXT setCode ahead —
-   * the wipe runs from this beat until that setCode's beat, so its beat sets the
-   * length; `ease` shapes the wipe, `code` = an optional black-and-white mask
-   * chain, blank = crossfade). `event`, `ease`, and `mode` are enums (dropdowns); `code` cells
-   * open in the editor with post completions; check `disabled` to mute a row.
+   * live input the chain reads through a props function; rows of one `name` form
+   * a KEYFRAME TRACK ordered by beat, and the row's `ease` shapes the segment
+   * INTO it — blank ease STEPS, jumping to `value` on the beat (the default,
+   * `dur` is ignored), a named ease (linear/easeIn/easeOut/easeInOut) GLIDES from
+   * the previous keyframe's value, arriving exactly ON this beat; repeat a value
+   * in the next row to HOLD then ramp, and in a loop a named-ease FIRST keyframe
+   * glides across the loop boundary from the last), "pulse" (add `value·env` over
+   * `dur` beats — default 1 — `ease` shaping the envelope decay, or 'step' for a
+   * square GATE that holds the full value across the window then drops; pulses
+   * stack), "layer" (composite another chain via `mode`, amount `value`), and
+   * "transition" (wipe to the NEXT setCode ahead — the wipe runs from this beat
+   * until that setCode's beat, so its beat sets the length; `ease` shapes the
+   * wipe, `code` = an optional black-and-white mask chain, blank = crossfade).
+   * `event`, `ease`, and `mode` are enums (dropdowns); `code` cells open in the
+   * editor with post completions; check `disabled` to mute a row.
    */
   post: {
     beat: 'number',
@@ -1211,8 +1218,8 @@ export const SCHEMAS = deepFreeze({
     code: { type: 'code', language: 'post', usedBy: ['setCode', 'add', 'layer', 'transition'] },
     name: { type: 'string', usedBy: ['setVariable', 'remove', 'pulse'] },
     value: { type: 'number', usedBy: ['setVariable', 'pulse', 'layer'] },
-    dur: { type: 'number', usedBy: ['setVariable', 'pulse'] },
-    ease: { type: 'enum', options: ['linear', 'easeIn', 'easeOut', 'easeInOut'], usedBy: ['setVariable', 'pulse', 'transition'] },
+    dur: { type: 'number', usedBy: ['pulse'] },
+    ease: { type: 'enum', options: ['step', 'linear', 'easeIn', 'easeOut', 'easeInOut'], usedBy: ['setVariable', 'pulse', 'transition'] },
     mode: { type: 'enum', options: ['blend', 'add', 'mult', 'diff', 'mask'], usedBy: ['layer'] },
     disabled: 'boolean',
   },
@@ -1225,8 +1232,10 @@ export const SCHEMAS = deepFreeze({
    * per-field track easing from the previous keyframe carrying that field),
    * "destroy" (the object leaves). px/py/pz position, rx/ry/rz rotation in
    * radians, sx/sy/sz scale, `color` a 0xRRGGBB number. `ease` names the
-   * easing of the segment INTO this keyframe. Number cells accept "="
-   * expressions (e.g. "=slider('h')" or "=progress().mul(6.283).sin()"),
+   * easing of the segment INTO this keyframe — blank stays linear (motion's
+   * default), while 'step' makes it a HOLD keyframe: the field keeps the
+   * previous keyframe's value until this beat, then jumps. Number cells accept
+   * "=" expressions (e.g. "=slider('h')" or "=progress().mul(6.283).sin()"),
    * which hold streaming over their span instead of interpolating; `dur`
    * (beats) sets the window a value's progress() sweeps — without it, an
    * expression runs to the next keyframe carrying the same field. Check
@@ -1248,7 +1257,7 @@ export const SCHEMAS = deepFreeze({
     sz: { type: 'number', usedBy: ['create', 'update'] },
     color: { type: 'number', usedBy: ['create', 'update'] },
     dur: { type: 'number', usedBy: ['update'] },
-    ease: { type: 'enum', options: ['linear', 'easeIn', 'easeOut', 'easeInOut'], usedBy: ['update'] },
+    ease: { type: 'enum', options: ['step', 'linear', 'easeIn', 'easeOut', 'easeInOut'], usedBy: ['update'] },
     disabled: 'boolean',
   },
   /**
@@ -1518,9 +1527,10 @@ export interface ExprNamespace {
   /** The playback clock in seconds at the playhead — the same clock hydra/post chains see as props.time, so pausing or scrubbing the timeline freezes or scrubs it. Live: resolves each frame, e.g. derive({ ry: expr.time().mul(0.5) }). */
   time(): Expr
   /**
-   * Percent-done of the enclosing event, 0→1. A post `setVariable`/`pulse`
-   * value reads its own `dur` window (a `setVariable` without `dur` reads 1);
-   * a scene
+   * Percent-done of the enclosing event, 0→1. A post `setVariable` value sweeps
+   * its keyframe's REIGN — from this beat to the next row of the same variable
+   * (across the loop boundary when looping); a post `pulse` value its `dur`
+   * window; a scene
    * keyframe value reads its own `dur` if set, else its per-field segment —
    * from this keyframe to the next one carrying the same field. Resolved
    * where the row's timing is known, so it works in "=" cells and in

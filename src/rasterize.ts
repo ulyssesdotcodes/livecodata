@@ -158,10 +158,16 @@ function sampleObject(events: Row[], i: number, extent: number): SampledState | 
       const node = substituteExpr(pv.$expr, { progress: u })
       fields[name] = isStreamingNode(node) ? { $expr: node } : evalExpr(node, fields, i)
     } else if (next && typeof next[name] === 'number') {
-      const raw = (i - (prev.frame as number)) / ((next.frame as number) - (prev.frame as number))
-      const ease = easeFnOf(next.ease)
-      const t = ease ? ease(raw) : raw
-      fields[name] = lerp(pv as number, next[name] as number, t)
+      // 'step' is a HOLD keyframe: prev's value stays put until next's beat, then
+      // jumps (next becomes prev at its own frame). Otherwise ease the segment.
+      if (next.ease === 'step') {
+        fields[name] = pv
+      } else {
+        const raw = (i - (prev.frame as number)) / ((next.frame as number) - (prev.frame as number))
+        const ease = easeFnOf(next.ease)
+        const t = ease ? ease(raw) : raw
+        fields[name] = lerp(pv as number, next[name] as number, t)
+      }
       sources.add(next)
     } else {
       fields[name] = pv
