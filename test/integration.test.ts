@@ -155,6 +155,39 @@ for (const { name, steps } of [
   })
 }
 
+test('Origami Metamorphosis sample: retime pingpongs the lotus back to a square before the lily', () => {
+  const sample = SAMPLES.find((s) => s.name === 'Origami Metamorphosis')!
+  const { views } = createRuntime({
+    editableRows: (n: string, schema: Record<string, ColumnType>, seed?: Record<string, unknown>[]) =>
+      (seed ?? sample.tables?.[n] ?? []).map((r) => conformRow(r, schemaColumns(schema))),
+  }).run(sample.code, { seed: 1 })
+  const rows = views.get(outViewName('three'))!.rows
+
+  // two flowers, handed off at the flat square: lotus retired, lily raised
+  assert.ok(rows.some((r) => r.type === 'create' && r.id === 'flowerA'), 'lotus spawns')
+  assert.ok(rows.some((r) => r.type === 'create' && r.id === 'flowerB'), 'lily spawns')
+  assert.ok(rows.some((r) => r.type === 'destroy' && r.id === 'flowerA'), 'lotus is retired')
+
+  const track = (id: string): [number, number][] => rows
+    .filter((r) => r.id === id && r.type === 'update' && typeof r.fold === 'number')
+    .map((r) => [r.beat as number, r.fold as number] as [number, number])
+    .sort((a, b) => a[0] - b[0])
+
+  // the lotus folds up, then .retime(pingpong) folds the very same run back
+  // down to a flat square — no hand-mirrored rows
+  const a = track('flowerA')
+  const peak = Math.max(...a.map(([, f]) => f))
+  const peakBeat = a.find(([, f]) => f === peak)![0]
+  assert.ok(peak >= 11, 'lotus reaches its full fold')
+  assert.ok(a[a.length - 1][1] < 0.5, 'lotus unfolds back to a flat square')
+  assert.ok(a[a.length - 1][0] > peakBeat, 'the unfold comes after the bloom')
+
+  // the lily then folds up from that square
+  const b = track('flowerB')
+  assert.equal(b[0][1], 0, 'the lily starts from a square')
+  assert.ok(Math.max(...b.map(([, f]) => f)) >= 7, 'the lily folds into its bloom')
+})
+
 test('Hydra Meta sample: replace/append/setSource/layer rewrite the sketch across the loop', () => {
   const sample = SAMPLES.find((s) => s.name === 'Hydra Meta')!
   const { views } = createRuntime({

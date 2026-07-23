@@ -571,6 +571,80 @@ paper.spawn({ id: "lily", color: 0xf0eeff, backColor: 0x7a3fc0, pz: 1.2, rx: -0.
     },
   },
   {
+    name: "Origami Metamorphosis",
+    table: "lotus",
+    code: `// livecodata — Origami Metamorphosis: one sheet, two flowers
+// A single square folds itself into the lotus, opens all the way back to a
+// flat square, then folds into the lily — proof that a fold table runs in
+// reverse. The trick is that origami().sequence() emits the whole folding as
+// beat-keyed keyframes of ONE number (\`fold\`: how many folds have landed).
+// .retime() warps those beats through a timeline (schemas.timeline), and a
+// "pingpong" event replays the run there and BACK — so the paper unfolds
+// itself, with no hand-mirrored rows. Press "Run", then hit Play.
+
+// Two crease patterns can't live on one sheet, so each flower is its own
+// origami program. They hand off at the shared flat square: fold=0 is the
+// exact same bare square for every program, so swapping one paper object for
+// the other there is invisible.
+editable("lotus", schemas.origami)
+editable("lily", schemas.origami)
+
+const pose = { pz: 1.2, rx: -0.3 }
+const lotus = origami().steps(table("lotus"))
+const lily = origami().steps(table("lily"))
+
+// pingpong the lotus: its fold runs over source beats 1–13; the out window
+// (beat 1, dur 24) plays that forward then backward across beats 1–25, so it
+// blooms by beat 13 and is flat again by 25. .retime warps the sequence's
+// beats; the spawn (create) row is left unmapped.
+const bloomFall = rows([{ event: "pingpong", beat: 1, dur: 24, from: 1, to: 13 }])
+
+lotus.spawn({ id: "flowerA", color: 0xfff2d6, backColor: 0xe0518a, ...pose })
+  .concat(lotus.sequence().retime(bloomFall))
+  // hand off at the flat square: retire the lotus and raise the lily there,
+  // both a plain square at that instant, so the swap can't be seen
+  .concat(rows([{ id: "flowerA", type: "destroy", beat: 25 }]))
+  .concat(lily.spawn({ id: "flowerB", beat: 25, color: 0xf0eeff, backColor: 0x7a3fc0, ...pose }))
+  .concat(lily.sequence().shift(24))
+  .outThree()
+
+// Things to try, live in the tabs on the right:
+//   - Edit either flower's fold table ("lotus"/"lily" tabs): the bloom retimes
+//     to match with no code change.
+//   - pingpong the lily too — \`rows([{ event: "pingpong", beat: 25, dur: 16,
+//     from: 1, to: 9 }])\` in place of \`.shift(24)\` — so it opens and closes
+//     and the whole loop returns to a square.
+//   - Widen "beats" under the scene to 40 to watch the whole cycle in one pass.
+`,
+    tables: {
+      lotus: [
+        // blintz: fold all four corners to the centre
+        { step: "bl1", p1: "0.5,0", p2: "0,0.5", move: "0.05,0.05", at: 1, dur: 0.9 },
+        { step: "bl2", p1: "0.5,0", p2: "1,0.5", move: "0.95,0.05", at: 2, dur: 0.9 },
+        { step: "bl3", p1: "1,0.5", p2: "0.5,1", move: "0.95,0.95", at: 3, dur: 0.9 },
+        { step: "bl4", p1: "0.5,1", p2: "0,0.5", move: "0.05,0.95", at: 4, dur: 0.9 },
+        { step: "petSW", p1: "0.65,0", p2: "0,0.65", move: "0.03,0.03", at: 5, dur: 0.9 },
+        { step: "petSE", p1: "0.35,0", p2: "1,0.65", move: "0.97,0.03", at: 6, dur: 0.9 },
+        { step: "petNE", p1: "1,0.35", p2: "0.35,1", move: "0.97,0.97", at: 7, dur: 0.9 },
+        { step: "petNW", p1: "0,0.35", p2: "0.65,1", move: "0.03,0.97", at: 8, dur: 0.9 },
+        { step: "tSW", p1: "0.42,0", p2: "0,0.42", move: "0.01,0.01", at: 9, dur: 0.9 },
+        { step: "tSE", p1: "0.58,0", p2: "1,0.42", move: "0.99,0.01", at: 10, dur: 0.9 },
+        { step: "tNE", p1: "1,0.58", p2: "0.58,1", move: "0.99,0.99", at: 11, dur: 0.9 },
+        { step: "tNW", p1: "0,0.58", p2: "0.42,1", move: "0.01,0.99", at: 12, dur: 0.9 },
+      ],
+      lily: [
+        { step: "bl1", p1: "0.5,0", p2: "0,0.5", move: "0.05,0.05", at: 1, dur: 0.9 },
+        { step: "bl2", p1: "0.5,0", p2: "1,0.5", move: "0.95,0.05", at: 2, dur: 0.9 },
+        { step: "bl3", p1: "1,0.5", p2: "0.5,1", move: "0.95,0.95", at: 3, dur: 0.9 },
+        { step: "bl4", p1: "0.5,1", p2: "0,0.5", move: "0.05,0.95", at: 4, dur: 0.9 },
+        { step: "petSW", p1: "0.65,0", p2: "0,0.65", move: "0.03,0.03", at: 5, dur: 0.9 },
+        { step: "petSE", p1: "0.35,0", p2: "1,0.65", move: "0.97,0.03", at: 6, dur: 0.9 },
+        { step: "petNE", p1: "1,0.35", p2: "0.35,1", move: "0.97,0.97", at: 7, dur: 0.9 },
+        { step: "petNW", p1: "0,0.35", p2: "0.65,1", move: "0.03,0.97", at: 8, dur: 0.9 },
+      ],
+    },
+  },
+  {
     name: "Hydra Sketch",
     table: "hydra",
     code: `// livecodata — a video-synth sketch with hydra (hydra-ts, a port of ojack's hydra)
