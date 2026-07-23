@@ -179,6 +179,8 @@ function buildPostGlobals(root) {
     '  function slider(name: string, min?: number, max?: number): (p: PostProps) => number;',
     '  /** A live post variable as a live arg — val("name", initial) reads the folded variable each frame (the initial as fallback), and a "setVariable" row for it materializes right after this cell — tweak or tween it there; deleting the val() call deletes the row. */',
     '  function val(name: string, value?: number): (p: PostProps) => number;',
+    '  /** A live arg for a transition\'s mask chain — reads that transition\'s window fraction (0 at its beat, 1 at the destination setCode, shaped by the row\'s ease). progress() alone is a crossfade; gradient(0).thresh(progress()) a directional wipe. Outside a transition mask it reads 1. */',
+    '  function progress(): (p: PostProps) => number;',
     '}',
     'export {};',
   ].join('\n')

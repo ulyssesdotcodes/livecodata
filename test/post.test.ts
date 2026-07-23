@@ -10,7 +10,7 @@ import {
   foldVars,
   type PostFrame,
 } from '../src/post.js'
-import { evalPostCode, chainSignature, collectLiveValues, sliderDeclsInCode, postVarDecls } from '../src/post-lang.js'
+import { evalPostCode, chainSignature, collectLiveValues, sliderDeclsInCode, postVarDecls, type OpChain } from '../src/post-lang.js'
 // Registers the Expr live-arg adapter post-lang consults (expr in post cells).
 import '../src/expr-cell.js'
 import { slider, progress, field, isBinding, evalExpr, type Binding } from '../src/dsl.js'
@@ -110,21 +110,88 @@ test('a transition wipes to the next setCode ahead, then expires to it (end-excl
   assert.ok(postStateFrames(idx).includes(180), 'the window END is an enumerated state frame')
 })
 
-test('a post transition ease shapes its wipe progress, inlined (no EASINGS at eval)', () => {
-  const posAt = (ease: unknown, time: number): number => {
-    const rows: Row[] = [
-      { beat: 1, event: 'setCode', code: 'blur(4)' },
-      { beat: 5, event: 'transition', ease }, // frame 120 → t 2s; window [120,180) → t 2..3
-      { beat: 7, event: 'setCode', code: 'edges(0.2)' },
-    ]
-    const fn = postFrameAt(buildPostIndex(rows), 150)!.chain[0].args[0].value as (p: { time: number }) => number
-    return fn({ time })
+// The transition is a per-pixel mask mix (result = mix(before, after, luma(mask)))
+// with NO automatic temporal sweep: time enters only through a mask that reads
+// progress(). These pin the new semantics.
+const wipeRows = (transition: Partial<Row>): Row[] => [
+  { beat: 1, event: 'setCode', code: 'blur(4)' },
+  { beat: 5, event: 'transition', ...transition }, // frame 120, window [120, 180)
+  { beat: 7, event: 'setCode', code: 'edges(0.2)' }, // frame 180 = window end
+]
+const maskOf = (frame: PostFrame): OpChain => frame.chain[0].chainArgs![2]
+
+test('a bare progress() mask sweeps luminance 0→1 across the window, shaped by ease', () => {
+  const fnAt = (ease: unknown): ((p: { time: number }) => number) => {
+    const mask = maskOf(postFrameAt(buildPostIndex(wipeRows({ code: 'progress()', ease })), 150)!)
+    assert.deepEqual(mask.map((o) => o.op), ['fill'], 'a bare live-arg mask lowers to fill (uniform luminance)')
+    return mask[0].args[0].value as (p: { time: number }) => number
   }
-  close(posAt('linear', 2.5), 0.5)   // linear midpoint
-  close(posAt(undefined, 2.5), 0.5)  // blank = linear
-  close(posAt('easeIn', 2.5), 0.25)  // u² at u=0.5
-  close(posAt('easeOut', 2.5), 0.75) // 1-(1-u)² at u=0.5
-  close(posAt('easeInOut', 2.25), 0.125) // 2u² at u=0.25
+  const linear = fnAt('linear')
+  close(linear({ time: 120 / 60 }), 0)  // 0 at the transition's beat
+  close(linear({ time: 150 / 60 }), 0.5) // linear midpoint
+  close(linear({ time: 180 / 60 }), 1)  // 1 at the next setCode's beat
+  close(fnAt(undefined)({ time: 150 / 60 }), 0.5) // blank ease = linear
+  close(fnAt('easeIn')({ time: 150 / 60 }), 0.25) // ease shapes progress
+  close(fnAt('easeOut')({ time: 150 / 60 }), 0.75)
+})
+
+test('a static mask composites the same every frame — no automatic temporal blend — then cuts to after', () => {
+  const idx = buildPostIndex(wipeRows({ code: 'gradient(0)' }))
+  const at = (f: number): PostFrame => postFrameAt(idx, f)!
+  assert.equal(at(120).chain[0].op, 'transition')
+  // One precompiled state across the whole window, identical live values: the
+  // composite never moves on its own (mix depends only on the frozen mask luma).
+  assert.equal(at(120).stateId, at(179).stateId, 'no per-frame state')
+  assert.deepEqual(collectLiveValues(at(120).chain, {}), collectLiveValues(at(150).chain, {}))
+  assert.deepEqual(ops(at(180)), ['scene', 'edges'], 'past the window: after only')
+})
+
+test('a blank transition mask is static black: before holds through the window, then a delayed cut', () => {
+  const idx = buildPostIndex(wipeRows({}))
+  const tr = postFrameAt(idx, 150)!.chain[0]
+  assert.deepEqual(maskOf(postFrameAt(idx, 150)!).map((o) => o.op), ['fill'])
+  assert.equal(maskOf(postFrameAt(idx, 150)!)[0].args[0].value, 0, 'blank → fill(0), a black mask')
+  assert.deepEqual(tr.chainArgs![0].map((o) => o.op), ['scene', 'blur'], 'before shows for the window')
+  assert.deepEqual(ops(postFrameAt(idx, 180)), ['scene', 'edges'], 'cut to after at the next setCode')
+})
+
+test('progress() inside a mask chain is a live uniform — the window keeps one precompiled state', () => {
+  const idx = buildPostIndex(wipeRows({ code: 'gradient(0).thresh(progress())' }))
+  const ids = [120, 135, 150, 179].map((f) => postFrameAt(idx, f)!.stateId)
+  assert.equal(new Set(ids).size, 1, 'a progress() mask adds no per-frame cache key')
+  const mask = maskOf(postFrameAt(idx, 150)!)
+  assert.deepEqual(mask.map((o) => o.op), ['gradient', 'thresh'])
+  assert.equal(mask[1].args[0].cls, 'live', "thresh's edge is the live progress arg")
+  const edge = mask[1].args[0].value as (p: { time: number }) => number
+  assert.ok(edge({ time: 135 / 60 }) < edge({ time: 165 / 60 }), 'it sweeps with the clock')
+})
+
+test('progress in a wrapped transition window reads across the loop seam', () => {
+  // loopFrames 120, seqLen 240; the transition at frame 210 wraps to the first
+  // setCode next pass, so its window [210, 270) crosses the seam.
+  const rows: Row[] = [
+    { beat: 2, event: 'setCode', code: 'blur(4)' },        // frame 30
+    { beat: 5, event: 'setCode', code: 'edges(0.2)' },     // frame 120
+    { beat: 8, event: 'transition', code: 'progress()' },  // frame 210
+  ]
+  const idx = buildPostIndex(rows)
+  const fnAt = (frame: number): ((p: { time: number }) => number) =>
+    maskOf(postFrameAt(idx, frame, 120)!)[0].args[0].value as (p: { time: number }) => number
+  close(fnAt(210)({ time: 210 / 60 }), 0)        // window start
+  close(fnAt(230)({ time: 230 / 60 }), 20 / 60)  // before the seam
+  close(fnAt(10)({ time: 10 / 60 }), 40 / 60)    // after it (dist 40 via wrap, not a clamp to 0)
+})
+
+test('generators and ops compile and are usable as chains and combine sources', () => {
+  assert.deepEqual(evalPostCode('gradient(0).thresh(progress())').map((o) => o.op), ['gradient', 'thresh'])
+  assert.deepEqual(evalPostCode('gradient(0).polar().thresh(progress(), 0.3)').map((o) => o.op), ['gradient', 'polar', 'thresh'])
+  assert.deepEqual(evalPostCode('noise(3).thresh(progress())').map((o) => o.op), ['noise', 'thresh'])
+  assert.deepEqual(evalPostCode('stripes(8).polar()').map((o) => o.op), ['stripes', 'polar'])
+  // a generator drives a combine's branch, not only a mask
+  assert.deepEqual(evalPostCode('blur(4).mask(gradient(0))')[2].chainArgs![0].map((o) => o.op), ['gradient'])
+  // thresh top-level runs on the scene luminance — a content-aware wipe
+  assert.deepEqual(evalPostCode('edges(0.2).thresh(progress())').map((o) => o.op), ['scene', 'edges', 'thresh'])
+  assert.equal(evalPostCode('gradient((p) => p.a)')[0].args[0].cls, 'live', 'generator args are live')
 })
 
 test('a wrapped post window runs to a setCode across the loop boundary', () => {

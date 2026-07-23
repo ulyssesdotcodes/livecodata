@@ -6,7 +6,7 @@
 // (`edges(0.2).bloom(1.2)`) with no routing. This module is pure — no GPU, no
 // `three`; the node graph is built and rendered by post-scene.ts.
 
-import { beatToFrame, beatsToFrames, FPS } from './constants.js'
+import { beatToFrame, beatsToFrames } from './constants.js'
 import {
   EASINGS, isBinding, isStreamingNode, evalExpr, substituteExpr,
   type Easings, type ExprNode,
@@ -134,19 +134,6 @@ function applyPostShape(code: string, row: Row): string {
   }
 }
 
-// The transition's `pos` fn (playback time → clamped 0 → 1), with `ease` baked
-// in as its closed form: the fn is eval'd with no access to EASINGS, so the
-// shape must be inlined. Blank/unknown ease is linear.
-function easedPos(ease: unknown, start: number, dur: number): string {
-  const u = `Math.min(Math.max((p.time - ${start}) / ${dur}, 0), 1)`
-  switch (ease) {
-    case 'easeIn': return `(p) => (${u}) ** 2`
-    case 'easeOut': return `(p) => 1 - (1 - (${u})) ** 2`
-    case 'easeInOut': return `(p) => ((e) => e < 0.5 ? 2 * e * e : 1 - ((-2 * e + 2) ** 2) / 2)(${u})`
-    default: return `(p) => ${u}`
-  }
-}
-
 // Fold the event stream into the running chain string at `frame`. Returns null
 // (post stage inactive → scene shows through) until the chain is non-empty.
 // setVariable/pulse are handled separately (foldVars); this is chain shape only.
@@ -181,13 +168,14 @@ function foldChain(index: Row[], frame: number, seqLen: number, loopFrames: numb
     if ((row.index as number) > horizon) break
     if (row.event !== 'transition') after = applyPostShape(after, row)
   }
-  // Apply wipes innermost-first so nested transitions compose in beat order.
+  // Compose wipes innermost-first so nested transitions layer in beat order. The
+  // mask rides in as a thunk so its progress() binds to THIS transition's window;
+  // a blank mask is static black (fill(0)) — before holds until the window ends.
   let result = after === '' ? 'scene()' : after
   for (let i = active.length - 1; i >= 0; i--) {
     const tr = active[i]
-    const posFn = easedPos(tr.ease, tr.start / FPS, tr.len / FPS)
-    const mask = tr.mask !== '' ? `(${tr.mask})` : 'null'
-    result = `transition((${tr.before}), (${result}), ${mask}, ${posFn})`
+    const maskBody = tr.mask !== '' ? tr.mask : 'fill(0)'
+    result = `transition((${tr.before}), (${result}), () => (${maskBody}), ${tr.start}, ${tr.len}, ${seqLen}, ${JSON.stringify(tr.ease ?? null)})`
   }
   return result
 }
