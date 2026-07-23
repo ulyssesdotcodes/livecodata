@@ -1058,8 +1058,8 @@ export class OrigamiBuilder {
 
   /**
    * Fold schedule → update keyframes driving `fold`. With no argument, uses
-   * the at/dur timings from the steps() rows; override with rows
-   * { step?, at, dur? } to retime.
+   * the beat/dur timings from the steps() rows; override with rows
+   * { step?, beat, dur? } to retime.
    */
   sequence(steps?: Table | Row[] | null, opts: { id?: unknown } = {}): Table {
     const id = opts.id ?? this._id
@@ -1071,7 +1071,7 @@ export class OrigamiBuilder {
       overrides.forEach((r, i) => {
         const target = r.step != null ? byName.get(String(r.step)) : timed[i]
         if (!target) return
-        const at = r.at ?? r.beat
+        const at = r.beat
         if (at != null) {
           const dur = r.dur != null ? Math.max(Number(r.dur), 1 / FRAMES_PER_BEAT) : target.t1 - target.t0
           target.t0 = Number(at)
@@ -1372,13 +1372,13 @@ export const SCHEMAS = deepFreeze({
    * An origami fold table (see origami().steps()): one fold per row — `step`
    * a label, `p1`/`p2` two points "x,y" on the fold line, `move` the sheet
    * point(s) naming the flap(s) that swing, `kind`/`pick` choose among valid
-   * layer orders ("simple", "reverse", "sink", …), `at`/`dur` the swing's
-   * beat timing, `to` how far it lands (1 = flat). Check `disabled` to skip
-   * a fold.
+   * layer orders ("simple", "reverse", "sink", …), `beat`/`dur` the swing's
+   * timing (1-indexed, like every other table), `to` how far it lands
+   * (1 = flat). Check `disabled` to skip a fold.
    */
   origami: {
     step: 'string', p1: 'string', p2: 'string', move: 'string',
-    kind: 'string', pick: 'number', at: 'number', dur: 'number', to: 'number',
+    kind: 'string', pick: 'number', beat: 'number', dur: 'number', to: 'number',
     disabled: 'boolean',
   },
 } as const satisfies Record<string, Schema>)

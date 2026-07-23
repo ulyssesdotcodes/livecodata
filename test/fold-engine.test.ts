@@ -144,10 +144,10 @@ test('editable-table rows: blank cells ("" and NaN) mean unset, not zero', () =>
   // arrive as empty strings / NaN — they must fall back to defaults
   const program = compileFoldTable([{
     step: 'diag', p1: '0,0', p2: '1,1', move: '0.9,0.1',
-    kind: '', pick: NaN, at: '', dur: '', to: '',
+    kind: '', pick: NaN, beat: '', dur: '', to: '',
   }])
   assert.equal(program.steps.length, 1)
-  assert.equal(program.steps[0].t0, 1)     // at defaulted, not Number('') = 0
+  assert.equal(program.steps[0].t0, 1)     // beat defaulted, not Number('') = 0
   assert.equal(program.steps[0].t1, 1.75)  // dur defaulted
   assert.equal(program.steps[0].to, 1)     // to defaulted, not 0 (no swing)
   // blank step names get positional defaults; blank p1 errors by name
@@ -157,7 +157,7 @@ test('editable-table rows: blank cells ("" and NaN) mean unset, not zero', () =>
   // "swing at beat 0", "zero-length swing" or "don't fold at all"
   const zeroed = compileFoldTable([{
     step: 'diag', p1: '0,0', p2: '1,1', move: '0.9,0.1',
-    kind: '', pick: 0, at: 0, dur: 0, to: 0,
+    kind: '', pick: 0, beat: 0, dur: 0, to: 0,
   }])
   assert.equal(zeroed.steps[0].t0, 1)
   assert.equal(zeroed.steps[0].t1, 1.75)

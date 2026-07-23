@@ -11,35 +11,35 @@ import { clearanceAt } from './util/clearance.js'
 // plus each face's layer offset.
 
 const CRANE_ROWS = [
-  { step: 'diag', p1: '0,0', p2: '1,1', move: '0.667,0.333', at: 1 },
-  { step: 'collapse1', p1: '0,0.5', p2: '1,0.5', move: '0.333,0.167', kind: 'reverse', at: 2 },
-  { step: 'collapse2', p1: '0.5,0', p2: '0.5,1', move: '0.833,0.667', kind: 'reverse', at: 3 },
-  { step: 'collapse3', p1: '0,1', p2: '0.4142135624,0', move: '0.667,0.069036', kind: 'reverse', at: 4 },
-  { step: 'collapse4', p1: '0,1', p2: '1,0.5857864376', move: '0.930964,0.667', kind: 'reverse', at: 5 },
-  { step: 'flatten', p1: '0,0.2928932188', p2: '0.7071067812,1', move: '0.930964,0.333', at: 6 },
-  { step: 'tuck1', p1: '0,1', p2: '0.4142135624,0', move: '0.069036,0.667', kind: 'reverse', at: 7 },
-  { step: 'tuck2', p1: '0,1', p2: '1,0.5857864376', move: '0.667,0.930964', kind: 'reverse', at: 8 },
-  { step: 'kite1', p1: '0,1', p2: '0.6681786379,0', move: '0.525373,0.274808', pick: 1, at: 9 },
-  { step: 'kite2', p1: '0,1', p2: '1,0.3318213621', move: '0.897812,0.667', at: 10 },
-  { step: 'turn', p1: '0,0.2928932188', p2: '0.7071067812,1', move: '0.333,0.930964', at: 11 },
-  { step: 'kite3', p1: '0,1', p2: '1,0.3318213621', move: '0.667,0.897812', pick: 1, at: 12 },
-  { step: 'kite4', p1: '0,1', p2: '0.6681786379,0', move: '0.208238,0.583899', pick: 1, at: 13 },
-  { step: 'neck', p1: '0.1345593806,0', p2: '0.4733251916,1', move: '0.906033,0.694263', kind: 'reverse', at: 14 },
-  { step: 'tail', p1: '0,0.5266748083', p2: '1,0.8654406193', move: '0.246505,0.203815', kind: 'reverse', at: 15 },
-  { step: 'head', p1: '0,0.1274716613', p2: '1,0.8431274379', move: '0.096435,0.080352', kind: 'reverse', at: 16 },
-  { step: 'wings', p1: '0,0.1414213562', p2: '0.8585786438,1', move: '0.858,0.377;0.377,0.858', at: 17, dur: 1.5, to: 0.5 },
+  { step: 'diag', p1: '0,0', p2: '1,1', move: '0.667,0.333', beat: 1 },
+  { step: 'collapse1', p1: '0,0.5', p2: '1,0.5', move: '0.333,0.167', kind: 'reverse', beat: 2 },
+  { step: 'collapse2', p1: '0.5,0', p2: '0.5,1', move: '0.833,0.667', kind: 'reverse', beat: 3 },
+  { step: 'collapse3', p1: '0,1', p2: '0.4142135624,0', move: '0.667,0.069036', kind: 'reverse', beat: 4 },
+  { step: 'collapse4', p1: '0,1', p2: '1,0.5857864376', move: '0.930964,0.667', kind: 'reverse', beat: 5 },
+  { step: 'flatten', p1: '0,0.2928932188', p2: '0.7071067812,1', move: '0.930964,0.333', beat: 6 },
+  { step: 'tuck1', p1: '0,1', p2: '0.4142135624,0', move: '0.069036,0.667', kind: 'reverse', beat: 7 },
+  { step: 'tuck2', p1: '0,1', p2: '1,0.5857864376', move: '0.667,0.930964', kind: 'reverse', beat: 8 },
+  { step: 'kite1', p1: '0,1', p2: '0.6681786379,0', move: '0.525373,0.274808', pick: 1, beat: 9 },
+  { step: 'kite2', p1: '0,1', p2: '1,0.3318213621', move: '0.897812,0.667', beat: 10 },
+  { step: 'turn', p1: '0,0.2928932188', p2: '0.7071067812,1', move: '0.333,0.930964', beat: 11 },
+  { step: 'kite3', p1: '0,1', p2: '1,0.3318213621', move: '0.667,0.897812', pick: 1, beat: 12 },
+  { step: 'kite4', p1: '0,1', p2: '0.6681786379,0', move: '0.208238,0.583899', pick: 1, beat: 13 },
+  { step: 'neck', p1: '0.1345593806,0', p2: '0.4733251916,1', move: '0.906033,0.694263', kind: 'reverse', beat: 14 },
+  { step: 'tail', p1: '0,0.5266748083', p2: '1,0.8654406193', move: '0.246505,0.203815', kind: 'reverse', beat: 15 },
+  { step: 'head', p1: '0,0.1274716613', p2: '1,0.8431274379', move: '0.096435,0.080352', kind: 'reverse', beat: 16 },
+  { step: 'wings', p1: '0,0.1414213562', p2: '0.8585786438,1', move: '0.858,0.377;0.377,0.858', beat: 17, dur: 1.5, to: 0.5 },
 ]
 
 const CICADA_ROWS = [
-  { step: 'half', p1: '0,0', p2: '1,1', move: '0.667,0.333', at: 1 },
-  { step: 'cornerL', p1: '0,0.5', p2: '1,0.5', move: '0.1,0.3;0.3,0.1', at: 2 },
-  { step: 'cornerR', p1: '0.5,0', p2: '0.5,1', move: '0.6,0.8;0.8,0.6', at: 3 },
-  { step: 'wingL', p1: '0.19885,0.598479', p2: '1.001892,0.99618', move: '0.03,0.12;0.12,0.03', at: 4 },
-  { step: 'wingR', p1: '0.401521,0.80115', p2: '0.00382,-0.001892', move: '0.88,0.97;0.97,0.88', at: 5 },
-  { step: 'head1', p1: '-0.19,0.59', p2: '0.41,1.19', move: '0.97,0.03', at: 6 },
-  { step: 'head2', p1: '-0.24,0.64', p2: '0.36,1.24', move: '0.03,0.97', at: 7 },
-  { step: 'tuckL', p1: '0.09,0.59', p2: '0.39,0.29', move: '0.05,0.55', at: 8 },
-  { step: 'tuckR', p1: '0.41,0.91', p2: '0.71,0.61', move: '0.45,0.95', at: 9 },
+  { step: 'half', p1: '0,0', p2: '1,1', move: '0.667,0.333', beat: 1 },
+  { step: 'cornerL', p1: '0,0.5', p2: '1,0.5', move: '0.1,0.3;0.3,0.1', beat: 2 },
+  { step: 'cornerR', p1: '0.5,0', p2: '0.5,1', move: '0.6,0.8;0.8,0.6', beat: 3 },
+  { step: 'wingL', p1: '0.19885,0.598479', p2: '1.001892,0.99618', move: '0.03,0.12;0.12,0.03', beat: 4 },
+  { step: 'wingR', p1: '0.401521,0.80115', p2: '0.00382,-0.001892', move: '0.88,0.97;0.97,0.88', beat: 5 },
+  { step: 'head1', p1: '-0.19,0.59', p2: '0.41,1.19', move: '0.97,0.03', beat: 6 },
+  { step: 'head2', p1: '-0.24,0.64', p2: '0.36,1.24', move: '0.03,0.97', beat: 7 },
+  { step: 'tuckL', p1: '0.09,0.59', p2: '0.39,0.29', move: '0.05,0.55', beat: 8 },
+  { step: 'tuckR', p1: '0.41,0.91', p2: '0.71,0.61', move: '0.45,0.95', beat: 9 },
 ]
 
 const SAMPLES_PER_STEP = 12
@@ -108,10 +108,10 @@ test('a fold whose flap hinge leaves the line is rejected, not stretched', () =>
   // where the flap boundary meets static paper by 0.05 — the old engine
   // silently stretched a static face 11% to absorb it
   const rows = [
-    { step: 'half', p1: '0,0', p2: '1,1', move: '0.667,0.333', at: 1 },
-    { step: 'cornerL', p1: '0,0.5', p2: '1,0.5', move: '0.1,0.3;0.3,0.1', at: 2 },
-    { step: 'cornerR', p1: '0.5,0', p2: '0.5,1', move: '0.6,0.8;0.8,0.6', at: 3 },
-    { step: 'wingL', p1: '0.159099,0.628769', p2: '0.901561,0.946967', move: '0.03,0.12;0.12,0.03', at: 4 },
+    { step: 'half', p1: '0,0', p2: '1,1', move: '0.667,0.333', beat: 1 },
+    { step: 'cornerL', p1: '0,0.5', p2: '1,0.5', move: '0.1,0.3;0.3,0.1', beat: 2 },
+    { step: 'cornerR', p1: '0.5,0', p2: '0.5,1', move: '0.6,0.8;0.8,0.6', beat: 3 },
+    { step: 'wingL', p1: '0.159099,0.628769', p2: '0.901561,0.946967', move: '0.03,0.12;0.12,0.03', beat: 4 },
   ]
   assert.throws(() => compileFoldTable(rows, { size: 1 }), /hinge leaves the fold line/)
 })

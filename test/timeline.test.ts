@@ -283,8 +283,8 @@ test('retime carries each source row\'s lineage onto every placed copy', () => {
 test('retime loops a subsection of an origami fold sequence', () => {
   const dsl = createDSL(null)
   const paper = dsl.origami().steps([
-    { step: 'diag', p1: '0,0', p2: '1,1', move: '0.667,0.333', at: 1, dur: 2 },
-    { step: 'collapse', p1: '0,0.5', p2: '1,0.5', move: '0.333,0.167', kind: 'reverse', at: 4, dur: 2 },
+    { step: 'diag', p1: '0,0', p2: '1,1', move: '0.667,0.333', beat: 1, dur: 2 },
+    { step: 'collapse', p1: '0,0.5', p2: '1,0.5', move: '0.333,0.167', kind: 'reverse', beat: 4, dur: 2 },
   ])
   const spawn = paper.spawn({ id: 'sheet' })
   // First fold plays straight; the second fold's window (source 4..7) loops

@@ -346,7 +346,7 @@ rows([
 //          over), "reverse" (inside reverse fold), "sink", … — the solver
 //          checks the paper really can fold that way
 //   pick   when several stackings of that kind are valid, which one
-//   at,dur when the swing starts, and how long it takes, in beats
+//   beat,dur when the swing starts, and how long it takes, in beats
 //   to     how far to swing: 1 lands flat (default). Only the last row
 //          may stop short — the wings hold at 0.5, half-raised
 //   disabled  an ordinary boolean column: check a step's box to skip that
@@ -403,29 +403,29 @@ rows([
     tables: {
       origami: [
         // in half along the diagonal
-        { step: "diag", p1: "0,0", p2: "1,1", move: "0.667,0.333", at: 1, dur: 2 },
+        { step: "diag", p1: "0,0", p2: "1,1", move: "0.667,0.333", beat: 1, dur: 2 },
         // collapse into the square base: four inside reverse folds
-        { step: "collapse1", p1: "0,0.5", p2: "1,0.5", move: "0.333,0.167", kind: "reverse", at: 4, dur: 2 },
-        { step: "collapse2", p1: "0.5,0", p2: "0.5,1", move: "0.833,0.667", kind: "reverse", at: 7, dur: 2 },
-        { step: "collapse3", p1: "0,1", p2: "0.4142135624,0", move: "0.667,0.069036", kind: "reverse", at: 10, dur: 2 },
-        { step: "collapse4", p1: "0,1", p2: "1,0.5857864376", move: "0.930964,0.667", kind: "reverse", at: 13, dur: 2 },
+        { step: "collapse1", p1: "0,0.5", p2: "1,0.5", move: "0.333,0.167", kind: "reverse", beat: 4, dur: 2 },
+        { step: "collapse2", p1: "0.5,0", p2: "0.5,1", move: "0.833,0.667", kind: "reverse", beat: 7, dur: 2 },
+        { step: "collapse3", p1: "0,1", p2: "0.4142135624,0", move: "0.667,0.069036", kind: "reverse", beat: 10, dur: 2 },
+        { step: "collapse4", p1: "0,1", p2: "1,0.5857864376", move: "0.930964,0.667", kind: "reverse", beat: 13, dur: 2 },
         // flatten the stray flap, then tuck the side corners in
-        { step: "flatten", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.930964,0.333", at: 16, dur: 2 },
-        { step: "tuck1", p1: "0,1", p2: "0.4142135624,0", move: "0.069036,0.667", kind: "reverse", at: 19, dur: 2 },
-        { step: "tuck2", p1: "0,1", p2: "1,0.5857864376", move: "0.667,0.930964", kind: "reverse", at: 22, dur: 2 },
+        { step: "flatten", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.930964,0.333", beat: 16, dur: 2 },
+        { step: "tuck1", p1: "0,1", p2: "0.4142135624,0", move: "0.069036,0.667", kind: "reverse", beat: 19, dur: 2 },
+        { step: "tuck2", p1: "0,1", p2: "1,0.5857864376", move: "0.667,0.930964", kind: "reverse", beat: 22, dur: 2 },
         // kite folds onto the centre line, front then (after turning a flap
         // like a page) back — this thins the points into neck and tail
-        { step: "kite1", p1: "0,1", p2: "0.6681786379,0", move: "0.525373,0.274808", pick: 1, at: 25, dur: 2 },
-        { step: "kite2", p1: "0,1", p2: "1,0.3318213621", move: "0.897812,0.667", at: 28, dur: 2 },
-        { step: "turn", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.333,0.930964", at: 31, dur: 2 },
-        { step: "kite3", p1: "0,1", p2: "1,0.3318213621", move: "0.667,0.897812", pick: 1, at: 34, dur: 2 },
-        { step: "kite4", p1: "0,1", p2: "0.6681786379,0", move: "0.208238,0.583899", pick: 1, at: 37, dur: 2 },
+        { step: "kite1", p1: "0,1", p2: "0.6681786379,0", move: "0.525373,0.274808", pick: 1, beat: 25, dur: 2 },
+        { step: "kite2", p1: "0,1", p2: "1,0.3318213621", move: "0.897812,0.667", beat: 28, dur: 2 },
+        { step: "turn", p1: "0,0.2928932188", p2: "0.7071067812,1", move: "0.333,0.930964", beat: 31, dur: 2 },
+        { step: "kite3", p1: "0,1", p2: "1,0.3318213621", move: "0.667,0.897812", pick: 1, beat: 34, dur: 2 },
+        { step: "kite4", p1: "0,1", p2: "0.6681786379,0", move: "0.208238,0.583899", pick: 1, beat: 37, dur: 2 },
         // swing the points up: neck, tail, then the head, all reverse folds
-        { step: "neck", p1: "0.1345593806,0", p2: "0.4733251916,1", move: "0.906033,0.694263", kind: "reverse", at: 40, dur: 2 },
-        { step: "tail", p1: "0,0.5266748083", p2: "1,0.8654406193", move: "0.246505,0.203815", kind: "reverse", at: 43, dur: 2 },
-        { step: "head", p1: "0,0.1274716613", p2: "1,0.8431274379", move: "0.096435,0.080352", kind: "reverse", at: 46, dur: 2 },
+        { step: "neck", p1: "0.1345593806,0", p2: "0.4733251916,1", move: "0.906033,0.694263", kind: "reverse", beat: 40, dur: 2 },
+        { step: "tail", p1: "0,0.5266748083", p2: "1,0.8654406193", move: "0.246505,0.203815", kind: "reverse", beat: 43, dur: 2 },
+        { step: "head", p1: "0,0.1274716613", p2: "1,0.8431274379", move: "0.096435,0.080352", kind: "reverse", beat: 46, dur: 2 },
         // both wings at once — front sheet and back sheet — held half-raised
-        { step: "wings", p1: "0,0.1414213562", p2: "0.8585786438,1", move: "0.858,0.377;0.377,0.858", at: 49, dur: 4, to: 0.5 },
+        { step: "wings", p1: "0,0.1414213562", p2: "0.8585786438,1", move: "0.858,0.377;0.377,0.858", beat: 49, dur: 4, to: 0.5 },
       ],
     },
   },
@@ -462,21 +462,21 @@ paper.spawn({ id: "cicada", color: 0xf4efe2, backColor: 0x79b356, pz: 1.2, rz: -
     tables: {
       origami: [
         // in half along the diagonal: the triangle, point down
-        { step: "half", p1: "0,0", p2: "1,1", move: "0.667,0.333", at: 1, dur: 2 },
+        { step: "half", p1: "0,0", p2: "1,1", move: "0.667,0.333", beat: 1, dur: 2 },
         // both corners up to the top point
-        { step: "cornerL", p1: "0,0.5", p2: "1,0.5", move: "0.1,0.3;0.3,0.1", at: 4, dur: 2 },
-        { step: "cornerR", p1: "0.5,0", p2: "0.5,1", move: "0.6,0.8;0.8,0.6", at: 7, dur: 2 },
+        { step: "cornerL", p1: "0,0.5", p2: "1,0.5", move: "0.1,0.3;0.3,0.1", beat: 4, dur: 2 },
+        { step: "cornerR", p1: "0.5,0", p2: "0.5,1", move: "0.6,0.8;0.8,0.6", beat: 7, dur: 2 },
         // wings: sweep each tip back down so they point away from each
         // other and stick out past the triangle's edges
-        { step: "wingL", p1: "0.19885,0.598479", p2: "1.001892,0.99618", move: "0.03,0.12;0.12,0.03", at: 10, dur: 2 },
-        { step: "wingR", p1: "0.401521,0.80115", p2: "0.00382,-0.001892", move: "0.88,0.97;0.97,0.88", at: 13, dur: 2 },
+        { step: "wingL", p1: "0.19885,0.598479", p2: "1.001892,0.99618", move: "0.03,0.12;0.12,0.03", beat: 10, dur: 2 },
+        { step: "wingR", p1: "0.401521,0.80115", p2: "0.00382,-0.001892", move: "0.88,0.97;0.97,0.88", beat: 13, dur: 2 },
         // the head: one layer down over the wings, the second stops short —
         // that little gap is the cicada's stripe
-        { step: "head1", p1: "-0.19,0.59", p2: "0.41,1.19", move: "0.97,0.03", at: 16, dur: 2 },
-        { step: "head2", p1: "-0.24,0.64", p2: "0.36,1.24", move: "0.03,0.97", at: 19, dur: 2 },
+        { step: "head1", p1: "-0.19,0.59", p2: "0.41,1.19", move: "0.97,0.03", beat: 16, dur: 2 },
+        { step: "head2", p1: "-0.24,0.64", p2: "0.36,1.24", move: "0.03,0.97", beat: 19, dur: 2 },
         // narrow the body: fold the side corners behind
-        { step: "tuckL", p1: "0.09,0.59", p2: "0.39,0.29", move: "0.05,0.55", at: 22, dur: 2 },
-        { step: "tuckR", p1: "0.41,0.91", p2: "0.71,0.61", move: "0.45,0.95", at: 25, dur: 2 },
+        { step: "tuckL", p1: "0.09,0.59", p2: "0.39,0.29", move: "0.05,0.55", beat: 22, dur: 2 },
+        { step: "tuckR", p1: "0.41,0.91", p2: "0.71,0.61", move: "0.45,0.95", beat: 25, dur: 2 },
       ],
     },
   },

@@ -116,7 +116,7 @@ export function registerExprCellCheck(fn: (text: string) => ExprCellCheck): void
 // Streaming results are invalid here: a { $expr } binding in these columns
 // would NaN rasterize's frame math and silently drop rows from the timeline
 // strip. A constant expression is a plain number by cook time, so it passes.
-const TIMING_COLUMNS = new Set(['beat', 'dur', 'loop', 'at'])
+const TIMING_COLUMNS = new Set(['beat', 'dur', 'loop'])
 
 // hydra/bauble events whose fold splices a plain string into the number-typed
 // `value` column (replace's substitute text; bauble's tile/slice/combine/

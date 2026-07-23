@@ -387,7 +387,7 @@ export interface FoldTableRowSpec {
   move: Vec2[]
   kind?: string
   pick?: number
-  at: number
+  beat: number
   dur: number
   to: number   // terminal swing fraction: 1 = flat, 0.5 = held at 90°
   crease: boolean  // kind "crease": cut only, nothing folds, no timeline slot
@@ -509,13 +509,13 @@ export const parseFoldRows = (rows: Record<string, unknown>[]): FoldTableRowSpec
       }
     }
     if (!crease) foldCount += 1
-    const at = posAt(r, 'at') ?? foldCount
+    const beat = posAt(r, 'beat') ?? foldCount
     const dur = posAt(r, 'dur') ?? 0.75
     const to = Math.min(1, posAt(r, 'to') ?? 1)
     specs.push({
       name, line: lineThrough(p1, p2), move,
       kind, pick: numAt(r, 'pick'),
-      at, dur, to, crease,
+      beat, dur, to, crease,
     })
   })
   return specs
@@ -559,8 +559,8 @@ export const compileFoldTable = (
     steps.push({
       name: spec.name,
       type: out.type,
-      t0: spec.at,
-      t1: spec.at + spec.dur,
+      t0: spec.beat,
+      t1: spec.beat + spec.dur,
       to: spec.to,
       FV: out.state.FV.map((F) => [...F]),
       Vfrom: out.anim.Vfrom.map(toDisplay),
