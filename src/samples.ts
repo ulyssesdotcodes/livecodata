@@ -660,18 +660,18 @@ editable("post", schemas.post)
 // Sliders are labelled controls drawn over the visual. Press "Run", then Play,
 // then drag a slider on the top-left of the scene.
 
-// 1. A table named "sliders" DEFINES them: one row per slider, { id, min, max }
+// 1. A table named "sliders" DEFINES them: one row per slider, { name, min, max }
 //    (plus an optional \`default\`). Each row becomes a labelled control over the
 //    visual. It's an editable() table, seeded on the right with the schema
 //    declared here (\`schemas.sliders\`, the canonical slider-table schema —
 //    hover it to see the columns) — so open the "sliders" tab in the panel
-//    and add a row, rename an id, or change a min/max, then Run to apply.
+//    and add a row, rename a name, or change a min/max, then Run to apply.
 //    (It could just as well be computed: table("sliders", rows([...])).)
 //    Check a row's \`disabled\` box to pull that control off the screen
 //    without losing its settings — uncheck to bring it back.
 editable("sliders", schemas.sliders)
 
-// 2. expr.slider(id) is the sibling of expr.midi(note): a live per-frame value
+// 2. expr.slider(name) is the sibling of expr.midi(note): a live per-frame value
 //    you bind into any field. Here the sphere's height follows the "height"
 //    slider — drag it and the orb moves; the value is recorded against playback
 //    time and replays every loop (watch the thumb retrace your move). derive
@@ -683,7 +683,7 @@ rows([{ id: "orb", event: "create", beat: 1, shape: "sphere", color: 0xffd43b,
   .derive({ py: expr.slider("height") })
   .outThree()
 
-// 3. In a hydra sketch every slider is also on props.sliders, keyed by id — no
+// 3. In a hydra sketch every slider is also on props.sliders, keyed by name — no
 //    setVariable rows needed. Reference it as a FUNCTION so hydra reads it fresh
 //    each frame: (props) => props.sliders.warp. Here "warp" drives the modulate
 //    amount and "brightness" the output level; .outHydra() routes the sketch.
@@ -706,9 +706,9 @@ rows([
 `,
     tables: {
       sliders: [
-        { id: "brightness", min: 0, max: 1,   default: 0.6 },
-        { id: "warp",       min: 0, max: 1.5, default: 0.3 },
-        { id: "height",     min: -1, max: 1,  default: 0 },
+        { name: "brightness", min: 0, max: 1,   default: 0.6 },
+        { name: "warp",       min: 0, max: 1.5, default: 0.3 },
+        { name: "height",     min: -1, max: 1,  default: 0 },
       ],
     },
   },

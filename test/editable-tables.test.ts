@@ -759,8 +759,8 @@ test('every declaration is logged; the fold keeps one row per name and the last 
   const store = createEditableTableStore()
   store.defineSlider('height', 0, 2)
   assert.deepEqual(
-    store.get('sliders')!.rows.map((r) => ({ id: r.id, min: r.min, max: r.max, default: r.default })),
-    [{ id: 'height', min: 0, max: 2, default: 0 }],
+    store.get('sliders')!.rows.map((r) => ({ name: r.name, min: r.min, max: r.max, default: r.default })),
+    [{ name: 'height', min: 0, max: 2, default: 0 }],
   )
   assert.equal(store.log.all().find((e) => e.kind === 'define-slider')!.src, 'slider:height')
   const len = store.log.length
@@ -771,7 +771,7 @@ test('every declaration is logged; the fold keeps one row per name and the last 
   const row = store.get('sliders')!.rows[0]
   assert.deepEqual({ min: row.min, max: row.max }, { min: 0, max: 4 }, 'last declaration wins')
   store.defineSlider('warp') // min/max default 0–1
-  const warp = store.get('sliders')!.rows.find((r) => r.id === 'warp')!
+  const warp = store.get('sliders')!.rows.find((r) => r.name === 'warp')!
   assert.deepEqual({ min: warp.min, max: warp.max }, { min: 0, max: 1 })
 })
 

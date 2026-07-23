@@ -519,7 +519,7 @@ export interface DSLContext {
   getData?(url: string): string
   // Live rows for a user-editable table, creating/reconciling it on first use.
   editableRows?(name: string, schema: Schema, seedRows?: Row[]): Row[]
-  // Declare an on-screen slider: expr.slider(name, min, max) adds { id, min,
+  // Declare an on-screen slider: expr.slider(name, min, max) adds { name, min,
   // max } to the "sliders" table the first time the name is seen.
   defineSlider?(id: string, min?: number, max?: number): void
 }
@@ -1357,13 +1357,13 @@ export const SCHEMAS = deepFreeze({
     disabled: 'boolean',
   },
   /**
-   * The "sliders" view: one on-screen control per row — `id` names it (and is
-   * what expr.slider(id) reads), `min`/`max` its range, `default` its initial
-   * value. Rows are usually declared by just calling expr.slider(id, min, max)
-   * (or a post cell's slider(id, min, max)). Check `disabled` to pull the
-   * control off screen without losing its settings.
+   * The "sliders" view: one on-screen control per row — `name` labels it (and
+   * is what expr.slider("name") reads), `min`/`max` its range, `default` its
+   * initial value. Rows are usually declared by just calling
+   * expr.slider("name", min, max) (or a post cell's slider("name", min, max)).
+   * Check `disabled` to pull the control off screen without losing its settings.
    */
-  sliders: { id: 'string', min: 'number', max: 'number', default: 'number', disabled: 'boolean' },
+  sliders: { name: 'string', min: 'number', max: 'number', default: 'number', disabled: 'boolean' },
   /**
    * Beat-timed positions: one keyframe per row — `beat` places it on the loop
    * (1-indexed), `px`/`py`/`pz` the position. The usual shape for an editable

@@ -283,7 +283,7 @@ export function schemaColumns(schema: Schema): EditableColumn[] {
 const SLIDERS_TABLE = 'sliders'
 const DEFINE_SLIDER_KIND = 'define-slider'
 const SLIDERS_COLUMNS: EditableColumn[] = schemaColumns({
-  id: 'string', min: 'number', max: 'number', default: 'number', disabled: 'boolean',
+  name: 'string', min: 'number', max: 'number', default: 'number', disabled: 'boolean',
 })
 
 // ── Serialized-schema migrations ─────────────────────────────────────────────
@@ -459,9 +459,10 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
     return
   }
   // A code-declared slider (expr.slider / a post cell's slider()): ensure the
-  // definitions table exists and upsert the row keyed by id — the fold keeps
+  // definitions table exists and upsert the row keyed by name — the fold keeps
   // one row per name however many declarations (reruns, peers, several code
-  // sites) land, and the last declaration in log order wins its range.
+  // sites) land, and the last declaration in log order wins its range. The wire
+  // event still carries the name as `id`; the folded column is `name`.
   if (e.kind === DEFINE_SLIDER_KIND) {
     const id = e.id != null ? String(e.id) : ''
     if (!id) return
@@ -477,7 +478,7 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
     t.events.push(eventRow(e))
     const min = typeof e.min === 'number' ? e.min : 0
     const max = typeof e.max === 'number' ? e.max : 1
-    const i = t.rows.findIndex((r) => r.id === id)
+    const i = t.rows.findIndex((r) => r.name === id)
     if (i >= 0) {
       // Only the declared range — default/disabled and any extra columns are
       // the row's own state.
@@ -485,7 +486,7 @@ function applyEvent(tables: Map<string, TableState>, e: StampedEvent): void {
       t.rows[i].max = max
       t.rowMeta[i].dirty = true
     } else {
-      t.rows.push(conformRow({ id, min, max, default: min }, effectiveColumns(t)))
+      t.rows.push(conformRow({ name: id, min, max, default: min }, effectiveColumns(t)))
       t.rowMeta.push(userMeta())
     }
     return
@@ -658,7 +659,7 @@ export interface EditableTableStore {
   // the same log gives them serialize/load/multiplayer-sync for free.
   record(table: string, kind: string, payload?: Record<string, unknown>): void
   // Declare an on-screen slider from code (expr.slider / a post cell's
-  // slider()): upserts { id, min, max } in the "sliders" table. Every run's
+  // slider()): upserts { name, min, max } in the "sliders" table. Every run's
   // declaration is appended — the log is the canonical record — with src
   // derived from the name; the fold keeps one row per name and the last
   // declaration wins its range.
