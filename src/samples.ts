@@ -477,6 +477,100 @@ paper.spawn({ id: "cicada", color: 0xf4efe2, backColor: 0x79b356, pz: 1.2, rz: -
     },
   },
   {
+    name: "Origami Lotus",
+    table: "origami",
+    code: `// livecodata — Origami Lotus: a blunt-petalled bloom from a blintz
+// The traditional water-lily fold, top-down: blintz the four corners to the
+// centre (a "blintz" fold), coax each corner-point back out past the rim as a
+// petal, then fold every petal's tip back for the lotus's rounded, two-tone
+// petals around a pale heart. Every row is one simple fold, solved exactly
+// when the code runs — same fold-table dialect as the Origami Crane sample
+// (see its header for the column notes). Press "Run", then hit Play.
+
+// \`schemas.origami\` is the canonical fold-table schema — the rows are seeded
+// in the table panel on the right, one fold each.
+editable("origami", schemas.origami)
+
+// Colored side down, like the crane, so the petals come out colored against a
+// pale centre. rx tips the flower back so you look into the bloom; rz spins it
+// 45° so the petals sit square-on. .outThree() routes the create row + fold
+// keyframes to the 3D scene, and playback bakes the per-frame cache
+// automatically.
+const paper = origami().steps(table("origami"))
+paper.spawn({ id: "lotus", color: 0xfff2d6, backColor: 0xe0518a, pz: 1.2, rx: -0.22, rz: 0.785 })
+  .concat(paper.sequence())
+  .outThree()
+
+// Things to try, live in the "origami" tab:
+//   - Delete the four "t…" tip rows: the petals stay sharp, like the Lily.
+//   - Give the last row (tNW) \`to: 0.5\`: its tip lifts half-folded, mid-bloom.
+//   - Recolor the bloom: set backColor above to 0xf6b73a for a golden lotus.
+`,
+    tables: {
+      origami: [
+        // blintz: fold all four corners to the centre
+        { step: "bl1", p1: "0.5,0", p2: "0,0.5", move: "0.05,0.05", at: 1, dur: 0.9 },
+        { step: "bl2", p1: "0.5,0", p2: "1,0.5", move: "0.95,0.05", at: 2, dur: 0.9 },
+        { step: "bl3", p1: "1,0.5", p2: "0.5,1", move: "0.95,0.95", at: 3, dur: 0.9 },
+        { step: "bl4", p1: "0.5,1", p2: "0,0.5", move: "0.05,0.95", at: 4, dur: 0.9 },
+        // fold each corner-point back out past the rim: four petals
+        { step: "petSW", p1: "0.65,0", p2: "0,0.65", move: "0.03,0.03", at: 5, dur: 0.9 },
+        { step: "petSE", p1: "0.35,0", p2: "1,0.65", move: "0.97,0.03", at: 6, dur: 0.9 },
+        { step: "petNE", p1: "1,0.35", p2: "0.35,1", move: "0.97,0.97", at: 7, dur: 0.9 },
+        { step: "petNW", p1: "0,0.35", p2: "0.65,1", move: "0.03,0.97", at: 8, dur: 0.9 },
+        // fold each petal's tip back for a rounded, two-tone petal
+        { step: "tSW", p1: "0.42,0", p2: "0,0.42", move: "0.01,0.01", at: 9, dur: 0.9 },
+        { step: "tSE", p1: "0.58,0", p2: "1,0.42", move: "0.99,0.01", at: 10, dur: 0.9 },
+        { step: "tNE", p1: "1,0.58", p2: "0.58,1", move: "0.99,0.99", at: 11, dur: 0.9 },
+        { step: "tNW", p1: "0,0.58", p2: "0.42,1", move: "0.01,0.99", at: 12, dur: 0.9 },
+      ],
+    },
+  },
+  {
+    name: "Origami Lily",
+    table: "origami",
+    code: `// livecodata — Origami Lily: four sharp petals in a star
+// A blintz base (four corners folded to the centre), then each corner-point
+// pulled straight back out past the rim into a pointed petal — a crisp
+// four-fold star of petals around a pale heart. Every row is one simple fold,
+// solved exactly when the code runs — same fold-table dialect as the Origami
+// Crane sample (see its header for the column notes). Press "Run", then hit
+// Play.
+
+// \`schemas.origami\` is the canonical fold-table schema — the rows are seeded
+// in the table panel on the right, one fold each.
+editable("origami", schemas.origami)
+
+// Colored side down, so the petals come out colored against a pale centre. rx
+// tips the flower back to look into it. .outThree() routes the paper to the 3D
+// scene; playback bakes the per-frame cache automatically.
+const paper = origami().steps(table("origami"))
+paper.spawn({ id: "lily", color: 0xf0eeff, backColor: 0x7a3fc0, pz: 1.2, rx: -0.22 })
+  .concat(paper.sequence())
+  .outThree()
+
+// Things to try, live in the "origami" tab:
+//   - Give the last petal (petNW) \`to: 0.5\`: one petal stands half-open.
+//   - Swap color and backColor for a pale flower with a violet heart.
+//   - Ease rx toward 0 to look straight at the star, or past -1 to see it
+//     nearly edge-on.
+`,
+    tables: {
+      origami: [
+        // blintz: fold all four corners to the centre
+        { step: "bl1", p1: "0.5,0", p2: "0,0.5", move: "0.05,0.05", at: 1, dur: 0.9 },
+        { step: "bl2", p1: "0.5,0", p2: "1,0.5", move: "0.95,0.05", at: 2, dur: 0.9 },
+        { step: "bl3", p1: "1,0.5", p2: "0.5,1", move: "0.95,0.95", at: 3, dur: 0.9 },
+        { step: "bl4", p1: "0.5,1", p2: "0,0.5", move: "0.05,0.95", at: 4, dur: 0.9 },
+        // pull each corner-point back out past the rim into a petal
+        { step: "petSW", p1: "0.65,0", p2: "0,0.65", move: "0.03,0.03", at: 5, dur: 0.9 },
+        { step: "petSE", p1: "0.35,0", p2: "1,0.65", move: "0.97,0.03", at: 6, dur: 0.9 },
+        { step: "petNE", p1: "1,0.35", p2: "0.35,1", move: "0.97,0.97", at: 7, dur: 0.9 },
+        { step: "petNW", p1: "0,0.35", p2: "0.65,1", move: "0.03,0.97", at: 8, dur: 0.9 },
+      ],
+    },
+  },
+  {
     name: "Hydra Sketch",
     table: "hydra",
     code: `// livecodata — a video-synth sketch with hydra (hydra-ts, a port of ojack's hydra)

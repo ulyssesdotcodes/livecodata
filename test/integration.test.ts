@@ -113,6 +113,48 @@ test('Origami Crane sample: 17 exact fold steps, wings held half-raised', () => 
   assert.equal(last.fold, 16.5)
 })
 
+// The two flower samples are hand-authored fold tables; the contract is that
+// they solve to flat states that read as a flower — a bloom with four-fold
+// radial symmetry — not the exact fold count, which is free to change.
+for (const { name, steps } of [
+  { name: 'Origami Lotus', steps: 12 },
+  { name: 'Origami Lily', steps: 8 },
+]) {
+  test(`${name} sample: simple folds solve to a flat, four-fold-symmetric bloom`, () => {
+    const sample = SAMPLES.find((s) => s.name === name)!
+    const { views } = createRuntime({
+      editableRows: (n: string, schema: Record<string, ColumnType>, seed?: Record<string, unknown>[]) =>
+        (seed ?? sample.tables?.[n] ?? []).map((r) => conformRow(r, schemaColumns(schema))),
+    }).run(sample.code, { seed: 1 })
+
+    const program = views.get(outViewName('three'))!.rows
+      .find((r) => r.type === 'create')!.program as FoldTableProgram
+    assert.equal(program.kind, 'fold-table')
+    assert.equal(program.steps.length, steps)
+
+    // the finished flower lies flat
+    const { pos } = foldTablePositions(program, steps)
+    for (const p of pos) assert.ok(Math.abs(p[2]) < 1e-9, 'landed flower is flat')
+
+    // and it reads as a bloom: paper reaches out to a comparable radius in
+    // every quarter turn, so petals radiate all the way around rather than
+    // bunching to one side
+    const cx = pos.reduce((s, p) => s + p[0], 0) / pos.length
+    const cy = pos.reduce((s, p) => s + p[1], 0) / pos.length
+    const reach = [0, 0, 0, 0]
+    let rMax = 0
+    for (const p of pos) {
+      const dx = p[0] - cx
+      const dy = p[1] - cy
+      const r = Math.hypot(dx, dy)
+      rMax = Math.max(rMax, r)
+      const q = (Math.floor((Math.atan2(dy, dx) / (Math.PI / 2) + 4)) % 4)
+      reach[q] = Math.max(reach[q], r)
+    }
+    for (const r of reach) assert.ok(r > 0.6 * rMax, 'petals radiate in every quarter')
+  })
+}
+
 test('Hydra Meta sample: replace/append/setSource/layer rewrite the sketch across the loop', () => {
   const sample = SAMPLES.find((s) => s.name === 'Hydra Meta')!
   const { views } = createRuntime({
