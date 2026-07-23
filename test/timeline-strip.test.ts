@@ -1,5 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync, readdirSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import ts from 'typescript'
 import { buildTimeline } from '../src/timeline.js'
 import {
   beatToX,
@@ -388,4 +391,73 @@ test('meaningfulSummary: caps entries and is empty for a position-only row', () 
   const row = Object.fromEntries(wide.map((c, i) => [c.name, i + 1]))
   assert.equal(meaningfulSummary(row, wide).length, 4)
   assert.deepEqual(meaningfulSummary({ beat: 2, dur: 1 }, [{ name: 'beat', type: 'number' }, { name: 'dur', type: 'number' }]), [])
+})
+
+// Regression tripwire (the coverage↔passBase order bug that left the table
+// panel unmounted): createMemo/createComputed run their body *eagerly* at
+// creation, so one whose body synchronously reads a reactive binding declared
+// lower in the SAME function scope hits that binding's temporal dead zone and
+// throws at first render — a browser-only crash the model tests never
+// instantiate. Walks each src/ui component's AST for exactly that forward
+// reference: per scope, ignoring nested (deferred) closures and property
+// names, so a hover/handler reading a later binding stays legitimately fine.
+test('ui components: no eager memo reads a reactive binding declared below it', () => {
+  const uiDir = fileURLToPath(new URL('../src/ui', import.meta.url))
+  const REACTIVE = new Set(['createSignal', 'createMemo', 'createStore', 'createComputed'])
+  const EAGER = new Set(['createMemo', 'createComputed'])
+  const calleeName = (init?: ts.Expression): string | undefined =>
+    init && ts.isCallExpression(init) && ts.isIdentifier(init.expression) ? init.expression.text : undefined
+  const violations: string[] = []
+
+  // Reactive bindings declared directly in one function scope, and where.
+  const scopeDecls = (stmts: readonly ts.Statement[]): Map<string, number> => {
+    const decls = new Map<string, number>()
+    for (const st of stmts) {
+      if (!ts.isVariableStatement(st)) continue
+      for (const d of st.declarationList.declarations) {
+        if (!(calleeName(d.initializer) && REACTIVE.has(calleeName(d.initializer)!))) continue
+        if (ts.isIdentifier(d.name)) decls.set(d.name.text, d.pos)
+        else if (ts.isArrayBindingPattern(d.name)) for (const el of d.name.elements) if (ts.isBindingElement(el) && ts.isIdentifier(el.name)) decls.set(el.name.text, d.pos)
+      }
+    }
+    return decls
+  }
+
+  const scanEagerBody = (node: ts.Node, memoPos: number, decls: Map<string, number>, file: string): void => {
+    const walk = (n: ts.Node): void => {
+      if (ts.isFunctionExpression(n) || ts.isArrowFunction(n) || ts.isFunctionDeclaration(n)) return // deferred
+      if (ts.isPropertyAccessExpression(n)) return walk(n.expression) // skip the property name
+      if (ts.isPropertyAssignment(n)) return walk(n.initializer) // skip the key
+      if (ts.isIdentifier(n)) {
+        const at = decls.get(n.text)
+        if (at !== undefined && at > memoPos) violations.push(`${file}: eager memo reads '${n.text}' declared lower in the same scope`)
+        return
+      }
+      ts.forEachChild(n, walk)
+    }
+    walk(node)
+  }
+
+  const visit = (n: ts.Node, file: string): void => {
+    if ((ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n)) && n.body && ts.isBlock(n.body)) {
+      const decls = scopeDecls(n.body.statements)
+      for (const st of n.body.statements) {
+        if (!ts.isVariableStatement(st)) continue
+        for (const d of st.declarationList.declarations) {
+          const init = d.initializer
+          if (calleeName(init) && EAGER.has(calleeName(init)!)) {
+            const cb = (init as ts.CallExpression).arguments[0]
+            if (cb && (ts.isArrowFunction(cb) || ts.isFunctionExpression(cb))) scanEagerBody(cb.body, st.pos, decls, file)
+          }
+        }
+      }
+    }
+    ts.forEachChild(n, (c) => visit(c, file))
+  }
+
+  for (const file of readdirSync(uiDir).filter((f) => f.endsWith('.tsx'))) {
+    const sf = ts.createSourceFile(file, readFileSync(`${uiDir}/${file}`, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+    visit(sf, file)
+  }
+  assert.deepEqual(violations, [], violations.join('\n'))
 })
