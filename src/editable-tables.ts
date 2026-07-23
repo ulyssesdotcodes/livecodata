@@ -353,7 +353,111 @@ function migratePostEventNames(events: StampedEvent[]): StampedEvent[] {
   })
 }
 
-const EDITABLE_MIGRATIONS: EventMigration[] = [migrateColumnsToArray, migratePostEventNames]
+// v3 → v4: the column-naming unification. Four tables each kept a legacy name
+// for a field every other table spells the common way. Rename each, scoped to
+// the tables shaped like the schema it targets (recognized by a create/
+// declare-schema's columns — or, for sliders, a define-slider event) and
+// followed through rename-table:
+//   origami   `at`  time column  → `beat`
+//   scene     `type` discriminant → `event` (+ the 'color' event rasterize folds)
+//   particles `set`  event value  → `setVariable`
+//   sliders   `id`   name column  → `name`
+// The define-slider fold already reads its wire `id` into the `name` column, so
+// those events pass through untouched; only the sliders table's create/seed/edit
+// events carry the old column name. Runs after migratePostEventNames, so a
+// post table's own `set`→`setVariable` is already done and particles (whose
+// enum has the unique `spawn`) is the only remaining `set`.
+type RenameKind = 'origami' | 'scene' | 'particles' | 'sliders'
+
+// The column whose NAME changes (particles renames a VALUE, not a column).
+const RENAMED_COLUMN: Partial<Record<RenameKind, readonly [from: string, to: string]>> = {
+  origami: ['at', 'beat'], scene: ['type', 'event'], sliders: ['id', 'name'],
+}
+
+function classifyColumns(cols: EditableColumn[]): RenameKind | null {
+  const has = (n: string): EditableColumn | undefined => cols.find((c) => c.name === n)
+  if (has('at') && (has('step') || has('p1') || has('move'))) return 'origami'
+  const type = has('type')
+  if (type?.options && ['create', 'update', 'destroy'].every((o) => type.options!.includes(o))) return 'scene'
+  const event = has('event')
+  if (event?.options?.includes('spawn') && event.options.includes('set')) return 'particles'
+  if (has('id') && has('min') && has('max') && has('default')) return 'sliders'
+  return null
+}
+
+function renameKey(row: unknown, from: string, to: string): unknown {
+  if (!row || typeof row !== 'object' || !(from in row)) return row
+  const { [from]: v, ...rest } = row as Row
+  return { ...rest, [to]: v }
+}
+
+function migrateColumnNaming(events: StampedEvent[]): StampedEvent[] {
+  const kinds = new Map<string, RenameKind>()
+  const migrateCols = (cols: EditableColumn[], kind: RenameKind): EditableColumn[] => cols.map((c) => {
+    const ren = RENAMED_COLUMN[kind]
+    if (ren && c.name === ren[0]) {
+      const next: EditableColumn = { ...c, name: ren[1] }
+      // scene: surface the 'color' event rasterize already folds
+      return kind === 'scene' && next.options && !next.options.includes('color')
+        ? { ...next, options: next.options.flatMap((o) => (o === 'destroy' ? ['color', 'destroy'] : [o])) }
+        : next
+    }
+    return kind === 'particles' && c.name === 'event' && c.options
+      ? { ...c, options: c.options.map((o) => (o === 'set' ? 'setVariable' : o)) }
+      : c
+  })
+  const migrateRow = (row: unknown, kind: RenameKind): unknown => {
+    const ren = RENAMED_COLUMN[kind]
+    const r = ren ? renameKey(row, ren[0], ren[1]) : row
+    return kind === 'particles' && r && typeof r === 'object' && (r as Row).event === 'set'
+      ? { ...(r as Row), event: 'setVariable' }
+      : r
+  }
+  return events.map((e) => {
+    const table = typeof e.table === 'string' ? e.table : ''
+    if (e.kind === 'define-slider') { kinds.set(table, 'sliders'); return e }
+    if (e.kind === 'create' || e.kind === 'declare-schema') {
+      const cols = e.columns
+      const kind = Array.isArray(cols) ? classifyColumns(cols as EditableColumn[]) : null
+      if (!kind) { if (e.kind === 'declare-schema') kinds.delete(table); return e }
+      kinds.set(table, kind)
+      return {
+        ...e,
+        columns: migrateCols(cols as EditableColumn[], kind),
+        ...(Array.isArray(e.rows) ? { rows: e.rows.map((r) => migrateRow(r, kind)) } : {}),
+      }
+    }
+    const kind = kinds.get(table)
+    if (!kind) return e
+    const ren = RENAMED_COLUMN[kind]
+    switch (e.kind) {
+      case 'rename-table':
+        kinds.delete(table)
+        if (typeof e.to === 'string') kinds.set(e.to, kind)
+        return e
+      case 'remove-table':
+        kinds.delete(table)
+        return e
+      case 'seed-rows':
+        return Array.isArray(e.rows) ? { ...e, rows: e.rows.map((r) => migrateRow(r, kind)) } : e
+      case 'set-cell':
+        if (kind === 'particles') return e.col === 'event' && e.value === 'set' ? { ...e, value: 'setVariable' } : e
+        return ren && e.col === ren[0] ? { ...e, col: ren[1] } : e
+      case 'set-row':
+        return { ...e, values: migrateRow(e.values, kind) }
+      case 'rename-column': {
+        if (!ren) return e
+        const col = e.col === ren[0] ? ren[1] : e.col
+        const to = e.to === ren[0] ? ren[1] : e.to
+        return col === e.col && to === e.to ? e : { ...e, col, to }
+      }
+      default:
+        return e
+    }
+  })
+}
+
+const EDITABLE_MIGRATIONS: EventMigration[] = [migrateColumnsToArray, migratePostEventNames, migrateColumnNaming]
 
 // Re-drive a code-created table's rows from a fresh seed: a pristine code row
 // (code && !dirty) takes the new seed value at its slot; a dirty row stays as-is.
