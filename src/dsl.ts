@@ -1266,8 +1266,8 @@ export const SCHEMAS = deepFreeze({
    * The GPU particle view: a table that opts the curl-noise particle sim in
    * and drives its parameters. A "spawn" row turns the sim on — without one
    * it never runs (WebGPU browsers only; the WebGL2 fallback has no compute
-   * shaders, so the rest of the scene renders without particles). "set" rows
-   * drive the sim's parameters, folded at-or-before the playhead like every
+   * shaders, so the rest of the scene renders without particles). "setVariable"
+   * rows drive the sim's parameters, folded at-or-before the playhead like every
    * event table: `name` is one of "timeMultiplier" (how fast the noise field
    * evolves), "elscale" (spatial scale of the swirls), or "speed"
    * (per-particle speed along the field); `value` the number. A slider named
@@ -1277,9 +1277,9 @@ export const SCHEMAS = deepFreeze({
    */
   particles: {
     beat: 'number',
-    event: ['spawn', 'set'],
-    name: { type: 'string', usedBy: ['set'] },
-    value: { type: 'number', usedBy: ['set'] },
+    event: ['spawn', 'setVariable'],
+    name: { type: 'string', usedBy: ['setVariable'] },
+    value: { type: 'number', usedBy: ['setVariable'] },
     disabled: 'boolean',
   },
   /**

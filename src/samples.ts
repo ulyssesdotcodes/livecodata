@@ -725,7 +725,7 @@ rows([
 
 // 1. The "particles" view opts the sim in and steers it — an event table folded
 //    at the playhead, like "post" and "hydra". A \`spawn\` row turns the sim ON
-//    (without one it never runs). \`set\` rows drive the field: \`name\` is "speed"
+//    (without one it never runs). \`setVariable\` rows drive the field: \`name\` is "speed"
 //    (how fast points ride the flow), "elscale" (size of the swirls), or
 //    "timeMultiplier" (how fast the flow itself churns); \`value\` is the number.
 //    Here it starts slow and broad, then quickens and tightens halfway through.
@@ -748,11 +748,11 @@ t.sphere({ id: "core", r: 0.6, color: 0x140f28, px: 0, py: 0, pz: 0 })
     tables: {
       particles: [
         { beat: 1, event: "spawn" },
-        { beat: 1, event: "set", name: "speed",          value: 0.002 },
-        { beat: 1, event: "set", name: "elscale",        value: 16 },
-        { beat: 1, event: "set", name: "timeMultiplier", value: 0.06 },
-        { beat: 9, event: "set", name: "speed",          value: 0.009 },
-        { beat: 9, event: "set", name: "elscale",        value: 8 },
+        { beat: 1, event: "setVariable", name: "speed",          value: 0.002 },
+        { beat: 1, event: "setVariable", name: "elscale",        value: 16 },
+        { beat: 1, event: "setVariable", name: "timeMultiplier", value: 0.06 },
+        { beat: 9, event: "setVariable", name: "speed",          value: 0.009 },
+        { beat: 9, event: "setVariable", name: "elscale",        value: 8 },
       ],
     },
   },
