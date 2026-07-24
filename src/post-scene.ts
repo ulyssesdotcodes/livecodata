@@ -29,7 +29,12 @@ type Node = any
 const t: any = TSL
 
 export interface PostAPI {
-  setProgram(index: Row[]): void
+  // loopFrames is the wrap length the fold samples against: a transition's
+  // until-next window can wrap the loop seam, so which states exist depends on
+  // it. Precompiling with the wrong value (e.g. 0) leaves the wrapped state to
+  // compile lazily on a beat — the recompile stall this precompile exists to
+  // avoid. The visualizer re-programs when it changes.
+  setProgram(index: Row[], loopFrames: number): void
   setFrame(frame: PostFrame | null, props: Record<string, unknown>): void
   render(): boolean
   resize(): void
@@ -354,14 +359,14 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
   }
 
   return {
-    setProgram(index): void {
+    setProgram(index, loopFrames): void {
       states.clear()
       prevRefs.length = 0
       active = null
       if (index.length === 0) return
       const seen = new Set<string>()
-      for (const f of postStateFrames(index)) {
-        const frame = postFrameAt(index, f)
+      for (const f of postStateFrames(index, loopFrames)) {
+        const frame = postFrameAt(index, f, loopFrames)
         if (!frame || seen.has(frame.stateId)) continue
         seen.add(frame.stateId)
         try {
