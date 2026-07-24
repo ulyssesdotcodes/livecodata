@@ -67,6 +67,7 @@ function buildHydraGlobals() {
     '  /** Per-frame values passed to function-valued ("dynamic") arguments: hydra\'s own clock fields plus any setVariable rows in scope. */',
     '  interface HydraProps {',
     '    time: number;',
+    '    loop: number;',
     '    bpm: number;',
     '    fps?: number;',
     '    resolution: readonly [number, number];',
@@ -158,6 +159,7 @@ function buildPostGlobals(root) {
     '  /** Per-frame values passed to function-valued (live) post arguments: your folded variables plus the playback clock. */',
     '  interface PostProps {',
     '    time: number;',
+    '    loop: number;',
     '    beat: number;',
     '    bpm: number;',
     '    sliders?: Record<string, number>;',
@@ -226,7 +228,7 @@ function buildExprGlobals(root, nsProps) {
     (arity === 1 ? ['x'] : PARAM_NAMES.slice(1, arity + 1)).map((n) => `${n}: Expr | number`).join(', ')
   // The bare sources/constants the cell scope provides; min/max/etc. come from
   // EXPR_FNS above, `expr` itself is added last.
-  const SOURCES = ['field', 'lit', 'idx', 'midi', 'slider', 'time', 'progress', 'pi', 'tau', 'e']
+  const SOURCES = ['field', 'lit', 'idx', 'midi', 'slider', 'time', 'progress', 'loop', 'pi', 'tau', 'e']
   const docOf = (/** @type {string} */ name) => nsProps.find((p) => p.name === name)?.doc ?? ''
   /** @param {string} doc @param {string} indent */
   const docComment = (doc) => (doc ? [`  /** ${doc.replace(/\*\//g, '*\\/').split('\n').join('\n   * ')} */`] : [])

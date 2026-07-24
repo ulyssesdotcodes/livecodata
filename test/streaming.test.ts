@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  Table, field, midi, slider, time, isBinding, isStreamingNode, resolveBindings, hashOf, type Expr,
+  Table, field, midi, slider, time, loop, isBinding, isStreamingNode, resolveBindings, hashOf, type Expr,
 } from '../src/dsl.js'
 import { rasterizeRows } from '../src/rasterize.js'
 import { buildMidiIndex, sampleMidiAt, midiRow, decodeMidi } from '../src/midi.js'
@@ -40,6 +40,15 @@ test('derive(time) leaves a per-frame binding; resolveBindings reads ctx.time', 
   assert.ok(isBinding(row.ry), 'the playback clock is deferred to frame time')
   assert.equal(isStreamingNode(nodeOf(time())), true)
   assert.equal(resolveBindings(row, { time: () => 3 }).ry, 1.5)
+})
+
+// ── loop(): the whole-loop counter as a streaming source ────────────────────
+
+test('derive(loop) leaves a per-frame binding; resolveBindings reads ctx.loop', () => {
+  const row = t([{ id: 'a' }]).derive({ n: loop() }).rows[0]
+  assert.ok(isBinding(row.n), 'the loop counter is deferred to frame time')
+  assert.equal(isStreamingNode(nodeOf(loop())), true)
+  assert.equal(resolveBindings(row, { loop: () => 3 }).n, 3)
 })
 
 test('derive with a constant Expr bakes immediately (no binding)', () => {
