@@ -26,6 +26,10 @@ export function PlaybackControls(props: {
   focusedRow: Accessor<number | null>
   onStripRowChange?: (row: { table: string; row: number } | null) => void
   onDragCommit?: () => void
+  // Collapsed to a corner icon when true — the whole transport hides so the
+  // visual output is unobscured; the restore icon toggles it back.
+  minimized: Accessor<boolean>
+  onToggleMinimize: () => void
 }) {
   const vs = props.vs
   const playing = () => vs().state === 'playing'
@@ -34,8 +38,22 @@ export function PlaybackControls(props: {
     return timelineActive ? `${(pos + 1).toFixed(2)}→${srcBeat.toFixed(2)} beat` : `beat ${srcBeat.toFixed(2)}`
   }
 
+  // The transport stays mounted and is hidden with CSS when minimized (see
+  // #playback-controls.minimized) — the TimelineStrip's store.onChange
+  // subscription has no unsubscribe (it assumes one mount for the app's
+  // lifetime), so it must never be torn down here.
   return (
     <>
+      <Show when={props.minimized()}>
+        <button
+          class="pb-restore-btn"
+          title="Show playback controls"
+          aria-label="Show playback controls"
+          onClick={props.onToggleMinimize}
+        >
+          <Icon name="sliders" size={18} />
+        </button>
+      </Show>
       <div class="playback-row">
         <button
           id="play-pause-btn"
@@ -73,6 +91,14 @@ export function PlaybackControls(props: {
           <span>beats</span>
         </label>
         <span id="playback-time">{timeText()}</span>
+        <button
+          class="pb-minimize-btn"
+          title="Minimize the transport"
+          aria-label="Minimize the transport"
+          onClick={props.onToggleMinimize}
+        >
+          <Icon name="chevron-down" />
+        </button>
       </div>
       <Show when={props.tapControl}>
         {(tap) => (

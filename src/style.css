@@ -1715,6 +1715,28 @@ html, body {
   max-width: 420px;
 }
 
+/* Minimized: the transport rows + strip hide (the strip stays mounted — see
+   ui/playback-controls.tsx), leaving a single corner icon (.pb-restore-btn)
+   pinned bottom-right so the visual output is clear. The panel chrome
+   (bg/border/blur/padding) drops away — the button carries its own. */
+#playback-controls.minimized {
+  left: auto;
+  right: 16px;
+  transform: none;
+  width: auto;
+  min-width: 0;
+  max-width: none;
+  padding: 0;
+  background: none;
+  border: none;
+  backdrop-filter: none;
+}
+
+#playback-controls.minimized .playback-row,
+#playback-controls.minimized .timeline-strip-wrap {
+  display: none;
+}
+
 .playback-row {
   display: flex;
   align-items: center;
@@ -1747,6 +1769,50 @@ html, body {
   min-width: 44px;
   text-align: right;
   margin-left: auto;
+}
+
+/* Minimize affordance: a quiet chevron riding at the far right of the top row
+   (after #playback-time's auto margin). */
+.pb-minimize-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  color: #607a96;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.pb-minimize-btn:hover {
+  background: #1a5090;
+  color: #fff;
+}
+
+/* The minimized state's sole control — borrows the panel's own frosted chrome
+   and the play button's accent hover so it reads as the same transport. */
+.pb-restore-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: rgba(22, 33, 62, 0.88);
+  border: 1px solid #0f3460;
+  border-radius: 8px;
+  color: #c8d6e5;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.pb-restore-btn:hover {
+  background: #e94560;
+  border-color: #e94560;
+  color: #fff;
 }
 
 /* Loop + tap-beat buttons share the play button's look. */
