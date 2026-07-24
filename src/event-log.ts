@@ -49,13 +49,14 @@ export function localSource(): string {
 }
 
 /** Deterministic total order (seq, then src) — same sort on every replica, same fold. */
-export function compareEvents(a: StampedEvent, b: StampedEvent): number {
+export function compareEvents(a: { seq: number; src?: string }, b: { seq: number; src?: string }): number {
   if (a.seq !== b.seq) return a.seq - b.seq
   const as = a.src ?? '', bs = b.src ?? ''
   return as < bs ? -1 : as > bs ? 1 : 0
 }
 
-const eventKey = (e: StampedEvent): string => `${e.src ?? ''}#${e.seq}`
+/** The (src, seq) identity key — the multiplayer dedup unit and the form apply `edits` lists hold. */
+export const eventKey = (e: StampedEvent): string => `${e.src ?? ''}#${e.seq}`
 
 /**
  * Compaction for latest-wins logs (presence — see presence.ts): keeps only the

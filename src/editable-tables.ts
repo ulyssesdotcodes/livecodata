@@ -4,7 +4,7 @@
 // "code" — rides ONE shared log, and that log is the unit a session
 // persists and multiplayer syncs.
 
-import { compareEvents, createEventLog, type EventLog, type EventMigration, type StampedEvent } from './event-log.js'
+import { compareEvents, createEventLog, eventKey, type EventLog, type EventMigration, type StampedEvent } from './event-log.js'
 import { buildBranchTree, branchEvents, APPLY_KIND, type ApplyNode, type BranchTree } from './branches.js'
 import { postVarDecls } from './post-lang.js'
 import type { Row } from './lineage.js'
@@ -22,9 +22,6 @@ export const EVENTS_SUFFIX = '·events'
 function mintApplyId(): string {
   return 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
-
-// (src, seq) event key — mirrors event-log.ts's private eventKey.
-const eventKey = (e: StampedEvent): string => `${e.src ?? ''}#${e.seq}`
 
 export type ColumnType = 'number' | 'string' | 'boolean' | 'code' | 'enum'
 
@@ -56,6 +53,9 @@ export interface SessionRun {
   at: number
   tables: Record<string, number>
 }
+
+const tableEventCounts = (tables: Map<string, TableState>): Record<string, number> =>
+  Object.fromEntries([...tables].map(([name, t]) => [name, t.events.length]))
 
 // "Clear" marker on the activity table — a marker, not a deletion: history is
 // untouched, but deriveRunsFromCode() won't resurrect runs from before it.
@@ -859,7 +859,7 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
   function newestApplyId(tree: BranchTree): string | null {
     let best: ApplyNode | null = null
     for (const n of tree.nodes.values()) {
-      if (!best || n.seq > best.seq || (n.seq === best.seq && n.src > best.src)) best = n
+      if (!best || compareEvents(best, n) < 0) best = n
     }
     return best?.id ?? null
   }
@@ -1089,9 +1089,7 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
 
     recordRun(): SessionRun {
       replay = null
-      const tableIdx: Record<string, number> = {}
-      for (const [name, t] of tables) tableIdx[name] = t.events.length
-      const run: SessionRun = { at: log.length, tables: tableIdx }
+      const run: SessionRun = { at: log.length, tables: tableEventCounts(tables) }
       runs.push(run)
       return run
     },
@@ -1110,9 +1108,7 @@ export function createEditableTableStore({ src }: { src?: string } = {}): Editab
         .filter((e) => (e.seq as number) > clearedSeq)
         .map((e) => {
           const at = (e.seq as number) + 1
-          const tableIdx: Record<string, number> = {}
-          for (const [name, t] of foldEventsMap(all.slice(0, at))) tableIdx[name] = t.events.length
-          return { at, tables: tableIdx }
+          return { at, tables: tableEventCounts(foldEventsMap(all.slice(0, at))) }
         })
     },
 

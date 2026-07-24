@@ -63,45 +63,11 @@ export function createPresenceChannel(
   const log = createEventLog({ src, compact: compactLatestPerSrcKind })
   const local: PresenceInfo = { client: src, user, table: null, cell: null, head: 0 }
   const localLive = { cell: null as string | null, code: null as string | null }
-  // Newest seq wins per replica — a join sync can replay old announcements
-  // out of order.
-  const states = new Map<string, { seq: number; info: PresenceInfo }>()
-  const liveStates = new Map<string, LiveCode>()
   const listeners: (() => void)[] = []
 
-  function ingest(e: StampedEvent): boolean {
-    if (typeof e.src !== 'string' || !e.src) return false
-    if (e.kind === 'presence') {
-      const cur = states.get(e.src)
-      if (cur && cur.seq >= e.seq) return false
-      states.set(e.src, {
-        seq: e.seq,
-        info: {
-          client: e.src,
-          user: typeof e.user === 'string' ? e.user : '',
-          table: typeof e.table === 'string' ? e.table : null,
-          cell: typeof e.cell === 'string' ? e.cell : null,
-          head: typeof e.head === 'number' ? e.head : 0,
-        },
-      })
-      return true
-    }
-    if (e.kind === 'live-code') {
-      if (typeof e.cell !== 'string' || typeof e.code !== 'string') return false
-      const cur = liveStates.get(e.src)
-      if (cur && cur.seq >= e.seq) return false
-      liveStates.set(e.src, { client: e.src, cell: e.cell, code: e.code, seq: e.seq })
-      return true
-    }
-    return false
-  }
-
-  log.onAppend((e) => { ingest(e) })
-  log.onMerge((added) => {
-    let changed = false
-    for (const e of added) changed = ingest(e) || changed
-    if (changed) listeners.forEach((cb) => cb())
-  })
+  // Fires only when a merge brought not-yet-seen events; local appends reach
+  // peers()/liveCodes() through the folds below without notifying.
+  log.onMerge(() => listeners.forEach((cb) => cb()))
 
   const schedule = throttled(() => {
     log.append({ kind: 'presence', user: local.user, table: local.table, cell: local.cell, head: local.head })
@@ -128,12 +94,31 @@ export function createPresenceChannel(
       scheduleLive()
     },
 
+    // log.all() is compacted to one event per (src, kind) in ascending
+    // (seq, src) order, so a plain Map.set overwrite folds latest-wins.
     peers(): Map<string, PresenceInfo> {
-      return new Map([...states].map(([client, s]) => [client, { ...s.info }]))
+      const out = new Map<string, PresenceInfo>()
+      for (const e of log.all()) {
+        if (e.kind !== 'presence' || typeof e.src !== 'string' || !e.src) continue
+        out.set(e.src, {
+          client: e.src,
+          user: typeof e.user === 'string' ? e.user : '',
+          table: typeof e.table === 'string' ? e.table : null,
+          cell: typeof e.cell === 'string' ? e.cell : null,
+          head: typeof e.head === 'number' ? e.head : 0,
+        })
+      }
+      return out
     },
 
     liveCodes(): Map<string, LiveCode> {
-      return new Map([...liveStates].map(([client, lc]) => [client, { ...lc }]))
+      const out = new Map<string, LiveCode>()
+      for (const e of log.all()) {
+        if (e.kind !== 'live-code' || typeof e.src !== 'string' || !e.src) continue
+        if (typeof e.cell !== 'string' || typeof e.code !== 'string') continue
+        out.set(e.src, { client: e.src, cell: e.cell, code: e.code, seq: e.seq })
+      }
+      return out
     },
 
     onChange(cb: () => void): void {

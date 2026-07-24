@@ -11,7 +11,7 @@ import { pathToFileURL } from 'node:url'
 import { WebSocketServer, WebSocket, type RawData } from 'ws'
 import type { StampedEvent } from '../src/event-log.js'
 import { parseClientMessage, type ServerMessage } from '../src/protocol.js'
-import { handleEvents, handleJoin, handleLeave, type Outbound, type RoomLogs } from '../src/room-core.js'
+import { deliverOutbound, handleEvents, handleJoin, handleLeave, type RoomLogs } from '../src/room-core.js'
 
 interface Room {
   name: string
@@ -63,13 +63,6 @@ export function startMultiplayerServer(
     for (const client of room.clients.keys()) if (client !== except) sendTo(client, msg)
   }
 
-  function deliver(room: Room, sender: WebSocket, outbound: Outbound[]): void {
-    for (const o of outbound) {
-      if (o.to === 'sender') sendTo(sender, o.msg)
-      else broadcast(room, o.msg, sender)
-    }
-  }
-
   function handleMessage(ws: WebSocket, raw: RawData): void {
     const msg = parseClientMessage(raw)
     if (!msg) return
@@ -82,14 +75,14 @@ export function startMultiplayerServer(
       const result = handleJoin(room.logs, msg, undefined, room.clients.size > 0)
       room.clients.set(ws, result.clientId)
       memberships.set(ws, room)
-      deliver(room, ws, result.outbound)
+      deliverOutbound(result.outbound, (m) => sendTo(ws, m), (m) => broadcast(room, m, ws))
       return
     }
 
     const room = memberships.get(ws)
     if (!room) return
     if (msg.type === 'events') {
-      deliver(room, ws, handleEvents(room.logs, msg).outbound)
+      deliverOutbound(handleEvents(room.logs, msg).outbound, (m) => sendTo(ws, m), (m) => broadcast(room, m, ws))
     }
   }
 
@@ -99,7 +92,7 @@ export function startMultiplayerServer(
     memberships.delete(ws)
     const clientId = room.clients.get(ws) ?? null
     room.clients.delete(ws)
-    deliver(room, ws, handleLeave(room.logs, clientId).outbound)
+    deliverOutbound(handleLeave(room.logs, clientId).outbound, (m) => sendTo(ws, m), (m) => broadcast(room, m, ws))
     // Last client left: drop the room. Each client persisted its own copy
     // locally (main.ts sessionStore), so the next joiner re-seeds it.
     if (room.clients.size === 0) rooms.delete(room.name)

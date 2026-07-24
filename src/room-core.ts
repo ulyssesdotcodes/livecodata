@@ -7,7 +7,7 @@
 // The room never interprets events, but it does author peer-join/peer-leave
 // events itself, so peer presence is just more log the client folds.
 
-import { compactLatestPerSrcKind, mergeEvents, type StampedEvent } from './event-log.js'
+import { compactLatestPerSrcKind, eventKey, mergeEvents, type StampedEvent } from './event-log.js'
 import { eventsMessage, syncMessage, type EventsMessage, type JoinMessage, type ServerMessage } from './protocol.js'
 
 // The log peer-connection events ride, and the pseudo-table they're tagged with.
@@ -52,8 +52,8 @@ function ingest(logs: RoomLogs, name: string, incoming: StampedEvent[]): Stamped
     return added
   }
   const stored = compactLatestPerSrcKind(events)
-  const kept = new Set(stored.map((e) => `${e.src ?? ''}#${e.seq}`))
-  const fresh = added.filter((e) => kept.has(`${e.src ?? ''}#${e.seq}`))
+  const kept = new Set(stored.map(eventKey))
+  const fresh = added.filter((e) => kept.has(eventKey(e)))
   // Everything new was already superseded — nothing to persist or relay.
   if (fresh.length) logs.set(name, stored)
   return fresh
@@ -125,4 +125,17 @@ export function handleLeave(logs: RoomLogs, clientId: string | null, now: number
   const added = recordServerEvent(logs, 'peer-leave', clientId, now)
   if (!added.length) return { changed: false, outbound: [] }
   return { changed: true, outbound: [{ to: 'others', msg: eventsMessage(SESSION_LOG, added) }] }
+}
+
+// Route each outbound message to the sender or the rest of the room; shared by
+// both adapters, which differ only in their send/broadcast primitives.
+export function deliverOutbound(
+  outbound: Outbound[],
+  sendToSender: (msg: ServerMessage) => void,
+  broadcastToOthers: (msg: ServerMessage) => void,
+): void {
+  for (const o of outbound) {
+    if (o.to === 'sender') sendToSender(o.msg)
+    else broadcastToOthers(o.msg)
+  }
 }

@@ -54,11 +54,7 @@ export interface SessionStore {
   list(): Promise<SessionSummary[]>
   // Upsert; preserves createdAt/name across updates.
   save(id: string, data: SessionSaveData): Promise<SessionRecord>
-  load(id: string): Promise<string | null>
-  runs(id: string): Promise<SessionRun[]>
-  head(id: string): Promise<string | null>
-  // The saved shown-table tab (null for a legacy session that predates it).
-  table(id: string): Promise<string | null>
+  get(id: string): Promise<SessionRecord | null>
   // No-op for an id that was never saved.
   rename(id: string, name: string): Promise<void>
   remove(id: string): Promise<void>
@@ -174,24 +170,8 @@ export function createSessionStore(storage: MinimalStorage = defaultStorage()): 
       return record
     },
 
-    async load(id: string): Promise<string | null> {
-      const s = readAll().find((s) => s.id === id)
-      return s ? s.events : null
-    },
-
-    async runs(id: string): Promise<SessionRun[]> {
-      const s = readAll().find((s) => s.id === id)
-      return s ? s.runs : []
-    },
-
-    async head(id: string): Promise<string | null> {
-      const s = readAll().find((s) => s.id === id)
-      return s ? s.head : null
-    },
-
-    async table(id: string): Promise<string | null> {
-      const s = readAll().find((s) => s.id === id)
-      return s ? s.table : null
+    async get(id: string): Promise<SessionRecord | null> {
+      return readAll().find((s) => s.id === id) ?? null
     },
 
     async rename(id: string, name: string): Promise<void> {
@@ -306,24 +286,8 @@ export function createIdbSessionStore(storage: MinimalStorage | undefined = defa
       return record
     },
 
-    async load(id: string): Promise<string | null> {
-      const db = await open()
-      return (await get(db, id))?.events ?? null
-    },
-
-    async runs(id: string): Promise<SessionRun[]> {
-      const db = await open()
-      return (await get(db, id))?.runs ?? []
-    },
-
-    async head(id: string): Promise<string | null> {
-      const db = await open()
-      return (await get(db, id))?.head ?? null
-    },
-
-    async table(id: string): Promise<string | null> {
-      const db = await open()
-      return (await get(db, id))?.table ?? null
+    async get(id: string): Promise<SessionRecord | null> {
+      return get(await open(), id)
     },
 
     async rename(id: string, name: string): Promise<void> {

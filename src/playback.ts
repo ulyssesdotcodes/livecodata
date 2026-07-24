@@ -7,7 +7,7 @@ import { activeLineage } from './lineage.js'
 import type { EvalCtx } from './dsl.js'
 import { FPS, FRAMES_PER_BEAT, DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS, beatsToFrames } from './constants.js'
 import type { Row } from './lineage.js'
-import type { CookedVisualRows, LoopEpochs, Visualizer } from './visualizer.js'
+import { LOOP_KINDS, type CookedVisualRows, type LoopEpochs, type Visualizer } from './visualizer.js'
 import { beatSecondsFromTaps } from './tap-log.js'
 
 export interface TapControl {
@@ -127,9 +127,9 @@ export function loopEpochsFromApplies(events: Row[]): LoopEpochs {
   const out: LoopEpochs = {}
   for (const e of events ?? []) {
     if (e.kind !== 'apply' || typeof e.at !== 'number') continue
-    const kinds: unknown[] = Array.isArray(e.changed) ? e.changed : ['scene', 'timeline', 'hydra', 'bauble', 'post']
+    const kinds: readonly unknown[] = Array.isArray(e.changed) ? e.changed : LOOP_KINDS
     for (const k of kinds) {
-      if (k === 'scene' || k === 'timeline' || k === 'hydra' || k === 'bauble' || k === 'post') out[k] = e.at
+      if ((LOOP_KINDS as readonly unknown[]).includes(k)) out[k as (typeof LOOP_KINDS)[number]] = e.at
     }
   }
   return out
@@ -146,9 +146,9 @@ interface TransportEvent { kind: 'playback-play' | 'playback-pause'; at: number 
 
 // Valid playback-play/-pause events, sorted chronologically by `at`. An event
 // with a missing/invalid `at` can't be placed on the wall-clock axis
-// pausedMsBefore walks, so it's dropped rather than guessed at; ties
-// (simultaneous stamps from different authors) keep encounter order, so the
-// fold stays deterministic without needing a tie-break field.
+// pausedMsBefore walks, so it's dropped rather than guessed at; the stable
+// sort keeps encounter order on ties (simultaneous stamps from different
+// authors), so the fold stays deterministic without a tie-break field.
 function transportEvents(events: Row[]): TransportEvent[] {
   const out: TransportEvent[] = []
   for (const e of events ?? []) {
@@ -156,10 +156,7 @@ function transportEvents(events: Row[]): TransportEvent[] {
       out.push({ kind: e.kind, at: e.at })
     }
   }
-  return out
-    .map((e, i) => ({ e, i }))
-    .sort((a, b) => a.e.at - b.e.at || a.i - b.i)
-    .map(({ e }) => e)
+  return out.sort((a, b) => a.at - b.at)
 }
 
 // The room's current transport state: the latest playback-play/-pause event

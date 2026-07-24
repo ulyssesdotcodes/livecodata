@@ -20,13 +20,8 @@ import type { PostAPI } from './post-scene.js'
 // Wall-clock instants (ms) each kind's multi-loop sequence counts passes from
 // — the `at` stamp of the newest apply that changed it. Shared by every
 // replica in a room, which is what puts them all on the same pass.
-export interface LoopEpochs {
-  scene?: number
-  timeline?: number
-  hydra?: number
-  bauble?: number
-  post?: number
-}
+export const LOOP_KINDS = ['scene', 'timeline', 'hydra', 'bauble', 'post'] as const
+export type LoopEpochs = Partial<Record<(typeof LOOP_KINDS)[number], number>>
 
 // The row sets a cooked program feeds the visualizers — a structurally
 // assignable subset of replay.ts's CookedResult, so the engine forwards the

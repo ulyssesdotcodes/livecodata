@@ -38,6 +38,14 @@ function mulberry32(seed: number): () => number {
   }
 }
 
+// Flattens inputs and sorts by beat — shared by the 'group' and 'out' node
+// kinds, which both just concatenate their member tables in beat order.
+const beatSorted = (ins: Row[][]): Row[] => {
+  const rows: Row[] = ins.flat()
+  rows.sort((a, b) => ((a.beat as number) ?? 1) - ((b.beat as number) ?? 1))
+  return rows
+}
+
 export interface RuntimeOptions {
   physics?: () => PhysicsEngine | null
   tapRows?: () => Row[] | null
@@ -135,11 +143,7 @@ export function createRuntime({ physics, tapRows, editableRows, logRows, defineS
         spec: { members: def.members },
         inputs: members,
         seedSensitive: false,
-        compute: (ins) => {
-          const rows: Row[] = ins.flat()
-          rows.sort((a, b) => ((a.beat as number) ?? 1) - ((b.beat as number) ?? 1))
-          return rows
-        },
+        compute: beatSorted,
       })
       const stamped = stampNode(name, groupT)
       cache.set(name, stamped)
@@ -237,11 +241,7 @@ export function createRuntime({ physics, tapRows, editableRows, logRows, defineS
         spec: { kind },
         inputs: members,
         seedSensitive: false,
-        compute: (ins) => {
-          const rows: Row[] = ins.flat()
-          rows.sort((a, b) => ((a.beat as number) ?? 1) - ((b.beat as number) ?? 1))
-          return rows
-        },
+        compute: beatSorted,
       })
       deps.set(name, [])
       cache.set(name, stampNode(name, combined))

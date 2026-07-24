@@ -33,9 +33,9 @@
 
 import { createSignal, createMemo, onMount, onCleanup, For, Show, type Accessor } from 'solid-js'
 import {
-  beatToX, xToBeat, gridLines, handlesFor, hitTest, pendingTimelineRows,
+  beatToX, xToBeat, gridLines, stripLayout, hitTest, pendingTimelineRows,
   resolveHandle, snapDelta, dragUpdate, withPreview,
-  valuesDiffer, exceedsDragThreshold, laneLayout, coverageBands, meaningfulSummary,
+  valuesDiffer, exceedsDragThreshold, coverageBands, meaningfulSummary,
   type StripGeometry, type Handle, type HitPart, type DragOptions, type SnapMode,
 } from '../timeline-strip.js'
 import { buildTimeline } from '../timeline.js'
@@ -140,25 +140,18 @@ export function TimelineStrip(props: {
   // itself is never touched mid-gesture.
   const [preview, setPreview] = createSignal<{ table: string; row: number; part: HitPart; values: Record<string, unknown>; ghost: boolean } | null>(null)
 
-  const handles = createMemo(() => {
-    const cur = currentData()
-    if (!cur) return []
-    const p = preview()
-    const rows = p && p.table === cur.name ? withPreview(cur.rows, p) : cur.rows
-    return handlesFor(cur.name, rows, cur.columns, liveTimelineRows(), props.vs().loopBeats)
-  })
-
-  // The open table's packed lane layout: total bands (sub-lanes and all) and
-  // where each pass begins. Reads the same live rows handles() does — with
-  // the drag preview merged — so the two never disagree. passBase drives the
-  // coverage tints and pass labels; a pass tint spans exactly its sub-lanes.
+  // The open table's handles and the packed lane layout they share, from one
+  // pass over the live rows with the drag preview merged: total bands (sub-
+  // lanes and all) and where each pass begins. passBase drives the coverage
+  // tints and pass labels; a pass tint spans exactly its sub-lanes.
   const layout = createMemo(() => {
     const cur = currentData()
-    if (!cur) return { laneCount: 1, passBase: [0] }
+    if (!cur) return { handles: [] as Handle[], laneCount: 1, passBase: [0] }
     const p = preview()
     const rows = p && p.table === cur.name ? withPreview(cur.rows, p) : cur.rows
-    return laneLayout(cur.name, rows, cur.columns, liveTimelineRows(), props.vs().loopBeats)
+    return stripLayout(cur.name, rows, cur.columns, liveTimelineRows(), props.vs().loopBeats)
   })
+  const handles = createMemo(() => layout().handles)
   const passBase = createMemo(() => layout().passBase)
   // One tint per pass (coverageBands), mapped through passBase so it lines up
   // with that pass's lane band and spans all of its packed sub-lanes.

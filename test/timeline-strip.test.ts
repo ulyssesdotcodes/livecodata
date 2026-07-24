@@ -8,7 +8,7 @@ import {
   beatToX,
   xToBeat,
   gridLines,
-  handlesFor,
+  stripLayout,
   hitTest,
   resolveHandle,
   snap,
@@ -18,7 +18,6 @@ import {
   exceedsDragThreshold,
   withPreview,
   pendingTimelineRows,
-  laneLayout,
   coverageBands,
   meaningfulSummary,
   type Handle,
@@ -64,7 +63,7 @@ test('handlesFor: timeline rows become until-next span handles; loop picks the l
     { beat: 5, loop: 0 },
     { beat: 1, loop: 1, disabled: true },
   ]
-  const handles = handlesFor('timeline', rows, cols('beat', 'loop'), rows, 8)
+  const handles = stripLayout('timeline', rows, cols('beat', 'loop'), rows, 8).handles
   assert.deepEqual(
     handles.map((h) => ({ row: h.row, kind: h.kind, beat: h.beat, end: h.end, lane: h.lane, disabled: h.disabled })),
     [
@@ -77,7 +76,7 @@ test('handlesFor: timeline rows become until-next span handles; loop picks the l
 
 test('handlesFor: with no timeline defined, a content row is identity — one non-ghost handle at its own beat', () => {
   const rows = [{ beat: 3, dur: 2 }]
-  const handles = handlesFor('three', rows, cols('beat', 'dur'), [])
+  const handles = stripLayout('three', rows, cols('beat', 'dur'), []).handles
   assert.deepEqual(handles, [
     { row: 0, kind: 'span', beat: 3, end: 5, lane: 0, ghost: false, disabled: false },
   ])
@@ -92,7 +91,7 @@ test('handlesFor: a fold transition draws its until-next window as a span (endRo
     { beat: 5, event: 'transition' },
     { beat: 9, event: 'setCode', code: 'noise().out(o0)' },
   ]
-  const handles = handlesFor('hydra', rows, cols('beat'), [])
+  const handles = stripLayout('hydra', rows, cols('beat'), []).handles
   assert.equal(handles.find((h) => h.row === 0)!.kind, 'point', 'setCode is an instant')
   const t = handles.find((h) => h.row === 1)!
   const win = hydraTransitionWindows(rows)[0]
@@ -109,7 +108,7 @@ test('handlesFor: a fold table draws a point for an inert dur; setVariable/pulse
     { beat: 3, event: 'setVariable', name: 'x', value: 1, dur: 2 },
     { beat: 5, event: 'pulse', dur: 2 },
   ]
-  const handles = handlesFor('post', rows, cols('beat', 'dur'), [])
+  const handles = stripLayout('post', rows, cols('beat', 'dur'), []).handles
   assert.deepEqual(handles.map((h) => h.kind), ['point', 'point', 'point'])
 })
 
@@ -122,7 +121,7 @@ test('handlesFor: a wrapped fold transition (destination earlier in the loop) re
     { beat: 6, event: 'setCode', code: 'b().out(o0)' },
     { beat: 7, event: 'transition' },
   ]
-  const arcs = handlesFor('hydra', rows, cols('beat'), [], 8).filter((h) => h.row === 2)
+  const arcs = stripLayout('hydra', rows, cols('beat'), [], 8).handles.filter((h) => h.row === 2)
   assert.equal(arcs.length, 2, 'a wrapped window is a tail arc + a head arc')
   const tail = arcs.find((h) => h.endRow === undefined)!
   const head = arcs.find((h) => h.endRow !== undefined)!
@@ -135,7 +134,7 @@ test('handlesFor: a content row played by a loop event gets one handle per place
   const timelineRows = [{ event: 'loop', beat: 1, from: 1, to: 5 }]
   const rows = [{ id: 'a', beat: 1 }]
   // Loop-beats 8 closes the pass at beat 9 — two 4-beat cycles.
-  const handles = handlesFor('hits', rows, cols('beat'), timelineRows, 8)
+  const handles = stripLayout('hits', rows, cols('beat'), timelineRows, 8).handles
   assert.deepEqual(
     handles.map((h) => ({ beat: h.beat, ghost: h.ghost })),
     [{ beat: 1, ghost: false }, { beat: 5, ghost: true }],
@@ -153,7 +152,7 @@ test('handlesFor: a content row placed across a multi-pass timeline lands each g
     { event: 'loop', beat: 1, from: 1, to: 5, loop: 1 },
   ]
   const rows = [{ beat: 3 }]
-  const handles = handlesFor('hits', rows, cols('beat'), timelineRows, 8)
+  const handles = stripLayout('hits', rows, cols('beat'), timelineRows, 8).handles
   assert.deepEqual(
     handles.map((h) => ({ beat: h.beat, lane: h.lane, ghost: h.ghost })),
     [
@@ -170,7 +169,7 @@ test('handlesFor: a content row whose beat runs past loopBeats wraps into a late
   // No timeline defined, so there's no lane to place a later pass into —
   // only a badge (see notes/timeline-strip-plan.md "Beats past maxBeats").
   const rows = [{ beat: 20 }]
-  const handles = handlesFor('hits', rows, cols('beat'), [], 8)
+  const handles = stripLayout('hits', rows, cols('beat'), [], 8).handles
   assert.deepEqual(
     handles.map((h) => ({ beat: h.beat, lane: h.lane, pass: h.pass })),
     [{ beat: 4, lane: 0, pass: 2 }],
@@ -185,7 +184,8 @@ test('laneLayout: a two-pass timeline reserves one lane per pass even with no co
     { event: 'hold', beat: 1, from: 1, loop: 0 },
     { event: 'hold', beat: 1, from: 1, loop: 1 },
   ]
-  assert.deepEqual(laneLayout('scene', [], cols('beat', 'dur'), twoPassTimeline), { laneCount: 2, passBase: [0, 1] })
+  const { laneCount, passBase } = stripLayout('scene', [], cols('beat', 'dur'), twoPassTimeline)
+  assert.deepEqual({ laneCount, passBase }, { laneCount: 2, passBase: [0, 1] })
 })
 
 test('sub-lane packing: overlapping spans stack into sub-lanes, disjoint spans share one, deterministically', () => {
@@ -197,11 +197,11 @@ test('sub-lane packing: overlapping spans stack into sub-lanes, disjoint spans s
     { beat: 3, dur: 3 },
   ]
   const columns = cols('beat', 'dur')
-  const laneOf = () => handlesFor('scene', rows, columns, [])
+  const laneOf = () => stripLayout('scene', rows, columns, []).handles
     .sort((a, b) => a.beat - b.beat).map((h) => h.lane)
   assert.deepEqual(laneOf(), [0, 1, 0], 'first-fit by start: 1..4 → 0, 3..6 → 1, 7..9 → 0')
   assert.deepEqual(laneOf(), laneOf(), 'deterministic')
-  assert.equal(laneLayout('scene', rows, columns, []).laneCount, 2)
+  assert.equal(stripLayout('scene', rows, columns, []).laneCount, 2)
 })
 
 // --- coverageBands -----------------------------------------------------------
