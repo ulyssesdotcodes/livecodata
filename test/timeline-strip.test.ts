@@ -23,7 +23,7 @@ import {
   type Handle,
 } from '../src/timeline-strip.js'
 import { hydraTransitionWindows } from '../src/hydra.js'
-import { postTransitionWindows } from '../src/post.js'
+import { postSpanWindows, postGlidePairs } from '../src/post.js'
 import type { EditableColumn } from '../src/editable-tables.js'
 
 const cols = (...names: string[]): EditableColumn[] => names.map((name) => ({ name, type: 'number' }))
@@ -100,16 +100,66 @@ test('handlesFor: a fold transition draws its until-next window as a span (endRo
   assert.deepEqual([t.beat, t.end, t.endRow], [5, 9, 2], 'runs to the beat-9 setCode, whose row is the arrow target')
 })
 
-test('handlesFor: a fold table draws a point for an inert dur; setVariable/pulse never span', () => {
-  // Nothing here consumes a window — a stray dur on a post setCode, a plain
-  // setVariable, a pulse — so all three are points, never misleading spans.
+test('handlesFor: a post pulse draws a bar (mirroring pulseAt); a bare pulse defaults to a 1-beat bar', () => {
   const rows = [
-    { beat: 1, event: 'setCode', code: 'edges(0.2)', dur: 4 },
-    { beat: 3, event: 'setVariable', name: 'x', value: 1, dur: 2 },
-    { beat: 5, event: 'pulse', dur: 2 },
+    { beat: 1, event: 'setCode', code: 'edges(0.2)', dur: 4 }, // stray dur → still a point
+    { beat: 3, event: 'pulse', name: 'x', value: 1, dur: 2 },
+    { beat: 6, event: 'pulse', name: 'x', value: 1 }, // blank dur → 1-beat bar
+    { beat: 8, event: 'pulse', name: 'x', value: 1, dur: 0, ease: 'step' }, // step gate has extent
   ]
   const handles = stripLayout('post', rows, cols('beat', 'dur'), []).handles
-  assert.deepEqual(handles.map((h) => h.kind), ['point', 'point', 'point'])
+  const barOf = (row: number) => handles.find((h) => h.row === row)!
+  assert.equal(barOf(0).kind, 'point', 'a stray dur on a setCode is still a point')
+  assert.deepEqual([barOf(1).kind, barOf(1).beat, barOf(1).end], ['span', 3, 5], 'explicit dur bar [beat, beat+dur)')
+  assert.deepEqual([barOf(2).kind, barOf(2).beat, barOf(2).end], ['span', 6, 7], 'blank dur → 1-beat bar')
+  assert.deepEqual([barOf(3).kind, barOf(3).beat, barOf(3).end], ['span', 8, 9], 'a step gate (dur 0) still spans its 1-beat default')
+  assert.equal(barOf(1).endRow, undefined, 'a pulse bar has no destination arrow')
+})
+
+test('handlesFor: an eased setVariable stays a point, tagged with the previous same-name row it glides from', () => {
+  const rows = [
+    { beat: 1, event: 'setVariable', name: 'x', value: 0 }, // step (blank ease): no glide
+    { beat: 5, event: 'setVariable', name: 'x', value: 1, ease: 'easeInOut' }, // eased: glides from row 0
+    { beat: 7, event: 'setVariable', name: 'x', value: 2, ease: 'step' }, // explicit step: no glide
+    { beat: 3, event: 'setVariable', name: 'y', value: 9, ease: 'linear' }, // eased but first of its track: no glide
+  ]
+  const cols4 = cols('beat')
+  const handles = stripLayout('post', rows, cols4, []).handles
+  assert.deepEqual(handles.map((h) => h.kind), ['point', 'point', 'point', 'point'], 'a glide is an arrow, never a bar')
+  const glideOf = (row: number) => handles.find((h) => h.row === row)!.glideFrom
+  assert.equal(glideOf(1), 0, 'the eased arrival glides from the previous same-name row')
+  assert.equal(glideOf(0), undefined, 'a blank-ease keyframe glides from nothing')
+  assert.equal(glideOf(2), undefined, 'an explicit step glides from nothing')
+  assert.equal(glideOf(3), undefined, 'the first row of a track has no previous to glide from')
+})
+
+test('handlesFor: setCode/add/remove/layer in a post table stay points', () => {
+  const rows = [
+    { beat: 1, event: 'setCode', code: 'edges(0.2)' },
+    { beat: 2, event: 'add', code: 'bloom(1.2)' },
+    { beat: 3, event: 'remove', name: 'bloom' },
+    { beat: 4, event: 'layer', code: 'noise()', mode: 'add' },
+  ]
+  const handles = stripLayout('post', rows, cols('beat'), []).handles
+  assert.deepEqual(handles.map((h) => h.kind), ['point', 'point', 'point', 'point'])
+  assert.ok(handles.every((h) => h.glideFrom === undefined && h.end === undefined))
+})
+
+test('handlesFor: a post pulse bar has parity with postSpanWindows (strip can\'t drift from playback)', () => {
+  const rows = [{ beat: 3, event: 'pulse', name: 'x', value: 1, dur: 2 }]
+  const win = postSpanWindows(rows).find((w) => w.row === 0)!
+  const bar = stripLayout('post', rows, cols('beat', 'dur'), []).handles.find((h) => h.row === 0)!
+  assert.deepEqual([bar.beat, bar.end], [win.start, win.end], 'bar matches the fold window')
+})
+
+test('postGlidePairs: only named-ease keyframes pair, each with the previous same-name row', () => {
+  const rows = [
+    { beat: 1, event: 'setVariable', name: 'x', value: 0 },
+    { beat: 5, event: 'setVariable', name: 'x', value: 1, ease: 'easeIn' },
+    { beat: 4, event: 'setVariable', name: 'y', value: 2, ease: 'linear' }, // first of y: no pair
+    { beat: 2, event: 'pulse', name: 'x', value: 1 }, // pulses aren't keyframes
+  ]
+  assert.deepEqual(postGlidePairs(rows), [{ row: 1, from: 0 }], 'x-row-1 glides from x-row-0; y-row-2 is first; pulse ignored')
 })
 
 test('handlesFor: a wrapped fold transition (destination earlier in the loop) renders two arcs', () => {

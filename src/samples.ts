@@ -797,9 +797,17 @@ rows([
 //      - beat 9  add:   pixelate(6) — append an effect mid-loop.
 //      - beat 11 remove: pixelate — drop it again by op name (the beat-time
 //                       bypass, the un-add). No chain rewrite.
-//      - beat 13 transition: wipe (blank code = crossfade), shaped by \`ease\`,
-//                       to the NEXT setCode ahead — it runs from here UNTIL that
-//                       beat, so the destination's beat sets the wipe length...
+//      - beat 13 transition: composite to the NEXT setCode ahead through a
+//                       per-pixel mask, \`gradient(0).thresh(progress().oneSub())\`
+//                       — a directional wipe. The mask is a black→white chain
+//                       (black keeps the old chain, white shows the new); it moves
+//                       ONLY because \`progress()\` sweeps 0→1 across the window
+//                       (this beat → the destination's beat, shaped by \`ease\`).
+//                       \`.oneSub()\` (1 − value, on any live arg) flips the mask so
+//                       the white/new region GROWS as progress runs. A bare
+//                       \`progress()\` would crossfade; leave \`code\` BLANK and the
+//                       mask is static black — the old chain HOLDS the whole
+//                       window, then cuts to the new one (a delayed cut).
 //      - beat 15 setCode: blend(prev().mosaic(4), 0.5) — the destination the
 //                       wipe crosses to over beats 13→15; it feeds back the
 //                       PREVIOUS output frame (prev()) blended with a mosaic of
@@ -819,7 +827,7 @@ editable("post", schemas.post)
         { beat: 7, event: "pulse", name: "glow", value: 1.2, dur: 1, ease: "easeOut" },
         { beat: 9, event: "add", code: "pixelate(6)" },
         { beat: 11, event: "remove", name: "pixelate" },
-        { beat: 13, event: "transition", ease: "easeInOut" },
+        { beat: 13, event: "transition", code: "gradient(0).thresh(progress().oneSub())", ease: "easeInOut" },
         { beat: 15, event: "setCode", code: "blend(prev().mosaic(4), 0.5)" },
       ],
     },

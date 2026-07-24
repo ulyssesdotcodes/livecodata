@@ -12,20 +12,27 @@ import type { EditableColumn } from './editable-tables.js'
 import { formatEditableCell } from './table-panel.js'
 import { placeBeat, timelineSegments, buildTimeline, windowsFor, type Timeline, type TimelineSegment } from './timeline.js'
 import { hydraTransitionWindows, type TransitionWindow } from './hydra.js'
-import { postTransitionWindows } from './post.js'
+import { postSpanWindows, postGlidePairs } from './post.js'
 import { baubleTransitionWindows } from './bauble.js'
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
 
-// The fold tables whose spans come from a transition's until-next window (the
-// exact width playback wipes over) rather than a `dur` column. A table absent
-// here falls back to its `dur` (scene/origami/path keep their live-dur spans);
-// a fold table's non-transition events — and any stray `dur` on one — draw a
-// point, never a misleading span.
+// The fold tables whose bars come from a fold window (a transition's until-next
+// wipe width, or a post pulse's [beat, beat + dur) extent) rather than a `dur`
+// column. A table absent here falls back to its `dur` (scene/origami/path keep
+// their live-dur spans); a fold table's other events — and any stray `dur` on
+// one — draw a point, never a misleading bar.
 const FOLD_WINDOWS: Record<string, (rows: Row[], loopBeats?: number) => TransitionWindow[]> = {
   hydra: hydraTransitionWindows,
-  post: postTransitionWindows,
+  post: postSpanWindows,
   bauble: baubleTransitionWindows,
+}
+
+// Fold tables whose eased keyframes glide from a previous row: the arriving
+// row's point handle carries a `glideFrom` arrow (the view draws a connector,
+// arrowhead on arrival, and hover-links the pair). Only post has an ease column.
+const FOLD_GLIDES: Record<string, (rows: Row[]) => { row: number; from: number }[]> = {
+  post: postGlidePairs,
 }
 
 export interface StripGeometry {
@@ -96,6 +103,11 @@ export interface Handle {
   // arrowhead to its point handle (hover-linking the pair) and an end drag
   // retargets THAT row's beat. Absent on a wrap tail and on inert transitions.
   endRow?: number
+  // The previous same-name setVariable row an eased keyframe glides from: this
+  // (point) handle is the arrival, and the view draws a connector arrow from
+  // that row's point to here (arrowhead on arrival), hover-linking the pair.
+  // Each point still drags itself — the arrow just follows.
+  glideFrom?: number
   lane: number
   // A later placement of the same row (a loop event playing it more than
   // once) — draggable, but not the "primary" one a click should focus.
@@ -206,11 +218,15 @@ function buildRaw(
   const foldWindows = FOLD_WINDOWS[name]
     ? new Map(FOLD_WINDOWS[name](rows, loopBeats).map((w) => [w.row, w]))
     : null
+  const glides = FOLD_GLIDES[name]
+    ? new Map(FOLD_GLIDES[name](rows).map((g) => [g.row, g.from]))
+    : null
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i]
     const beat = num(row.beat)
     if (beat === undefined) continue
     const win = foldWindows?.get(i)
+    const glideFrom = glides?.get(i)
     const dur = foldWindows
       ? (win ? win.end - win.start : undefined)
       : colNames.has('dur') ? num(row.dur) : undefined
@@ -224,7 +240,7 @@ function buildRaw(
         ...(w.pass > 0 ? { pass: w.pass } : {}),
       }
       if (dur === undefined) {
-        raw.push({ ...common, kind: 'point', beat: w.local })
+        raw.push({ ...common, kind: 'point', beat: w.local, ...(glideFrom !== undefined ? { glideFrom } : {}) })
         return
       }
       const end = w.local + dur * p.stretch

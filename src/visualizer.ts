@@ -205,24 +205,35 @@ export function createBaubleVisualizer(baubleAPI: BaubleAPI): Visualizer {
   }
 }
 
-// The post layer: like hydra, folding is absolute and compilation happens at
-// load (setProgram enumerates + warm-compiles every state), so clear() must not
-// tear it down. applyFrame folds to a precompiled state and writes the frame's
-// live-uniform values; three-scene's animate loop drives the actual render.
+// The post layer: like hydra, folding is absolute and compilation happens up
+// front (setProgram enumerates + warm-compiles every state on the first apply,
+// once loopFrames is known), so clear() must not tear it down. applyFrame folds
+// to a precompiled state and writes the frame's live-uniform values;
+// three-scene's animate loop drives the actual render.
 export function createPostVisualizer(postAPI: PostAPI): Visualizer {
   let index: Row[] = buildPostIndex([])
   let maxIndex = 0
   let epoch = 0
+  // The loopFrames setProgram last precompiled against (null = re-program next
+  // frame). setProgram enumerates loopFrames-dependent states (wrapped
+  // transition windows), but load doesn't carry loopFrames — and setLoopBeats
+  // changes it with no re-cook — so warm-compile on the first apply the length
+  // is known and whenever it changes, keeping the compile in the cook pause.
+  let programmedLoop: number | null = null
 
   return {
     load(cooked): void {
       index = buildPostIndex(cooked.postRows ?? [])
       maxIndex = index.reduce((m, r) => Math.max(m, r.index as number), 0)
       if (typeof cooked.loopEpochs?.post === 'number') epoch = cooked.loopEpochs.post
-      postAPI.setProgram(index)
+      programmedLoop = null
     },
     hasContent: () => index.length > 0,
     applyFrame({ srcFrameF, loopFrames, ctx, passAt, bpm }): Row[] {
+      if (programmedLoop !== loopFrames) {
+        postAPI.setProgram(index, loopFrames)
+        programmedLoop = loopFrames
+      }
       const loops = loopFrames > 0 ? Math.floor(maxIndex / loopFrames) + 1 : 1
       const frameF = (loops > 1 ? (passAt(epoch) % loops) * loopFrames : 0) + srcFrameF
       const frame = postFrameAt(index, Math.floor(frameF), loopFrames)

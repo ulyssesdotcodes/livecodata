@@ -16,6 +16,8 @@
 // precompiled state. This is what lets generic table columns drive arbitrary
 // parameters: `edges(0.25, 1)` never recompiles when 0.25 changes, only when
 // the structural colorMode does.
+import { FPS } from './constants.js'
+
 export type ArgClass = 'live' | 'structural'
 export type OpKind = 'head' | 'fx' | 'combine'
 
@@ -48,7 +50,33 @@ export const POST_OPS: Record<string, OpSpec> = {
     args: [{ name: 'amount', arg: 'live', default: 0.1 }],
     doc: 'Displace this chain\'s pixels by another chain\'s red/green channels, scaled by `amount` (live) — hydra\'s modulate. A mid-grey modulator leaves the view untouched; brighter/darker regions push it around.',
   },
-  transition: { kind: 'head', args: [{ name: 'mix', arg: 'live', default: 0 }, { name: 'threshold', arg: 'structural', default: 0.1 }, { name: 'useTexture', arg: 'structural', default: 0 }], doc: 'Wipe from one chain to another; the fold builds it from a transition event (crossfade, or a mask chain).' },
+  transition: { kind: 'head', args: [], doc: 'Per-pixel wipe between two chains: every frame composites before→after by the mask\'s luminance (black keeps before, white shows after). The fold builds it from a transition event; time comes only from a mask reading progress().' },
+  fill: { kind: 'head', args: [{ name: 'amount', arg: 'live', default: 0 }], doc: 'A flat luminance field (live) — the uniform mask a bare transition value lowers to: fill(progress()) is a crossfade, fill(0.5) a static half-blend.' },
+  gradient: {
+    kind: 'head',
+    args: [{ name: 'angle', arg: 'live', default: 0 }],
+    doc: 'Linear luminance ramp 0→1 across the screen at `angle` radians (live). gradient(0) = black left → white right; feed it to thresh(progress().oneSub()) for a directional wipe.',
+  },
+  noise: {
+    kind: 'head',
+    args: [{ name: 'scale', arg: 'live', default: 3 }],
+    doc: 'Static value-noise luminance at `scale` cells across (live) — a dissolve source; deterministic (no self-animation, drive it with progress()). noise(3).thresh(progress().oneSub()) dissolves.',
+  },
+  stripes: {
+    kind: 'head',
+    args: [{ name: 'count', arg: 'live', default: 8 }, { name: 'angle', arg: 'live', default: 0 }],
+    doc: 'Repeating 0→1 luminance ramps — `count` bands at `angle` radians (both live). Blinds: stripes(8).thresh(progress().oneSub()); with .polar() they become concentric rings.',
+  },
+  thresh: {
+    kind: 'fx',
+    args: [{ name: 'edge', arg: 'live', default: 0.5 }, { name: 'softness', arg: 'live', default: 0.1 }],
+    doc: 'Turn a grayscale into a moving wipe edge: pixels ABOVE `edge` become white (show the next chain), below stay black, with a `softness`-wide smooth border (both live). Ride `edge` on progress().oneSub() so the reveal grows as the wipe runs — gradient(0).thresh(progress().oneSub()).',
+  },
+  polar: {
+    kind: 'fx',
+    args: [{ name: 'cx', arg: 'live', default: 0.5 }, { name: 'cy', arg: 'live', default: 0.5 }],
+    doc: 'Resample the chain in polar coordinates about (cx, cy) (live): the input\'s x axis reads as normalized RADIUS (0 centre → 1 far corner), its y axis as ANGLE (0→1 per turn). gradient(Math.PI).polar() is a centre-bright radial ramp (a centre-outward iris under thresh(progress().oneSub())), gradient(Math.PI/2).polar() an angular one (clock).',
+  },
   edges: {
     kind: 'fx',
     args: [
@@ -159,6 +187,19 @@ export const POST_OPS: Record<string, OpSpec> = {
 // per-frame function of the props object; a structural arg carries a baked
 // number.
 export type LiveValue = number | ((props: Record<string, unknown>) => number)
+
+// A post live-arg handle: a per-frame (p) => number closure carrying a small
+// fluent surface (oneSub — the 1 − x reflection) so authors reshape it inline,
+// e.g. progress().oneSub(). The result is still a plain function, so it lowers
+// to the same uniform as any live arg with no recompile, and composes
+// (oneSub().oneSub()).
+export type LiveArgFn = ((p: Record<string, unknown>) => number) & { oneSub(): LiveArgFn }
+export function liveArg(fn: (p: Record<string, unknown>) => number): LiveArgFn {
+  const f = fn as LiveArgFn
+  f.oneSub = (): LiveArgFn => liveArg((p) => 1 - fn(p))
+  return f
+}
+
 export interface OpArgVal {
   cls: ArgClass
   value: LiveValue
@@ -300,7 +341,13 @@ function headScope(): Record<string, unknown> {
   scope.scene = (): ChainBuilder => new ChainBuilder(makeCall('scene', 'head', [], []))
   scope.prev = (): ChainBuilder => new ChainBuilder(makeCall('prev', 'head', [], []))
   for (const [name, spec] of Object.entries(POST_OPS)) {
-    if (spec.kind === 'head') continue
+    if (spec.kind === 'head') {
+      // Generator heads (gradient/noise/stripes/fill) start a chain from a
+      // synthesised field; scene/prev/transition are installed explicitly.
+      if (name === 'scene' || name === 'prev' || name === 'transition') continue
+      scope[name] = (...raw: unknown[]): ChainBuilder => new ChainBuilder(makeCall(name, 'head', spec.args, raw))
+      continue
+    }
     scope[name] = (...raw: unknown[]): ChainBuilder => {
       const cb = new ChainBuilder(makeCall('scene', 'head', [], []))
       if (spec.kind === 'combine') cb.ops.push(makeCall(name, spec.kind, spec.args, raw.slice(1), [chainOps(raw[0])]))
@@ -311,43 +358,99 @@ function headScope(): Record<string, unknown> {
   // A live post variable — val("glow", 0.5) — reading the folded variable
   // each frame with the initial as the fallback. The editable-table fold
   // materializes a "setVariable" row for each val() right after the cell it appears in.
-  scope.val = (name: unknown, value?: unknown): ((p: Record<string, unknown>) => number) => {
+  scope.val = (name: unknown, value?: unknown): LiveArgFn => {
     const key = String(name)
     const fallback = typeof value === 'number' && Number.isFinite(value) ? value : 0
-    return (p) => {
+    return liveArg((p) => {
       const v = p[key]
       return typeof v === 'number' ? v : fallback
-    }
+    })
   }
   // A live on-screen slider, usable anywhere a live arg is — blur(slider("r",
   // 0, 8)) — reading props.sliders each frame. The cook declares the control
   // from these calls (see sliderDeclsInCode).
-  scope.slider = (name: unknown, min?: unknown, max?: unknown): ((p: Record<string, unknown>) => number) => {
+  scope.slider = (name: unknown, min?: unknown, max?: unknown): LiveArgFn => {
     const id = String(name)
     const lo = typeof min === 'number' && Number.isFinite(min) ? min : undefined
     const hi = typeof max === 'number' && Number.isFinite(max) ? max : undefined
     sliderDefiner?.(id, lo, hi)
-    return (p) => {
+    return liveArg((p) => {
       const v = (p.sliders as Record<string, number> | undefined)?.[id]
       return typeof v === 'number' ? v : lo ?? 0
-    }
+    })
   }
   // The expr namespace — expr.midi("c4"), expr.slider("r", 0, 8).mul(2), … —
   // usable anywhere a live arg is; expr.slider declares through the same
   // collector as the bare slider().
   if (exprArgs) scope.expr = exprArgs.makeScope((id, min, max) => sliderDefiner?.(id, min, max))
-  // A transition is the head of the output chain the fold produces: it wipes
-  // `before` → `after` by `pos` (0→1), optionally through a black-and-white
-  // `mask` chain (null = crossfade). The pos function reads the playback clock.
-  scope.transition = (before: unknown, after: unknown, mask: unknown, pos: unknown, threshold?: unknown): ChainBuilder => {
-    const useTexture = mask instanceof ChainBuilder ? 1 : 0
-    const call = makeCall('transition', 'head', POST_OPS.transition.args, [pos, threshold, useTexture])
-    call.chainArgs = useTexture
-      ? [chainOps(before), chainOps(after), chainOps(mask)]
-      : [chainOps(before), chainOps(after)]
+  // progress() — a live arg reading the enclosing transition's window fraction
+  // (0 at the transition's beat, 1 at the next setCode), rebound per frame from
+  // the playback clock like slider()/val(). Outside a transition mask it reads 1.
+  scope.progress = (): LiveArgFn => progressFn
+  // A transition is the head of the output chain the fold produces: it mixes
+  // `before` → `after` per pixel by the `mask` chain's luminance, every frame.
+  // The mask is passed as a THUNK so its progress() calls bind to THIS
+  // transition's window (start/len/seqLen/ease) — nested transitions each get
+  // their own. A bare number or live-fn mask lowers to a uniform luminance
+  // (fill), so `() => 0.5` is a static half-blend and `() => progress()` a
+  // crossfade.
+  scope.transition = (
+    before: unknown, after: unknown, maskThunk: unknown,
+    startFrame: unknown, lenFrames: unknown, seqLen: unknown, ease: unknown,
+  ): ChainBuilder => {
+    const mask = withProgress(
+      windowProgress(Number(startFrame), Number(lenFrames), Number(seqLen), ease),
+      () => normalizeMask((maskThunk as () => unknown)()),
+    )
+    const call = makeCall('transition', 'head', [], [])
+    call.chainArgs = [chainOps(before), chainOps(after), mask.ops]
     return new ChainBuilder(call)
   }
   return scope
+}
+
+// A bare-value mask (number or live fn) becomes a uniform luminance field; a
+// chain passes through. Anything else is an authoring error.
+function normalizeMask(mask: unknown): ChainBuilder {
+  if (mask instanceof ChainBuilder) return mask
+  if (typeof mask === 'number' || typeof mask === 'function' || exprArgs?.isExpr(mask)) {
+    return new ChainBuilder(makeCall('fill', 'head', POST_OPS.fill.args, [mask]))
+  }
+  throw new Error('post: transition mask must be a chain, number, or live arg')
+}
+
+// The live progress fn a transition mask's progress() reads. Default (outside a
+// transition) reads 1 — a fully-arrived event.
+let progressFn: LiveArgFn = liveArg(() => 1)
+
+// Run `build` with progressFn set to `fn`, restoring the previous binding after
+// (a stack via the saved `prev`, so nested transition masks each see their own).
+function withProgress(fn: LiveArgFn, build: () => ChainBuilder): ChainBuilder {
+  const prev = progressFn
+  progressFn = fn
+  try { return build() } finally { progressFn = prev }
+}
+
+const clampU = (x: number): number => (x < 0 ? 0 : x > 1 ? 1 : x)
+const easeU: Record<string, (u: number) => number> = {
+  linear: (u) => u,
+  easeIn: (u) => u * u,
+  easeOut: (u) => 1 - (1 - u) ** 2,
+  easeInOut: (u) => (u < 0.5 ? 2 * u * u : 1 - ((-2 * u + 2) ** 2) / 2),
+}
+
+// The eased 0→1 window fraction at the playback frame (p.time·FPS), wrapped over
+// the content cycle (seqLen>0) exactly as transitionAt does — so a window that
+// crosses the loop seam still reads right when the playhead re-samples [0, len).
+function windowProgress(
+  startFrame: number, lenFrames: number, seqLen: number, ease: unknown,
+): LiveArgFn {
+  const shape = easeU[(typeof ease === 'string' && ease in easeU ? ease : 'linear')]
+  return liveArg((p) => {
+    const frame = (typeof p.time === 'number' ? p.time : 0) * FPS
+    const dist = seqLen > 0 ? ((frame - startFrame) % seqLen + seqLen) % seqLen : frame - startFrame
+    return shape(clampU(lenFrames > 0 ? dist / lenFrames : 1))
+  })
 }
 
 // Evaluate a post code cell to its op list. The cell is an expression like

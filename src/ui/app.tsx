@@ -4,7 +4,7 @@
 // an accessor main.ts fills in right after mountApp returns — the engine
 // needs the canvases this render creates.
 
-import { Show, type Accessor } from 'solid-js'
+import { createSignal, Show, type Accessor } from 'solid-js'
 import { render } from 'solid-js/web'
 import { PlaybackControls, type PlaybackController } from './playback-controls.js'
 import { EditorPane, type EditorController } from './editor.js'
@@ -48,6 +48,9 @@ export interface CanvasMounts {
 function App(props: AppProps & { mounts: CanvasMounts }) {
   let sidePanels: HTMLDivElement | undefined
   let tablePane: HTMLDivElement | undefined
+  // Minimized transport: collapse the whole playback panel (controls + timeline
+  // strip) to a corner icon so the visual output isn't obscured.
+  const [playbackMinimized, setPlaybackMinimized] = createSignal(false)
   return (
     <>
       <div id="canvas-pane" ref={(el) => (props.mounts.canvasPane = el)}>
@@ -55,11 +58,13 @@ function App(props: AppProps & { mounts: CanvasMounts }) {
         <canvas id="hydra-canvas" ref={(el) => (props.mounts.hydraCanvas = el)} />
         <canvas id="bauble-canvas" ref={(el) => (props.mounts.baubleCanvas = el)} />
         <SliderPanel ctl={props.sliderPanel} />
-        <div id="playback-controls">
+        <div id="playback-controls" classList={{ minimized: playbackMinimized() }}>
           <Show when={props.playback()}>
             {(p) => (
               <PlaybackControls
                 vs={p().vs}
+                minimized={playbackMinimized}
+                onToggleMinimize={() => setPlaybackMinimized((m) => !m)}
                 engine={p().engine}
                 tapControl={p().tapControl}
                 timelineRows={props.timelineRows}

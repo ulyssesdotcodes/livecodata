@@ -305,18 +305,39 @@ export function TimelineStrip(props: {
   }
   let gesture: Gesture | null = null
 
-  // Fold transition ↔ destination pairing: hovering either the transition
-  // span or the destination setCode point highlights both (the arrowhead
-  // links them). Empty unless the hover lands on a paired row.
+  // Arrow-linked pairs: a fold transition span and its destination setCode
+  // point, or an eased setVariable point and the row it glides from. Hovering
+  // either end highlights both (the arrowhead links them). Empty unless the
+  // hover lands on a paired row.
   const linkedRows = createMemo<Set<number>>(() => {
     const hv = hover()
     const set = new Set<number>()
     if (!hv) return set
     for (const h of handles()) {
-      if (h.endRow === undefined) continue
-      if (h.row === hv.row || h.endRow === hv.row) { set.add(h.row); set.add(h.endRow) }
+      const other = h.endRow ?? h.glideFrom
+      if (other === undefined) continue
+      if (h.row === hv.row || other === hv.row) { set.add(h.row); set.add(other) }
     }
     return set
+  })
+
+  // Connector arrows for eased setVariable points (glideFrom) — a line from the
+  // previous same-name point to the arriving one, arrowhead on arrival. Drawn
+  // as their own layer (unlike a transition's span-end arrowhead) since the two
+  // endpoints are separate point handles: pair each with its from-handle in the
+  // same lane, skipping any that would run backward (the loop-wrap glide).
+  const glideArrows = createMemo(() => {
+    const geo = geometry()
+    const hs = handles()
+    const arrows: { left: number; width: number; lane: number; row: number; from: number }[] = []
+    for (const h of hs) {
+      if (h.kind !== 'point' || h.glideFrom === undefined) continue
+      const from = hs.find((f) => f.row === h.glideFrom && f.lane === h.lane)
+      if (!from || !(from.beat < h.beat)) continue
+      const left = beatToX(geo, from.beat)
+      arrows.push({ left, width: Math.max(1, beatToX(geo, h.beat) - left), lane: h.lane, row: h.row, from: h.glideFrom })
+    }
+    return arrows
   })
   // Last row reported to onStripRowChange — hover fires per pointermove, so
   // dedupe to actual row changes rather than spamming the panel every frame.
@@ -545,6 +566,22 @@ export function TimelineStrip(props: {
       <Show when={currentData()}>
         {(cur) => (
           <div class="timeline-strip-handles">
+            <For each={glideArrows()}>
+              {(a) => (
+                <div
+                  class="timeline-strip-glide"
+                  classList={{ 'timeline-strip-handle-linked': linkedRows().has(a.row) }}
+                  style={{
+                    left: `${a.left}px`,
+                    width: `${a.width}px`,
+                    top: `${(a.lane / laneCount()) * 100}%`,
+                    height: `${100 / laneCount()}%`,
+                  }}
+                >
+                  <span class="timeline-strip-glide-arrow" />
+                </div>
+              )}
+            </For>
             <For each={handles()}>
               {(h) => (
                 <div
