@@ -15,6 +15,8 @@ import { evalPostCode, chainSignature, collectLiveValues, sliderDeclsInCode, pos
 import '../src/expr-cell.js'
 import { slider, progress, field, isBinding, evalExpr, type Binding } from '../src/dsl.js'
 import { frameToBeat, beatsToFrames } from '../src/constants.js'
+import { createPostVisualizer } from '../src/visualizer.js'
+import type { PostAPI } from '../src/post-scene.js'
 import type { Row } from '../src/lineage.js'
 
 const b = (frame: number): number => frameToBeat(frame)
@@ -418,6 +420,49 @@ test('warm-compile audit: no frame of a loop introduces an unenumerated state', 
     const fr = postFrameAt(idx, f, L)
     if (fr) assert.ok(enumerated.has(fr.stateId), `frame ${f} state "${fr.stateId}" was not precompiled`)
   }
+})
+
+test('the post visualizer precompiles with the real loopFrames — no state compiles on a beat', () => {
+  // A transition as the LAST post event wipes back to the start across the loop
+  // seam: its folded state exists only under the real loopFrames. The visualizer
+  // must give setProgram that loopFrames (not 0), or the wipe state compiles
+  // lazily inside setFrame — the getProgramParameter stall on apply/playback.
+  const rows: Row[] = [
+    { beat: 1, event: 'setCode', code: 'blur(4)' },
+    { beat: 5, event: 'setCode', code: 'edges(0.2)' },
+    { beat: 7, event: 'transition', code: 'gradient(0).thresh(progress().oneSub())' },
+  ]
+  const L = beatsToFrames(8)
+
+  // A fake engine that precompiles exactly as post-scene's setProgram does, then
+  // flags any setFrame state it never precompiled (the lazy compile).
+  const precompiled = new Set<string>()
+  let lazy = 0
+  const fakePost: PostAPI = {
+    setProgram(index, loopFrames): void {
+      precompiled.clear()
+      for (const sf of postStateFrames(index, loopFrames)) {
+        const fr = postFrameAt(index, sf, loopFrames)
+        if (fr) precompiled.add(fr.stateId)
+      }
+    },
+    setFrame(frame): void { if (frame && !precompiled.has(frame.stateId)) lazy++ },
+    render: () => false,
+    resize(): void {},
+    reset(): void {},
+  }
+
+  const viz = createPostVisualizer(fakePost)
+  viz.load({ sceneRows: [], hydraRows: [], postRows: rows })
+  const idx = buildPostIndex(rows)
+  const maxIndex = idx.reduce((m, r) => Math.max(m, r.index as number), 0)
+  const loops = Math.floor(maxIndex / L) + 1
+  for (let pass = 0; pass < loops; pass++) {
+    for (let f = 0; f < L; f++) {
+      viz.applyFrame({ srcFrameF: f, loopFrames: L, ctx: null, passAt: () => pass, bpm: 120 })
+    }
+  }
+  assert.equal(lazy, 0, 'a post state compiled lazily — setProgram under-enumerated (wrong loopFrames)')
 })
 
 test('op-list lowering: live-by-default, structural where the registry says, signature masks live', () => {
