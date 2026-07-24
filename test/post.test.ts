@@ -155,15 +155,32 @@ test('a blank transition mask is static black: before holds through the window, 
   assert.deepEqual(ops(postFrameAt(idx, 180)), ['scene', 'edges'], 'cut to after at the next setCode')
 })
 
-test('progress() inside a mask chain is a live uniform — the window keeps one precompiled state', () => {
-  const idx = buildPostIndex(wipeRows({ code: 'gradient(0).thresh(progress())' }))
+test('a progress().oneSub() mask chain is a live uniform whose reveal grows before→after', () => {
+  const idx = buildPostIndex(wipeRows({ code: 'gradient(0).thresh(progress().oneSub())' }))
   const ids = [120, 135, 150, 179].map((f) => postFrameAt(idx, f)!.stateId)
   assert.equal(new Set(ids).size, 1, 'a progress() mask adds no per-frame cache key')
   const mask = maskOf(postFrameAt(idx, 150)!)
   assert.deepEqual(mask.map((o) => o.op), ['gradient', 'thresh'])
-  assert.equal(mask[1].args[0].cls, 'live', "thresh's edge is the live progress arg")
+  assert.equal(mask[1].args[0].cls, 'live', "thresh's edge is the live (oneSub'd) progress arg")
   const edge = mask[1].args[0].value as (p: { time: number }) => number
-  assert.ok(edge({ time: 135 / 60 }) < edge({ time: 165 / 60 }), 'it sweeps with the clock')
+  // ascending thresh: pixels above `edge` show after. oneSub falls edge 1 → 0,
+  // so at the start nothing is above it (fully before) and at the end all of the
+  // gradient [0,1] is (fully after) — the reveal grows monotonically.
+  close(edge({ time: 120 / 60 }), 1) // progress 0 → edge 1 → fully before
+  close(edge({ time: 180 / 60 }), 0) // progress 1 → edge 0 → fully after
+  assert.ok(edge({ time: 135 / 60 }) > edge({ time: 165 / 60 }), 'the edge falls as the wipe runs')
+})
+
+test('oneSub reflects any live-arg handle (1 − value) and composes', () => {
+  // On a bare progress() crossfade mask, oneSub reverses the sweep direction.
+  const fill = maskOf(postFrameAt(buildPostIndex(wipeRows({ code: 'progress().oneSub()' })), 150)!)
+  assert.deepEqual(fill.map((o) => o.op), ['fill'])
+  const f = fill[0].args[0].value as (p: { time: number }) => number
+  close(f({ time: 120 / 60 }), 1) // 1 − 0
+  close(f({ time: 180 / 60 }), 0) // 1 − 1
+  // slider/val handles carry it too (1 − value), and it double-composes back.
+  close((evalPostCode('blur(slider("r").oneSub())')[1].args[0].value as (p: Record<string, unknown>) => number)({ sliders: { r: 0.3 } }), 0.7)
+  close((evalPostCode('blur(val("g", 4).oneSub().oneSub())')[1].args[0].value as (p: Record<string, unknown>) => number)({ g: 4 }), 4)
 })
 
 test('progress in a wrapped transition window reads across the loop seam', () => {
@@ -183,14 +200,16 @@ test('progress in a wrapped transition window reads across the loop seam', () =>
 })
 
 test('generators and ops compile and are usable as chains and combine sources', () => {
-  assert.deepEqual(evalPostCode('gradient(0).thresh(progress())').map((o) => o.op), ['gradient', 'thresh'])
-  assert.deepEqual(evalPostCode('gradient(0).polar().thresh(progress(), 0.3)').map((o) => o.op), ['gradient', 'polar', 'thresh'])
-  assert.deepEqual(evalPostCode('noise(3).thresh(progress())').map((o) => o.op), ['noise', 'thresh'])
+  // The canonical idiom set (wipe / iris / clock / dissolve).
+  assert.deepEqual(evalPostCode('gradient(0).thresh(progress().oneSub())').map((o) => o.op), ['gradient', 'thresh'])
+  assert.deepEqual(evalPostCode('gradient(Math.PI).polar().thresh(progress().oneSub(), 0.3)').map((o) => o.op), ['gradient', 'polar', 'thresh'])
+  assert.deepEqual(evalPostCode('gradient(Math.PI / 2).polar().thresh(progress().oneSub())').map((o) => o.op), ['gradient', 'polar', 'thresh'])
+  assert.deepEqual(evalPostCode('noise(3).thresh(progress().oneSub())').map((o) => o.op), ['noise', 'thresh'])
   assert.deepEqual(evalPostCode('stripes(8).polar()').map((o) => o.op), ['stripes', 'polar'])
   // a generator drives a combine's branch, not only a mask
   assert.deepEqual(evalPostCode('blur(4).mask(gradient(0))')[2].chainArgs![0].map((o) => o.op), ['gradient'])
   // thresh top-level runs on the scene luminance — a content-aware wipe
-  assert.deepEqual(evalPostCode('edges(0.2).thresh(progress())').map((o) => o.op), ['scene', 'edges', 'thresh'])
+  assert.deepEqual(evalPostCode('edges(0.2).thresh(progress().oneSub())').map((o) => o.op), ['scene', 'edges', 'thresh'])
   assert.equal(evalPostCode('gradient((p) => p.a)')[0].args[0].cls, 'live', 'generator args are live')
 })
 

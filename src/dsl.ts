@@ -1185,9 +1185,9 @@ export const SCHEMAS = deepFreeze({
    * previous output frame, for feedback), `scene()` (the raw scene), or a
    * generator: `gradient(angle)` (a 0→1 luminance ramp), `noise(scale)` (a
    * dissolve field), `stripes(count, angle)` (blinds), reshaped by
-   * `.thresh(edge, softness)` (a moving wipe edge — ride `edge` on `progress()`)
-   * and `.polar(cx, cy)` (resample in radius/angle, turning a gradient into an
-   * iris or clock). Every op argument is either LIVE (the default: a number, or a
+   * `.thresh(edge, softness)` (a moving wipe edge — ride `edge` on
+   * `progress().oneSub()`) and `.polar(cx, cy)` (resample in radius/angle, turning
+   * a gradient into an iris or clock). Every op argument is either LIVE (the default: a number, or a
    * function of the props object like `(p) => p.glow`, bound to a uniform
    * rebound each frame with no recompile) or STRUCTURAL (e.g. edges' colorMode,
    * which selects a shader path). `slider("name", min?, max?)` is a live arg
@@ -1198,7 +1198,8 @@ export const SCHEMAS = deepFreeze({
    * data (deleting the val() call deletes the row). `progress()` is a live arg
    * usable inside a transition's mask chain, reading that transition's window
    * fraction (0 at its beat → 1 at the destination, shaped by the row's `ease`);
-   * elsewhere it reads 1. `event` picks what a row
+   * elsewhere it reads 1. Any live-arg handle (progress/slider/val) carries
+   * `.oneSub()` — the 1 − value reflection, e.g. progress().oneSub(). `event` picks what a row
    * does — "setCode"
    * (`code` = the whole chain; empty = passthrough), "add" (append effects,
    * `pixelate(6)`, leading `.` optional), "remove" (`name` = op name; drop every
@@ -1217,10 +1218,12 @@ export const SCHEMAS = deepFreeze({
    * mask — `code` is that mask chain, running from this beat until that setCode's
    * beat; black keeps the old chain, white shows the new. It moves ONLY through a
    * mask reading `progress()` (0 at this beat → 1 at the destination, shaped by
-   * `ease`): `progress()` alone crossfades, `gradient(0).thresh(progress())`
-   * wipes, `gradient(0).polar().thresh(progress())` irises; a bare number like
-   * `0.5` is a static half-blend. Blank `code` is static black — the old chain
-   * HOLDS the whole window, then cuts to the new one at that setCode).
+   * `ease`): `progress()` alone crossfades, `gradient(0).thresh(progress().oneSub())`
+   * wipes, `gradient(Math.PI).polar().thresh(progress().oneSub())` irises — `.oneSub()`
+   * (1 − value, on any live arg) flips the mask so the reveal GROWS as progress
+   * runs; a bare number like `0.5` is a static half-blend. Blank `code` is static
+   * black — the old chain HOLDS the whole window, then cuts to the new one at that
+   * setCode).
    * `event`, `ease`, and `mode` are enums (dropdowns); `code` cells open in the
    * editor with post completions; check `disabled` to mute a row.
    */

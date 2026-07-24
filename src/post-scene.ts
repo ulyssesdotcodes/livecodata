@@ -269,7 +269,7 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
           const edge = live(liveInit(op, 0))
           const soft = live(liveInit(op, 1))
           const l = t.luminance(t.vec3(input.rgb))
-          const f = t.oneMinus(t.smoothstep(edge.sub(soft.mul(0.5)), edge.add(soft.mul(0.5)), l))
+          const f = t.smoothstep(edge.sub(soft.mul(0.5)), edge.add(soft.mul(0.5)), l)
           return t.vec4(t.vec3(f), 1)
         }
         case 'polar': {
