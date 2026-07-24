@@ -1030,7 +1030,7 @@ export class OrigamiBuilder {
   steps(steps: Table | Row[]): OrigamiBuilder {
     const next = new OrigamiBuilder(this._size, this._ctx)
     next._id = this._id
-    next._rows = [...this._rows, ...(steps instanceof Table ? steps.rows : steps ?? [])]
+    next._rows = [...this._rows, ...rowsOf(steps)]
     return next
   }
 
@@ -1716,7 +1716,7 @@ export function createDSL(ctx: DSLContext | null): DSLSurface {
       return new Table(rows, ctx)
     },
     geometry: (points: Table | Row[]): BufferGeometry =>
-      geometryFromPoints(points instanceof Table ? points.rows : points ?? []),
+      geometryFromPoints(rowsOf(points)),
     // The first keyframe seeds a full default pose so a partial first row is
     // still well-defined.
     camera: (keyframes: Row[] | null | undefined): Table => new Table(

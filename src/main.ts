@@ -28,7 +28,7 @@ import { Table, outViewName } from './dsl.js'
 import { createEditableTableStore, DISABLED_COL, CLEAR_RUNS_KIND, ACTIVITY_TABLE, isExprCellText, type ColumnType, type SessionRun } from './editable-tables.js'
 import type { ApplyNode } from './branches.js'
 import { createMidiInput, subscribeWebMidi, type MidiInput, type MidiStore } from './midi.js'
-import { createSliderInput, sliderDefs, sameSliderDefs, type SliderDef, type SliderInput, type SliderStore } from './sliders.js'
+import { createSliderInput, sliderDefs, sameSliderDefs, type SliderDef, type SliderInput } from './sliders.js'
 import { createSliderPanel } from './ui/slider-panel.js'
 import { beatToFrame } from './constants.js'
 import { createTapLog } from './tap-log.js'
@@ -208,11 +208,13 @@ let lastTick = 0
 let rewindBaseline = 0
 let midiEnabled = getMidiEnabled()
 
-const midiStore: MidiStore = {
-  record: (kind, payload) => editableStore.record('midi', kind, payload),
-  events: () => editableStore.log.all().filter((e) => e.table === 'midi'),
+const logTableStore = (table: string): MidiStore => ({
+  record: (kind, payload) => editableStore.record(table, kind, payload),
+  events: () => editableStore.log.all().filter((e) => e.table === table),
   onChange: (cb) => editableStore.onChange(cb),
-}
+})
+
+const midiStore = logTableStore('midi')
 
 const midiInput: MidiInput = createMidiInput({
   store: midiStore,
@@ -233,11 +235,7 @@ if (midiEnabled) ensureMidiSubscription()
 // view. Moves are ordinary "slider" store events, so they sync and persist
 // like any table; with no browser permission to request, the input is created
 // the moment a program defines a slider.
-const sliderStore: SliderStore = {
-  record: (kind, payload) => editableStore.record('slider', kind, payload),
-  events: () => editableStore.log.all().filter((e) => e.table === 'slider'),
-  onChange: (cb) => editableStore.onChange(cb),
-}
+const sliderStore = logTableStore('slider')
 
 let sliderInput: SliderInput | null = null
 
@@ -911,8 +909,9 @@ async function openSession(id: string): Promise<void> {
   setExampleParam(null)
   // Only a genuinely unreadable session aborts the switch; a session whose
   // *program* errors is not corrupt — it still opens (below).
+  const rec = await sessionStore.get(id).catch(() => null)
   try {
-    const events = await sessionStore.load(id)
+    const events = rec?.events
     if (events == null) throw new Error('saved session data is missing')
     const ok = quietly(() => editableStore.load(events))
     if (!ok) throw new Error('saved session data could not be read')
@@ -923,7 +922,7 @@ async function openSession(id: string): Promise<void> {
   currentSessionId = id
   // Restore/derive legacy runs only for a session with no apply nodes — a
   // branching session scrubs its branch path instead.
-  const savedRuns = await sessionStore.runs(id).catch(() => [])
+  const savedRuns = rec?.runs ?? []
   quietly(() => {
     if (editableStore.currentHead() !== null) return
     if (savedRuns.length) editableStore.setRuns(savedRuns)
@@ -931,7 +930,7 @@ async function openSession(id: string): Promise<void> {
   })
   // Reopen on the branch the session was last on (load() defaulted head to
   // the newest apply).
-  const savedHead = await sessionStore.head(id).catch(() => null)
+  const savedHead = rec?.head ?? null
   if (savedHead && savedHead !== editableStore.currentHead() && editableStore.branchTree().nodes.has(savedHead)) {
     quietly(() => editableStore.checkout(savedHead))
   }
@@ -941,7 +940,7 @@ async function openSession(id: string): Promise<void> {
   // Reopen on the table the session was last showing (the panel applies it
   // once that tab exists); a legacy session with no saved table keeps the
   // panel's default tab.
-  const savedTable = await sessionStore.table(id).catch(() => null)
+  const savedTable = rec?.table ?? null
   tablePanel.restoreTable(savedTable)
 
   // Open for editing *before* running: if the program errors when cooked, the
@@ -1146,13 +1145,12 @@ async function bootRoom(room: string): Promise<void> {
   // Restore the locally-persisted copy of the room's log first, then connect
   // (the join snapshot carries it up).
   try {
-    const saved = await sessionStore.load(currentSessionId)
-    if (saved) {
-      quietly(() => editableStore.load(saved))
-      const savedRuns = await sessionStore.runs(currentSessionId).catch(() => [])
+    const rec = await sessionStore.get(currentSessionId)
+    if (rec?.events) {
+      quietly(() => editableStore.load(rec.events))
       quietly(() => {
         if (editableStore.currentHead() !== null) return
-        if (savedRuns.length) editableStore.setRuns(savedRuns)
+        if (rec.runs.length) editableStore.setRuns(rec.runs)
         else editableStore.deriveRunsFromCode()
       })
     }

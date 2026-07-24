@@ -183,7 +183,7 @@ export function withPreview(rows: Row[], preview: { row: number; values: Record<
 
 // A handle tagged with the pass group it belongs to, before sub-lane packing
 // resolves its final `lane`. The `group` is internal — stripped from the
-// public Handle handlesFor returns.
+// public Handle stripLayout returns.
 type RawHandle = Handle & { group: number }
 
 // Every placement's raw handle plus how many pass groups the strip spans.
@@ -289,13 +289,9 @@ function packLanes(raw: RawHandle[], groupCount: number): { base: number[]; lane
   return { base, laneCount: Math.max(1, cursor) }
 }
 
-export function handlesFor(name: string, rows: Row[], columns: EditableColumn[], timelineRows: Row[], loopBeats?: number): Handle[] {
-  const { raw, groupCount } = buildRaw(name, rows, columns, timelineRows, loopBeats)
-  packLanes(raw, groupCount)
-  return raw.map(({ group: _group, ...h }) => h)
-}
-
-export interface LaneLayout {
+export interface StripLayout {
+  // Every placement's public handle, packed lanes written back.
+  handles: Handle[]
   // Total lane bands the strip needs — packed sub-lanes included.
   laneCount: number
   // The first lane of each pass; pass g spans [passBase[g], passBase[g + 1]).
@@ -303,14 +299,14 @@ export interface LaneLayout {
   passBase: number[]
 }
 
-// The lane layout for the open table's handles: how many lane bands (packed
-// sub-lanes and all), and where each pass starts — the coverage shading and
-// pass labels key off passBase so a pass's tint spans exactly its sub-lanes.
-// Recomputes the same handles handlesFor does, so the two never disagree.
-export function laneLayout(name: string, rows: Row[], columns: EditableColumn[], timelineRows: Row[], loopBeats?: number): LaneLayout {
+// The open table's handles and the lane layout they pack into, from one
+// buildRaw + packLanes pass: how many lane bands (packed sub-lanes and all),
+// and where each pass starts — the coverage shading and pass labels key off
+// passBase so a pass's tint spans exactly its sub-lanes.
+export function stripLayout(name: string, rows: Row[], columns: EditableColumn[], timelineRows: Row[], loopBeats?: number): StripLayout {
   const { raw, groupCount } = buildRaw(name, rows, columns, timelineRows, loopBeats)
   const { base, laneCount } = packLanes(raw, groupCount)
-  return { laneCount, passBase: base }
+  return { handles: raw.map(({ group: _group, ...h }) => h), laneCount, passBase: base }
 }
 
 export interface CoverageBand {
@@ -322,7 +318,7 @@ export interface CoverageBand {
 
 // One tinted band per compiled segment, its beats mapped from the extended
 // playback axis (see timeline.ts's compile) onto its own pass's local
-// 0..span axis and tagged with which lane that pass is — mirrors handlesFor's
+// 0..span axis and tagged with which lane that pass is — mirrors stripLayout's
 // content-row wrap. A window that spans a pass boundary (a row in an earlier
 // pass whose next row is a later one) tints the band by its p0's lane; the
 // common case, a pass filled by its own rows, keeps p0 and p1 in one lane.

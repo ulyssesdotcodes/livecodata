@@ -8,7 +8,7 @@
 import { DurableObject } from 'cloudflare:workers'
 import type { StampedEvent } from '../src/event-log.js'
 import { parseClientMessage, type ServerMessage } from '../src/protocol.js'
-import { handleEvents, handleJoin, handleLeave, type Outbound, type RoomLogs } from '../src/room-core.js'
+import { deliverOutbound, handleEvents, handleJoin, handleLeave, type RoomLogs } from '../src/room-core.js'
 
 interface SocketAttachment {
   client: string
@@ -49,13 +49,6 @@ export class Room extends DurableObject {
     }
   }
 
-  private deliver(sender: WebSocket, outbound: Outbound[]): void {
-    for (const o of outbound) {
-      if (o.to === 'sender') this.send(sender, o.msg)
-      else this.broadcast(o.msg, sender)
-    }
-  }
-
   private joinedClient(ws: WebSocket): string | null {
     const attachment = ws.deserializeAttachment() as SocketAttachment | null | undefined
     return attachment?.client ?? null
@@ -86,7 +79,7 @@ export class Room extends DurableObject {
       const result = handleJoin(logs, msg, undefined, hasPeers)
       ws.serializeAttachment({ client: result.clientId } satisfies SocketAttachment)
       if (result.changed) await this.saveLogs(logs)
-      this.deliver(ws, result.outbound)
+      deliverOutbound(result.outbound, (m) => this.send(ws, m), (m) => this.broadcast(m, ws))
       return
     }
 
@@ -95,7 +88,7 @@ export class Room extends DurableObject {
       const logs = await this.getLogs()
       const result = handleEvents(logs, msg)
       if (result.changed) await this.saveLogs(logs)
-      this.deliver(ws, result.outbound)
+      deliverOutbound(result.outbound, (m) => this.send(ws, m), (m) => this.broadcast(m, ws))
     }
   }
 
@@ -105,7 +98,7 @@ export class Room extends DurableObject {
       const logs = await this.getLogs()
       const result = handleLeave(logs, clientId)
       if (result.changed) await this.saveLogs(logs)
-      this.deliver(ws, result.outbound)
+      deliverOutbound(result.outbound, (m) => this.send(ws, m), (m) => this.broadcast(m, ws))
     }
     // Last socket left: drop the room's storage. Each client persisted its
     // own copy locally (main.ts sessionStore), so the next joiner re-seeds it.

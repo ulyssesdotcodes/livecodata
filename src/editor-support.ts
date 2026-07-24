@@ -191,19 +191,21 @@ export interface SymbolCardData {
 }
 export type SymbolCardFactory = (data: SymbolCardData) => { dom: HTMLElement; destroy?: () => void }
 
+// The method-doc table for a `.` at `dotPos`, picked by the chain's root.
+function docsForDot(text: string, dotPos: number): Record<string, DocEntry> {
+  return isThreeDot(text, dotPos) ? THREE_METHOD_DOCS
+    : isExprNamespaceDot(text, dotPos) ? EXPR_NAMESPACE_DOCS
+      : isExprDot(text, dotPos) ? EXPR_METHOD_DOCS
+        : TABLE_METHOD_DOCS
+}
+
 // Curated prose for `name` at `start`: member access picks the method table by
 // the chain's root (the same heuristic the fallback completions use), a bare
 // identifier is a DSL builtin or nothing.
 export function curatedDocFor(text: string, start: number, name: string): DocEntry | null {
   let i = start - 1
   while (i >= 0 && /\s/.test(text[i])) i--
-  if (i >= 0 && text[i] === '.') {
-    const docs = isThreeDot(text, i) ? THREE_METHOD_DOCS
-      : isExprNamespaceDot(text, i) ? EXPR_NAMESPACE_DOCS
-        : isExprDot(text, i) ? EXPR_METHOD_DOCS
-          : TABLE_METHOD_DOCS
-    return docs[name] ?? null
-  }
+  if (i >= 0 && text[i] === '.') return docsForDot(text, i)[name] ?? null
   return DSL_BUILTIN_DOCS[name] ?? null
 }
 
@@ -230,10 +232,7 @@ function heuristicCompletions(context: CompletionContext, makeInfoNode: InfoNode
   const dot = context.matchBefore(/\.\w*/)
   if (dot) {
     const text = context.state.doc.toString()
-    const docs = isThreeDot(text, dot.from) ? THREE_METHOD_DOCS
-      : isExprNamespaceDot(text, dot.from) ? EXPR_NAMESPACE_DOCS
-        : isExprDot(text, dot.from) ? EXPR_METHOD_DOCS
-          : TABLE_METHOD_DOCS
+    const docs = docsForDot(text, dot.from)
     return {
       from: dot.from + 1,
       options: Object.keys(docs).map((label) => {

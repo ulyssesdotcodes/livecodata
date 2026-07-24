@@ -23,42 +23,26 @@ function fakeStorage(): FakeStorage {
   }
 }
 
-test('save then load round-trips the serialized log', async () => {
-  const store = createSessionStore(fakeStorage())
-  await store.save('a', { events: '{"entries":[1]}', tables: ['scene'] })
-  assert.equal(await store.load('a'), '{"entries":[1]}')
-  assert.equal(await store.load('missing'), null)
-})
-
-test('save then runs round-trips the run list; legacy sessions report none', async () => {
+test('save then get round-trips events, runs, head and table; missing reads as null', async () => {
   const store = createSessionStore(fakeStorage())
   const runs = [{ at: 2, tables: { code: 1, nums: 1 } }, { at: 4, tables: { code: 2, nums: 2 } }]
-  await store.save('a', { events: 'e', tables: ['nums'], runs })
-  assert.deepEqual(await store.runs('a'), runs)
+  await store.save('a', { events: '{"entries":[1]}', tables: ['nums'], runs, head: 'a12xyz', table: 'path' })
+  const rec = await store.get('a')
+  assert.equal(rec?.events, '{"entries":[1]}')
+  assert.deepEqual(rec?.runs, runs)
+  assert.equal(rec?.head, 'a12xyz')
+  assert.equal(rec?.table, 'path')
 
-  await store.save('b', { events: 'e' }) // no runs supplied — a legacy/empty session
-  assert.deepEqual(await store.runs('b'), [])
-  assert.deepEqual(await store.runs('missing'), [])
+  assert.equal(await store.get('missing'), null)
 })
 
-test('save then head round-trips the branch head; absent reads as null', async () => {
+test('a legacy session reads back empty runs and null head/table', async () => {
   const store = createSessionStore(fakeStorage())
-  await store.save('a', { events: 'e', head: 'a12xyz' })
-  assert.equal(await store.head('a'), 'a12xyz')
-
-  await store.save('b', { events: 'e' }) // no head — legacy/single-branch session
-  assert.equal(await store.head('b'), null)
-  assert.equal(await store.head('missing'), null)
-})
-
-test('save then table round-trips the shown tab; absent reads as null', async () => {
-  const store = createSessionStore(fakeStorage())
-  await store.save('a', { events: 'e', table: 'path' })
-  assert.equal(await store.table('a'), 'path')
-
-  await store.save('b', { events: 'e' }) // no table — legacy session
-  assert.equal(await store.table('b'), null)
-  assert.equal(await store.table('missing'), null)
+  await store.save('b', { events: 'e' }) // no runs/head/table — a legacy/empty session
+  const rec = await store.get('b')
+  assert.deepEqual(rec?.runs, [])
+  assert.equal(rec?.head, null)
+  assert.equal(rec?.table, null)
 })
 
 test('save upserts: same id updates in place and preserves createdAt', async () => {
@@ -66,7 +50,7 @@ test('save upserts: same id updates in place and preserves createdAt', async () 
   const first = await store.save('a', { events: 'v0', tables: ['x'] })
   const second = await store.save('a', { events: 'v1', tables: ['x', 'y'] })
   assert.equal((await store.list()).length, 1, 'one record, not two')
-  assert.equal(await store.load('a'), 'v1')
+  assert.equal((await store.get('a'))?.events, 'v1')
   assert.equal(second.createdAt, first.createdAt, 'createdAt preserved across updates')
   assert.ok(second.updatedAt >= first.updatedAt, 'updatedAt advances')
 })
@@ -89,7 +73,7 @@ test('rename sets the name; a later save preserves it', async () => {
 
   await store.save('a', { events: 'v1', tables: ['x'] })
   assert.equal((await store.list())[0].name, 'my jam', 'name survives an ordinary save')
-  assert.equal(await store.load('a'), 'v1', 'the save still landed')
+  assert.equal((await store.get('a'))?.events, 'v1', 'the save still landed')
 })
 
 test('remove deletes a single session', async () => {
@@ -97,8 +81,8 @@ test('remove deletes a single session', async () => {
   await store.save('a', { events: 'a' })
   await store.save('b', { events: 'b' })
   await store.remove('a')
-  assert.equal(await store.load('a'), null)
-  assert.equal(await store.load('b'), 'b')
+  assert.equal(await store.get('a'), null)
+  assert.equal((await store.get('b'))?.events, 'b')
   assert.equal((await store.list()).length, 1)
 })
 
@@ -110,7 +94,7 @@ test('survives an empty, missing, or corrupt store without throwing', async () =
   assert.deepEqual(await createSessionStore(corrupt).list(), [], 'corrupt → empty list')
   const store = createSessionStore(corrupt)
   await store.save('a', { events: 'a', tables: [] })
-  assert.equal(await store.load('a'), 'a')
+  assert.equal((await store.get('a'))?.events, 'a')
 })
 
 test('a failed write rejects rather than losing data silently', async () => {
@@ -125,6 +109,6 @@ test('a new store instance sees sessions persisted by another (same storage)', a
   const storage = fakeStorage()
   await createSessionStore(storage).save('a', { events: 'a', tables: ['t'] })
   const reopened = createSessionStore(storage)
-  assert.equal(await reopened.load('a'), 'a')
+  assert.equal((await reopened.get('a'))?.events, 'a')
   assert.deepEqual((await reopened.list()).map((s) => s.id), ['a'])
 })

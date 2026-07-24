@@ -86,9 +86,15 @@ function TablePanelView(props: PanelProps) {
   const [tick, setTick] = createSignal(0)
   const bump = () => setTick((t) => t + 1)
 
-  // A Run can change the store underneath the panel (see retainDeclared), but
-  // only local edits bump `tick` — so pair every external `views` refresh
-  // with a bump or tick-gated store reads would show the pre-Run shape.
+  // store.onChange has no unsubscribe; this view is mounted once for the
+  // app's lifetime, so one subscription for life is fine (mirrors
+  // ui/timeline-strip.tsx's own tick).
+  store.onChange(bump)
+
+  // A Run can change `views` without ever writing to the store (a recomputed,
+  // non-editable table), so store.onChange alone can miss it — pair every
+  // external `views` refresh with a bump too, or tick-gated store reads would
+  // show the pre-Run shape.
   createEffect(on(views, () => bump(), { defer: true }))
 
   const [filter, setFilter] = createSignal('')
@@ -435,7 +441,6 @@ function TablePanelView(props: PanelProps) {
       const v = value.trim()
       if (v && v !== col.name) store.renameColumn(table, col.name, v)
       setRenaming(false)
-      bump()
     }
 
     // Measured after opening so a menu near the viewport's right edge clamps
@@ -490,10 +495,7 @@ function TablePanelView(props: PanelProps) {
                 Type
                 <select
                   class="col-type-select"
-                  onChange={(e) => {
-                    store.setColumnType(table, col.name, e.currentTarget.value as ColumnType)
-                    bump()
-                  }}
+                  onChange={(e) => store.setColumnType(table, col.name, e.currentTarget.value as ColumnType)}
                 >
                   <For each={COLUMN_TYPES}>
                     {(t) => <option value={t} selected={t === col.type}>{t}</option>}
@@ -507,7 +509,7 @@ function TablePanelView(props: PanelProps) {
               </label>
               <button
                 class="settings-row col-del-btn"
-                onClick={() => { store.removeColumn(table, col.name); bump() }}
+                onClick={() => store.removeColumn(table, col.name)}
               >
                 Remove column
               </button>
@@ -526,7 +528,6 @@ function TablePanelView(props: PanelProps) {
       const colName = nameInput?.value.trim()
       if (colName) store.addColumn(colProps.table, colName, (typeSel?.value ?? 'number') as ColumnType)
       setAdding(false)
-      bump()
     }
     return (
       <th class="add-col-head">
@@ -579,7 +580,6 @@ function TablePanelView(props: PanelProps) {
       if (viaBlur && key === focusGuardKey) return
       store.setCell(table, rowIndex, col.name, value)
       setEditingCell(null)
-      bump()
     }
 
     const keyHandler = (e: KeyboardEvent, commitNow: () => void): void => {
@@ -639,7 +639,7 @@ function TablePanelView(props: PanelProps) {
           <select
             class="cell-enum"
             value={raw() == null ? '' : String(raw())}
-            onChange={(e) => { store.setCell(table, rowIndex, col.name, e.currentTarget.value); bump() }}
+            onChange={(e) => store.setCell(table, rowIndex, col.name, e.currentTarget.value)}
           >
             {/* A stray value not in the options still shows, flagged, until a
                 valid pick. */}
@@ -817,7 +817,6 @@ function TablePanelView(props: PanelProps) {
       const v = value.trim()
       if (v && v !== name && store.renameTable(name, v) && untrack(current) === name) setCurrent(v)
       setRenaming(false)
-      bump()
     }
     const viewers = () => viewersOf(presence(), name)
     const ringStyle = () => tabRingStyle(presence(), name)
@@ -851,7 +850,6 @@ function TablePanelView(props: PanelProps) {
                     e.stopPropagation()
                     store.removeTable(name)
                     if (untrack(current) === name) setCurrent(null)
-                    bump()
                   }}
                 >
                   ×
@@ -948,7 +946,6 @@ function TablePanelView(props: PanelProps) {
               const name = nextTableName(untrack(views), store)
               store.createTable(name)
               setCurrent(name)
-              bump()
             }}
           >
             <Icon name="plus" />
@@ -1086,7 +1083,7 @@ function TablePanelView(props: PanelProps) {
                               class="row-dup-btn"
                               title="Duplicate row"
                               aria-label="Duplicate row"
-                              onClick={() => { store.duplicateRow(ed().name, i); bump() }}
+                              onClick={() => store.duplicateRow(ed().name, i)}
                             >
                               ⧉
                             </button>
@@ -1094,7 +1091,7 @@ function TablePanelView(props: PanelProps) {
                               class="row-del-btn"
                               title="Delete row"
                               aria-label="Delete row"
-                              onClick={() => { store.removeRow(ed().name, i); bump() }}
+                              onClick={() => store.removeRow(ed().name, i)}
                             >
                               ×
                             </button>
@@ -1116,7 +1113,7 @@ function TablePanelView(props: PanelProps) {
           <div class="edit-toolbar" style={{ display: 'flex' }}>
             <button
               class="add-row-btn"
-              onClick={() => { store.addRow(editableData()!.name); bump() }}
+              onClick={() => store.addRow(editableData()!.name)}
             >
               + row
             </button>

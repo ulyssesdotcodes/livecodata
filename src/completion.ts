@@ -56,19 +56,26 @@ export function chainRoot(text: string, dotPos: number): string | null {
   return null
 }
 
+// The identifier immediately left of the dot at `dotPos`, and whether that
+// identifier is itself a member access (preceded by another dot). The one
+// backward scan isThreeDot/isExprNamespaceDot both dispatch on.
+function identBeforeDot(text: string, dotPos: number): { name: string; isMember: boolean } | null {
+  let i = dotPos - 1
+  while (i >= 0 && isWs(text[i])) i--
+  if (i < 0 || !isIdentChar(text[i])) return null // a call/index close, not a bare member
+  const end = i
+  while (i >= 0 && isIdentChar(text[i])) i--
+  const name = text.slice(i + 1, end + 1)
+  while (i >= 0 && isWs(text[i])) i--
+  return { name, isMember: i >= 0 && text[i] === '.' }
+}
+
 // The dot right after the bare `expr` global (namespace member access, offers
 // field/lit/midi/…) — as opposed to a dot later in the chain, which is on an
 // Expr value and offers the Expr methods.
 export function isExprNamespaceDot(text: string, dotPos: number): boolean {
-  let i = dotPos - 1
-  while (i >= 0 && isWs(text[i])) i--
-  if (i < 0 || !isIdentChar(text[i])) return false
-  const end = i
-  while (i >= 0 && isIdentChar(text[i])) i--
-  if (text.slice(i + 1, end + 1) !== 'expr') return false
-  // A bare global, not a member access named expr.
-  while (i >= 0 && isWs(text[i])) i--
-  return i < 0 || text[i] !== '.'
+  const r = identBeforeDot(text, dotPos)
+  return r !== null && r.name === 'expr' && !r.isMember
 }
 
 export function isExprDot(text: string, dotPos: number): boolean {
@@ -123,15 +130,9 @@ export function completionBoost(sortText: string, tsKind: string, hasCuratedDoc:
 
 // True when the "." at `dotPos` follows a table's `.three` accessor (e.g.
 // `box().three.`), so the dot offers the three animators instead of the
-// ordinary table methods.
+// ordinary table methods. Must be a member access (`.three`), not a stray
+// identifier named three.
 export function isThreeDot(text: string, dotPos: number): boolean {
-  let i = dotPos - 1
-  while (i >= 0 && isWs(text[i])) i--
-  if (i < 0 || !isIdentChar(text[i])) return false // a call/index close, not a bare member
-  const end = i
-  while (i >= 0 && isIdentChar(text[i])) i--
-  if (text.slice(i + 1, end + 1) !== 'three') return false
-  // Must be a member access (`.three`), not a stray identifier named three.
-  while (i >= 0 && isWs(text[i])) i--
-  return i >= 0 && text[i] === '.'
+  const r = identBeforeDot(text, dotPos)
+  return r !== null && r.name === 'three' && r.isMember
 }
