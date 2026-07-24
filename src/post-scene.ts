@@ -237,17 +237,51 @@ export function initPost(three: { renderer: THREE.WebGPURenderer; scene: THREE.S
           return t.vec4(tex.sample(uvN.add(t.vec2(q, 0))).r, tex.sample(uvN).g, tex.sample(uvN.sub(t.vec2(q, 0))).b, 1)
         }
         case 'transition': {
-          const pos = live(liveInit(op, 0))
-          const threshold = op.args[1].value as number
-          const useTexture = op.args[2].value as number
-          const before = t.convertToTexture(build(op.chainArgs![0]))
-          const after = t.convertToTexture(build(op.chainArgs![1]))
-          if (useTexture) {
-            const mask = t.convertToTexture(build(op.chainArgs![2]))
-            const f = t.smoothstep(pos.sub(threshold), pos.add(threshold), t.luminance(t.vec3(mask)))
-            return t.mix(after, before, f)
-          }
-          return t.mix(before, after, pos)
+          // Per-pixel mask mix: black keeps before, white shows after. Build in
+          // chainArg order (before, after, mask) to align live uniforms.
+          const before = t.vec4(build(op.chainArgs![0]))
+          const after = t.vec4(build(op.chainArgs![1]))
+          const l = t.luminance(t.vec3(build(op.chainArgs![2])))
+          return t.mix(before, after, l)
+        }
+        case 'fill':
+          return t.vec4(t.vec3(live(liveInit(op, 0))), 1)
+        case 'gradient': {
+          const angle = live(liveInit(op, 0))
+          const d = t.vec2(t.cos(angle), t.sin(angle))
+          const l = t.clamp(t.dot(t.uv().sub(0.5), d).add(0.5), 0, 1)
+          return t.vec4(t.vec3(l), 1)
+        }
+        case 'noise': {
+          const scale = live(liveInit(op, 0))
+          const cell = t.uv().mul(scale).floor()
+          const n = t.fract(t.sin(t.dot(cell, t.vec2(12.9898, 78.233))).mul(43758.5453))
+          return t.vec4(t.vec3(n), 1)
+        }
+        case 'stripes': {
+          const count = live(liveInit(op, 0))
+          const angle = live(liveInit(op, 1))
+          const d = t.vec2(t.cos(angle), t.sin(angle))
+          const l = t.dot(t.uv().sub(0.5), d).add(0.5).mul(count).fract()
+          return t.vec4(t.vec3(l), 1)
+        }
+        case 'thresh': {
+          const edge = live(liveInit(op, 0))
+          const soft = live(liveInit(op, 1))
+          const l = t.luminance(t.vec3(input.rgb))
+          const f = t.smoothstep(edge.sub(soft.mul(0.5)), edge.add(soft.mul(0.5)), l)
+          return t.vec4(t.vec3(f), 1)
+        }
+        case 'polar': {
+          const cx = live(liveInit(op, 0))
+          const cy = live(liveInit(op, 1))
+          const tex = t.convertToTexture(input)
+          const centre = t.vec2(cx, cy)
+          const d = t.uv().sub(centre)
+          const far = t.max(centre, t.vec2(1, 1).sub(centre))
+          const r = t.length(d).div(t.length(far))
+          const a = t.atan(d.y, d.x).mul(0.15915494).add(0.5)
+          return tex.sample(t.vec2(r, a))
         }
         // Combines (blend has a live amount; the rest composite raw).
         case 'blend':

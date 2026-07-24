@@ -2096,6 +2096,36 @@ html, body {
   filter: brightness(1.35);
 }
 
+/* Connector for an eased setVariable glide: a thin dashed line from the
+   previous same-name point to the arriving one, laid out over the lane band so
+   its mid-line meets both point dots. Its own layer (not a span-end arrowhead)
+   since the endpoints are separate point handles. */
+.timeline-strip-glide {
+  position: absolute;
+  pointer-events: none;
+}
+
+.timeline-strip-glide::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 5px;
+  top: 50%;
+  border-top: 1px dashed #4a9eff;
+}
+
+/* Arrowhead at the arriving (right) end — ease-on-arrival, mirroring the fold
+   transition arrow's triangle. */
+.timeline-strip-glide-arrow {
+  position: absolute;
+  right: -1px;
+  top: 50%;
+  transform: translateY(-50%);
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-right: 5px solid #4a9eff;
+}
+
 /* Ghost: a later placement of a row a loop event plays more than once — not
    the primary click target, so it reads as translucent. */
 .timeline-strip-handle-ghost {
