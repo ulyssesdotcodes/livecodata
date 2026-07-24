@@ -155,9 +155,12 @@ export function createHydraVisualizer(hydraAPI: HydraAPI): Visualizer {
         const vars = ctx ? resolveBindings(sketch.vars, ctx) : sketch.vars
         const sliders = ctx?.sliders?.()
         // $midi lets expr.midi() dynamic args sample the playhead's MIDI
-        // ($-prefix reserved, like $expr).
+        // ($-prefix reserved, like $expr); loop is the expr.loop() counter,
+        // merged after the user vars (like hydra's own clock fields) so a
+        // same-named variable can't hide it.
         const midi = ctx?.midi ? { $midi: ctx.midi } : {}
-        hydraAPI.setSketch(sliders ? { ...sketch, vars: { sliders, ...midi, ...vars } } : (ctx ? { ...sketch, vars: { ...midi, ...vars } } : sketch))
+        const loop = ctx?.loop ? { loop: ctx.loop() } : {}
+        hydraAPI.setSketch(ctx ? { ...sketch, vars: { ...(sliders ? { sliders } : {}), ...midi, ...vars, ...loop } } : sketch)
       } else {
         hydraAPI.setSketch(sketch)
       }
@@ -250,7 +253,7 @@ export function createPostVisualizer(postAPI: PostAPI): Visualizer {
         // under pause/scrub.
         const vars = ctx ? resolveBindings(frame.vars, ctx) : frame.vars
         const sliders = ctx?.sliders?.()
-        const clock = { time: frameF / FPS, beat: frameToBeat(frameF), bpm: bpm ?? 60 / DEFAULT_BEAT_SECONDS }
+        const clock = { time: frameF / FPS, beat: frameToBeat(frameF), bpm: bpm ?? 60 / DEFAULT_BEAT_SECONDS, loop: ctx?.loop ? ctx.loop() : 0 }
         // $midi lets expr.midi() live args sample the playhead's MIDI ($-prefix
         // reserved, like $expr — a user var can't collide).
         const midi = ctx?.midi ? { $midi: ctx.midi } : {}

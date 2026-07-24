@@ -346,9 +346,15 @@ export function createPlaybackEngine(
     const srcFrame = Math.round(srcFrameF)
     const midiCtx = midiCtxAt ? midiCtxAt(srcFrame) : null
     const sliderCtx = sliderCtxAt ? sliderCtxAt(srcFrame) : null
-    // Always present so time() bindings resolve even with no midi/slider
-    // stream; the clock is the source position, so scrubbing scrubs it.
-    const ctx: EvalCtx = { ...midiCtx, ...sliderCtx, time: () => srcFrameF / FPS }
+    // Always present so time()/loop() bindings resolve even with no midi/slider
+    // stream; the clock is the source position, so scrubbing scrubs it. loop()
+    // counts whole passes since the playback origin (the activity log's
+    // session-start, via tapControl.anchor) — passesSince from the origin is
+    // that count, and it rides the same wall-aligned/pause-shifted grid as the
+    // multi-loop pass math, so synced clients and replays agree. Fixed for the
+    // frame, so it's computed once here rather than per binding.
+    const loopNow = passesSince(tapControl?.anchor?.() ?? 0)
+    const ctx: EvalCtx = { ...midiCtx, ...sliderCtx, time: () => srcFrameF / FPS, loop: () => loopNow }
     const states: Row[] = []
     const loopFrames = beatsToFrames(loopBeats)
     const bpm = tappedBpm() ?? 60 / DEFAULT_BEAT_SECONDS

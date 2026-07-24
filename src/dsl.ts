@@ -45,6 +45,9 @@ export type ExprNode =
   // Percent-done of the enclosing event: substituted with a literal where the
   // row's timing is known (substituteExpr); unsubstituted it reads as 1.
   | { k: 'progress' }
+  // Whole loops elapsed since the session start (0 on the first pass) — a live
+  // per-frame source like time, read from the playback clock.
+  | { k: 'loop' }
 
 // The math functions a { k: 'call' } node can name — the single source of
 // truth feeding evalExpr, the "=" cell scope (expr-cell.ts), and the editor
@@ -188,6 +191,8 @@ export const time = (): Expr => new Expr({ k: 'time' })
 
 export const progress = (): Expr => new Expr({ k: 'progress' })
 
+export const loop = (): Expr => new Expr({ k: 'loop' })
+
 export const callExpr = (fn: string, args: ExprInput[]): Expr =>
   new Expr({ k: 'call', fn, args: args.map(toNode) })
 
@@ -200,13 +205,15 @@ export interface EvalCtx {
   // Playback seconds at the playhead — the same clock hydra/post chains see,
   // so pausing/scrubbing freezes/scrubs it.
   time?: () => number
+  // Whole loops elapsed since the session start (0 on the first pass).
+  loop?: () => number
 }
 
 // True if the node reads a streaming source and so must be carried as a
 // binding and evaluated per frame rather than at bake time.
 export function isStreamingNode(n: ExprNode): boolean {
   switch (n.k) {
-    case 'midi': case 'slider': case 'time': case 'progress': return true
+    case 'midi': case 'slider': case 'time': case 'progress': case 'loop': return true
     case 'field': case 'lit': case 'idx': return false
     case 'not': return isStreamingNode(n.a)
     case 'bin': case 'cmp': case 'logic': return isStreamingNode(n.a) || isStreamingNode(n.b)
@@ -231,6 +238,7 @@ export function evalExpr(n: ExprNode, row: Row, i: number, ctx?: EvalCtx): unkno
     case 'midi': return ctx?.midi ? ctx.midi(n.note, n.channel) : 0
     case 'slider': return ctx?.slider ? ctx.slider(n.id) : 0
     case 'time': return ctx?.time ? ctx.time() : 0
+    case 'loop': return ctx?.loop ? ctx.loop() : 0
     case 'bin': {
       const a = evalExpr(n.a, row, i, ctx) as number
       const b = evalExpr(n.b, row, i, ctx) as number
@@ -1556,6 +1564,16 @@ export interface ExprNamespace {
    * e.g. "=progress().mul(expr.tau).sin()" shapes a setVariable's own sweep.
    */
   progress(): Expr
+  /**
+   * How many whole loops have elapsed since the session started — 0 during the
+   * first pass, 1 during the second, and so on. "Start" is the session's origin
+   * on the activity log (the same beat-0 the wall-aligned grid anchors to), so
+   * every synced client and a scrub or replay agree on the count, and pausing
+   * doesn't advance it. Live: resolves each frame, e.g.
+   * derive({ hue: expr.loop().mul(0.1) }) shifts color every loop, and
+   * expr.loop().mod(4) cycles through four states.
+   */
+  loop(): Expr
   /** The smaller of `a` and `b` — expr.min(expr.slider("a"), 1). Also chainable: a.min(b). */
   min(a: Expr | number, b: Expr | number): Expr
   /** The larger of `a` and `b`. Also chainable: a.max(b). */
@@ -1583,7 +1601,7 @@ export interface ExprNamespace {
 // surface; only slider() differs by ctx (a null ctx reads without declaring).
 export function makeExprNamespace(ctx: Pick<DSLContext, 'defineSlider'> | null): ExprNamespace {
   return {
-    field, lit, idx, midi, time, progress,
+    field, lit, idx, midi, time, progress, loop,
     slider: (id: string, min?: number, max?: number): Expr => {
       ctx?.defineSlider?.(String(id), min, max)
       return slider(id)

@@ -25,6 +25,13 @@ test('"=" text: streaming exprs bake to bindings, constants to numbers', () => {
   assert.equal(evalExprCell('=2 * 3', {}, 0).value, 6, 'a plain number result passes through')
 })
 
+test('"=" text: loop() is a bare streaming source resolving to ctx.loop', () => {
+  const s = evalExprCell('=loop().mul(2)', {}, 0)
+  assert.equal(s.streaming, true)
+  assert.ok(isBinding(s.value))
+  assert.equal(evalExpr((s.value as Binding).$expr, {}, 0, { loop: () => 3 }), 6)
+})
+
 test('broken text is invalid and the cook writes the column default', () => {
   assert.equal(checkExprCell('=nope(').valid, false)
   assert.equal(checkExprCell('=noSuchFn(1)').valid, false)

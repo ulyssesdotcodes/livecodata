@@ -210,7 +210,7 @@ test('expr cells: the "=" surface completes bare sources and chain methods', () 
   const bare = exprSvc.completionsAt('sl', 2)
   assert.ok(bare)
   const bareNames = bare.entries.map((e) => e.name)
-  for (const m of ['slider', 'sin', 'progress', 'clamp', 'tau', 'field']) {
+  for (const m of ['slider', 'sin', 'progress', 'loop', 'clamp', 'tau', 'field']) {
     assert.ok(bareNames.includes(m), `expected bare ${m} in the expr surface`)
   }
   assert.ok(!bareNames.includes('table'), 'DSL surface must not leak into expr cells')

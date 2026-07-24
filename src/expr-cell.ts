@@ -28,7 +28,7 @@ const plainNs = makeExprNamespace(null)
 // wrapper (sin(x) ≡ x.sin()), then the sources/constants and the expr
 // namespace itself. Order is the call convention — append only.
 const FN_NAMES = Object.keys(EXPR_FNS)
-const SOURCE_NAMES = ['field', 'lit', 'idx', 'midi', 'slider', 'time', 'progress', 'pi', 'tau', 'e', 'expr']
+const SOURCE_NAMES = ['field', 'lit', 'idx', 'midi', 'slider', 'time', 'progress', 'pi', 'tau', 'e', 'expr', 'loop']
 const SCOPE_NAMES = [...FN_NAMES, ...SOURCE_NAMES]
 
 const scopeCache = new WeakMap<ExprNamespace, unknown[]>()
@@ -36,7 +36,7 @@ function scopeValues(ns: ExprNamespace): unknown[] {
   const hit = scopeCache.get(ns)
   if (hit) return hit
   const values: unknown[] = FN_NAMES.map((name) => (...args: (Expr | number)[]) => callExpr(name, args))
-  values.push(ns.field, ns.lit, ns.idx, ns.midi, ns.slider, ns.time, ns.progress, ns.pi, ns.tau, ns.e, ns)
+  values.push(ns.field, ns.lit, ns.idx, ns.midi, ns.slider, ns.time, ns.progress, ns.pi, ns.tau, ns.e, ns, ns.loop)
   scopeCache.set(ns, values)
   return values
 }
@@ -124,6 +124,7 @@ function propsEvalCtx(p: Record<string, unknown>): EvalCtx {
       return typeof s === 'number' ? s : 0
     },
     time: () => (typeof p.time === 'number' ? p.time : 0),
+    loop: () => (typeof p.loop === 'number' ? p.loop : 0),
     ...(typeof p.$midi === 'function' ? { midi: p.$midi as EvalCtx['midi'] } : {}),
   }
 }

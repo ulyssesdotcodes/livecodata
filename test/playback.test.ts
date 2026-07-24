@@ -31,10 +31,10 @@ import {
   createPlaybackEngine, pausedMsBefore, transportStateFromEvents, playbackOrigin,
   type PlaybackEngine, type TapControl,
 } from '../src/playback.js'
-import { createSceneVisualizer, createHydraVisualizer } from '../src/visualizer.js'
+import { createSceneVisualizer, createHydraVisualizer, type Visualizer } from '../src/visualizer.js'
 import { rasterizeRows } from '../src/rasterize.js'
 import { DEFAULT_BEAT_SECONDS, DEFAULT_LOOP_BEATS } from '../src/constants.js'
-import { Table, time as timeExpr } from '../src/dsl.js'
+import { Table, time as timeExpr, type EvalCtx } from '../src/dsl.js'
 import type { Row } from '../src/lineage.js'
 
 function fakeScene() {
@@ -407,6 +407,32 @@ test('passesSince (multi-pass content) is unaffected by a pause spanning the loo
   time.advance(2000)
   time.frame()
   assert.equal(sketches.at(-1), 'b.out(o0)', 'exactly pass 1, matching one loop of musical (not wall) time elapsed')
+})
+
+test('the engine feeds ctx.loop() — whole loops since the origin (activity-log start)', () => {
+  const time = fakeTime(1000) // session start (origin) at epoch 1000
+  let seen: EvalCtx | null = null
+  const capture: Visualizer = {
+    load(): void {},
+    hasContent: () => true,
+    applyFrame(frame): Row[] { seen = frame.ctx; return [] },
+    clear(): void {},
+    blank(): void {},
+  }
+  const engine = createPlaybackEngine([capture], {
+    clock: time.clock,
+    // main.ts wires tapControl.anchor to playbackOrigin over the activity log;
+    // here the origin (earliest session-start) is epoch 1000.
+    tapControl: { tap(): void {}, clear(): void {}, rows: () => [], anchor: () => 1000 },
+  })
+  engine.load({ sceneRows: [], timelineRows: [], hydraRows: HYDRA_ROWS })
+  engine.toggle() // play from the origin
+  assert.equal(seen!.loop!(), 0, 'the first pass is loop 0')
+  // The default 16-beat loop at 0.5 s/beat spans 8s of wall time per pass.
+  time.advance(8000); time.frame()
+  assert.equal(seen!.loop!(), 1, 'one whole loop elapsed')
+  time.advance(8000); time.frame()
+  assert.equal(seen!.loop!(), 2, 'two whole loops elapsed')
 })
 
 // --- wallAlignedLoop — the quotient companion to wallAlignedTick -------------
