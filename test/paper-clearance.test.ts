@@ -103,6 +103,37 @@ test('table folding: parity chains across steps and starts face-up', () => {
   }
 })
 
+test('every fold swings toward the viewer (paper on a table, folder looking down)', () => {
+  // the user-facing contract behind the parity flips: at the apex of each
+  // step's swing, the paper that moves sits ABOVE where it sat once any
+  // turn-over finished — never folding away behind the model. Measured on
+  // the displayed positions, the exact frames playback draws. The final held
+  // pose (to < 1 — the crane's wings) is exempt: the finished model lifts
+  // into 3D and its flaps legitimately spread both ways.
+  for (const [name, rows] of [['crane', CRANE_ROWS], ['cicada', CICADA_ROWS]] as const) {
+    const program = compileFoldTable(rows, { size: 1 })
+    for (let k = 0; k < program.steps.length; ++k) {
+      const step = program.steps[k]
+      if (step.to < 1) continue
+      const flips = step.flipFrom !== step.flipTo
+      const base = foldTablePositions(program, k + (flips ? 0.32 : 0.02) * step.to)
+      let apex = 0
+      for (const tRaw of flips ? [0.5, 0.65, 0.8] : [0.25, 0.5, 0.75]) {
+        const { pos } = foldTablePositions(program, k + tRaw * step.to)
+        for (let v = 0; v < pos.length; ++v) {
+          const moved = Math.hypot(
+            pos[v][0] - base.pos[v][0], pos[v][1] - base.pos[v][1], pos[v][2] - base.pos[v][2])
+          if (moved < 0.05) continue
+          const dz = pos[v][2] - base.pos[v][2]
+          if (Math.abs(dz) > Math.abs(apex)) apex = dz
+        }
+      }
+      assert.ok(apex > 0,
+        `${name} step "${step.name}": swing apex ${apex.toFixed(3)} should rise toward the viewer`)
+    }
+  }
+})
+
 test('a fold whose flap hinge leaves the line is rejected, not stretched', () => {
   // the cicada wing rows as first authored: the crease misses the corner
   // where the flap boundary meets static paper by 0.05 — the old engine
