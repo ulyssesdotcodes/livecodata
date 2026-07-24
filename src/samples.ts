@@ -363,19 +363,19 @@ rows([
 editable("origami", schemas.origami)
 
 // Feed the fold table to a sheet of paper, colored side DOWN (backColor)
-// the way a crane is folded so the finished bird comes out colored. ry
-// turns the sheet over to face you — half a turn about the up/down axis,
-// as if watching the fold from under a glass table — so every fold swings
-// toward the camera instead of away. The fold value is one number: how
-// many folds have landed (fractions = the next flap mid-swing), so
-// scrubbing the timeline scrubs the folding. .outThree() routes the create
-// row + fold keyframes to the 3D scene (the "three (system)" tab), and
-// playback bakes the per-frame cache automatically. The keyframes span
-// about 52 beats — four passes of the 16-beat loop: the paper folds itself
-// across the first three and a bit, holds the finished crane, then opens
-// flat and folds itself all over again.
+// the way a crane is folded so the finished bird comes out colored. Every
+// fold swings toward you on its own — the engine keeps the paper flat on
+// the table and turns it over whenever the next fold would dip away. The
+// fold value is one number: how many folds have landed (fractions = the
+// next flap mid-swing), so scrubbing the timeline scrubs the folding.
+// .outThree() routes the create row + fold keyframes to the 3D scene (the
+// "three (system)" tab), and playback bakes the per-frame cache
+// automatically. The keyframes span about 52 beats — four passes of the
+// 16-beat loop: the paper folds itself across the first three and a bit,
+// holds the finished crane, then opens flat and folds itself all over
+// again.
 const paper = origami().steps(table("origami"))
-paper.spawn({ id: "crane", color: 0xf4efe2, backColor: 0xd94f2a, pz: 1.2, ry: Math.PI, rz: 2.356 })
+paper.spawn({ id: "crane", color: 0xf4efe2, backColor: 0xd94f2a, pz: 1.2, rz: 2.356 })
   .concat(paper.sequence())
   .outThree()
 

@@ -553,9 +553,22 @@ export const compileFoldTable = (
       throw e
     }
     const soft = bakeMotion(out, spec, reverses, priorLines, scale, size, parity)
-    // a fold acting on the underside turns the model over first; mechanism
-    // steps open upward off their anchored bottom cover, so they never flip
-    const down = soft?.zDirs ? false : foldsDown(out)
+    // the paper lies on a table and the folder looks down: every swing must
+    // rise toward the viewer. Measure the apex of the motion that will
+    // actually play and turn the model over first when it would dip — the
+    // parity while the fold plays mirrors z, so the sign picks it outright.
+    // Mechanism steps never flip: their anchor is already probed (bakeMotion)
+    // to open toward the viewer under the running parity.
+    const stepMotion: StepMotion = {
+      Vfrom: out.anim.Vfrom.map(toDisplay),
+      line: lineToDisplay(out.anim.line),
+      moving: out.anim.moving,
+      dirs: out.anim.dirs,
+      FV: out.state.FV,
+      soft,
+    }
+    const apex = soft?.zDirs ? 0 : swingApex(stepMotion, spec.to)
+    const flipTo = apex === 0 ? parity : apex > 0 ? 0 : 1
     steps.push({
       name: spec.name,
       type: out.type,
@@ -563,15 +576,15 @@ export const compileFoldTable = (
       t1: spec.beat + spec.dur,
       to: spec.to,
       FV: out.state.FV.map((F) => [...F]),
-      Vfrom: out.anim.Vfrom.map(toDisplay),
-      line: lineToDisplay(out.anim.line),
+      Vfrom: stepMotion.Vfrom,
+      line: stepMotion.line,
       moving: out.anim.moving,
       layers: out.state.layers,
       layersFrom: out.anim.layersFrom,
       dirs: out.anim.dirs,
       soft,
       flipFrom: parity,
-      flipTo: down ? parity ^ 1 : parity,
+      flipTo,
     })
     parity = steps[steps.length - 1].flipTo
     const rec = reverseRecordOf(out)
@@ -668,7 +681,7 @@ const bakeStep = (out: FoldOutcome, scale: number): { frames: number; pos: numbe
 // no-op safety net.
 const bakeMech = (
   out: FoldOutcome, reverses: ReverseRecord[], pageLines: Line[], scale: number,
-  parity: number,
+  anchor: 'a' | 'b',
 ): { frames: number; pos: number[]; zDirs: number[] } | undefined => {
   const mech = buildReverseMech(out, reverses, pageLines)
   if (!mech) return undefined
@@ -678,9 +691,7 @@ const bakeMech = (
   // vertices. Shallow collapses keep the exact full-open motion.
   const betaCap = mech.slavePairs > 0 && out.state.FV.length > SOFT_MAX_FACES
     ? MECH_BETA_CAP : undefined
-  // the cover facing the table stays flat: the engine's b side dips when
-  // the display is face-up, a when flipped
-  const baked = mech.frames(MECH_FRAMES, { anchor: parity ? 'a' : 'b', betaCap })
+  const baked = mech.frames(MECH_FRAMES, { anchor, betaCap })
   if (baked.pos.length < MECH_FRAMES) return undefined
   const nv = out.state.sheet.length
   const pos: number[] = []
@@ -832,26 +843,33 @@ const bakePassesGate = (
   return bakedMotionDepth(FV, frames) <= budget * size
 }
 
-// area-weighted vote over the moving faces of the side each swings toward
-// (sense × side of the line)
-const foldsDown = (out: FoldOutcome): boolean => {
-  const { FV, sheet } = out.state
-  const { Vfrom, moving, dirs, line } = out.anim
-  const [u, d] = line
-  let v = 0
-  FV.forEach((F, fi) => {
-    if (!moving[fi] || dirs[fi] === 0) return
-    let cx = 0
-    let cy = 0
-    for (const vi of F) { cx += Vfrom[vi][0] / F.length; cy += Vfrom[vi][1] / F.length }
-    const h = cx * u[0] + cy * u[1] - d
+// Signed apex of a step's swing in the engine frame: area-weighted height of
+// the faces at the deepest point of the motion that will ACTUALLY play (rigid
+// or baked), sampled through the same path playback uses. The display parity
+// is chosen from this — the rigid fold direction can disagree with a baked
+// relax or mechanism motion, and a vote from the wrong motion is exactly what
+// made the paper flip over and then fold away from the viewer anyway.
+const swingApex = (m: StepMotion, to: number): number => {
+  const area = m.FV.map((F) => {
     let a = 0
     for (let i = 0, j = F.length - 1; i < F.length; j = i++) {
-      a += sheet[F[j]][0] * sheet[F[i]][1] - sheet[F[i]][0] * sheet[F[j]][1]
+      a += m.Vfrom[F[j]][0] * m.Vfrom[F[i]][1] - m.Vfrom[F[i]][0] * m.Vfrom[F[j]][1]
     }
-    v += Math.abs(a / 2) * Math.sign(dirs[fi] * h)
+    return Math.abs(a / 2)
   })
-  return v < 0
+  const base = sampleStepMotion(m, 0).pos
+  let apex = 0
+  for (const f of [0.25, 0.5, 0.75]) {
+    const { pos } = sampleStepMotion(m, f * to)
+    let s = 0
+    for (let fi = 0; fi < m.FV.length; ++fi) {
+      let dz = 0
+      for (const vi of m.FV[fi]) dz += (pos[vi][2] - base[vi][2]) / m.FV[fi].length
+      s += area[fi] * dz
+    }
+    if (Math.abs(s) > Math.abs(apex)) apex = s
+  }
+  return apex
 }
 
 // Motion routing for one step: rigid for simple and held folds; relaxed
@@ -876,11 +894,28 @@ const bakeMotion = (
         strain <= GATE_RELAX_STRAIN) return relax
   }
   const recent = [...priorLines].reverse()
+  // mechanism steps play under the running parity (they never flip — see
+  // compileFoldTable), so try both anchors and keep the first whose book
+  // measurably opens toward the viewer; a gate-passing bake that opens away
+  // is only a last resort
+  const motionOf = (soft: { frames: number; pos: number[]; zDirs: number[] }): StepMotion => ({
+    Vfrom: out.anim.Vfrom.map((p): Vec2 => [(p[0] - 0.5) * scale, (p[1] - 0.5) * scale]),
+    line: [out.anim.line[0], (out.anim.line[1] - (out.anim.line[0][0] + out.anim.line[0][1]) * 0.5) * scale],
+    moving: out.anim.moving,
+    dirs: out.anim.dirs,
+    FV,
+    soft,
+  })
+  let fallback: { frames: number; pos: number[]; zDirs: number[] } | undefined
   for (let nPages = 0; nPages <= recent.length; ++nPages) {
-    const mech = bakeMech(out, reverses, recent.slice(0, nPages), scale, parity)
-    if (bakePassesGate(mech, FV, nv, size, GATE_MECH_DEPTH)) return mech
+    for (const anchor of ['b', 'a'] as const) {
+      const mech = bakeMech(out, reverses, recent.slice(0, nPages), scale, anchor)
+      if (!bakePassesGate(mech, FV, nv, size, GATE_MECH_DEPTH)) continue
+      if (swingApex(motionOf(mech!), 1) * (parity ? -1 : 1) > 0) return mech
+      fallback ??= mech
+    }
   }
-  return undefined
+  return fallback
 }
 
 const smooth = (a: number, b: number, x: number): number => {
